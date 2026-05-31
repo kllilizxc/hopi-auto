@@ -1,11 +1,25 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { AgentRunner } from './agent/AgentRunner'
 import { MockAgentRunner } from './agent/AgentRunner'
+import { ConfiguredRoleProcessRunner } from './agent/ConfiguredRoleProcessRunner'
+import {
+  GoalAssistantNotConfiguredError,
+  createGoalAssistantRuntime,
+} from './assistant/GoalAssistantRuntime'
+import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
+import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
+import { createRunHistoryStore } from './runtime/runHistoryStore'
+import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
 import { createBoardStore } from './storage/boardStore'
+import { createDecisionStore } from './storage/decisionStore'
+import { createProjectPaths } from './storage/paths'
+import { createPreferenceStore } from './storage/preferenceStore'
+import indexPage from './ui/index.html'
 
 export interface ServerOptions {
   rootDir?: string
@@ -37,11 +51,34 @@ const moveTaskSchema = z.object({
   reason: z.string().min(1).default('manual transition'),
 })
 
+const resolveDecisionSchema = z.object({
+  answer: z.string().min(1),
+})
+
+const assistantMessageSchema = z.object({
+  content: z.string().min(1),
+})
+
+const assistantRunSchema = z.object({
+  content: z.string().min(1),
+})
+
+const updatePreferenceSchema = z.object({
+  content: z.string().min(1),
+})
+
 export function createServer(options: ServerOptions = {}): Bun.Server<undefined> {
   const rootDir = options.rootDir ?? process.cwd()
   const store = createBoardStore(rootDir)
+  const decisions = createDecisionStore(rootDir)
+  const preferences = createPreferenceStore(rootDir)
+  const assistantThread = createAssistantThreadStore(rootDir)
+  const assistantRuns = createAssistantRunStore(rootDir)
+  const assistantRuntime = createGoalAssistantRuntime(rootDir)
   const attempts = createAttemptStore(rootDir)
-  const runner = options.runner ?? new MockAgentRunner()
+  const history = createRunHistoryStore(rootDir)
+  const writeTraces = createWriteTraceStore(rootDir)
+  const runner = options.runner ?? createDefaultRunner(rootDir)
   const clients = new Set<EventClient>()
 
   function broadcast(payload: unknown) {
@@ -56,24 +93,186 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
   }
 
   return Bun.serve({
+    routes: {
+      '/': indexPage,
+    },
     port: options.port ?? 3000,
-    async fetch(request) {
+    async fetch(request, server) {
       const url = new URL(request.url)
       const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
       const goalKey = routeGoalKey(parts)
 
       try {
-        if (request.method === 'GET' && url.pathname === '/') {
-          return textResponse('HOPI backend')
+        if (request.method === 'GET' && url.pathname === '/api/events') {
+          server.timeout(request, 0)
+          return eventsResponse(clients)
         }
 
-        if (request.method === 'GET' && url.pathname === '/api/events') {
-          return eventsResponse(clients)
+        if (request.method === 'GET' && url.pathname === '/api/preferences') {
+          return jsonResponse(await preferences.readPreferences())
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/preferences') {
+          const body = await parseJsonBody(request, updatePreferenceSchema)
+          const document = await preferences.writePreferences(body.content)
+          broadcast({ type: 'preferences_changed' })
+          return jsonResponse(document)
         }
 
         if (request.method === 'GET' && isGoalRoute(parts, 'board')) {
           const currentGoalKey = requireGoalKey(parts)
           return jsonResponse(await store.readBoard(currentGoalKey))
+        }
+
+        if (request.method === 'GET' && isGoalRoute(parts, 'runs') && parts.length === 4) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse({
+            goalKey: currentGoalKey,
+            runs: await history.listRuns(currentGoalKey),
+          })
+        }
+
+        if (request.method === 'GET' && isGoalRoute(parts, 'runs') && parts.length === 5) {
+          const currentGoalKey = requireGoalKey(parts)
+          const runId = requirePathPart(parts, 4)
+          const run = await history.readRun(currentGoalKey, runId)
+          if (!run) {
+            throw new HttpError(404, `Run not found: ${runId}`)
+          }
+          return jsonResponse(run)
+        }
+
+        if (request.method === 'GET' && isGoalRoute(parts, 'write-traces') && parts.length === 4) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse({
+            goalKey: currentGoalKey,
+            entries: await writeTraces.listEntries(currentGoalKey, {
+              taskRef: stringQuery(url, 'taskRef'),
+              runId: stringQuery(url, 'runId'),
+              stepId: stringQuery(url, 'stepId'),
+              role: roleQuery(url),
+              limit: numberQuery(url, 'limit'),
+            }),
+          })
+        }
+
+        if (request.method === 'GET' && isGoalRoute(parts, 'decisions') && parts.length === 4) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse(await decisions.readGoalDecisions(currentGoalKey))
+        }
+
+        if (
+          request.method === 'POST' &&
+          isGoalRoute(parts, 'decisions') &&
+          parts.length === 6 &&
+          parts[5] === 'resolve'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const decisionKey = requirePathPart(parts, 4)
+          const body = await parseJsonBody(request, resolveDecisionSchema)
+          const current = await decisions.readGoalDecisions(currentGoalKey)
+          if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
+            throw new HttpError(404, `Decision not found: ${decisionKey}`)
+          }
+          return jsonResponse(
+            await decisions.resolveDecision(currentGoalKey, decisionKey, { answer: body.answer }),
+          )
+        }
+
+        if (
+          request.method === 'GET' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'thread' &&
+          parts.length === 5
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse(await assistantThread.readThread(currentGoalKey))
+        }
+
+        if (
+          request.method === 'GET' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'runs' &&
+          parts.length === 5
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse({
+            goalKey: currentGoalKey,
+            runs: await assistantRuns.listRuns(currentGoalKey),
+          })
+        }
+
+        if (
+          request.method === 'GET' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'runs' &&
+          parts.length === 6
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const assistantRunId = requirePathPart(parts, 5)
+          const run = await assistantRuns.readRun(currentGoalKey, assistantRunId)
+          if (!run) {
+            throw new HttpError(404, `Assistant run not found: ${assistantRunId}`)
+          }
+          return jsonResponse(run)
+        }
+
+        if (
+          request.method === 'POST' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'messages' &&
+          parts.length === 5
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const body = await parseJsonBody(request, assistantMessageSchema)
+          return jsonResponse(
+            await assistantThread.appendUserMessage(currentGoalKey, body.content),
+            201,
+          )
+        }
+
+        if (
+          request.method === 'POST' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'run' &&
+          parts.length === 5
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          if (!(await assistantRuntime.isConfigured())) {
+            throw new HttpError(409, 'Goal assistant is not configured.')
+          }
+          const body = await parseJsonBody(request, assistantRunSchema)
+          const result = await assistantRuntime.run({
+            goalKey: currentGoalKey,
+            content: body.content,
+          })
+          broadcast({ type: 'assistant_changed', goalKey: currentGoalKey })
+          broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          if (
+            result.actionResults.some(
+              (actionResult) =>
+                actionResult.kind === 'record_preference' ||
+                actionResult.kind === 'update_preference',
+            )
+          ) {
+            broadcast({ type: 'preferences_changed' })
+          }
+          return jsonResponse(result)
         }
 
         if (request.method === 'POST' && isGoalRoute(parts, 'tasks') && parts.length === 4) {
@@ -125,6 +324,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             goalKey: currentGoalKey,
             store,
             attempts,
+            history,
             runner,
             writer: 'api',
           })
@@ -136,6 +336,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
       } catch (error) {
         if (error instanceof HttpError) {
           return jsonResponse({ error: error.message }, error.status)
+        }
+        if (error instanceof GoalAssistantNotConfiguredError) {
+          return jsonResponse({ error: error.message }, 409)
         }
 
         const correlationId = crypto.randomUUID()
@@ -158,6 +361,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
       }
     },
   })
+}
+
+function createDefaultRunner(rootDir: string): AgentRunner {
+  const paths = createProjectPaths(rootDir)
+  if (existsSync(paths.adapterConfigPath())) {
+    return new ConfiguredRoleProcessRunner({ rootDir })
+  }
+
+  return new MockAgentRunner()
 }
 
 function isGoalRoute(parts: string[], leaf: string) {
@@ -195,6 +407,37 @@ async function parseJsonBody<T>(request: Request, schema: z.ZodType<T>) {
   return parsed.data
 }
 
+function stringQuery(url: URL, key: string) {
+  const value = url.searchParams.get(key)?.trim()
+  return value ? value : undefined
+}
+
+function numberQuery(url: URL, key: string) {
+  const value = stringQuery(url, key)
+  if (!value) {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new HttpError(400, `Invalid query parameter: ${key}`)
+  }
+  return parsed
+}
+
+function roleQuery(url: URL) {
+  const value = stringQuery(url, 'role')
+  if (!value) {
+    return undefined
+  }
+
+  const parsed = z.enum(['planner', 'generator', 'reviewer', 'merger']).safeParse(value)
+  if (!parsed.success) {
+    throw new HttpError(400, 'Invalid query parameter: role')
+  }
+  return parsed.data
+}
+
 function eventsResponse(clients: Set<EventClient>) {
   let client: EventClient | undefined
   const stream = new ReadableStream<Uint8Array>({
@@ -221,10 +464,6 @@ function eventsResponse(clients: Set<EventClient>) {
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: jsonHeaders })
-}
-
-function textResponse(body: string, status = 200) {
-  return new Response(body, { status, headers: { 'content-type': 'text/plain' } })
 }
 
 function errorMessage(error: unknown) {

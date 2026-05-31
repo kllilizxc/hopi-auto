@@ -1,6 +1,6 @@
 # HOPI Agent Handoff
 
-Status date: 2026-05-31
+Status date: 2026-06-01
 
 This document is the handoff entry point for an agent with no prior chat context.
 
@@ -13,8 +13,21 @@ Phase 1 backend is complete:
 - The disposable prototype backend was replaced with a deterministic Bun core.
 - The backend reads and mutates file-native goal boards.
 - A single-step scheduler advances one deterministic unit per call.
-- Real LLM agents and worktree merging are intentionally out of scope for Phase 1.
-- The React/Vite frontend remains in the repo as legacy prototype code and is not part of the current verification gate.
+- Goal-scoped runtime run/step/message history is now persisted under `.hopi/runtime/**`.
+- The runner boundary now streams typed runtime events into step history.
+- A real `ProcessAgentRunner` and git `WorktreeManager` now exist behind that runner boundary.
+- Goal-scoped durable `write-trace.jsonl` recording now exists for process-backed file writes.
+- Configured planner / generator / reviewer / merger process adapters now exist through repo-local adapter config and typed outcome files.
+- Built-in vendor transport adapters now exist for Codex, Claude Code, and OpenCode, backed by durable per-step `prompt.md` bundles.
+- Built-in vendor transports now normalize machine-readable CLI output into structured step transcripts instead of storing raw vendor JSON lines.
+- Deterministic merger execution now performs real git merge completion and settled-run cleanup.
+- Durable write traces are now queryable, injected into relevant role context bundles, and surfaced through the Bun API and UI.
+- The first Goal assistant substrate slice is now implemented with durable `decisions.yml`, repo `preference.md`, Goal-scoped `assistant-thread.json`, planner-context plumbing for decisions/preferences, and minimum Bun API routes for those stores.
+- Live Goal assistant execution is now implemented with an explicit Goal-scoped runtime call, constrained durable actions, assistant run bundles under `.hopi/runtime/**`, and scheduler cleanup for resolved decision blockers.
+- Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
+- Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
+- The Bun backend now serves the active Bun UI at `/`.
+- Richer planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
 
 Use this command before and after backend work:
 
@@ -32,6 +45,9 @@ Read these first:
 - `docs/agent-handoff.md`: current state, guardrails, and next work.
 - `docs/hopi-phase-1-authority.md`: canonical Phase 1 schema and runtime boundary.
 - `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`: completed Phase 1 execution plan and rationale.
+- `docs/superpowers/specs/2026-06-01-live-goal-assistant-execution-design.md`: current authority note for explicit Goal assistant execution.
+- `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: current authority note for assistant inspection APIs and Bun UI surfacing.
+- `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 
 Historical reference only:
 
@@ -71,6 +87,24 @@ Audit event path:
 .hopi/docs/goals/<goalKey>/events.jsonl
 ```
 
+Write trace path:
+
+```text
+.hopi/docs/goals/<goalKey>/write-trace.jsonl
+```
+
+Goal decision path:
+
+```text
+.hopi/docs/goals/<goalKey>/decisions.yml
+```
+
+Repo preference path:
+
+```text
+.hopi/preference.md
+```
+
 Runtime overlay path:
 
 ```text
@@ -78,6 +112,18 @@ Runtime overlay path:
 ```
 
 Runtime files are ignored and may be regenerated.
+
+Goal assistant thread path:
+
+```text
+.hopi/runtime/goals/<goalKey>/assistant-thread.json
+```
+
+Goal assistant run path:
+
+```text
+.hopi/runtime/goals/<goalKey>/assistant/runs/<assistantRunId>/
+```
 
 Canonical task shape:
 
@@ -126,6 +172,8 @@ Failure kinds:
 
 `blockedBy` contains only current unresolved blockers. When a task blocker references a task that is now `done`, the scheduler removes that blocker and writes a `task_blocker_resolved` event.
 
+When a decision blocker references a `decisionKey` that is resolved in `decisions.yml`, the scheduler removes that blocker and writes a `decision_blocker_resolved` event.
+
 ## Backend Modules
 
 Current backend source:
@@ -135,20 +183,52 @@ Current backend source:
 - `packages/backend/src/storage/paths.ts`: `.hopi` path construction.
 - `packages/backend/src/storage/lock.ts`: file lock with same-process queue and stale lock handling.
 - `packages/backend/src/storage/boardStore.ts`: atomic board reads, mutations, and event appends.
+- `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
+- `packages/backend/src/storage/preferenceStore.ts`: bootstrap, persistence, and deduplicated durable preference recording for repo-level `preference.md`.
+- `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
+- `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
+- `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
+- `packages/backend/src/assistant/assistantRunStore.ts`: read-side assistant run inspection store.
+- `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests and preference recording.
 - `packages/backend/src/runtime/attemptStore.ts`: ignored runtime attempt budget overlay.
-- `packages/backend/src/agent/AgentRunner.ts`: injectable runner interface and `MockAgentRunner`.
+- `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
+- `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
+- `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap for `goal.md` and `design.md`.
+- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries and planner durable-input plumbing for `todo.yml`, `decisions.yml`, and `.hopi/preference.md`.
+- `packages/backend/src/runtime/worktreeManager.ts`: run-scoped git worktree preparation and cleanup.
+- `packages/backend/src/runtime/gitMergeExecutor.ts`: deterministic git merge completion and settled-run cleanup for merger success paths.
+- `packages/backend/src/runtime/writeTrace.ts`: durable write-trace types.
+- `packages/backend/src/runtime/writeTraceStore.ts`: Goal-scoped append-only `write-trace.jsonl` storage.
+- `packages/backend/src/runtime/writeTraceRecorder.ts`: process-focused file-change snapshot recorder for compact durable traces.
+- `packages/backend/src/agent/AgentRunner.ts`: event-streaming execution adapter contract and scripted `MockAgentRunner`.
+- `packages/backend/src/agent/ProcessAgentRunner.ts`: process-backed runner that can execute in the repo root or a prepared worktree and stream runtime evidence.
+- `packages/backend/src/agent/ConfiguredRoleProcessRunner.ts`: repo-local role adapter config, placeholder substitution, context bundle wiring, and typed outcome ingestion.
+- `packages/backend/src/agent/vendorTransport.ts`: built-in Codex / Claude / OpenCode transport config parsing and command resolution.
+- `packages/backend/src/agent/vendorTranscript.ts`: built-in vendor stream normalization into structured transcript events.
 - `packages/backend/src/scheduler/reconcileOnce.ts`: deterministic one-step scheduler.
-- `packages/backend/src/server.ts`: Bun API and SSE endpoint.
+- `packages/backend/src/server.ts`: Bun API, SSE endpoint, and Bun-served UI shell.
 - `packages/backend/src/index.ts`: public exports.
 
 Current backend tests:
 
 - `packages/backend/tests/validation.test.ts`
 - `packages/backend/tests/boardStore.test.ts`
+- `packages/backend/tests/decisionStore.test.ts`
 - `packages/backend/tests/attemptStore.test.ts`
+- `packages/backend/tests/preferenceStore.test.ts`
+- `packages/backend/tests/assistantThreadStore.test.ts`
+- `packages/backend/tests/assistantRunStore.test.ts`
+- `packages/backend/tests/runHistoryStore.test.ts`
+- `packages/backend/tests/roleProcessContext.test.ts`
 - `packages/backend/tests/agentRunner.test.ts`
+- `packages/backend/tests/configuredRoleProcessRunner.test.ts`
+- `packages/backend/tests/gitMergeExecutor.test.ts`
+- `packages/backend/tests/processAgentRunner.test.ts`
 - `packages/backend/tests/reconcileOnce.test.ts`
 - `packages/backend/tests/server.test.ts`
+- `packages/backend/tests/sampleGoals.test.ts`
+- `packages/backend/tests/writeTraceStore.test.ts`
+- `packages/backend/tests/worktreeManager.test.ts`
 
 ## Scheduler Rules
 
@@ -188,6 +268,94 @@ When a failure kind reaches the max attempt budget:
 
 System errors are not task failures. Adapter, route, schema, or storage errors should be reported as system errors and must not become task blockers.
 
+Run history is stored in:
+
+```text
+.hopi/runtime/goals/<goalKey>/run-history.json
+```
+
+Model rules:
+
+- a run starts when a task leaves `planned`
+- a step records one `planner` / `generator` / `reviewer` / `merger` dispatch
+- a run stays `active` through successful review/merge progression
+- a run ends as `retryable`, `blocked`, `completed`, or `system_error`
+- step messages are runtime overlay only; they do not mutate workflow truth
+- step transcripts carry normalized vendor execution semantics for built-in transports
+- step execution evidence may include worktree metadata and artifact references
+
+Runtime adapter events currently supported:
+
+- `message`
+- `transcript`
+- `worktree_prepared`
+- `artifact`
+
+Planner context bundles now also receive these durable inputs:
+
+- `goal.md`
+- `design.md`
+- current `todo.yml` content
+- `decisions.yml`
+- `.hopi/preference.md`
+- relevant write traces
+
+Configured role adapters live at:
+
+```text
+.hopi/runtime/agent-adapters.json
+```
+
+Context bundles live at:
+
+```text
+.hopi/runtime/goals/<goalKey>/runs/<runId>/<stepId>/
+```
+
+Model rules:
+
+- `context.md` carries task, Goal, and boundary context into role processes
+- `prompt.md` is the transport-facing execution prompt built from the current context bundle
+- `outcome.json` lets reviewer and merger return typed outcomes on exit `0`
+- `goal.md` and `design.md` are bootstrapped if missing before configured role execution
+
+Built-in vendor transports now supported in `.hopi/runtime/agent-adapters.json`:
+
+- `process`
+- `codex`
+- `claude`
+- `opencode`
+
+`agent-adapters.json` may now also include a top-level `assistant` transport config alongside `roles`.
+
+Model rules:
+
+- built-in vendor transports keep `outcome.json` as the deterministic workflow contract
+- Codex and Claude transports pass `prompt.md` through stdin
+- OpenCode transports pass prompt content as the final non-interactive message argument
+- built-in vendor stdout is normalized into compact transcript entries before it reaches run history
+- raw `process` transports remain available for repo-local custom adapters
+
+Merger success paths now have deterministic backend post-processing:
+
+- engineering merger success performs a real git merge from the run branch into the root repo
+- merge conflicts abort the root merge and flow through the existing retry/budget path
+- settled success paths clean the run worktree and disposable branch
+- planning merger success can complete without a run branch
+
+Durable write traces are stored in:
+
+```text
+.hopi/docs/goals/<goalKey>/write-trace.jsonl
+```
+
+Model rules:
+
+- entries are compact append-only JSON lines
+- entries summarize changed repo-relative paths without file contents
+- write traces do not alter scheduler decisions or workflow truth
+- the current recorder is process-backed and works for both root and worktree execution
+
 ## API
 
 Start the backend:
@@ -206,13 +374,30 @@ Expected startup line:
 Routes:
 
 ```text
+GET  /api/preferences
+POST /api/preferences
 GET  /api/goals/:goalKey/board
+GET  /api/goals/:goalKey/decisions
+POST /api/goals/:goalKey/decisions/:decisionKey/resolve
+GET  /api/goals/:goalKey/runs
+GET  /api/goals/:goalKey/runs/:runId
+GET  /api/goals/:goalKey/write-traces
+GET  /api/goals/:goalKey/assistant/thread
+GET  /api/goals/:goalKey/assistant/runs
+GET  /api/goals/:goalKey/assistant/runs/:assistantRunId
+POST /api/goals/:goalKey/assistant/messages
+POST /api/goals/:goalKey/assistant/run
 POST /api/goals/:goalKey/tasks
 POST /api/goals/:goalKey/tasks/:taskRef/move
 POST /api/goals/:goalKey/reconcile
 GET  /api/events
 GET  /
 ```
+
+Default bootstrap note:
+
+- `createServer()` now prefers `ConfiguredRoleProcessRunner` when `.hopi/runtime/agent-adapters.json` exists.
+- If adapter config is absent, it still falls back to `MockAgentRunner`.
 
 Create task request:
 
@@ -238,22 +423,50 @@ Manual move request:
 
 ## Frontend State
 
-`packages/frontend` is still a legacy Vite prototype. Do not treat it as the target architecture.
+The active frontend is now served by the backend through a Bun HTML import at `/`.
 
-For the next frontend pass, prefer a Bun HTML-import frontend served by the backend or another explicitly approved Bun-first arrangement. The UI should preserve the confirmed product need: users must be able to switch between steps/runs and inspect the message history for that selected step.
+Current UI capabilities:
+
+- read-only board projection from `todo.yml`
+- run list for the current Goal
+- step list for the selected run
+- normalized transcript history for the selected step
+- message history for the selected step
+- structured step evidence for worktree path and artifact references when present
+- selected-step durable write-trace rendering for run-scoped file-change evidence
+- assistant prompt submission
+- repo preference surfacing and editing
+- decision topic surfacing
+- assistant thread surfacing
+- assistant run list and assistant run detail inspection
+
+Current non-UI Goal assistant substrate:
+
+- durable Goal decisions in `decisions.yml`
+- durable repo preferences in `.hopi/preference.md`
+- Goal-scoped assistant thread storage under `.hopi/runtime/**`
+- planner context wiring for decisions and preferences
+- explicit Goal assistant execution with constrained durable actions, including `request_planning` and `record_preference`
+
+What is still missing:
+
+- richer assistant action coverage beyond the current preference/planning loop, especially planner-request follow-through beyond same-title reuse
+- deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
+- deeper assistant-run inspection beyond the current summary/detail projection
+
+`packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
 ## Recommended Next Work
 
 Next high-leverage phase:
 
-1. Add a minimal run/step history model for `planner -> generator -> reviewer -> merger -> planner` loops.
-2. Persist enough step metadata for the frontend to switch selected step and display messages for that step.
-3. Rebuild or replace the legacy frontend against the Bun API and the new step-history model.
+1. Extend Goal assistant beyond the current constrained preference/planning loop, especially planner-request follow-through and richer decision/preference handling.
+2. Feed durable write-trace evidence more deeply into role prompts and review/merge policy, without moving workflow truth out of docs.
+3. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, and the current deterministic scheduler core.
+4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 
 Keep this out of the next phase unless explicitly requested:
 
-- Real LLM agent adapters.
-- Real git worktree merge automation.
 - A complex queue service.
 - A database.
 - Compatibility with deleted prototype schema fields.

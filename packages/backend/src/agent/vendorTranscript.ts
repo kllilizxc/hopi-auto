@@ -1,0 +1,378 @@
+import type {
+  AgentRuntimeEvent,
+  AgentTranscriptEntryKind,
+  AgentTranscriptTransport,
+} from './AgentRunner'
+
+export type ProcessTranscriptFormat =
+  | 'plain'
+  | 'codex_jsonl'
+  | 'claude_stream_json'
+  | 'opencode_json'
+
+export function normalizeProcessOutputLine(options: {
+  format: ProcessTranscriptFormat
+  stream: 'stdout' | 'stderr'
+  role: string
+  line: string
+}): AgentRuntimeEvent[] {
+  if (options.format === 'plain') {
+    return [
+      messageEvent(options.role, options.stream === 'stderr' ? 'error' : 'info', options.line),
+    ]
+  }
+
+  if (options.stream === 'stderr') {
+    return [transcriptEvent(transportForFormat(options.format), 'error', options.line)]
+  }
+
+  const parsed = parseJson(options.line)
+  if (!parsed) {
+    return [transcriptEvent(transportForFormat(options.format), 'status', options.line)]
+  }
+
+  switch (options.format) {
+    case 'codex_jsonl':
+      return normalizeCodexEvent(parsed)
+    case 'claude_stream_json':
+      return normalizeClaudeEvent(parsed)
+    case 'opencode_json':
+      return normalizeOpencodeEvent(parsed)
+  }
+}
+
+function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
+  const eventType =
+    stringValue(objectValue(parsed)?.type) ?? stringValue(objectValue(parsed)?.method)
+  const item =
+    objectValue(objectValue(parsed)?.item) ??
+    objectValue(objectValue(objectValue(parsed)?.params)?.item)
+  const itemType = stringValue(item?.type)
+
+  if (itemType === 'agent_message') {
+    const text = extractText(item)
+    return text
+      ? [
+          transcriptEvent('codex', 'assistant', text, {
+            vendorEventType: eventType ?? 'item/completed',
+          }),
+        ]
+      : []
+  }
+
+  if (itemType && isToolCallType(itemType)) {
+    const toolName = extractToolName(item)
+    return [
+      transcriptEvent('codex', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+        toolName: toolName ?? undefined,
+        vendorEventType: eventType ?? 'item/completed',
+      }),
+    ]
+  }
+
+  if (itemType && isToolResultType(itemType)) {
+    const text = extractText(item) ?? 'Tool result'
+    return [
+      transcriptEvent('codex', 'tool_result', text, {
+        toolName: extractToolName(item) ?? undefined,
+        vendorEventType: eventType ?? 'item/completed',
+      }),
+    ]
+  }
+
+  if (eventType) {
+    return [
+      transcriptEvent('codex', 'status', humanizeEventType(eventType), {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  return [transcriptEvent('codex', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
+  const value = objectValue(parsed)
+  const eventType = stringValue(value?.type)
+  const message = objectValue(value?.message)
+  const blocks = arrayValue(message?.content) ?? arrayValue(value?.content) ?? []
+
+  if (eventType === 'assistant') {
+    return normalizeContentBlocks('claude', eventType, blocks, 'assistant')
+  }
+
+  if (eventType === 'user') {
+    return normalizeContentBlocks('claude', eventType, blocks, 'tool_result')
+  }
+
+  if (eventType === 'result') {
+    const summary =
+      stringValue(value?.subtype) ??
+      stringValue(value?.stop_reason) ??
+      extractText(value) ??
+      'result received'
+    return [
+      transcriptEvent('claude', summary.includes('error') ? 'error' : 'status', summary, {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  if (eventType) {
+    return [
+      transcriptEvent('claude', 'status', extractText(value) ?? humanizeEventType(eventType), {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  return [transcriptEvent('claude', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
+  const value = objectValue(parsed)
+  const eventType =
+    stringValue(value?.type) ?? stringValue(value?.event) ?? stringValue(value?.kind)
+  const blocks = arrayValue(value?.content) ?? arrayValue(value?.parts) ?? []
+
+  if (eventType?.includes('error')) {
+    return [
+      transcriptEvent('opencode', 'error', extractText(value) ?? humanizeEventType(eventType), {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  if (eventType && (eventType.includes('assistant') || eventType.includes('message'))) {
+    const text = extractText(value)
+    if (text) {
+      return [
+        transcriptEvent('opencode', 'assistant', text, {
+          vendorEventType: eventType,
+        }),
+      ]
+    }
+
+    const normalizedBlocks = normalizeContentBlocks('opencode', eventType, blocks, 'assistant')
+    if (normalizedBlocks.length > 0) {
+      return normalizedBlocks
+    }
+  }
+
+  if (
+    eventType &&
+    (eventType.includes('tool_use') ||
+      eventType.includes('tool_call') ||
+      (eventType.includes('tool') && !eventType.includes('result')))
+  ) {
+    const toolName = extractToolName(value)
+    return [
+      transcriptEvent('opencode', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+        toolName: toolName ?? undefined,
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  if (eventType && (eventType.includes('tool_result') || eventType.includes('result'))) {
+    const text = extractText(value) ?? humanizeEventType(eventType)
+    return [
+      transcriptEvent('opencode', 'tool_result', text, {
+        toolName: extractToolName(value) ?? undefined,
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  if (blocks.length > 0) {
+    const normalizedBlocks = normalizeContentBlocks(
+      'opencode',
+      eventType ?? 'content',
+      blocks,
+      'assistant',
+    )
+    if (normalizedBlocks.length > 0) {
+      return normalizedBlocks
+    }
+  }
+
+  if (eventType) {
+    return [
+      transcriptEvent('opencode', 'status', extractText(value) ?? humanizeEventType(eventType), {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  return [transcriptEvent('opencode', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function normalizeContentBlocks(
+  transport: AgentTranscriptTransport,
+  vendorEventType: string,
+  blocks: unknown[],
+  defaultKind: Extract<AgentTranscriptEntryKind, 'assistant' | 'tool_result'>,
+) {
+  const events: AgentRuntimeEvent[] = []
+
+  for (const block of blocks) {
+    const value = objectValue(block)
+    const blockType = stringValue(value?.type)
+    if (blockType === 'text') {
+      const text = extractText(value)
+      if (text) {
+        events.push(
+          transcriptEvent(
+            transport,
+            defaultKind === 'assistant' ? 'assistant' : 'tool_result',
+            text,
+            {
+              vendorEventType,
+            },
+          ),
+        )
+      }
+      continue
+    }
+
+    if (blockType === 'tool_use') {
+      const toolName = extractToolName(value)
+      events.push(
+        transcriptEvent(transport, 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+          toolName: toolName ?? undefined,
+          vendorEventType,
+        }),
+      )
+      continue
+    }
+
+    if (blockType === 'tool_result') {
+      events.push(
+        transcriptEvent(transport, 'tool_result', extractText(value) ?? 'Tool result', {
+          vendorEventType,
+        }),
+      )
+    }
+  }
+
+  return events
+}
+
+function transcriptEvent(
+  transport: AgentTranscriptTransport,
+  entryKind: AgentTranscriptEntryKind,
+  summary: string,
+  options: {
+    toolName?: string
+    vendorEventType?: string
+  } = {},
+): AgentRuntimeEvent {
+  return {
+    kind: 'transcript',
+    transport,
+    entryKind,
+    summary: compactSummary(summary),
+    toolName: options.toolName,
+    vendorEventType: options.vendorEventType,
+  }
+}
+
+function messageEvent(role: string, level: 'info' | 'error', content: string): AgentRuntimeEvent {
+  return {
+    kind: 'message',
+    level,
+    role,
+    content,
+  }
+}
+
+function transportForFormat(
+  format: Exclude<ProcessTranscriptFormat, 'plain'>,
+): AgentTranscriptTransport {
+  switch (format) {
+    case 'codex_jsonl':
+      return 'codex'
+    case 'claude_stream_json':
+      return 'claude'
+    case 'opencode_json':
+      return 'opencode'
+  }
+}
+
+function isToolCallType(itemType: string) {
+  return (
+    itemType.includes('tool_call') || itemType.endsWith('_call') || itemType === 'local_shell_call'
+  )
+}
+
+function isToolResultType(itemType: string) {
+  return (
+    itemType.includes('tool_result') ||
+    itemType.includes('call_output') ||
+    itemType.endsWith('_output')
+  )
+}
+
+function extractToolName(value: Record<string, unknown> | undefined) {
+  return (
+    stringValue(value?.tool_name) ??
+    stringValue(value?.name) ??
+    stringValue(objectValue(value?.tool)?.name) ??
+    stringValue(objectValue(value?.invocation)?.tool_name)
+  )
+}
+
+function extractText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return compactSummary(value)
+  }
+
+  if (Array.isArray(value)) {
+    const parts = value.map(extractText).filter((part): part is string => Boolean(part))
+    return parts.length > 0 ? compactSummary(parts.join('\n')) : undefined
+  }
+
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+
+  const record = value as Record<string, unknown>
+  return (
+    stringValue(record.text) ??
+    stringValue(record.content) ??
+    stringValue(record.message) ??
+    extractText(record.content) ??
+    extractText(record.message) ??
+    extractText(record.result)
+  )
+}
+
+function humanizeEventType(eventType: string) {
+  return compactSummary(eventType.replaceAll(/[./_]+/g, ' '))
+}
+
+function compactSummary(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 400)
+}
+
+function parseJson(line: string) {
+  try {
+    return JSON.parse(line)
+  } catch {
+    return null
+  }
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value : undefined
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}

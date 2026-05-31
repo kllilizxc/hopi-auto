@@ -4,29 +4,30 @@ goal:
   title: Test Full Stack Workflow
 items:
   - ref: T-1
+    kind: engineering
     status: done
     title: Implement Login Page
-    body: |-
-      Create a basic login page component
-
-      Acceptance Criteria:
-      - Page exists
-    dependencyTaskList: []
+    description: Create a basic login page component.
+    acceptanceCriteria:
+      - The login page exists.
+    blockedBy: []
   - ref: T-2
-    status: blocked
+    kind: engineering
+    status: planned
     title: Setup DB Connection
-    body: |-
-      Connect the backend to Postgres
-
-      Acceptance Criteria:
-      - Connected
-    dependencyTaskList: []
+    description: Connect the backend to Postgres.
+    acceptanceCriteria:
+      - The backend connects successfully.
+    blockedBy:
+      - kind: decision
+        ref: db-provider
   - ref: T-3
+    kind: engineering
     status: planned
     title: Deploy to Prod
-    body: |-
-      Write deployment configs
-
-      Acceptance Criteria:
-      - Deployed
-    dependencyTaskList: []
+    description: Write deployment configs.
+    acceptanceCriteria:
+      - The application deploys successfully.
+    blockedBy:
+      - kind: task
+        ref: T-2
