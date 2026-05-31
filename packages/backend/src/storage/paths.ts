@@ -7,6 +7,7 @@ export interface ProjectPaths {
   designMarkdownPath(goalKey: string): string
   todoPath(goalKey: string): string
   decisionsPath(goalKey: string): string
+  planningRequestsPath(goalKey: string): string
   eventsPath(goalKey: string): string
   writeTracePath(goalKey: string): string
   preferencePath(): string
@@ -49,6 +50,9 @@ export function createProjectPaths(rootDir = process.cwd()): ProjectPaths {
     },
     decisionsPath(goalKey: string) {
       return join(this.goalDir(goalKey), 'decisions.yml')
+    },
+    planningRequestsPath(goalKey: string) {
+      return join(this.goalDir(goalKey), 'planning-requests.yml')
     },
     eventsPath(goalKey: string) {
       return join(this.goalDir(goalKey), 'events.jsonl')

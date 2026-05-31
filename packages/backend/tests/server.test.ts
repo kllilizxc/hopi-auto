@@ -66,6 +66,56 @@ describe('createServer', () => {
     })
   })
 
+  test('creates and lists durable planning requests through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Plan auth follow-through',
+      description: 'Turn the auth answer into durable planning work.',
+      acceptanceCriteria: ['The auth follow-through is visible in todo.yml.'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      title: 'Plan auth follow-through',
+      taskRef: 'P-1',
+      status: 'open',
+    })
+
+    const listResponse = await fetch(apiUrl(server, '/api/goals/test/planning-requests'))
+    expect(listResponse.status).toBe(200)
+    await expect(listResponse.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          title: 'Plan auth follow-through',
+          taskRef: 'P-1',
+          status: 'open',
+        }),
+      ],
+    })
+
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          kind: 'planning',
+          status: 'planned',
+          title: 'Plan auth follow-through',
+        }),
+      ],
+    })
+
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('requestKey: PR-1')
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 
@@ -367,7 +417,12 @@ describe('createServer', () => {
       assistantRunId: string
       message: string
       events: Array<{ kind: string; role?: string; content?: string }>
-      actionResults: Array<{ kind: string; taskRef?: string; decisionKey?: string }>
+      actionResults: Array<{
+        kind: string
+        taskRef?: string
+        requestKey?: string
+        decisionKey?: string
+      }>
     }>(response)
     expect(result.goalKey).toBe('test')
     expect(result.assistantRunId).toBeString()
@@ -389,6 +444,7 @@ describe('createServer', () => {
         }),
         expect.objectContaining({
           kind: 'request_planning',
+          requestKey: 'PR-1',
           taskRef: 'P-1',
         }),
         expect.objectContaining({
@@ -422,6 +478,16 @@ describe('createServer', () => {
         }),
       ]),
     )
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('requestKey: PR-1')
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('taskRef: P-1')
 
     const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
     expect(thread.goalKey).toBe('test')

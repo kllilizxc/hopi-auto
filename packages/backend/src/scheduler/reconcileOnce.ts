@@ -2,15 +2,21 @@ import type { AgentOutcome, AgentRole, AgentRunner, AgentRuntimeEvent } from '..
 import type { BlockerRef, FailureKind, TaskItem, TaskStatus } from '../domain/board'
 import type { AttemptStore } from '../runtime/attemptStore'
 import { type GitMergeExecutor, createGitMergeExecutor } from '../runtime/gitMergeExecutor'
+import { resolvePlanningRequestsForTask } from '../runtime/planningRequest'
 import type { RunStatus, StepOutcome } from '../runtime/runHistory'
 import type { RunHistoryStore } from '../runtime/runHistoryStore'
 import type { BoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
+import {
+  type PlanningRequestStore,
+  createPlanningRequestStore,
+} from '../storage/planningRequestStore'
 
 export interface ReconcileOptions {
   goalKey: string
   store: BoardStore
   decisions?: DecisionStore
+  planningRequests?: PlanningRequestStore
   attempts: AttemptStore
   history?: RunHistoryStore
   runner: AgentRunner
@@ -45,6 +51,8 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
   const mergeExecutor = options.mergeExecutor ?? createGitMergeExecutor(options.store.paths.rootDir)
   const decisions = options.decisions ?? createDecisionStore(options.store.paths.rootDir)
+  const planningRequests =
+    options.planningRequests ?? createPlanningRequestStore(options.store.paths.rootDir)
 
   if (await cleanupResolvedBlockers(options.store, decisions, options.goalKey, writer)) {
     return { kind: 'idle' }
@@ -143,6 +151,21 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
       message: statusMessage(errorMessage(error)),
     })
     throw error
+  }
+
+  if (task.kind === 'planning' && resolution.to === 'done') {
+    await resolvePlanningRequestsForTask(
+      {
+        boardStore: options.store,
+        planningRequests,
+      },
+      {
+        goalKey: options.goalKey,
+        taskRef: task.ref,
+        resolution: `Planning task ${task.ref} completed.`,
+        writer,
+      },
+    )
   }
 
   await finishHistoryStep(options.history, runRef, {

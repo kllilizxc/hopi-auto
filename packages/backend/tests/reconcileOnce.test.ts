@@ -399,6 +399,21 @@ describe('reconcileOnce', () => {
     const store = await seedBoard(rootDir, [
       task({ ref: 'P-1', kind: 'planning', status: 'merging' }),
     ])
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-1
+    title: Plan auth follow-through
+    description: Capture the auth design follow-through.
+    acceptanceCriteria:
+      - The auth plan is durable.
+    taskRef: P-1
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
 
     await expect(
       reconcileOnce({
@@ -417,6 +432,11 @@ describe('reconcileOnce', () => {
     })
 
     await expect(readTask(store, 'P-1')).resolves.toMatchObject({ status: 'done' })
+    const planningRequests = await Bun.file(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+    ).text()
+    expect(planningRequests).toContain('status: resolved')
+    expect(planningRequests).toContain('resolution: Planning task P-1 completed.')
   })
 
   test('appends reviewer work to the same active run', async () => {

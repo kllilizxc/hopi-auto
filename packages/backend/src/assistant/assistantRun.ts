@@ -101,6 +101,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('request_planning'),
+    requestKey: z.string().min(1).optional(),
     taskRef: z.string().min(1),
     summary: z.string().min(1),
   }),

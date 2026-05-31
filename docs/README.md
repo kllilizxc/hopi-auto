@@ -39,6 +39,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-write-trace-aware-review-and-merge-policy.md`: implementation plan for the trace-aware review/merge policy slice.
 - `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`: approved and implemented design for Goal doc inspection plus planner doc-status policy.
 - `docs/superpowers/plans/2026-06-01-goal-docs-inspection-and-planner-doc-status.md`: implementation plan for the Goal docs inspection and planner doc-status slice.
+- `docs/superpowers/specs/2026-06-01-durable-planning-requests-and-planner-follow-through-design.md`: approved and implemented design for durable planning requests and deterministic planner follow-through.
+- `docs/superpowers/plans/2026-06-01-durable-planning-requests-and-planner-follow-through.md`: implementation plan for the durable planning-request and planner follow-through slice.
 - `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`: approved design for deterministic merger execution and settled-run cleanup.
 - `docs/superpowers/plans/2026-05-31-merge-execution-and-cleanup.md`: implementation plan for the merger execution slice.
 

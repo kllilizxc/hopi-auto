@@ -450,6 +450,7 @@ textarea {
 .assistant-form,
 .preference-form,
 .decision-form,
+.planning-request-form,
 .decision-resolve-form,
 .assistant-card,
 .assistant-run-card {
@@ -475,6 +476,7 @@ textarea {
 
 .assistant-form textarea,
 .preference-form textarea,
+.planning-request-form textarea,
 .decision-resolve-form textarea {
   width: 100%;
   min-height: 140px;
@@ -493,6 +495,7 @@ textarea {
 }
 
 .decision-form input,
+.planning-request-form input,
 .decision-resolve-form input {
   width: 100%;
   min-width: 0;
@@ -503,6 +506,18 @@ textarea {
   background: rgba(255, 255, 255, 0.86);
 }
 
+.planning-request-form textarea {
+  min-height: 96px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  line-height: 1.5;
+}
+
 .decision-resolve-form textarea {
   min-height: 96px;
 }
@@ -510,6 +525,7 @@ textarea {
 .assistant-form button,
 .preference-form button,
 .decision-form button,
+.planning-request-form button,
 .decision-resolve-form button {
   padding: 12px 16px;
   border: none;
@@ -523,6 +539,7 @@ textarea {
 .assistant-form button:disabled,
 .preference-form button:disabled,
 .decision-form button:disabled,
+.planning-request-form button:disabled,
 .decision-resolve-form button:disabled {
   opacity: 0.72;
   cursor: wait;

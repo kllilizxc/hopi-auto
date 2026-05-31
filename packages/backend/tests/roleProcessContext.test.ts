@@ -69,6 +69,21 @@ describe('createRoleProcessContextBuilder', () => {
       summary: 'Choose the rollout strategy',
       taskRef: 'P-1',
     })
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2', 'planning-requests.yml'),
+      `version: 1
+goalKey: goal-2
+requests:
+  - requestKey: PR-1
+    title: Plan rollout follow-through
+    description: Turn the rollout decision into durable planning follow-through.
+    acceptanceCriteria:
+      - The rollout design follow-through is visible.
+    taskRef: P-1
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
     await createPreferenceStore(rootDir).writePreferences(
       '# Preferences\n\n- Prefer incremental rollouts.\n',
     )
@@ -98,15 +113,20 @@ describe('createRoleProcessContextBuilder', () => {
     expect(context).not.toContain('Do not edit .hopi/docs/**')
     expect(context).toContain('.hopi/docs/goals/goal-2/todo.yml')
     expect(context).toContain('.hopi/docs/goals/goal-2/decisions.yml')
+    expect(context).toContain('.hopi/docs/goals/goal-2/planning-requests.yml')
     expect(context).toContain('.hopi/preference.md')
     expect(context).toContain('## Goal Docs Status')
     expect(context).toContain('goal.md status: bootstrapped')
     expect(context).toContain('design.md status: bootstrapped')
     expect(context).toContain('Choose the rollout strategy')
+    expect(context).toContain('Plan rollout follow-through')
     expect(context).toContain('Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
       'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',
+    )
+    expect(prompt).toContain(
+      'Address open planning requests linked to this task before returning success.',
     )
   })
 

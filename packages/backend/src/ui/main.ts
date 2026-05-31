@@ -45,6 +45,18 @@ interface GoalDecision {
   resolvedAt?: string
 }
 
+interface GoalPlanningRequest {
+  requestKey: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  taskRef: string
+  status: 'open' | 'resolved'
+  createdAt: string
+  resolvedAt?: string
+  resolution?: string
+}
+
 interface GoalDocSnapshot {
   path: string
   content: string
@@ -205,6 +217,7 @@ interface AssistantActionResult {
     | 'record_preference'
     | 'update_preference'
   taskRef?: string
+  requestKey?: string
   status?: TaskStatus
   decisionKey?: string
   summary: string
@@ -247,6 +260,7 @@ interface AppState {
   preferenceContent: string
   preferenceDirty: boolean
   goalDocs: GoalDocsSnapshot | null
+  planningRequests: GoalPlanningRequest[]
   board: TodoBoard | null
   decisions: GoalDecision[]
   assistantThread: AssistantThreadEntry[]
@@ -295,6 +309,7 @@ const state: AppState = {
   preferenceContent: '',
   preferenceDirty: false,
   goalDocs: null,
+  planningRequests: [],
   board: null,
   decisions: [],
   assistantThread: [],
@@ -394,6 +409,32 @@ root.addEventListener('submit', (event: SubmitEvent) => {
     return
   }
 
+  if (form.dataset.role === 'planning-request-form') {
+    event.preventDefault()
+    const formData = new FormData(form)
+    const title = `${formData.get('title') ?? ''}`.trim()
+    const acceptanceCriteria = `${formData.get('acceptanceCriteria') ?? ''}`
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (!title || acceptanceCriteria.length === 0) {
+      return
+    }
+
+    state.error = null
+    render()
+    void createPlanningRequest(
+      {
+        requestKey: `${formData.get('requestKey') ?? ''}`.trim(),
+        title,
+        description: `${formData.get('description') ?? ''}`.trim(),
+        acceptanceCriteria,
+      },
+      form,
+    )
+    return
+  }
+
   if (form.dataset.role === 'decision-resolve-form') {
     event.preventDefault()
     const formData = new FormData(form)
@@ -426,6 +467,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
   state.goalKey = trimmed
   state.board = null
   state.goalDocs = null
+  state.planningRequests = []
   state.preferenceContent = ''
   state.preferenceEditor = ''
   state.preferenceDirty = false
@@ -531,6 +573,11 @@ eventSource.onmessage = (event) => {
     return
   }
 
+  if (payload.type === 'planning_requests_changed' && payload.goalKey === state.goalKey) {
+    void loadGoalData()
+    return
+  }
+
   if (payload.type === 'preferences_changed') {
     void loadGoalData()
   }
@@ -553,6 +600,7 @@ async function loadGoalData() {
     const [
       boardResponse,
       docsResponse,
+      planningRequestsResponse,
       runsResponse,
       decisionsResponse,
       threadResponse,
@@ -561,6 +609,7 @@ async function loadGoalData() {
     ] = await Promise.all([
       fetch(`/api/goals/${state.goalKey}/board`),
       fetch(`/api/goals/${state.goalKey}/docs`),
+      fetch(`/api/goals/${state.goalKey}/planning-requests`),
       fetch(`/api/goals/${state.goalKey}/runs`),
       fetch(`/api/goals/${state.goalKey}/decisions`),
       fetch(`/api/goals/${state.goalKey}/assistant/thread`),
@@ -573,6 +622,9 @@ async function loadGoalData() {
     }
     if (!docsResponse.ok) {
       throw new Error(`Docs request failed with ${docsResponse.status}`)
+    }
+    if (!planningRequestsResponse.ok) {
+      throw new Error(`Planning requests failed with ${planningRequestsResponse.status}`)
     }
 
     if (!runsResponse.ok) {
@@ -597,6 +649,9 @@ async function loadGoalData() {
 
     state.board = (await boardResponse.json()) as TodoBoard
     state.goalDocs = (await docsResponse.json()) as GoalDocsSnapshot
+    state.planningRequests = (
+      (await planningRequestsResponse.json()) as { requests: GoalPlanningRequest[] }
+    ).requests
     state.runs = ((await runsResponse.json()) as { runs: RunSummary[] }).runs
     state.decisions = ((await decisionsResponse.json()) as { decisions: GoalDecision[] }).decisions
     state.assistantThread = (
@@ -645,6 +700,7 @@ async function loadGoalData() {
     state.loadingBoard = false
     state.board = null
     state.goalDocs = null
+    state.planningRequests = []
     state.preferenceContent = ''
     state.preferenceEditor = ''
     state.preferenceDirty = false
@@ -826,6 +882,39 @@ async function createDecision(
     if (!response.ok) {
       const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
       throw new Error(errorBody?.error ?? `Decision create failed with ${response.status}`)
+    }
+
+    form.reset()
+    await loadGoalData()
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error)
+    render()
+  }
+}
+
+async function createPlanningRequest(
+  input: {
+    requestKey: string
+    title: string
+    description: string
+    acceptanceCriteria: string[]
+  },
+  form: HTMLFormElement,
+) {
+  try {
+    const response = await fetch(`/api/goals/${state.goalKey}/planning-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        requestKey: input.requestKey || undefined,
+        title: input.title,
+        description: input.description,
+        acceptanceCriteria: input.acceptanceCriteria,
+      }),
+    })
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(errorBody?.error ?? `Planning request create failed with ${response.status}`)
     }
 
     form.reset()
@@ -1065,6 +1154,39 @@ function render() {
 
               <section class="assistant-card">
                 <div class="assistant-card-header">
+                  <h3>Planning Requests</h3>
+                  <span class="goal-chip soft">${state.planningRequests.length}</span>
+                </div>
+                <p class="assistant-note">
+                  Durable planner follow-through requests stay file-native and linked to visible planning work. Use this when the planner needs explicit next-step intent, not just another loose note.
+                </p>
+                <form class="decision-form planning-request-form" data-role="planning-request-form">
+                  <input name="title" placeholder="Planner follow-through title" />
+                  <input name="requestKey" placeholder="request key (optional)" />
+                  <textarea
+                    name="description"
+                    placeholder="Why this planning follow-through is needed"
+                  ></textarea>
+                  <textarea
+                    name="acceptanceCriteria"
+                    placeholder="One acceptance criterion per line"
+                  ></textarea>
+                  <div class="assistant-actions-row">
+                    <button type="submit">Create Planning Request</button>
+                    <span class="assistant-note">A visible planning task will be reused or created deterministically.</span>
+                  </div>
+                </form>
+                <div class="assistant-list">
+                  ${
+                    state.planningRequests.length === 0
+                      ? '<div class="ghost-card">No planning follow-through requests yet</div>'
+                      : state.planningRequests.map(renderPlanningRequest).join('')
+                  }
+                </div>
+              </section>
+
+              <section class="assistant-card">
+                <div class="assistant-card-header">
                   <h3>Decisions</h3>
                   <span class="goal-chip soft">${state.decisions.length}</span>
                 </div>
@@ -1253,6 +1375,33 @@ function renderDecision(decision: GoalDecision) {
                 <button type="submit">Resolve Decision</button>
               </form>
             `
+      }
+    </article>
+  `
+}
+
+function renderPlanningRequest(request: GoalPlanningRequest) {
+  return `
+    <article class="assistant-entry">
+      <div class="assistant-entry-top">
+        <span class="assistant-kind kind-${escapeAttribute(request.status)}">${escapeHtml(request.status)}</span>
+        <time>${escapeHtml(formatTimestamp(request.createdAt))}</time>
+      </div>
+      <strong>${escapeHtml(request.requestKey)}</strong>
+      <p>${escapeHtml(request.title)}</p>
+      <div class="assistant-summary">Task: ${escapeHtml(request.taskRef)}</div>
+      ${request.description ? `<div class="assistant-summary">${escapeHtml(request.description)}</div>` : ''}
+      ${
+        request.acceptanceCriteria.length > 0
+          ? `<div class="criteria-list">${request.acceptanceCriteria
+              .map((criterion) => `<span>${escapeHtml(criterion)}</span>`)
+              .join('')}</div>`
+          : ''
+      }
+      ${
+        request.resolution
+          ? `<div class="assistant-summary">Resolution: ${escapeHtml(request.resolution)}</div>`
+          : ''
       }
     </article>
   `

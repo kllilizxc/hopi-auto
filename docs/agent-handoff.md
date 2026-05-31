@@ -30,6 +30,7 @@ Phase 1 backend is complete:
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
+- Durable `planning-requests.yml` now exists as the planner follow-through input surface: assistant and API can open file-native planning requests linked to visible planning tasks, planner context consumes them, the Bun UI surfaces them, and planning task completion auto-resolves linked requests deterministically.
 - The Bun backend now serves the active Bun UI at `/`.
 - Deeper planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
 
@@ -56,6 +57,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
 - `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`: current authority note for Goal doc inspection and planner durable doc-status policy.
+- `docs/superpowers/specs/2026-06-01-durable-planning-requests-and-planner-follow-through-design.md`: current authority note for durable planning requests and deterministic planner follow-through.
 
 Historical reference only:
 
@@ -105,6 +107,12 @@ Goal decision path:
 
 ```text
 .hopi/docs/goals/<goalKey>/decisions.yml
+```
+
+Planning request path:
+
+```text
+.hopi/docs/goals/<goalKey>/planning-requests.yml
 ```
 
 Repo preference path:
@@ -193,8 +201,10 @@ Current backend source:
 - `packages/backend/src/storage/boardStore.ts`: atomic board reads, mutations, and event appends.
 - `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
 - `packages/backend/src/storage/preferenceStore.ts`: bootstrap, persistence, and deduplicated durable preference recording for repo-level `preference.md`.
+- `packages/backend/src/storage/planningRequestStore.ts`: durable Goal planning-request storage in `planning-requests.yml`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
 - `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus resolution-side visible blocker cleanup.
+- `packages/backend/src/runtime/planningRequest.ts`: shared control-path helper for durable planning requests plus planning-task follow-through resolution.
 - `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
 - `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
 - `packages/backend/src/assistant/assistantRunStore.ts`: read-side assistant run inspection store.
@@ -203,7 +213,7 @@ Current backend source:
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
 - `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
 - `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap plus inspectable `goal.md` / `design.md` content and `bootstrapped` versus `curated` status.
-- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, `.hopi/preference.md`, Goal doc status, and trace-aware reviewer/merger evidence policy.
+- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, `planning-requests.yml`, `.hopi/preference.md`, Goal doc status, and trace-aware reviewer/merger evidence policy.
 - `packages/backend/src/runtime/worktreeManager.ts`: run-scoped git worktree preparation and cleanup.
 - `packages/backend/src/runtime/gitMergeExecutor.ts`: deterministic git merge completion and settled-run cleanup for merger success paths.
 - `packages/backend/src/runtime/writeTrace.ts`: durable write-trace types.
@@ -229,6 +239,7 @@ Current backend tests:
 - `packages/backend/tests/assistantRunStore.test.ts`
 - `packages/backend/tests/runHistoryStore.test.ts`
 - `packages/backend/tests/goalDocsStore.test.ts`
+- `packages/backend/tests/planningRequestStore.test.ts`
 - `packages/backend/tests/roleProcessContext.test.ts`
 - `packages/backend/tests/agentRunner.test.ts`
 - `packages/backend/tests/configuredRoleProcessRunner.test.ts`
@@ -388,6 +399,8 @@ GET  /api/preferences
 POST /api/preferences
 GET  /api/goals/:goalKey/board
 GET  /api/goals/:goalKey/docs
+GET  /api/goals/:goalKey/planning-requests
+POST /api/goals/:goalKey/planning-requests
 GET  /api/goals/:goalKey/decisions
 POST /api/goals/:goalKey/decisions
 POST /api/goals/:goalKey/decisions/:decisionKey/resolve
@@ -441,6 +454,7 @@ Current UI capabilities:
 
 - read-only board projection from `todo.yml`
 - durable `goal.md` and `design.md` surfacing with `bootstrapped` versus `curated` status
+- durable planning-request creation and surfacing linked to visible planning work
 - run list for the current Goal
 - step list for the selected run
 - normalized transcript history for the selected step
@@ -458,15 +472,16 @@ Current UI capabilities:
 Current non-UI Goal assistant substrate:
 
 - durable Goal decisions in `decisions.yml`
+- durable Goal planning requests in `planning-requests.yml`
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
-- planner context wiring for Goal docs, decisions, and preferences
+- planner context wiring for Goal docs, decisions, planning requests, and preferences
 - explicit Goal assistant execution with constrained durable actions, including `request_planning`, `request_decision`, and `record_preference`
 
 What is still missing:
 
-- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond current Goal doc-status policy plus explicit decision unblock and one-step reconcile
+- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond current Goal doc-status policy plus durable planning-request intake and auto-resolution
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper assistant-run inspection beyond the current summary/detail projection
 - deeper artifact/run-history correlation inside review/merge policy beyond the current trace-aware prompt layer
@@ -478,7 +493,7 @@ What is still missing:
 Next high-leverage phase:
 
 1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
-2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, and the current deterministic scheduler core.
+2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core.
 3. Deepen review/merge evidence policy further with artifact/run-history correlation where it improves deterministic behavior.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 

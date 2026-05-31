@@ -6,6 +6,10 @@ import { stringifyBoardYaml } from '../domain/validation'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
+import {
+  type PlanningRequestStore,
+  createPlanningRequestStore,
+} from '../storage/planningRequestStore'
 import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
 import { type GoalDocsStore, createGoalDocsStore } from './goalDocsStore'
 import type { GoalWriteTraceEntry } from './writeTrace'
@@ -37,6 +41,13 @@ interface PlannerContextInputs {
   todoContent: string
   decisionsFile: string
   decisionsContent: string
+  planningRequestsFile: string
+  planningRequestsContent: string
+  relevantPlanningRequests: Array<{
+    requestKey: string
+    title: string
+    taskRef: string
+  }>
   preferenceFile: string
   preferenceContent: string
 }
@@ -51,6 +62,7 @@ export function createRoleProcessContextBuilder(
   goalDocs: GoalDocsStore = createGoalDocsStore(rootDir),
   boardStore: BoardStore = createBoardStore(rootDir),
   decisions: DecisionStore = createDecisionStore(rootDir),
+  planningRequests: PlanningRequestStore = createPlanningRequestStore(rootDir),
   preferences: PreferenceStore = createPreferenceStore(rootDir),
   writeTraces: WriteTraceStore = createWriteTraceStore(rootDir),
 ): RoleProcessContextBuilder {
@@ -76,8 +88,10 @@ export function createRoleProcessContextBuilder(
               options.goalKey,
               boardStore,
               decisions,
+              planningRequests,
               preferences,
               paths,
+              options.task.ref,
             )
           : undefined
       await mkdir(dirname(contextFile), { recursive: true })
@@ -213,6 +227,7 @@ function renderPlannerInputs(inputs?: PlannerContextInputs) {
 
 - todo.yml: ${inputs.todoFile}
 - decisions.yml: ${inputs.decisionsFile}
+- planning-requests.yml: ${inputs.planningRequestsFile}
 - preference.md: ${inputs.preferenceFile}
 
 ### Current todo.yml
@@ -226,6 +241,14 @@ ${inputs.todoContent.trim()}
 \`\`\`yaml
 ${inputs.decisionsContent.trim()}
 \`\`\`
+
+### Current planning-requests.yml
+
+\`\`\`yaml
+${inputs.planningRequestsContent.trim()}
+\`\`\`
+
+${renderRelevantPlanningRequests(inputs.relevantPlanningRequests)}
 
 ### Current preference.md
 
@@ -290,11 +313,14 @@ async function loadPlannerContextInputs(
   goalKey: string,
   boardStore: BoardStore,
   decisions: DecisionStore,
+  planningRequests: PlanningRequestStore,
   preferences: PreferenceStore,
   paths: ReturnType<typeof createProjectPaths>,
+  taskRef: string,
 ): Promise<PlannerContextInputs> {
   const board = await boardStore.readBoard(goalKey)
   await decisions.ensureGoalDecisions(goalKey)
+  const planningRequestSet = await planningRequests.ensureGoalPlanningRequests(goalKey)
   const preferenceDocument = await preferences.readPreferences()
 
   return {
@@ -302,6 +328,15 @@ async function loadPlannerContextInputs(
     todoContent: stringifyBoardYaml(board),
     decisionsFile: paths.decisionsPath(goalKey),
     decisionsContent: await Bun.file(paths.decisionsPath(goalKey)).text(),
+    planningRequestsFile: paths.planningRequestsPath(goalKey),
+    planningRequestsContent: await Bun.file(paths.planningRequestsPath(goalKey)).text(),
+    relevantPlanningRequests: planningRequestSet.requests
+      .filter((request) => request.status === 'open' && request.taskRef === taskRef)
+      .map((request) => ({
+        requestKey: request.requestKey,
+        title: request.title,
+        taskRef: request.taskRef,
+      })),
     preferenceFile: preferenceDocument.path,
     preferenceContent: preferenceDocument.content,
   }
@@ -353,6 +388,20 @@ function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusIn
 
 ${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
 - When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
+- Address open planning requests linked to this task before returning success.
+`
+}
+
+function renderRelevantPlanningRequests(
+  requests: PlannerContextInputs['relevantPlanningRequests'],
+) {
+  if (requests.length === 0) {
+    return ''
+  }
+
+  return `### Relevant Open Planning Requests For This Task
+
+${requests.map((request) => `- ${request.requestKey} | ${request.title} | ${request.taskRef}`).join('\n')}
 `
 }
 

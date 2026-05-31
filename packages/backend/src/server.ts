@@ -14,12 +14,14 @@ import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
 import { requestGoalDecision, resolveGoalDecision } from './runtime/decisionRequest'
 import { createGoalDocsStore } from './runtime/goalDocsStore'
+import { requestGoalPlanning } from './runtime/planningRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
 import { createBoardStore } from './storage/boardStore'
 import { createDecisionStore } from './storage/decisionStore'
 import { createProjectPaths } from './storage/paths'
+import { createPlanningRequestStore } from './storage/planningRequestStore'
 import { createPreferenceStore } from './storage/preferenceStore'
 import indexPage from './ui/index.html'
 
@@ -63,6 +65,14 @@ const createDecisionSchema = z.object({
   taskRef: z.string().min(1).optional(),
 })
 
+const createPlanningRequestSchema = z.object({
+  requestKey: z.string().min(1).optional(),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  blockedBy: z.array(blockerSchema).default([]),
+})
+
 const assistantMessageSchema = z.object({
   content: z.string().min(1),
 })
@@ -79,6 +89,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
   const rootDir = options.rootDir ?? process.cwd()
   const store = createBoardStore(rootDir)
   const decisions = createDecisionStore(rootDir)
+  const planningRequests = createPlanningRequestStore(rootDir)
   const preferences = createPreferenceStore(rootDir)
   const goalDocs = createGoalDocsStore(rootDir)
   const assistantThread = createAssistantThreadStore(rootDir)
@@ -176,6 +187,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           return jsonResponse(await decisions.readGoalDecisions(currentGoalKey))
         }
 
+        if (
+          request.method === 'GET' &&
+          isGoalRoute(parts, 'planning-requests') &&
+          parts.length === 4
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse(await planningRequests.readGoalPlanningRequests(currentGoalKey))
+        }
+
         if (request.method === 'POST' && isGoalRoute(parts, 'decisions') && parts.length === 4) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, createDecisionSchema)
@@ -231,6 +251,36 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
           return jsonResponse(result.decision)
+        }
+
+        if (
+          request.method === 'POST' &&
+          isGoalRoute(parts, 'planning-requests') &&
+          parts.length === 4
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const body = await parseJsonBody(request, createPlanningRequestSchema)
+          const result = await requestGoalPlanning(
+            {
+              boardStore: store,
+              planningRequests,
+            },
+            {
+              goalKey: currentGoalKey,
+              requestKey: body.requestKey,
+              title: body.title,
+              description: body.description,
+              acceptanceCriteria: body.acceptanceCriteria,
+              blockedBy: body.blockedBy,
+              writer: 'api',
+              reason: `api request planning ${body.requestKey ?? body.title}`,
+            },
+          )
+          broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
+          if (result.taskCreated) {
+            broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          }
+          return jsonResponse(result.request, result.created ? 201 : 200)
         }
 
         if (
@@ -318,6 +368,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           broadcast({ type: 'assistant_changed', goalKey: currentGoalKey })
           broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           if (
+            result.actionResults.some((actionResult) => actionResult.kind === 'request_planning')
+          ) {
+            broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
+          }
+          if (
             result.actionResults.some(
               (actionResult) =>
                 actionResult.kind === 'record_preference' ||
@@ -377,6 +432,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           const result = await reconcileOnce({
             goalKey: currentGoalKey,
             store,
+            planningRequests,
             attempts,
             history,
             runner,

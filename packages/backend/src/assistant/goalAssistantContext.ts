@@ -12,6 +12,10 @@ import { type WriteTraceStore, createWriteTraceStore } from '../runtime/writeTra
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
+import {
+  type PlanningRequestStore,
+  createPlanningRequestStore,
+} from '../storage/planningRequestStore'
 import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
 
 export interface PrepareGoalAssistantBundleOptions {
@@ -27,6 +31,7 @@ export function createGoalAssistantContextBuilder(
   rootDir = process.cwd(),
   boardStore: BoardStore = createBoardStore(rootDir),
   decisions: DecisionStore = createDecisionStore(rootDir),
+  planningRequests: PlanningRequestStore = createPlanningRequestStore(rootDir),
   preferences: PreferenceStore = createPreferenceStore(rootDir),
   threadStore: AssistantThreadStore = createAssistantThreadStore(rootDir),
   goalDocs: GoalDocsStore = createGoalDocsStore(rootDir),
@@ -40,6 +45,7 @@ export function createGoalAssistantContextBuilder(
       const board = await boardStore.readBoard(options.goalKey)
       const docs = await goalDocs.ensureGoalDocs(options.goalKey, board.goal.title)
       await decisions.ensureGoalDecisions(options.goalKey)
+      await planningRequests.ensureGoalPlanningRequests(options.goalKey)
       const preferenceDocument = await preferences.readPreferences()
       const thread = await threadStore.readThread(options.goalKey)
       const runs = await history.listRuns(options.goalKey)
@@ -57,6 +63,8 @@ export function createGoalAssistantContextBuilder(
         todoFile: paths.todoPath(options.goalKey),
         decisionsFile: paths.decisionsPath(options.goalKey),
         decisionsContent: await Bun.file(paths.decisionsPath(options.goalKey)).text(),
+        planningRequestsFile: paths.planningRequestsPath(options.goalKey),
+        planningRequestsContent: await Bun.file(paths.planningRequestsPath(options.goalKey)).text(),
         preferenceFile: preferenceDocument.path,
         preferenceContent: preferenceDocument.content,
         threadEntries: thread.entries.slice(-12),
@@ -94,6 +102,8 @@ function renderAssistantContext(options: {
   todoFile: string
   decisionsFile: string
   decisionsContent: string
+  planningRequestsFile: string
+  planningRequestsContent: string
   preferenceFile: string
   preferenceContent: string
   threadEntries: Awaited<ReturnType<AssistantThreadStore['readThread']>>['entries']
@@ -111,6 +121,7 @@ Goal Key: ${options.goalKey}
 - design.md: ${options.designFile}
 - todo.yml: ${options.todoFile}
 - decisions.yml: ${options.decisionsFile}
+- planning-requests.yml: ${options.planningRequestsFile}
 - preference.md: ${options.preferenceFile}
 
 ## Current todo.yml
@@ -123,6 +134,12 @@ ${options.boardYaml.trim()}
 
 \`\`\`yaml
 ${(options.decisionsContent || 'version: 1\n').trim()}
+\`\`\`
+
+## Current planning-requests.yml
+
+\`\`\`yaml
+${(options.planningRequestsContent || 'version: 1\n').trim()}
 \`\`\`
 
 ## Current preference.md
@@ -220,6 +237,7 @@ Rules:
 - Only move tasks through legal manual transitions.
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
+- Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.
 - If you resolve a decision whose durable topic may not exist yet, include a concise summary.
 - Prefer "record_preference" for adding one durable preference; use "update_preference" only when intentionally rewriting the full preference document.

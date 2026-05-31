@@ -11,9 +11,14 @@ import {
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
 import { requestGoalDecision, resolveGoalDecision } from '../runtime/decisionRequest'
+import { requestGoalPlanning } from '../runtime/planningRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
+import {
+  type PlanningRequestStore,
+  createPlanningRequestStore,
+} from '../storage/planningRequestStore'
 import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
 import {
   type GoalAssistantAction,
@@ -42,12 +47,14 @@ export function createGoalAssistantRuntime(
   rootDir = process.cwd(),
   boardStore: BoardStore = createBoardStore(rootDir),
   decisions: DecisionStore = createDecisionStore(rootDir),
+  planningRequests: PlanningRequestStore = createPlanningRequestStore(rootDir),
   preferences: PreferenceStore = createPreferenceStore(rootDir),
   threadStore: AssistantThreadStore = createAssistantThreadStore(rootDir),
   contextBuilder: GoalAssistantContextBuilder = createGoalAssistantContextBuilder(
     rootDir,
     boardStore,
     decisions,
+    planningRequests,
     preferences,
     threadStore,
   ),
@@ -104,6 +111,7 @@ export function createGoalAssistantRuntime(
           const result = await applyAssistantAction(input.goalKey, action, {
             boardStore,
             decisions,
+            planningRequests,
             preferences,
           })
           actionResults.push(result)
@@ -156,6 +164,7 @@ async function applyAssistantAction(
   stores: {
     boardStore: BoardStore
     decisions: DecisionStore
+    planningRequests: PlanningRequestStore
     preferences: PreferenceStore
   },
 ): Promise<GoalAssistantActionResult> {
@@ -212,42 +221,29 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning') {
-    let taskRef = ''
-    let reusedExisting = false
-    await stores.boardStore.mutateBoard(
-      goalKey,
-      'assistant',
-      'assistant request planning',
-      (board) => {
-        const existing = board.items.find(
-          (item) =>
-            item.kind === 'planning' && item.title === action.title && item.status !== 'done',
-        )
-        if (existing) {
-          taskRef = existing.ref
-          reusedExisting = true
-          return
-        }
-
-        taskRef = nextPlanningTaskRef(board.items.map((item) => item.ref))
-        board.items.push({
-          ref: taskRef,
-          kind: 'planning',
-          status: 'planned',
-          title: action.title,
-          description: action.description,
-          acceptanceCriteria: action.acceptanceCriteria,
-          blockedBy: action.blockedBy,
-        })
+    const result = await requestGoalPlanning(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        title: action.title,
+        description: action.description,
+        acceptanceCriteria: action.acceptanceCriteria,
+        blockedBy: action.blockedBy,
+        writer: 'assistant',
+        reason: `assistant request planning ${action.title}`,
       },
     )
 
     return {
       kind: 'request_planning',
-      taskRef,
-      summary: reusedExisting
-        ? `Planning request already visible in ${taskRef}.`
-        : `Requested planning work in ${taskRef}.`,
+      requestKey: result.request.requestKey,
+      taskRef: result.request.taskRef,
+      summary: result.created
+        ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
+        : `Planning request already open in ${result.request.requestKey} for ${result.request.taskRef}.`,
     }
   }
 
