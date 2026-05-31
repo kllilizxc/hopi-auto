@@ -13,6 +13,7 @@ import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
 import { requestGoalDecision, resolveGoalDecision } from './runtime/decisionRequest'
+import { createGoalDocsStore } from './runtime/goalDocsStore'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
@@ -79,6 +80,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
   const store = createBoardStore(rootDir)
   const decisions = createDecisionStore(rootDir)
   const preferences = createPreferenceStore(rootDir)
+  const goalDocs = createGoalDocsStore(rootDir)
   const assistantThread = createAssistantThreadStore(rootDir)
   const assistantRuns = createAssistantRunStore(rootDir)
   const assistantRuntime = createGoalAssistantRuntime(rootDir)
@@ -129,6 +131,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         if (request.method === 'GET' && isGoalRoute(parts, 'board')) {
           const currentGoalKey = requireGoalKey(parts)
           return jsonResponse(await store.readBoard(currentGoalKey))
+        }
+
+        if (request.method === 'GET' && isGoalRoute(parts, 'docs') && parts.length === 4) {
+          const currentGoalKey = requireGoalKey(parts)
+          const board = await store.readBoard(currentGoalKey)
+          return jsonResponse(await goalDocs.readGoalDocs(currentGoalKey, board.goal.title))
         }
 
         if (request.method === 'GET' && isGoalRoute(parts, 'runs') && parts.length === 4) {

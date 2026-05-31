@@ -47,6 +47,25 @@ describe('createServer', () => {
     })
   })
 
+  test('returns bootstrapped goal docs through the API', async () => {
+    const server = startServer()
+
+    const response = await fetch(apiUrl(server, '/api/goals/test/docs'))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      goal: {
+        status: 'bootstrapped',
+        content: expect.stringContaining('# Goal: test'),
+      },
+      design: {
+        status: 'bootstrapped',
+        content: expect.stringContaining('Durable design detail has not been recorded yet.'),
+      },
+    })
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 

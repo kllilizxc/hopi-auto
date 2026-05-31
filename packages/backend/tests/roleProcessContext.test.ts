@@ -92,14 +92,22 @@ describe('createRoleProcessContextBuilder', () => {
     })
 
     const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
     expect(context).toContain('Role: planner')
     expect(context).toContain('Planner may edit goal.md and design.md')
     expect(context).not.toContain('Do not edit .hopi/docs/**')
     expect(context).toContain('.hopi/docs/goals/goal-2/todo.yml')
     expect(context).toContain('.hopi/docs/goals/goal-2/decisions.yml')
     expect(context).toContain('.hopi/preference.md')
+    expect(context).toContain('## Goal Docs Status')
+    expect(context).toContain('goal.md status: bootstrapped')
+    expect(context).toContain('design.md status: bootstrapped')
     expect(context).toContain('Choose the rollout strategy')
     expect(context).toContain('Prefer incremental rollouts.')
+    expect(prompt).toContain('## Planner Design Policy')
+    expect(prompt).toContain(
+      'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',
+    )
   })
 
   test('includes relevant earlier write traces in the context bundle', async () => {

@@ -41,6 +41,11 @@ interface PlannerContextInputs {
   preferenceContent: string
 }
 
+interface GoalDocsStatusInputs {
+  goalStatus: 'bootstrapped' | 'curated'
+  designStatus: 'bootstrapped' | 'curated'
+}
+
 export function createRoleProcessContextBuilder(
   rootDir = process.cwd(),
   goalDocs: GoalDocsStore = createGoalDocsStore(rootDir),
@@ -54,6 +59,7 @@ export function createRoleProcessContextBuilder(
   return {
     async prepareBundle(options) {
       const docs = await goalDocs.ensureGoalDocs(options.goalKey, options.goalTitle)
+      const docsSnapshot = await goalDocs.readGoalDocs(options.goalKey, options.goalTitle)
       const contextFile = paths.runtimeContextPath(options.goalKey, options.runId, options.stepId)
       const promptFile = paths.runtimePromptPath(options.goalKey, options.runId, options.stepId)
       const outcomeFile = paths.runtimeOutcomePath(options.goalKey, options.runId, options.stepId)
@@ -81,6 +87,10 @@ export function createRoleProcessContextBuilder(
         ...docs,
         outcomeFile,
         plannerInputs,
+        docsStatus: {
+          goalStatus: docsSnapshot.goal.status,
+          designStatus: docsSnapshot.design.status,
+        },
         relevantTraces: filterRelevantTraces(relevantTraces, options.runId),
       })
       await Bun.write(contextFile, context)
@@ -89,6 +99,10 @@ export function createRoleProcessContextBuilder(
         renderPromptMarkdown({
           role: options.role,
           taskKind: options.task.kind,
+          docsStatus: {
+            goalStatus: docsSnapshot.goal.status,
+            designStatus: docsSnapshot.design.status,
+          },
           context,
           outcomeFile,
         }),
@@ -112,6 +126,7 @@ function renderContextMarkdown(
       goalFile: string
       designFile: string
       plannerInputs?: PlannerContextInputs
+      docsStatus: GoalDocsStatusInputs
       relevantTraces: GoalWriteTraceEntry[]
     },
 ) {
@@ -137,6 +152,11 @@ ${options.task.acceptanceCriteria.map((item) => `- ${item}`).join('\n') || '- No
 
 - goal.md: ${options.goalFile}
 - design.md: ${options.designFile}
+
+## Goal Docs Status
+
+- goal.md status: ${options.docsStatus.goalStatus}
+- design.md status: ${options.docsStatus.designStatus}
 
 ${renderPlannerInputs(options.plannerInputs)}
 
@@ -218,6 +238,7 @@ ${inputs.preferenceContent.trim()}
 function renderPromptMarkdown(options: {
   role: AgentRole
   taskKind: TaskItem['kind']
+  docsStatus: GoalDocsStatusInputs
   context: string
   outcomeFile: string
 }) {
@@ -251,6 +272,7 @@ Recommended outcome shape:
 \`\`\`
 
 ${renderRoleEvidencePolicy(options.role, options.taskKind)}
+${renderPlannerDesignPolicy(options.role, options.docsStatus)}
 
 ## Bundled Context
 
@@ -315,6 +337,23 @@ function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
   }
 
   return ''
+}
+
+function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusInputs) {
+  if (role !== 'planner') {
+    return ''
+  }
+
+  const bootstrapRule =
+    docsStatus.designStatus === 'bootstrapped'
+      ? '- If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.\n'
+      : ''
+
+  return `## Planner Design Policy
+
+${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
+- When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
+`
 }
 
 function capitalizeRole(role: AgentRole) {

@@ -29,8 +29,9 @@ Phase 1 backend is complete:
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
+- Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
 - The Bun backend now serves the active Bun UI at `/`.
-- Richer planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
+- Deeper planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
 
 Use this command before and after backend work:
 
@@ -54,6 +55,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
+- `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`: current authority note for Goal doc inspection and planner durable doc-status policy.
 
 Historical reference only:
 
@@ -200,8 +202,8 @@ Current backend source:
 - `packages/backend/src/runtime/attemptStore.ts`: ignored runtime attempt budget overlay.
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
 - `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
-- `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap for `goal.md` and `design.md`.
-- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, and `.hopi/preference.md`, plus trace-aware reviewer/merger evidence policy.
+- `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap plus inspectable `goal.md` / `design.md` content and `bootstrapped` versus `curated` status.
+- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, `.hopi/preference.md`, Goal doc status, and trace-aware reviewer/merger evidence policy.
 - `packages/backend/src/runtime/worktreeManager.ts`: run-scoped git worktree preparation and cleanup.
 - `packages/backend/src/runtime/gitMergeExecutor.ts`: deterministic git merge completion and settled-run cleanup for merger success paths.
 - `packages/backend/src/runtime/writeTrace.ts`: durable write-trace types.
@@ -226,6 +228,7 @@ Current backend tests:
 - `packages/backend/tests/assistantThreadStore.test.ts`
 - `packages/backend/tests/assistantRunStore.test.ts`
 - `packages/backend/tests/runHistoryStore.test.ts`
+- `packages/backend/tests/goalDocsStore.test.ts`
 - `packages/backend/tests/roleProcessContext.test.ts`
 - `packages/backend/tests/agentRunner.test.ts`
 - `packages/backend/tests/configuredRoleProcessRunner.test.ts`
@@ -384,6 +387,7 @@ Routes:
 GET  /api/preferences
 POST /api/preferences
 GET  /api/goals/:goalKey/board
+GET  /api/goals/:goalKey/docs
 GET  /api/goals/:goalKey/decisions
 POST /api/goals/:goalKey/decisions
 POST /api/goals/:goalKey/decisions/:decisionKey/resolve
@@ -436,6 +440,7 @@ The active frontend is now served by the backend through a Bun HTML import at `/
 Current UI capabilities:
 
 - read-only board projection from `todo.yml`
+- durable `goal.md` and `design.md` surfacing with `bootstrapped` versus `curated` status
 - run list for the current Goal
 - step list for the selected run
 - normalized transcript history for the selected step
@@ -455,12 +460,13 @@ Current non-UI Goal assistant substrate:
 - durable Goal decisions in `decisions.yml`
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
-- planner context wiring for decisions and preferences
+- deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
+- planner context wiring for Goal docs, decisions, and preferences
 - explicit Goal assistant execution with constrained durable actions, including `request_planning`, `request_decision`, and `record_preference`
 
 What is still missing:
 
-- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond explicit decision unblock plus one-step reconcile
+- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond current Goal doc-status policy plus explicit decision unblock and one-step reconcile
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper assistant-run inspection beyond the current summary/detail projection
 - deeper artifact/run-history correlation inside review/merge policy beyond the current trace-aware prompt layer

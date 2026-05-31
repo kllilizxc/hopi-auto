@@ -7,8 +7,23 @@ export interface GoalDocsFiles {
   designFile: string
 }
 
+export type GoalDocStatus = 'bootstrapped' | 'curated'
+
+export interface GoalDocSnapshot {
+  path: string
+  content: string
+  status: GoalDocStatus
+}
+
+export interface GoalDocsSnapshot {
+  goalKey: string
+  goal: GoalDocSnapshot
+  design: GoalDocSnapshot
+}
+
 export interface GoalDocsStore {
   ensureGoalDocs(goalKey: string, goalTitle: string): Promise<GoalDocsFiles>
+  readGoalDocs(goalKey: string, goalTitle: string): Promise<GoalDocsSnapshot>
 }
 
 export function createGoalDocsStore(rootDir = process.cwd()): GoalDocsStore {
@@ -25,6 +40,26 @@ export function createGoalDocsStore(rootDir = process.cwd()): GoalDocsStore {
       return {
         goalFile,
         designFile,
+      }
+    },
+    async readGoalDocs(goalKey, goalTitle) {
+      const files = await this.ensureGoalDocs(goalKey, goalTitle)
+      const goalContent = await Bun.file(files.goalFile).text()
+      const designContent = await Bun.file(files.designFile).text()
+
+      return {
+        goalKey,
+        goal: {
+          path: files.goalFile,
+          content: goalContent,
+          status:
+            goalContent === renderGoalMarkdown(goalKey, goalTitle) ? 'bootstrapped' : 'curated',
+        },
+        design: {
+          path: files.designFile,
+          content: designContent,
+          status: designContent === renderDesignMarkdown(goalTitle) ? 'bootstrapped' : 'curated',
+        },
       }
     },
   }

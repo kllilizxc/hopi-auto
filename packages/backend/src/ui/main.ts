@@ -45,6 +45,18 @@ interface GoalDecision {
   resolvedAt?: string
 }
 
+interface GoalDocSnapshot {
+  path: string
+  content: string
+  status: 'bootstrapped' | 'curated'
+}
+
+interface GoalDocsSnapshot {
+  goalKey: string
+  goal: GoalDocSnapshot
+  design: GoalDocSnapshot
+}
+
 interface PreferenceDocument {
   path: string
   content: string
@@ -234,6 +246,7 @@ interface AppState {
   preferenceEditor: string
   preferenceContent: string
   preferenceDirty: boolean
+  goalDocs: GoalDocsSnapshot | null
   board: TodoBoard | null
   decisions: GoalDecision[]
   assistantThread: AssistantThreadEntry[]
@@ -281,6 +294,7 @@ const state: AppState = {
   preferenceEditor: '',
   preferenceContent: '',
   preferenceDirty: false,
+  goalDocs: null,
   board: null,
   decisions: [],
   assistantThread: [],
@@ -411,6 +425,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
 
   state.goalKey = trimmed
   state.board = null
+  state.goalDocs = null
   state.preferenceContent = ''
   state.preferenceEditor = ''
   state.preferenceDirty = false
@@ -537,6 +552,7 @@ async function loadGoalData() {
   try {
     const [
       boardResponse,
+      docsResponse,
       runsResponse,
       decisionsResponse,
       threadResponse,
@@ -544,6 +560,7 @@ async function loadGoalData() {
       preferencesResponse,
     ] = await Promise.all([
       fetch(`/api/goals/${state.goalKey}/board`),
+      fetch(`/api/goals/${state.goalKey}/docs`),
       fetch(`/api/goals/${state.goalKey}/runs`),
       fetch(`/api/goals/${state.goalKey}/decisions`),
       fetch(`/api/goals/${state.goalKey}/assistant/thread`),
@@ -553,6 +570,9 @@ async function loadGoalData() {
 
     if (!boardResponse.ok) {
       throw new Error(`Board request failed with ${boardResponse.status}`)
+    }
+    if (!docsResponse.ok) {
+      throw new Error(`Docs request failed with ${docsResponse.status}`)
     }
 
     if (!runsResponse.ok) {
@@ -576,6 +596,7 @@ async function loadGoalData() {
     }
 
     state.board = (await boardResponse.json()) as TodoBoard
+    state.goalDocs = (await docsResponse.json()) as GoalDocsSnapshot
     state.runs = ((await runsResponse.json()) as { runs: RunSummary[] }).runs
     state.decisions = ((await decisionsResponse.json()) as { decisions: GoalDecision[] }).decisions
     state.assistantThread = (
@@ -623,6 +644,7 @@ async function loadGoalData() {
 
     state.loadingBoard = false
     state.board = null
+    state.goalDocs = null
     state.preferenceContent = ''
     state.preferenceEditor = ''
     state.preferenceDirty = false
@@ -925,6 +947,21 @@ function render() {
           </div>
         </section>
 
+        <section class="panel docs-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">Durable Goal Docs</p>
+              <h2>Goal and design context</h2>
+            </div>
+            <span class="goal-chip soft">${escapeHtml(renderGoalDocsSummary(state.goalDocs))}</span>
+          </div>
+
+          <div class="docs-grid">
+            ${renderGoalDocCard('goal.md', state.goalDocs?.goal)}
+            ${renderGoalDocCard('design.md', state.goalDocs?.design)}
+          </div>
+        </section>
+
         <section class="panel runtime-panel">
           <div class="panel-heading">
             <div>
@@ -1116,6 +1153,40 @@ function renderLane(status: TaskStatus, label: string) {
       </div>
     </article>
   `
+}
+
+function renderGoalDocCard(label: string, doc?: GoalDocSnapshot) {
+  if (!doc) {
+    return '<div class="ghost-card">Loading durable Goal docs...</div>'
+  }
+
+  return `
+    <article class="assistant-card doc-card">
+      <div class="assistant-card-header">
+        <h3>${escapeHtml(label)}</h3>
+        <span class="assistant-kind kind-${escapeAttribute(doc.status)}">${escapeHtml(doc.status)}</span>
+      </div>
+      <div class="assistant-summary">${escapeHtml(doc.path)}</div>
+      <pre class="doc-preview">${escapeHtml(doc.content)}</pre>
+    </article>
+  `
+}
+
+function renderGoalDocsSummary(docs: GoalDocsSnapshot | null) {
+  if (!docs) {
+    return 'loading'
+  }
+
+  const curatedCount = [docs.goal.status, docs.design.status].filter(
+    (status) => status === 'curated',
+  ).length
+  if (curatedCount === 2) {
+    return 'all curated'
+  }
+  if (curatedCount === 0) {
+    return 'all bootstrapped'
+  }
+  return `${curatedCount}/2 curated`
 }
 
 function renderTaskCard(item: TaskItem) {

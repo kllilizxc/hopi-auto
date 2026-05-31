@@ -167,6 +167,7 @@ textarea {
 }
 
 .board-panel,
+.docs-panel,
 .runtime-panel {
   padding: 22px;
 }
@@ -365,6 +366,12 @@ textarea {
 .runtime-layout {
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(220px, 260px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.docs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -605,6 +612,25 @@ textarea {
   font-size: 0.8rem;
 }
 
+.doc-card {
+  min-width: 0;
+}
+
+.doc-preview {
+  margin: 12px 0 0;
+  max-height: 340px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #334155;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .assistant-kind {
   display: inline-flex;
   align-items: center;
@@ -625,7 +651,8 @@ textarea {
 .assistant-kind.kind-resolved,
 .assistant-kind.kind-action_result,
 .assistant-kind.kind-update_preference,
-.assistant-kind.kind-record_preference {
+.assistant-kind.kind-record_preference,
+.assistant-kind.kind-curated {
   background: rgba(21, 128, 61, 0.12);
   color: #166534;
 }
@@ -638,6 +665,11 @@ textarea {
 .assistant-kind.kind-move_task {
   background: rgba(29, 78, 216, 0.1);
   color: #1d4ed8;
+}
+
+.assistant-kind.kind-bootstrapped {
+  background: rgba(180, 83, 9, 0.12);
+  color: #9a3412;
 }
 
 .assistant-run-layout {
@@ -790,6 +822,10 @@ textarea {
   .runtime-layout,
   .assistant-layout,
   .assistant-run-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-grid {
     grid-template-columns: 1fr;
   }
 }

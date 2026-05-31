@@ -94,6 +94,11 @@ The trace-aware review and merge policy slice is documented in:
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`
 - `docs/superpowers/plans/2026-06-01-write-trace-aware-review-and-merge-policy.md`
 
+The Goal docs inspection and planner doc-status slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`
+- `docs/superpowers/plans/2026-06-01-goal-docs-inspection-and-planner-doc-status.md`
+
 The deterministic merge execution slice is documented in:
 
 - `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`
