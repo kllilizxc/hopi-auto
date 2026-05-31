@@ -231,6 +231,7 @@ describe('requestGoalPlanning', () => {
           requestKey: 'PR-1',
           taskRef: 'P-1',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
@@ -238,11 +239,163 @@ describe('requestGoalPlanning', () => {
           requestKey: 'PR-2',
           taskRef: 'P-2',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['todo.yml'],
         }),
       ],
     })
+  })
+
+  test('extends an existing grouped planning follow-through with one later dependent task', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh the durable goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape the visible planning graph after the auth goal context is clear.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    const extension = await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'review-pass',
+            title: 'Review auth planning follow-through',
+            description: 'Inspect the grouped planning artifacts before handoff.',
+            acceptanceCriteria: ['The grouped planning review is visible.'],
+            requestedUpdates: ['design.md'],
+            blockedByTaskKeys: ['task-graph'],
+          },
+        ],
+      },
+    )
+
+    expect(extension).toMatchObject({
+      groupKey: 'auth-follow-through',
+      entries: [
+        {
+          taskKey: 'review-pass',
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          created: true,
+          taskCreated: true,
+        },
+      ],
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-3',
+          title: 'Review auth planning follow-through',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          taskRef: 'P-1',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          taskRef: 'P-2',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'review-pass',
+          taskRef: 'P-3',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md'],
+        }),
+      ],
+    })
+  })
+
+  test('rejects conflicting grouped task-key reuse when one grouped request already owns the key', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh the durable goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+    )
+
+    await expect(
+      requestGoalPlanningBatch(
+        {
+          boardStore,
+          planningRequests,
+        },
+        {
+          goalKey: 'goal-1',
+          groupKey: 'auth-follow-through',
+          requests: [
+            {
+              taskKey: 'other-key',
+              title: 'Clarify auth goal context',
+              description: 'Reuse the same visible task under a different durable key.',
+              acceptanceCriteria: ['The auth goal context stays durable.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+          ],
+        },
+      ),
+    ).rejects.toThrow('Grouped planning request key conflict')
   })
 })
 

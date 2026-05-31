@@ -50,6 +50,7 @@ interface PlannerContextInputs {
   relevantPlanningRequests: Array<{
     requestKey: string
     groupKey?: string
+    groupTaskKey?: string
     title: string
     taskRef: string
     decisionRefs: string[]
@@ -59,6 +60,7 @@ interface PlannerContextInputs {
     groupKey: string
     requests: Array<{
       requestKey: string
+      groupTaskKey?: string
       taskRef: string
       title: string
       decisionRefs: string[]
@@ -415,6 +417,7 @@ async function loadPlannerContextInputs(
     .map((request) => ({
       requestKey: request.requestKey,
       groupKey: request.groupKey,
+      groupTaskKey: request.groupTaskKey,
       title: request.title,
       taskRef: request.taskRef,
       decisionRefs: request.decisionRefs,
@@ -530,6 +533,7 @@ ${requests
     [
       `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
       request.groupKey ? `  Planning group: ${request.groupKey}` : null,
+      request.groupTaskKey ? `  Grouped task key: ${request.groupTaskKey}` : null,
       request.decisionRefs.length > 0
         ? `  Linked decisions: ${request.decisionRefs.join(', ')}`
         : null,
@@ -558,6 +562,7 @@ ${groups
       ...group.requests.map((request) =>
         [
           `  - ${request.requestKey} | ${request.taskRef} | ${request.title}`,
+          request.groupTaskKey ? `    Grouped task key: ${request.groupTaskKey}` : null,
           request.decisionRefs.length > 0
             ? `    Linked decisions: ${request.decisionRefs.join(', ')}`
             : null,
@@ -609,6 +614,7 @@ function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef
         )
         .map((request) => ({
           requestKey: request.requestKey,
+          groupTaskKey: request.groupTaskKey,
           taskRef: request.taskRef,
           title: request.title,
           decisionRefs: request.decisionRefs,

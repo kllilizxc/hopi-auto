@@ -14,6 +14,7 @@ export type GoalPlanningRequestUpdateTarget = (typeof PLANNING_REQUEST_UPDATE_TA
 export interface GoalPlanningRequest {
   requestKey: string
   groupKey?: string
+  groupTaskKey?: string
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -40,6 +41,7 @@ export interface PlanningRequestStore {
     input: {
       requestKey?: string
       groupKey?: string
+      groupTaskKey?: string
       title: string
       description: string
       acceptanceCriteria: string[]
@@ -53,6 +55,7 @@ export interface PlanningRequestStore {
     requestKey: string,
     input: {
       groupKey?: string
+      groupTaskKey?: string
       decisionRefs?: string[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
@@ -62,6 +65,7 @@ export interface PlanningRequestStore {
     requestKey: string,
     input: {
       groupKey?: string
+      groupTaskKey?: string
       title: string
       description: string
       acceptanceCriteria: string[]
@@ -79,6 +83,7 @@ export interface PlanningRequestStore {
 const GoalPlanningRequestSchema = z.object({
   requestKey: z.string().min(1),
   groupKey: z.string().min(1).optional(),
+  groupTaskKey: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
@@ -122,10 +127,18 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         if (current.requests.some((request) => request.requestKey === requestKey)) {
           throw new Error(`Planning request already exists: ${requestKey}`)
         }
+        ensureGroupTaskKeyCoherence(input.groupKey, input.groupTaskKey)
+        ensureUniqueOpenGroupTaskKey(
+          current.requests,
+          requestKey,
+          input.groupKey,
+          input.groupTaskKey,
+        )
 
         const request: GoalPlanningRequest = {
           requestKey,
           groupKey: input.groupKey,
+          groupTaskKey: input.groupTaskKey,
           title: input.title,
           description: input.description,
           acceptanceCriteria: input.acceptanceCriteria,
@@ -156,12 +169,22 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           input.requestedUpdates ?? [],
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
+        const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
+        ensureGroupTaskKeyCoherence(nextGroupKey, nextGroupTaskKey)
+        ensureUniqueOpenGroupTaskKey(
+          current.requests,
+          request.requestKey,
+          nextGroupKey,
+          nextGroupTaskKey,
+        )
         const changed =
           nextGroupKey !== request.groupKey ||
+          nextGroupTaskKey !== request.groupTaskKey ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.groupKey = nextGroupKey
+          request.groupTaskKey = nextGroupTaskKey
           request.decisionRefs = nextDecisionRefs
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
@@ -185,8 +208,17 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           input.requestedUpdates ?? [],
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
+        const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
+        ensureGroupTaskKeyCoherence(nextGroupKey, nextGroupTaskKey)
+        ensureUniqueOpenGroupTaskKey(
+          current.requests,
+          request.requestKey,
+          nextGroupKey,
+          nextGroupTaskKey,
+        )
         const changed =
           nextGroupKey !== request.groupKey ||
+          nextGroupTaskKey !== request.groupTaskKey ||
           request.title !== input.title ||
           request.description !== input.description ||
           !sameStringArray(request.acceptanceCriteria, input.acceptanceCriteria) ||
@@ -194,6 +226,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.groupKey = nextGroupKey
+          request.groupTaskKey = nextGroupTaskKey
           request.title = input.title
           request.description = input.description
           request.acceptanceCriteria = [...input.acceptanceCriteria]
@@ -276,6 +309,7 @@ function nextPlanningRequestKey(requests: GoalPlanningRequest[]) {
 
   return `PR-${nextNumber}`
 }
+
 function mergeUniqueValues<T extends string>(existing: T[], incoming: T[]) {
   const merged = [...existing]
   for (const value of incoming) {
@@ -298,4 +332,47 @@ function resolveGroupKey(existing: string | undefined, incoming: string | undefi
     return existing
   }
   throw new Error(`Planning request group mismatch: ${existing} != ${incoming}`)
+}
+
+function resolveGroupTaskKey(existing: string | undefined, incoming: string | undefined) {
+  if (!existing) {
+    return incoming
+  }
+  if (!incoming || incoming === existing) {
+    return existing
+  }
+  throw new Error(`Grouped planning request key conflict: ${existing} != ${incoming}`)
+}
+
+function ensureGroupTaskKeyCoherence(
+  groupKey: string | undefined,
+  groupTaskKey: string | undefined,
+) {
+  if (groupTaskKey && !groupKey) {
+    throw new Error('Grouped planning request key requires a planning group key')
+  }
+}
+
+function ensureUniqueOpenGroupTaskKey(
+  requests: GoalPlanningRequest[],
+  currentRequestKey: string,
+  groupKey: string | undefined,
+  groupTaskKey: string | undefined,
+) {
+  if (!groupKey || !groupTaskKey) {
+    return
+  }
+
+  const conflict = requests.find(
+    (request) =>
+      request.requestKey !== currentRequestKey &&
+      request.status === 'open' &&
+      request.groupKey === groupKey &&
+      request.groupTaskKey === groupTaskKey,
+  )
+  if (conflict) {
+    throw new Error(
+      `Grouped planning request key conflict: ${groupKey}/${groupTaskKey} is already owned by ${conflict.requestKey}`,
+    )
+  }
 }

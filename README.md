@@ -144,6 +144,11 @@ The grouped planning decision-enrichment slice is documented in:
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`
 - `docs/superpowers/plans/2026-06-01-grouped-planning-decision-enrichment.md`
 
+The incremental grouped-planning extension slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`
+- `docs/superpowers/plans/2026-06-01-incremental-grouped-planning-extension.md`
+
 The run-history and artifact-aware review/merge policy slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`

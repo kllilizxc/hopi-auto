@@ -264,6 +264,7 @@ Rules:
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
+- Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.

@@ -216,6 +216,7 @@ goalKey: goal-3b
 requests:
   - requestKey: PR-1
     groupKey: auth-follow-through
+    groupTaskKey: goal-docs
     title: Clarify auth goal context
     description: Refresh durable Goal context first.
     acceptanceCriteria:
@@ -230,6 +231,7 @@ requests:
     createdAt: 2026-06-01T00:00:00.000Z
   - requestKey: PR-2
     groupKey: auth-follow-through
+    groupTaskKey: task-graph
     title: Decompose auth task graph
     description: Reshape todo.yml after the goal context is ready.
     acceptanceCriteria:
@@ -266,6 +268,7 @@ requests:
     expect(context).toContain('### Related Open Planning Group')
     expect(context).toContain('Group key: auth-follow-through')
     expect(context).toContain('PR-2 | P-2 | Decompose auth task graph')
+    expect(context).toContain('Grouped task key: task-graph')
     expect(context).toContain('Requested durable updates: todo.yml')
     expect(context).toContain('Linked decisions: auth-strategy')
   })

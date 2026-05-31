@@ -71,6 +71,7 @@ const createDecisionSchema = z.object({
 const createPlanningRequestSchema = z.object({
   requestKey: z.string().min(1).optional(),
   groupKey: z.string().min(1).optional(),
+  groupTaskKey: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -277,6 +278,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               requestKey: body.requestKey,
               groupKey: body.groupKey,
+              groupTaskKey: body.groupTaskKey,
               title: body.title,
               description: body.description,
               acceptanceCriteria: body.acceptanceCriteria,

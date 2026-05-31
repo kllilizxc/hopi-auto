@@ -172,6 +172,7 @@ describe('createServer', () => {
       description: 'Coordinate auth follow-through across multiple planning tasks.',
       acceptanceCriteria: ['The grouped auth follow-through is durable.'],
       groupKey: 'auth-follow-through',
+      groupTaskKey: 'goal-docs',
     })
 
     expect(createResponse.status).toBe(201)
@@ -179,6 +180,19 @@ describe('createServer', () => {
       requestKey: 'PR-1',
       taskRef: 'P-1',
       groupKey: 'auth-follow-through',
+      groupTaskKey: 'goal-docs',
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+        }),
+      ],
     })
   })
 
@@ -981,12 +995,14 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['todo.yml'],
         }),
@@ -1054,6 +1070,7 @@ describe('createServer', () => {
           requestKey: 'PR-1',
           taskRef: 'P-1',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
@@ -1061,8 +1078,87 @@ describe('createServer', () => {
           requestKey: 'PR-2',
           taskRef: 'P-2',
           groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and extends an existing grouped planning follow-through', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (prompt.includes('Add one grouped planning review step after the task graph.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I added one later grouped planning review step after the task graph stage.', actions: [{ kind: 'request_planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'review-pass', title: 'Review auth planning follow-through', description: 'Inspect the grouped planning artifacts before handoff.', acceptanceCriteria: ['The grouped planning review is visible.'], requestedUpdates: ['design.md'], blockedByTaskKeys: ['task-graph'] }] }] })); console.log('assistant grouped planning extended'); process.exit(0); } if (prompt.includes('Split the auth planning work into durable stages.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I split the auth planning follow-through into two coordinated visible planning tasks.', actions: [{ kind: 'request_planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }] })); console.log('assistant grouped planning requested'); process.exit(0); } throw new Error('missing user message');",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+
+    const initialResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Split the auth planning work into durable stages.',
+    })
+    expect(initialResponse.status).toBe(200)
+
+    const extensionResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Add one grouped planning review step after the task graph.',
+    })
+
+    expect(extensionResponse.status).toBe(200)
+    await expect(extensionResponse.json()).resolves.toMatchObject({
+      message: 'I added one later grouped planning review step after the task graph stage.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_batch',
+          groupKey: 'auth-follow-through',
+          requestKeys: ['PR-3'],
+          taskRefs: ['P-3'],
+        }),
+      ]),
+    })
+
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-3',
+          title: 'Review auth planning follow-through',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          taskRef: 'P-1',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          taskRef: 'P-2',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'review-pass',
+          taskRef: 'P-3',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md'],
         }),
       ],
     })

@@ -48,6 +48,7 @@ interface GoalDecision {
 interface GoalPlanningRequest {
   requestKey: string
   groupKey?: string
+  groupTaskKey?: string
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -208,6 +209,7 @@ interface AssistantAction {
   decisionRefs?: string[]
   requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
   groupKey?: string
+  groupTaskKey?: string
   requests?: Array<{
     taskKey: string
     requestKey?: string
@@ -238,6 +240,7 @@ interface AssistantActionResult {
   taskRefs?: string[]
   requestKeys?: string[]
   groupKey?: string
+  groupTaskKey?: string
   status?: TaskStatus
   decisionKey?: string
   summary: string
@@ -449,6 +452,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
     event.preventDefault()
     const formData = new FormData(form)
     const groupKey = `${formData.get('groupKey') ?? ''}`.trim()
+    const groupTaskKey = `${formData.get('groupTaskKey') ?? ''}`.trim()
     const title = `${formData.get('title') ?? ''}`.trim()
     const acceptanceCriteria = `${formData.get('acceptanceCriteria') ?? ''}`
       .split('\n')
@@ -475,6 +479,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
       {
         requestKey: `${formData.get('requestKey') ?? ''}`.trim(),
         groupKey,
+        groupTaskKey,
         title,
         description: `${formData.get('description') ?? ''}`.trim(),
         acceptanceCriteria,
@@ -958,6 +963,7 @@ async function createPlanningRequest(
   input: {
     requestKey: string
     groupKey: string
+    groupTaskKey: string
     title: string
     description: string
     acceptanceCriteria: string[]
@@ -973,6 +979,7 @@ async function createPlanningRequest(
       body: JSON.stringify({
         requestKey: input.requestKey || undefined,
         groupKey: input.groupKey || undefined,
+        groupTaskKey: input.groupTaskKey || undefined,
         title: input.title,
         description: input.description,
         acceptanceCriteria: input.acceptanceCriteria,
@@ -1237,6 +1244,11 @@ function render() {
                     placeholder="linked decision refs (comma separated)"
                   />
                   <input name="groupKey" type="text" placeholder="optional planning group key" />
+                  <input
+                    name="groupTaskKey"
+                    type="text"
+                    placeholder="optional grouped task key"
+                  />
                   <textarea
                     name="description"
                     placeholder="Why this planning follow-through is needed"
@@ -1485,6 +1497,11 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       ${
         request.groupKey
           ? `<div class="assistant-summary">Planning group: ${escapeHtml(request.groupKey)}</div>`
+          : ''
+      }
+      ${
+        request.groupTaskKey
+          ? `<div class="assistant-summary">Grouped task key: ${escapeHtml(request.groupTaskKey)}</div>`
           : ''
       }
       ${
