@@ -1,0 +1,15 @@
+version: 1
+goal:
+  goalKey: math-feature
+  title: Add Subtract Function
+items:
+  - ref: T-1
+    status: blocked
+    title: Implement Subtract
+    body: |-
+      Add a subtract function to index.ts.
+
+      Acceptance Criteria:
+      - function subtract(a: number, b: number): number exists
+      - It subtracts b from a
+    dependencyTaskList: []

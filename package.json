@@ -1,0 +1,12 @@
+{
+  "name": "hopi-agent-orchestrator-root",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:backend": "cd packages/backend && bun dev",
+    "dev:frontend": "cd packages/frontend && bun dev",
+    "dev": "bun run dev:backend & bun run dev:frontend"
+  }
+}
