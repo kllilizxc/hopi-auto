@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentRunner } from '../src/agent/AgentRunner'
+import type { TodoBoard } from '../src/domain/board'
 import { createServer } from '../src/index'
 
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'server')
@@ -42,7 +43,7 @@ describe('createServer', () => {
 
     expect(createResponse.status).toBe(201)
     const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
-    const board = await boardResponse.json()
+    const board = await readJson<TodoBoard>(boardResponse)
     expect(board.items).toEqual([
       {
         ref: 'T-1',
@@ -78,8 +79,8 @@ describe('createServer', () => {
     })
 
     const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
-    const board = await boardResponse.json()
-    expect(board.items[0].status).toBe('in_review')
+    const board = await readJson<TodoBoard>(boardResponse)
+    expect(board.items[0]).toMatchObject({ status: 'in_review' })
   })
 
   test('moves a task through the manual move API', async () => {
@@ -99,8 +100,8 @@ describe('createServer', () => {
     })
 
     expect(moveResponse.status).toBe(200)
-    const board = await moveResponse.json()
-    expect(board.items[0].status).toBe('in_review')
+    const board = await readJson<TodoBoard>(moveResponse)
+    expect(board.items[0]).toMatchObject({ status: 'in_review' })
   })
 
   test('returns HTTP 400 for invalid request bodies', async () => {
@@ -137,8 +138,8 @@ describe('createServer', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'Internal server error' })
 
     const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
-    const board = await boardResponse.json()
-    expect(board.items[0].status).toBe('planned')
+    const board = await readJson<TodoBoard>(boardResponse)
+    expect(board.items[0]).toMatchObject({ status: 'planned' })
 
     const events = await Bun.file(
       join(rootDir(), '.hopi', 'docs', 'goals', 'test', 'events.jsonl'),
@@ -168,4 +169,8 @@ async function postJson(server: ReturnType<typeof createServer>, path: string, b
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  return (await response.json()) as T
 }

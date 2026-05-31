@@ -239,7 +239,7 @@ async function seedBoard(rootDir: string, items: TaskItem[]) {
 
 async function readTask(store: ReturnType<typeof createBoardStore>, ref: string) {
   const board = await store.readBoard(goalKey)
-  const item = board.items.find((candidate) => candidate.ref === ref)
+  const item = board.items.find((task) => task.ref === ref)
   if (!item) {
     throw new Error(`Missing task ${ref}`)
   }

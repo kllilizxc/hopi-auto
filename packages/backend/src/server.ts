@@ -108,7 +108,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             'api',
             body.reason ?? 'manual transition',
             (board) => {
-              const task = board.items.find((candidate) => candidate.ref === taskRef)
+              const task = board.items.find((item) => item.ref === taskRef)
               if (!task) {
                 throw new HttpError(404, `Task not found: ${taskRef}`)
               }

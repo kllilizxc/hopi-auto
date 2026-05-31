@@ -261,7 +261,7 @@ async function finalizeTask(
 }
 
 function findTask(tasks: TaskItem[], taskRef: string) {
-  const task = tasks.find((candidate) => candidate.ref === taskRef)
+  const task = tasks.find((item) => item.ref === taskRef)
   if (!task) {
     throw new Error(`Missing task ${taskRef}`)
   }
@@ -269,7 +269,5 @@ function findTask(tasks: TaskItem[], taskRef: string) {
 }
 
 function hasBlocker(blockers: BlockerRef[], blocker: BlockerRef) {
-  return blockers.some(
-    (candidate) => candidate.kind === blocker.kind && candidate.ref === blocker.ref,
-  )
+  return blockers.some((item) => item.kind === blocker.kind && item.ref === blocker.ref)
 }
