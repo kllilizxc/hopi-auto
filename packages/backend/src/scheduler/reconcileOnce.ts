@@ -65,17 +65,6 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
     })
   } catch (error) {
     await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
-    await options.store.appendEvent(options.goalKey, {
-      writer,
-      action: 'system_error',
-      goalKey: options.goalKey,
-      taskRef: task.ref,
-      systemError: {
-        kind: 'runner_exception',
-        message: errorMessage(error),
-        correlationId: crypto.randomUUID(),
-      },
-    })
     throw error
   }
 
@@ -283,8 +272,4 @@ function hasBlocker(blockers: BlockerRef[], blocker: BlockerRef) {
   return blockers.some(
     (candidate) => candidate.kind === blocker.kind && candidate.ref === blocker.ref,
   )
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
 }
