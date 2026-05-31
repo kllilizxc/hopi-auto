@@ -11,6 +11,7 @@ import { createWorktreeManager } from '../src/runtime/worktreeManager'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { createBoardStore } from '../src/storage/boardStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
+import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
 import { createPreferenceStore } from '../src/storage/preferenceStore'
 
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'server')
@@ -74,6 +75,8 @@ describe('createServer', () => {
       title: 'Plan auth follow-through',
       description: 'Turn the auth answer into durable planning work.',
       acceptanceCriteria: ['The auth follow-through is visible in todo.yml.'],
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['design.md', 'todo.yml'],
     })
 
     expect(createResponse.status).toBe(201)
@@ -82,6 +85,8 @@ describe('createServer', () => {
       title: 'Plan auth follow-through',
       taskRef: 'P-1',
       status: 'open',
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['design.md', 'todo.yml'],
     })
 
     const listResponse = await fetch(apiUrl(server, '/api/goals/test/planning-requests'))
@@ -94,6 +99,8 @@ describe('createServer', () => {
           title: 'Plan auth follow-through',
           taskRef: 'P-1',
           status: 'open',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
     })
@@ -114,6 +121,16 @@ describe('createServer', () => {
         join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
       ).text(),
     ).resolves.toContain('requestKey: PR-1')
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('decisionRefs:')
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('requestedUpdates:')
   })
 
   test('creates tasks through the API', async () => {
@@ -397,7 +414,7 @@ describe('createServer', () => {
         cmd: [
           'bun',
           '-e',
-          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('db-provider')) throw new Error('missing decision topic'); if (!prompt.includes('Use Postgres and create planning work.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'Use Postgres and create visible planning work.', actions: [{ kind: 'resolve_decision', decisionKey: 'db-provider', summary: 'Choose the database provider', taskRef: 'T-2', answer: 'Use Postgres.' }, { kind: 'request_planning', title: 'Plan database integration', description: 'Define the database adapter and migration work.', acceptanceCriteria: ['The database integration plan is visible in todo.yml.'] }, { kind: 'record_preference', summary: 'Prefer Bun-native services when they meet the Goal requirements.' }] })); console.log('assistant finished')",
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('db-provider')) throw new Error('missing decision topic'); if (!prompt.includes('Use Postgres and create planning work.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'Use Postgres and create visible planning work.', actions: [{ kind: 'resolve_decision', decisionKey: 'db-provider', summary: 'Choose the database provider', taskRef: 'T-2', answer: 'Use Postgres.' }, { kind: 'request_planning', title: 'Plan database integration', description: 'Define the database adapter and migration work.', acceptanceCriteria: ['The database integration plan is visible in todo.yml.'], decisionRefs: ['db-provider'], requestedUpdates: ['design.md', 'todo.yml'] }, { kind: 'record_preference', summary: 'Prefer Bun-native services when they meet the Goal requirements.' }] })); console.log('assistant finished')",
           '${PROMPT_FILE}',
           '${OUTCOME_FILE}',
         ],
@@ -488,6 +505,17 @@ describe('createServer', () => {
         join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
       ).text(),
     ).resolves.toContain('taskRef: P-1')
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          decisionRefs: ['db-provider'],
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
 
     const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
     expect(thread.goalKey).toBe('test')

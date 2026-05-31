@@ -43,6 +43,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-goal-docs-inspection-and-planner-doc-status.md`: implementation plan for the Goal docs inspection and planner doc-status slice.
 - `docs/superpowers/specs/2026-06-01-durable-planning-requests-and-planner-follow-through-design.md`: approved and implemented design for durable planning requests and deterministic planner follow-through.
 - `docs/superpowers/plans/2026-06-01-durable-planning-requests-and-planner-follow-through.md`: implementation plan for the durable planning-request and planner follow-through slice.
+- `docs/superpowers/specs/2026-06-01-decision-linked-planning-follow-through-design.md`: approved and implemented design for decision-linked planning requests plus explicit `design.md` / `todo.yml` follow-through targets.
+- `docs/superpowers/plans/2026-06-01-decision-linked-planning-follow-through.md`: implementation plan for the decision-linked planning follow-through slice.
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`: approved and implemented design for run-history and artifact-aware reviewer/merger policy.
 - `docs/superpowers/plans/2026-06-01-run-history-and-artifact-aware-review-merge-policy.md`: implementation plan for the run-history and artifact-aware review/merge slice.
 - `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`: approved and implemented design for planning follow-through reviewer/merger policy.

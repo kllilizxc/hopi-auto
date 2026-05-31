@@ -70,6 +70,8 @@ const createPlanningRequestSchema = z.object({
   title: z.string().min(1),
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  requestedUpdates: z.array(z.enum(['design.md', 'todo.yml'])).default([]),
   blockedBy: z.array(blockerSchema).default([]),
 })
 
@@ -271,6 +273,8 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               title: body.title,
               description: body.description,
               acceptanceCriteria: body.acceptanceCriteria,
+              decisionRefs: body.decisionRefs,
+              requestedUpdates: body.requestedUpdates,
               blockedBy: body.blockedBy,
               writer: 'api',
               reason: `api request planning ${body.requestKey ?? body.title}`,

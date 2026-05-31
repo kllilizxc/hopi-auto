@@ -29,12 +29,16 @@ describe('createPlanningRequestStore', () => {
       description: 'Capture the auth planning follow-through.',
       acceptanceCriteria: ['The auth plan is durable.'],
       taskRef: 'P-1',
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['design.md', 'todo.yml'],
     })
     expect(created).toMatchObject({
       requestKey: 'PR-1',
       title: 'Plan auth follow-through',
       taskRef: 'P-1',
       status: 'open',
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['design.md', 'todo.yml'],
     })
 
     const resolved = await store.resolveRequest(goalKey, created.requestKey, {
@@ -55,6 +59,8 @@ describe('createPlanningRequestStore', () => {
           taskRef: 'P-1',
           status: 'resolved',
           resolution: 'Planning task P-1 completed.',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
         },
       ],
     })

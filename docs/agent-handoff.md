@@ -32,6 +32,7 @@ Phase 1 backend is complete:
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
 - Durable `planning-requests.yml` now exists as the planner follow-through input surface: assistant and API can open file-native planning requests linked to visible planning tasks, planner context consumes them, the Bun UI surfaces them, and planning task completion auto-resolves linked requests deterministically.
+- Durable planning requests now also carry decision lineage plus explicit `design.md` / `todo.yml` update targets, and reused open requests preserve newer follow-through metadata instead of dropping it.
 - Reviewer and merger prompts now correlate prior run history, artifact refs, transcript evidence, and durable write traces instead of relying on write-trace policy alone.
 - Planning reviewer and merger prompts now also enforce durable follow-through evidence against open planning requests, planning write traces, and prior run evidence.
 - The Bun backend now serves the active Bun UI at `/`.
@@ -62,6 +63,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
 - `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`: current authority note for Goal doc inspection and planner durable doc-status policy.
 - `docs/superpowers/specs/2026-06-01-durable-planning-requests-and-planner-follow-through-design.md`: current authority note for durable planning requests and deterministic planner follow-through.
+- `docs/superpowers/specs/2026-06-01-decision-linked-planning-follow-through-design.md`: current authority note for decision-linked planning requests and explicit `design.md` / `todo.yml` follow-through targets.
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`: current authority note for run-history and artifact-aware reviewer/merger policy.
 - `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`: current authority note for planning follow-through reviewer/merger policy.
 
@@ -462,6 +464,7 @@ Current UI capabilities:
 - read-only board projection from `todo.yml`
 - durable `goal.md` and `design.md` surfacing with `bootstrapped` versus `curated` status
 - durable planning-request creation and surfacing linked to visible planning work
+- decision-linked planning request surfacing with explicit `design.md` / `todo.yml` update targets
 - run list for the current Goal
 - step list for the selected run
 - normalized transcript history for the selected step
@@ -480,6 +483,7 @@ Current non-UI Goal assistant substrate:
 
 - durable Goal decisions in `decisions.yml`
 - durable Goal planning requests in `planning-requests.yml`
+- decision-linked planning request metadata for explicit `design.md` / `todo.yml` reshape intent
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -490,7 +494,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond current Goal doc-status policy plus durable planning-request intake and auto-resolution
+- richer assistant action coverage beyond the current decision-linked planning/decision/preference loop, especially workflows that span more than one visible planning task or require deeper Goal doc maintenance
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
@@ -501,7 +505,7 @@ What is still missing:
 Next high-leverage phase:
 
 1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
-2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core.
+2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage and update targets.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 

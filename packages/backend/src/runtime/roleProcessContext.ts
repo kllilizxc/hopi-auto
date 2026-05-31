@@ -7,6 +7,7 @@ import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
 import {
+  type GoalPlanningRequestUpdateTarget,
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
@@ -48,6 +49,8 @@ interface PlannerContextInputs {
     requestKey: string
     title: string
     taskRef: string
+    decisionRefs: string[]
+    requestedUpdates: GoalPlanningRequestUpdateTarget[]
   }>
   preferenceFile: string
   preferenceContent: string
@@ -399,6 +402,8 @@ async function loadPlannerContextInputs(
         requestKey: request.requestKey,
         title: request.title,
         taskRef: request.taskRef,
+        decisionRefs: request.decisionRefs,
+        requestedUpdates: request.requestedUpdates,
       })),
     preferenceFile: preferenceDocument.path,
     preferenceContent: preferenceDocument.content,
@@ -468,6 +473,8 @@ function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusIn
 ${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
 - When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
 - Address open planning requests linked to this task before returning success.
+- If a relevant planning request targets design.md, update durable design rationale before returning success.
+- If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.
 `
 }
 
@@ -480,7 +487,21 @@ function renderRelevantPlanningRequests(
 
   return `### Relevant Open Planning Requests For This Task
 
-${requests.map((request) => `- ${request.requestKey} | ${request.title} | ${request.taskRef}`).join('\n')}
+${requests
+  .map((request) =>
+    [
+      `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
+      request.decisionRefs.length > 0
+        ? `  Linked decisions: ${request.decisionRefs.join(', ')}`
+        : null,
+      request.requestedUpdates.length > 0
+        ? `  Requested durable updates: ${request.requestedUpdates.join(', ')}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  )
+  .join('\n')}
 `
 }
 

@@ -51,6 +51,8 @@ interface GoalPlanningRequest {
   description: string
   acceptanceCriteria: string[]
   taskRef: string
+  decisionRefs: string[]
+  requestedUpdates: Array<'design.md' | 'todo.yml'>
   status: 'open' | 'resolved'
   createdAt: string
   resolvedAt?: string
@@ -201,6 +203,8 @@ interface AssistantAction {
   title?: string
   description?: string
   acceptanceCriteria?: string[]
+  decisionRefs?: string[]
+  requestedUpdates?: Array<'design.md' | 'todo.yml'>
   decisionKey?: string
   summary?: string
   answer?: string
@@ -433,6 +437,16 @@ root.addEventListener('submit', (event: SubmitEvent) => {
       .split('\n')
       .map((item) => item.trim())
       .filter(Boolean)
+    const decisionRefs = `${formData.get('decisionRefs') ?? ''}`
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    const requestedUpdates = formData
+      .getAll('requestedUpdates')
+      .map((value) => `${value}`.trim())
+      .filter(
+        (value): value is 'design.md' | 'todo.yml' => value === 'design.md' || value === 'todo.yml',
+      )
     if (!title || acceptanceCriteria.length === 0) {
       return
     }
@@ -445,6 +459,8 @@ root.addEventListener('submit', (event: SubmitEvent) => {
         title,
         description: `${formData.get('description') ?? ''}`.trim(),
         acceptanceCriteria,
+        decisionRefs,
+        requestedUpdates,
       },
       form,
     )
@@ -925,6 +941,8 @@ async function createPlanningRequest(
     title: string
     description: string
     acceptanceCriteria: string[]
+    decisionRefs: string[]
+    requestedUpdates: Array<'design.md' | 'todo.yml'>
   },
   form: HTMLFormElement,
 ) {
@@ -937,6 +955,8 @@ async function createPlanningRequest(
         title: input.title,
         description: input.description,
         acceptanceCriteria: input.acceptanceCriteria,
+        decisionRefs: input.decisionRefs,
+        requestedUpdates: input.requestedUpdates,
       }),
     })
     if (!response.ok) {
@@ -1191,6 +1211,10 @@ function render() {
                 <form class="decision-form planning-request-form" data-role="planning-request-form">
                   <input name="title" placeholder="Planner follow-through title" />
                   <input name="requestKey" placeholder="request key (optional)" />
+                  <input
+                    name="decisionRefs"
+                    placeholder="linked decision refs (comma separated)"
+                  />
                   <textarea
                     name="description"
                     placeholder="Why this planning follow-through is needed"
@@ -1199,6 +1223,17 @@ function render() {
                     name="acceptanceCriteria"
                     placeholder="One acceptance criterion per line"
                   ></textarea>
+                  <div class="planning-update-targets">
+                    <span class="assistant-note">Requested durable updates</span>
+                    <label>
+                      <input type="checkbox" name="requestedUpdates" value="design.md" />
+                      <span>design.md</span>
+                    </label>
+                    <label>
+                      <input type="checkbox" name="requestedUpdates" value="todo.yml" />
+                      <span>todo.yml</span>
+                    </label>
+                  </div>
                   <div class="assistant-actions-row">
                     <button type="submit">Create Planning Request</button>
                     <span class="assistant-note">A visible planning task will be reused or created deterministically.</span>
@@ -1421,6 +1456,16 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       <strong>${escapeHtml(request.requestKey)}</strong>
       <p>${escapeHtml(request.title)}</p>
       <div class="assistant-summary">Task: ${escapeHtml(request.taskRef)}</div>
+      ${
+        request.decisionRefs.length > 0
+          ? `<div class="assistant-summary">Linked decisions: ${escapeHtml(request.decisionRefs.join(', '))}</div>`
+          : ''
+      }
+      ${
+        request.requestedUpdates.length > 0
+          ? `<div class="assistant-summary">Requested durable updates: ${escapeHtml(request.requestedUpdates.join(', '))}</div>`
+          : ''
+      }
       ${request.description ? `<div class="assistant-summary">${escapeHtml(request.description)}</div>` : ''}
       ${
         request.acceptanceCriteria.length > 0

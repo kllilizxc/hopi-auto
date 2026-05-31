@@ -231,6 +231,8 @@ async function applyAssistantAction(
         title: action.title,
         description: action.description,
         acceptanceCriteria: action.acceptanceCriteria,
+        decisionRefs: action.decisionRefs,
+        requestedUpdates: action.requestedUpdates,
         blockedBy: action.blockedBy,
         writer: 'assistant',
         reason: `assistant request planning ${action.title}`,

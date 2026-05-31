@@ -6,8 +6,10 @@ import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
 const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
+const PLANNING_REQUEST_UPDATE_TARGETS = ['design.md', 'todo.yml'] as const
 
 export type GoalPlanningRequestStatus = (typeof PLANNING_REQUEST_STATUSES)[number]
+export type GoalPlanningRequestUpdateTarget = (typeof PLANNING_REQUEST_UPDATE_TARGETS)[number]
 
 export interface GoalPlanningRequest {
   requestKey: string
@@ -15,6 +17,8 @@ export interface GoalPlanningRequest {
   description: string
   acceptanceCriteria: string[]
   taskRef: string
+  decisionRefs: string[]
+  requestedUpdates: GoalPlanningRequestUpdateTarget[]
   status: GoalPlanningRequestStatus
   createdAt: string
   resolvedAt?: string
@@ -38,6 +42,16 @@ export interface PlanningRequestStore {
       description: string
       acceptanceCriteria: string[]
       taskRef: string
+      decisionRefs?: string[]
+      requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+    },
+  ): Promise<GoalPlanningRequest>
+  mergeRequestMetadata(
+    goalKey: string,
+    requestKey: string,
+    input: {
+      decisionRefs?: string[]
+      requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
   resolveRequest(
@@ -53,6 +67,8 @@ const GoalPlanningRequestSchema = z.object({
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   taskRef: z.string().min(1),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
   status: z.enum(PLANNING_REQUEST_STATUSES),
   createdAt: z.string().datetime(),
   resolvedAt: z.string().datetime().optional(),
@@ -97,11 +113,39 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           description: input.description,
           acceptanceCriteria: input.acceptanceCriteria,
           taskRef: input.taskRef,
+          decisionRefs: mergeUniqueValues([], input.decisionRefs ?? []),
+          requestedUpdates: mergeUniqueValues([], input.requestedUpdates ?? []),
           status: 'open',
           createdAt: new Date().toISOString(),
         }
         current.requests.push(request)
         await writePlanningRequestSet(planningRequestsPath, current)
+        return request
+      })
+    },
+    async mergeRequestMetadata(goalKey, requestKey, input) {
+      const planningRequestsPath = paths.planningRequestsPath(goalKey)
+      const lockPath = `${planningRequestsPath}.lock`
+      return withFileLock(lockPath, async () => {
+        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const request = current.requests.find((item) => item.requestKey === requestKey)
+        if (!request) {
+          throw new Error(`Planning request not found: ${requestKey}`)
+        }
+
+        const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
+        const nextRequestedUpdates = mergeUniqueValues(
+          request.requestedUpdates,
+          input.requestedUpdates ?? [],
+        )
+        const changed =
+          nextDecisionRefs.length !== request.decisionRefs.length ||
+          nextRequestedUpdates.length !== request.requestedUpdates.length
+        if (changed) {
+          request.decisionRefs = nextDecisionRefs
+          request.requestedUpdates = nextRequestedUpdates
+          await writePlanningRequestSet(planningRequestsPath, current)
+        }
         return request
       })
     },
@@ -176,4 +220,13 @@ function nextPlanningRequestKey(requests: GoalPlanningRequest[]) {
     }, 0) + 1
 
   return `PR-${nextNumber}`
+}
+function mergeUniqueValues<T extends string>(existing: T[], incoming: T[]) {
+  const merged = [...existing]
+  for (const value of incoming) {
+    if (!merged.includes(value)) {
+      merged.push(value)
+    }
+  }
+  return merged
 }

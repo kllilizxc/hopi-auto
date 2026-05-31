@@ -81,6 +81,11 @@ requests:
     acceptanceCriteria:
       - The rollout design follow-through is visible.
     taskRef: P-1
+    decisionRefs:
+      - rollout-strategy
+    requestedUpdates:
+      - design.md
+      - todo.yml
     status: open
     createdAt: 2026-06-01T00:00:00.000Z
 `,
@@ -121,6 +126,8 @@ requests:
     expect(context).toContain('design.md status: bootstrapped')
     expect(context).toContain('Choose the rollout strategy')
     expect(context).toContain('Plan rollout follow-through')
+    expect(context).toContain('Linked decisions: rollout-strategy')
+    expect(context).toContain('Requested durable updates: design.md, todo.yml')
     expect(context).toContain('Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
@@ -128,6 +135,12 @@ requests:
     )
     expect(prompt).toContain(
       'Address open planning requests linked to this task before returning success.',
+    )
+    expect(prompt).toContain(
+      'If a relevant planning request targets design.md, update durable design rationale before returning success.',
+    )
+    expect(prompt).toContain(
+      'If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.',
     )
   })
 
@@ -336,6 +349,11 @@ requests:
     acceptanceCriteria:
       - The rollout follow-through is visible.
     taskRef: P-7
+    decisionRefs:
+      - rollout-strategy
+    requestedUpdates:
+      - design.md
+      - todo.yml
     status: open
     createdAt: 2026-06-01T00:00:00.000Z
 `,
@@ -384,6 +402,8 @@ requests:
     expect(context).toContain('.hopi/docs/goals/goal-7/planning-requests.yml')
     expect(context).toContain('Plan rollout follow-through')
     expect(context).toContain('### Relevant Open Planning Requests For This Task')
+    expect(context).toContain('Linked decisions: rollout-strategy')
+    expect(context).toContain('Requested durable updates: design.md, todo.yml')
     expect(context).toContain('.hopi/docs/goals/goal-7/design.md')
     expect(prompt).toContain(
       'Planning reviewer must verify durable planning follow-through against open planning requests before accepting.',

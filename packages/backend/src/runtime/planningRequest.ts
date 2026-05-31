@@ -1,6 +1,10 @@
 import type { BlockerRef } from '../domain/board'
 import type { BoardStore } from '../storage/boardStore'
-import type { GoalPlanningRequest, PlanningRequestStore } from '../storage/planningRequestStore'
+import type {
+  GoalPlanningRequest,
+  GoalPlanningRequestUpdateTarget,
+  PlanningRequestStore,
+} from '../storage/planningRequestStore'
 
 export interface GoalPlanningRequestInput {
   goalKey: string
@@ -8,6 +12,8 @@ export interface GoalPlanningRequestInput {
   title: string
   description: string
   acceptanceCriteria: string[]
+  decisionRefs?: string[]
+  requestedUpdates?: GoalPlanningRequestUpdateTarget[]
   blockedBy?: BlockerRef[]
   writer?: string
   reason?: string
@@ -32,8 +38,16 @@ export async function requestGoalPlanning(
     ? currentRequests.requests.find((request) => request.requestKey === input.requestKey)
     : undefined
   if (existingByKey) {
+    const enriched = await stores.planningRequests.mergeRequestMetadata(
+      input.goalKey,
+      existingByKey.requestKey,
+      {
+        decisionRefs: input.decisionRefs,
+        requestedUpdates: input.requestedUpdates,
+      },
+    )
     return {
-      request: existingByKey,
+      request: enriched,
       created: false,
       taskCreated: false,
     }
@@ -46,8 +60,16 @@ export async function requestGoalPlanning(
       currentBoard.items.some((task) => task.ref === request.taskRef && task.status !== 'done'),
   )
   if (existingOpen) {
+    const enriched = await stores.planningRequests.mergeRequestMetadata(
+      input.goalKey,
+      existingOpen.requestKey,
+      {
+        decisionRefs: input.decisionRefs,
+        requestedUpdates: input.requestedUpdates,
+      },
+    )
     return {
-      request: existingOpen,
+      request: enriched,
       created: false,
       taskCreated: false,
     }
@@ -88,6 +110,8 @@ export async function requestGoalPlanning(
     description: input.description,
     acceptanceCriteria: input.acceptanceCriteria,
     taskRef,
+    decisionRefs: input.decisionRefs,
+    requestedUpdates: input.requestedUpdates,
   })
 
   return {

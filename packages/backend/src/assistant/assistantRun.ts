@@ -55,6 +55,8 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    requestedUpdates: z.array(z.enum(['design.md', 'todo.yml'])).default([]),
     blockedBy: z
       .array(
         z.object({
