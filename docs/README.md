@@ -29,6 +29,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-live-goal-assistant-execution.md`: implementation plan for the live Goal assistant execution slice.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: approved and implemented design for assistant run inspection APIs and Bun UI surfacing.
 - `docs/superpowers/plans/2026-06-01-goal-assistant-surfacing-and-inspection.md`: implementation plan for the assistant surfacing and inspection slice.
+- `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`: approved and implemented design for exact assistant bundle inspection on the Bun product path.
+- `docs/superpowers/plans/2026-06-01-assistant-run-bundle-inspection.md`: implementation plan for the assistant run bundle inspection slice.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: approved and implemented design for repo preference editing plus safer assistant planning/preference actions.
 - `docs/superpowers/plans/2026-06-01-goal-assistant-preferences-and-planning-request.md`: implementation plan for the preference and planner-request slice.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: approved and implemented design for assistant decision requests and direct decision management on the Bun product path.

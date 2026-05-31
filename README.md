@@ -74,6 +74,11 @@ The Goal assistant surfacing and inspection slice is documented in:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`
 - `docs/superpowers/plans/2026-06-01-goal-assistant-surfacing-and-inspection.md`
 
+The assistant run bundle inspection slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`
+- `docs/superpowers/plans/2026-06-01-assistant-run-bundle-inspection.md`
+
 The Goal assistant preference and planner-request slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`

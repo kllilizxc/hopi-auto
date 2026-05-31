@@ -252,6 +252,20 @@ interface AssistantRunDetail {
   error?: string
 }
 
+interface AssistantRunBundleFile {
+  path: string
+  content: string | null
+}
+
+interface AssistantRunBundle {
+  goalKey: string
+  assistantRunId: string
+  context: AssistantRunBundleFile
+  prompt: AssistantRunBundleFile
+  outcome: AssistantRunBundleFile
+  result: AssistantRunBundleFile
+}
+
 interface AppState {
   goalKey: string
   goalKeyInput: string
@@ -271,6 +285,7 @@ interface AppState {
   selectedStepId: string | null
   selectedAssistantRunId: string | null
   selectedAssistantRun: AssistantRunDetail | null
+  selectedAssistantBundle: AssistantRunBundle | null
   selectedRunWriteTraces: WriteTraceEntry[]
   loadingBoard: boolean
   loadingRun: boolean
@@ -320,6 +335,7 @@ const state: AppState = {
   selectedStepId: null,
   selectedAssistantRunId: null,
   selectedAssistantRun: null,
+  selectedAssistantBundle: null,
   selectedRunWriteTraces: [],
   loadingBoard: true,
   loadingRun: false,
@@ -480,6 +496,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
   state.selectedStepId = null
   state.selectedAssistantRunId = null
   state.selectedAssistantRun = null
+  state.selectedAssistantBundle = null
   state.selectedRunWriteTraces = []
   state.error = null
   state.loadingBoard = true
@@ -540,6 +557,7 @@ root.addEventListener('click', (event: MouseEvent) => {
 
     state.selectedAssistantRunId = assistantRunId
     state.selectedAssistantRun = null
+    state.selectedAssistantBundle = null
     state.loadingAssistantRun = true
     render()
     void loadSelectedAssistantRun()
@@ -690,6 +708,7 @@ async function loadGoalData() {
     state.selectedRun = null
     state.selectedStepId = null
     state.selectedAssistantRun = null
+    state.selectedAssistantBundle = null
     state.selectedRunWriteTraces = []
     render()
   } catch (error) {
@@ -713,6 +732,7 @@ async function loadGoalData() {
     state.selectedStepId = null
     state.selectedAssistantRun = null
     state.selectedAssistantRunId = null
+    state.selectedAssistantBundle = null
     state.selectedRunWriteTraces = []
     state.error = error instanceof Error ? error.message : String(error)
     render()
@@ -777,6 +797,7 @@ async function loadSelectedAssistantRun() {
   if (!state.selectedAssistantRunId) {
     state.loadingAssistantRun = false
     state.selectedAssistantRun = null
+    state.selectedAssistantBundle = null
     render()
     return
   }
@@ -784,18 +805,23 @@ async function loadSelectedAssistantRun() {
   const requestId = ++assistantRunRequestId
 
   try {
-    const response = await fetch(
-      `/api/goals/${state.goalKey}/assistant/runs/${state.selectedAssistantRunId}`,
-    )
-    if (!response.ok) {
-      throw new Error(`Assistant run request failed with ${response.status}`)
+    const [runResponse, bundleResponse] = await Promise.all([
+      fetch(`/api/goals/${state.goalKey}/assistant/runs/${state.selectedAssistantRunId}`),
+      fetch(`/api/goals/${state.goalKey}/assistant/runs/${state.selectedAssistantRunId}/bundle`),
+    ])
+    if (!runResponse.ok) {
+      throw new Error(`Assistant run request failed with ${runResponse.status}`)
+    }
+    if (!bundleResponse.ok) {
+      throw new Error(`Assistant bundle request failed with ${bundleResponse.status}`)
     }
 
     if (requestId !== assistantRunRequestId) {
       return
     }
 
-    state.selectedAssistantRun = (await response.json()) as AssistantRunDetail
+    state.selectedAssistantRun = (await runResponse.json()) as AssistantRunDetail
+    state.selectedAssistantBundle = (await bundleResponse.json()) as AssistantRunBundle
     state.loadingAssistantRun = false
     render()
   } catch (error) {
@@ -805,6 +831,7 @@ async function loadSelectedAssistantRun() {
 
     state.loadingAssistantRun = false
     state.selectedAssistantRun = null
+    state.selectedAssistantBundle = null
     state.error = error instanceof Error ? error.message : String(error)
     render()
   }
@@ -975,6 +1002,7 @@ async function reconcileGoal() {
 function render() {
   const currentSelectedStep = selectedStep()
   const currentSelectedAssistantRun = state.selectedAssistantRun
+  const currentSelectedAssistantBundle = state.selectedAssistantBundle
 
   root.innerHTML = `
     <div class="app-shell">
@@ -1245,8 +1273,11 @@ function render() {
                       state.loadingAssistantRun
                         ? '<div class="ghost-card">Loading assistant run...</div>'
                         : currentSelectedAssistantRun
-                          ? renderAssistantRunDetail(currentSelectedAssistantRun)
-                          : '<div class="ghost-card">Select an assistant run to inspect it</div>'
+                          ? renderAssistantRunDetail(
+                              currentSelectedAssistantRun,
+                              currentSelectedAssistantBundle,
+                            )
+                          : '<div class="ghost-card">Select an assistant run to inspect its durable bundle and runtime evidence.</div>'
                     }
                   </div>
                 </div>
@@ -1442,7 +1473,7 @@ function renderAssistantRunSummary(run: AssistantRunSummary) {
   `
 }
 
-function renderAssistantRunDetail(run: AssistantRunDetail) {
+function renderAssistantRunDetail(run: AssistantRunDetail, bundle: AssistantRunBundle | null) {
   return `
     <div class="assistant-run-card">
       <div class="assistant-run-meta">
@@ -1454,6 +1485,13 @@ function renderAssistantRunDetail(run: AssistantRunDetail) {
       <h4>Reply</h4>
       <p class="assistant-run-copy">${escapeHtml(run.message || 'No assistant reply recorded.')}</p>
       ${run.error ? `<div class="error-banner inline-error">${escapeHtml(run.error)}</div>` : ''}
+      <h4>Bundle Files</h4>
+      <div class="assistant-bundle-grid">
+        ${renderAssistantBundleFile('context.md', bundle?.context)}
+        ${renderAssistantBundleFile('prompt.md', bundle?.prompt)}
+        ${renderAssistantBundleFile('outcome.json', bundle?.outcome)}
+        ${renderAssistantBundleFile('result.json', bundle?.result)}
+      </div>
       <h4>Action Results</h4>
       <div class="assistant-list">
         ${
@@ -1482,6 +1520,29 @@ function renderAssistantRunDetail(run: AssistantRunDetail) {
         }
       </div>
     </div>
+  `
+}
+
+function renderAssistantBundleFile(label: string, file?: AssistantRunBundleFile) {
+  if (!file) {
+    return `
+      <article class="assistant-bundle-card">
+        <div class="assistant-entry-top">
+          <strong>${escapeHtml(label)}</strong>
+        </div>
+        <div class="ghost-card">Bundle file is unavailable for this run.</div>
+      </article>
+    `
+  }
+
+  return `
+    <article class="assistant-bundle-card">
+      <div class="assistant-entry-top">
+        <strong>${escapeHtml(label)}</strong>
+      </div>
+      <div class="assistant-summary">${escapeHtml(file.path)}</div>
+      <pre class="assistant-bundle-preview">${escapeHtml(file.content ?? 'Bundle file was not recorded for this run.')}</pre>
+    </article>
   `
 }
 

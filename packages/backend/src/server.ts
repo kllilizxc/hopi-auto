@@ -319,6 +319,25 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           Boolean(parts[2]) &&
           parts[3] === 'assistant' &&
           parts[4] === 'runs' &&
+          parts.length === 7 &&
+          parts[6] === 'bundle'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const assistantRunId = requirePathPart(parts, 5)
+          const bundle = await assistantRuns.readBundle(currentGoalKey, assistantRunId)
+          if (!bundle) {
+            throw new HttpError(404, `Assistant run bundle not found: ${assistantRunId}`)
+          }
+          return jsonResponse(bundle)
+        }
+
+        if (
+          request.method === 'GET' &&
+          parts[0] === 'api' &&
+          parts[1] === 'goals' &&
+          Boolean(parts[2]) &&
+          parts[3] === 'assistant' &&
+          parts[4] === 'runs' &&
           parts.length === 6
         ) {
           const currentGoalKey = requireGoalKey(parts)

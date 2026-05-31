@@ -44,6 +44,18 @@ describe('createAssistantRunStore', () => {
       events: [{ kind: 'message', level: 'info', role: 'assistant', content: 'finished' }],
       status: 'completed',
     })
+    await Bun.write(
+      paths.assistantContextPath(goalKey, 'assistant-run-2'),
+      '# HOPI Goal Assistant Context\n\nDurable context.\n',
+    )
+    await Bun.write(
+      paths.assistantPromptPath(goalKey, 'assistant-run-2'),
+      '# HOPI Goal Assistant Prompt\n\nBundled prompt.\n',
+    )
+    await Bun.write(
+      paths.assistantOutcomePath(goalKey, 'assistant-run-2'),
+      '{\n  "message": "Second reply.",\n  "actions": []\n}\n',
+    )
 
     const store = createAssistantRunStore(rootDir)
     await expect(store.listRuns(goalKey)).resolves.toEqual([
@@ -72,6 +84,34 @@ describe('createAssistantRunStore', () => {
       message: 'Second reply.',
       status: 'completed',
       actionResults: [{ kind: 'update_preference', summary: 'Updated durable preferences.' }],
+    })
+    await expect(store.readBundle(goalKey, 'assistant-run-2')).resolves.toMatchObject({
+      goalKey,
+      assistantRunId: 'assistant-run-2',
+      context: {
+        path: expect.stringContaining(
+          '.hopi/runtime/goals/goal-1/assistant/runs/assistant-run-2/context.md',
+        ),
+        content: expect.stringContaining('Durable context.'),
+      },
+      prompt: {
+        path: expect.stringContaining(
+          '.hopi/runtime/goals/goal-1/assistant/runs/assistant-run-2/prompt.md',
+        ),
+        content: expect.stringContaining('Bundled prompt.'),
+      },
+      outcome: {
+        path: expect.stringContaining(
+          '.hopi/runtime/goals/goal-1/assistant/runs/assistant-run-2/outcome.json',
+        ),
+        content: expect.stringContaining('"message": "Second reply."'),
+      },
+      result: {
+        path: expect.stringContaining(
+          '.hopi/runtime/goals/goal-1/assistant/runs/assistant-run-2/result.json',
+        ),
+        content: expect.stringContaining('"assistantRunId": "assistant-run-2"'),
+      },
     })
   })
 })

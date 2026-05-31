@@ -709,6 +709,34 @@ textarea {
   margin-top: 0;
 }
 
+.assistant-bundle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assistant-bundle-card {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.assistant-bundle-preview {
+  margin: 10px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #0f172a;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .inline-error {
   margin-top: 12px;
   margin-bottom: 0;
@@ -839,6 +867,10 @@ textarea {
   .runtime-layout,
   .assistant-layout,
   .assistant-run-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-bundle-grid {
     grid-template-columns: 1fr;
   }
 

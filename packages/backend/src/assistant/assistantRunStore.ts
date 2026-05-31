@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import { createProjectPaths } from '../storage/paths'
 import {
+  type GoalAssistantRunBundle,
   type GoalAssistantRunRecord,
   type GoalAssistantRunSummary,
   parseGoalAssistantRunRecord,
@@ -9,6 +10,7 @@ import {
 
 export interface AssistantRunStore {
   readRun(goalKey: string, assistantRunId: string): Promise<GoalAssistantRunRecord | null>
+  readBundle(goalKey: string, assistantRunId: string): Promise<GoalAssistantRunBundle | null>
   listRuns(goalKey: string): Promise<GoalAssistantRunSummary[]>
 }
 
@@ -30,6 +32,22 @@ export function createAssistantRunStore(rootDir = process.cwd()): AssistantRunSt
 
       return parseGoalAssistantRunRecord(raw)
     },
+    async readBundle(goalKey, assistantRunId) {
+      const resultPath = paths.assistantResultPath(goalKey, assistantRunId)
+      const resultFile = Bun.file(resultPath)
+      if (!(await resultFile.exists())) {
+        return null
+      }
+
+      return {
+        goalKey,
+        assistantRunId,
+        context: await readBundleFile(paths.assistantContextPath(goalKey, assistantRunId)),
+        prompt: await readBundleFile(paths.assistantPromptPath(goalKey, assistantRunId)),
+        outcome: await readBundleFile(paths.assistantOutcomePath(goalKey, assistantRunId)),
+        result: await readBundleFile(resultPath),
+      }
+    },
     async listRuns(goalKey) {
       const runsDir = paths.assistantRunsDir(goalKey)
       try {
@@ -48,5 +66,13 @@ export function createAssistantRunStore(rootDir = process.cwd()): AssistantRunSt
         return []
       }
     },
+  }
+}
+
+async function readBundleFile(path: string) {
+  const file = Bun.file(path)
+  return {
+    path,
+    content: (await file.exists()) ? await file.text() : null,
   }
 }

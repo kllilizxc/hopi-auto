@@ -598,6 +598,32 @@ describe('createServer', () => {
         }),
       ]),
     })
+    const bundleResponse = await fetch(
+      apiUrl(server, `/api/goals/test/assistant/runs/${result.assistantRunId}/bundle`),
+    )
+    expect(bundleResponse.status).toBe(200)
+    await expect(bundleResponse.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      assistantRunId: result.assistantRunId,
+      context: {
+        path: expect.stringContaining(`/assistant/runs/${result.assistantRunId}/context.md`),
+        content: expect.stringContaining('Current decisions.yml'),
+      },
+      prompt: {
+        path: expect.stringContaining(`/assistant/runs/${result.assistantRunId}/prompt.md`),
+        content: expect.stringContaining('# HOPI Goal Assistant Prompt'),
+      },
+      outcome: {
+        path: expect.stringContaining(`/assistant/runs/${result.assistantRunId}/outcome.json`),
+        content: expect.stringContaining(
+          '"message":"Use Postgres and create visible planning work."',
+        ),
+      },
+      result: {
+        path: expect.stringContaining(`/assistant/runs/${result.assistantRunId}/result.json`),
+        content: expect.stringContaining('"assistantRunId"'),
+      },
+    })
 
     await expect(createPreferenceStore(workspaceRoot).readPreferences()).resolves.toMatchObject({
       content: expect.stringContaining(

@@ -26,6 +26,7 @@ Phase 1 backend is complete:
 - The first Goal assistant substrate slice is now implemented with durable `decisions.yml`, repo `preference.md`, Goal-scoped `assistant-thread.json`, planner-context plumbing for decisions/preferences, and minimum Bun API routes for those stores.
 - Live Goal assistant execution is now implemented with an explicit Goal-scoped runtime call, constrained durable actions, assistant run bundles under `.hopi/runtime/**`, and scheduler cleanup for resolved decision blockers.
 - Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
+- Exact assistant bundle inspection is now implemented on the Bun product path for `context.md`, `prompt.md`, `outcome.json`, and `result.json`.
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
@@ -54,6 +55,7 @@ Read these first:
 - `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`: completed Phase 1 execution plan and rationale.
 - `docs/superpowers/specs/2026-06-01-live-goal-assistant-execution-design.md`: current authority note for explicit Goal assistant execution.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: current authority note for assistant inspection APIs and Bun UI surfacing.
+- `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`: current authority note for exact assistant bundle inspection on the Bun product path.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
@@ -414,6 +416,7 @@ GET  /api/goals/:goalKey/write-traces
 GET  /api/goals/:goalKey/assistant/thread
 GET  /api/goals/:goalKey/assistant/runs
 GET  /api/goals/:goalKey/assistant/runs/:assistantRunId
+GET  /api/goals/:goalKey/assistant/runs/:assistantRunId/bundle
 POST /api/goals/:goalKey/assistant/messages
 POST /api/goals/:goalKey/assistant/run
 POST /api/goals/:goalKey/tasks
@@ -471,7 +474,7 @@ Current UI capabilities:
 - direct decision topic creation and resolution
 - decision topic surfacing
 - assistant thread surfacing
-- assistant run list and assistant run detail inspection
+- assistant run list, assistant run detail inspection, and exact bundle-file inspection for `context.md`, `prompt.md`, `outcome.json`, and `result.json`
 
 Current non-UI Goal assistant substrate:
 
@@ -489,7 +492,6 @@ What is still missing:
 
 - richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond current Goal doc-status policy plus durable planning-request intake and auto-resolution
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
-- deeper assistant-run inspection beyond the current summary/detail projection
 - deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
@@ -500,7 +502,7 @@ Next high-leverage phase:
 
 1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
 2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core.
-3. Deepen preference and assistant-run inspection policy where it improves deterministic operator visibility without introducing new workflow truth.
+3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 
 Keep this out of the next phase unless explicitly requested:

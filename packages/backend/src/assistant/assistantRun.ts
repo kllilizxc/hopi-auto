@@ -154,6 +154,20 @@ export interface GoalAssistantRunSummary {
   actionCount: number
 }
 
+export interface GoalAssistantRunBundleFile {
+  path: string
+  content: string | null
+}
+
+export interface GoalAssistantRunBundle {
+  goalKey: string
+  assistantRunId: string
+  context: GoalAssistantRunBundleFile
+  prompt: GoalAssistantRunBundleFile
+  outcome: GoalAssistantRunBundleFile
+  result: GoalAssistantRunBundleFile
+}
+
 const goalAssistantRunRecordSchema = z.object({
   goalKey: z.string().min(1),
   assistantRunId: z.string().min(1),
