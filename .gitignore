@@ -7,9 +7,12 @@ dist
 *.tgz
 
 # HOPI runtime artifacts
+.hopi/runtime/
 .hopi/worktrees/
 packages/backend/.hopi/
+packages/backend/tests/tmp/
 packages/backend/tests/shadow-project/.git/
+packages/backend/tests/shadow-project/.hopi/runtime/
 packages/backend/tests/shadow-project/.hopi/worktrees/
 
 # code coverage
