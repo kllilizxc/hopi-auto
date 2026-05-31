@@ -1,5 +1,7 @@
+> **Status:** Historical implementation plan. Do not implement this document directly. Phase 1 has replaced this prototype path; start with `docs/agent-handoff.md`.
+
 # HOPI Multi-Agent Collaboration: Implementation Plan
-Status: Proposed
+Status: historical implementation plan superseded by `docs/agent-handoff.md` for implementation work
 Date: 2026-05-29
 
 This plan outlines the sequential phases to implement the multi-agent orchestration layer for the HOPI Goal system based on the finalized `hopi-multi-agent-architecture.md` design.

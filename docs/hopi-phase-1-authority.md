@@ -2,7 +2,11 @@
 
 Phase 1 builds a Bun-first deterministic backend core for file-native HOPI goal boards.
 
-The execution authority is `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`.
+Status: implemented and verified.
+
+For zero-context handoff, start with `docs/agent-handoff.md`.
+
+The completed execution plan is `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`.
 
 ## Phase 1 Schema
 
@@ -23,3 +27,15 @@ Tasks use:
 ## Backend Constraint
 
 The Phase 1 backend uses Bun APIs directly. Express and execa are not part of the target backend.
+
+## Implemented Surface
+
+- `packages/backend/src/domain/board.ts`
+- `packages/backend/src/domain/validation.ts`
+- `packages/backend/src/storage/boardStore.ts`
+- `packages/backend/src/runtime/attemptStore.ts`
+- `packages/backend/src/agent/AgentRunner.ts`
+- `packages/backend/src/scheduler/reconcileOnce.ts`
+- `packages/backend/src/server.ts`
+
+Run `bun run check` from the repo root before handing work to another agent.

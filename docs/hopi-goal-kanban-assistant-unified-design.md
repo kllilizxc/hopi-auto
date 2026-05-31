@@ -1,6 +1,8 @@
+> **Status:** Historical product background. Do not implement this document directly. Phase 1 supersedes obsolete task fields such as `candidate`, task status `blocked`, `dependencyTaskList`, and `todo.mjs`; start with `docs/agent-handoff.md`.
+
 # HOPI Goal System Unified Design
 
-Status: canonical design
+Status: historical product background superseded by `docs/agent-handoff.md` for implementation work
 Last updated: 2026-05-26
 
 This is the single canonical design document for HOPI Goal, kanban, assistant, planner, scheduler, runtime overlay, and trace behavior.

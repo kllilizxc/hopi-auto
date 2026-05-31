@@ -1,5 +1,7 @@
 # HOPI Takeover Stabilization Implementation Plan
 
+> **Status:** Completed on 2026-05-31. For current handoff and next work, start with `docs/agent-handoff.md`. This plan remains useful as rationale and implementation history; do not re-run unchecked boxes as if Phase 1 were still pending.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the disposable prototype backend with a Bun-first deterministic core that can read, mutate, reconcile, and expose file-native HOPI goal boards without Express, Vite coupling, or real agent dependencies.
@@ -1060,4 +1062,3 @@ Type consistency:
 - `TaskStatus`, `TaskKind`, `BlockerRef`, and `FailureKind` are defined once in `domain/board.ts`.
 - `blockedBy` is used consistently; `blockers` and `dependencyTaskList` are not Phase 1 fields.
 - `merge_conflict` appears both as failure kind and blocker kind, with the blocker written only after budget exhaustion.
-

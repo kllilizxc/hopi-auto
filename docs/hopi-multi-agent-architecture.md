@@ -1,5 +1,7 @@
+> **Status:** Historical architecture background. Do not implement this document directly. The current Bun-first backend no longer uses `todo.mjs`, Express, execa, `GoalScheduler`, or `AgentDispatcher`; start with `docs/agent-handoff.md`.
+
 # HOPI Multi-Agent Collaboration Architecture
-Status: Proposed
+Status: historical architecture background superseded by `docs/agent-handoff.md` for implementation work
 Date: 2026-05-29
 
 ## Overview
