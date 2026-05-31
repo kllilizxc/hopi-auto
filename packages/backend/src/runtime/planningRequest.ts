@@ -9,6 +9,7 @@ import type {
 export interface GoalPlanningRequestInput {
   goalKey: string
   requestKey?: string
+  groupKey?: string
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -23,6 +24,28 @@ export interface GoalPlanningRequestResult {
   request: GoalPlanningRequest
   created: boolean
   taskCreated: boolean
+}
+
+export interface GoalPlanningBatchEntryInput {
+  taskKey: string
+  requestKey?: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+  blockedBy?: BlockerRef[]
+  blockedByTaskKeys?: string[]
+}
+
+export interface GoalPlanningBatchResult {
+  groupKey: string
+  entries: Array<{
+    taskKey: string
+    requestKey: string
+    taskRef: string
+    created: boolean
+    taskCreated: boolean
+  }>
 }
 
 export async function requestGoalPlanning(
@@ -42,6 +65,7 @@ export async function requestGoalPlanning(
       input.goalKey,
       existingByKey.requestKey,
       {
+        groupKey: input.groupKey,
         decisionRefs: input.decisionRefs,
         requestedUpdates: input.requestedUpdates,
       },
@@ -64,6 +88,7 @@ export async function requestGoalPlanning(
       input.goalKey,
       existingOpen.requestKey,
       {
+        groupKey: input.groupKey,
         decisionRefs: input.decisionRefs,
         requestedUpdates: input.requestedUpdates,
       },
@@ -100,6 +125,7 @@ export async function requestGoalPlanning(
       input.goalKey,
       upgradeableGeneric.requestKey,
       {
+        groupKey: input.groupKey,
         title: input.title,
         description: input.description,
         acceptanceCriteria: input.acceptanceCriteria,
@@ -146,6 +172,7 @@ export async function requestGoalPlanning(
 
   const request = await stores.planningRequests.createRequest(input.goalKey, {
     requestKey: input.requestKey,
+    groupKey: input.groupKey,
     title: input.title,
     description: input.description,
     acceptanceCriteria: input.acceptanceCriteria,
@@ -158,6 +185,94 @@ export async function requestGoalPlanning(
     request,
     created: true,
     taskCreated,
+  }
+}
+
+export async function requestGoalPlanningBatch(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    groupKey: string
+    decisionRefs?: string[]
+    requests: GoalPlanningBatchEntryInput[]
+    writer?: string
+    reason?: string
+  },
+): Promise<GoalPlanningBatchResult> {
+  validatePlanningBatchInput(input.requests)
+  await validateExistingTaskBlockers(stores.boardStore, input.goalKey, input.requests)
+
+  const entries: GoalPlanningBatchResult['entries'] = []
+  for (const request of input.requests) {
+    const result = await requestGoalPlanning(stores, {
+      goalKey: input.goalKey,
+      requestKey: request.requestKey,
+      groupKey: input.groupKey,
+      title: request.title,
+      description: request.description,
+      acceptanceCriteria: request.acceptanceCriteria,
+      decisionRefs: input.decisionRefs,
+      requestedUpdates: request.requestedUpdates,
+      writer: input.writer,
+      reason: input.reason,
+    })
+    entries.push({
+      taskKey: request.taskKey,
+      requestKey: result.request.requestKey,
+      taskRef: result.request.taskRef,
+      created: result.created,
+      taskCreated: result.taskCreated,
+    })
+  }
+
+  const taskRefByKey = new Map(entries.map((entry) => [entry.taskKey, entry.taskRef]))
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'planning_request',
+    input.reason ?? `request planning batch ${input.groupKey}`,
+    (board) => {
+      for (const request of input.requests) {
+        const taskRef = taskRefByKey.get(request.taskKey)
+        if (!taskRef) {
+          throw new Error(`Planning batch task mapping missing: ${request.taskKey}`)
+        }
+        const task = board.items.find((item) => item.ref === taskRef)
+        if (!task) {
+          throw new Error(`Task not found: ${taskRef}`)
+        }
+        const requestedBlockers = [
+          ...(request.blockedBy ?? []),
+          ...(request.blockedByTaskKeys ?? []).map((taskKey) => {
+            const ref = taskRefByKey.get(taskKey)
+            if (!ref) {
+              throw new Error(`Unknown planning batch dependency: ${taskKey}`)
+            }
+            return {
+              kind: 'task' as const,
+              ref,
+            }
+          }),
+        ]
+
+        for (const blocker of requestedBlockers) {
+          if (
+            !task.blockedBy.some(
+              (existing) => existing.kind === blocker.kind && existing.ref === blocker.ref,
+            )
+          ) {
+            task.blockedBy.push(blocker)
+          }
+        }
+      }
+    },
+  )
+
+  return {
+    groupKey: input.groupKey,
+    entries,
   }
 }
 
@@ -258,6 +373,66 @@ function nextPlanningTaskRef(existingRefs: string[]) {
     }, 0) + 1
 
   return `P-${nextNumber}`
+}
+
+async function validateExistingTaskBlockers(
+  boardStore: BoardStore,
+  goalKey: string,
+  requests: GoalPlanningBatchEntryInput[],
+) {
+  const board = await boardStore.readBoard(goalKey)
+  const existingRefs = new Set(board.items.map((item) => item.ref))
+  for (const request of requests) {
+    for (const blocker of request.blockedBy ?? []) {
+      if (blocker.kind === 'task' && !existingRefs.has(blocker.ref)) {
+        throw new Error(`Task blocker not found: ${blocker.ref}`)
+      }
+    }
+  }
+}
+
+function validatePlanningBatchInput(requests: GoalPlanningBatchEntryInput[]) {
+  if (requests.length === 0) {
+    throw new Error('Planning batch must include at least one request')
+  }
+
+  const taskKeys = requests.map((request) => request.taskKey)
+  if (new Set(taskKeys).size !== taskKeys.length) {
+    throw new Error('Planning batch taskKey values must be unique')
+  }
+
+  const requestByKey = new Map(requests.map((request) => [request.taskKey, request]))
+  for (const request of requests) {
+    if (request.blockedByTaskKeys?.includes(request.taskKey)) {
+      throw new Error(`Planning batch task cannot depend on itself: ${request.taskKey}`)
+    }
+    for (const dependencyKey of request.blockedByTaskKeys ?? []) {
+      if (!requestByKey.has(dependencyKey)) {
+        throw new Error(`Unknown planning batch dependency: ${dependencyKey}`)
+      }
+    }
+  }
+
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (taskKey: string) => {
+    if (visited.has(taskKey)) {
+      return
+    }
+    if (visiting.has(taskKey)) {
+      throw new Error(`Planning batch dependency cycle detected at: ${taskKey}`)
+    }
+    visiting.add(taskKey)
+    for (const dependencyKey of requestByKey.get(taskKey)?.blockedByTaskKeys ?? []) {
+      visit(dependencyKey)
+    }
+    visiting.delete(taskKey)
+    visited.add(taskKey)
+  }
+
+  for (const taskKey of taskKeys) {
+    visit(taskKey)
+  }
 }
 
 function findUpgradeableGenericFollowThrough(

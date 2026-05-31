@@ -13,6 +13,7 @@ export type GoalPlanningRequestUpdateTarget = (typeof PLANNING_REQUEST_UPDATE_TA
 
 export interface GoalPlanningRequest {
   requestKey: string
+  groupKey?: string
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -38,6 +39,7 @@ export interface PlanningRequestStore {
     goalKey: string,
     input: {
       requestKey?: string
+      groupKey?: string
       title: string
       description: string
       acceptanceCriteria: string[]
@@ -50,6 +52,7 @@ export interface PlanningRequestStore {
     goalKey: string,
     requestKey: string,
     input: {
+      groupKey?: string
       decisionRefs?: string[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
@@ -58,6 +61,7 @@ export interface PlanningRequestStore {
     goalKey: string,
     requestKey: string,
     input: {
+      groupKey?: string
       title: string
       description: string
       acceptanceCriteria: string[]
@@ -74,6 +78,7 @@ export interface PlanningRequestStore {
 
 const GoalPlanningRequestSchema = z.object({
   requestKey: z.string().min(1),
+  groupKey: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
@@ -120,6 +125,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
 
         const request: GoalPlanningRequest = {
           requestKey,
+          groupKey: input.groupKey,
           title: input.title,
           description: input.description,
           acceptanceCriteria: input.acceptanceCriteria,
@@ -149,10 +155,13 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.requestedUpdates,
           input.requestedUpdates ?? [],
         )
+        const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const changed =
+          nextGroupKey !== request.groupKey ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
+          request.groupKey = nextGroupKey
           request.decisionRefs = nextDecisionRefs
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
@@ -175,13 +184,16 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.requestedUpdates,
           input.requestedUpdates ?? [],
         )
+        const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const changed =
+          nextGroupKey !== request.groupKey ||
           request.title !== input.title ||
           request.description !== input.description ||
           !sameStringArray(request.acceptanceCriteria, input.acceptanceCriteria) ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
+          request.groupKey = nextGroupKey
           request.title = input.title
           request.description = input.description
           request.acceptanceCriteria = [...input.acceptanceCriteria]
@@ -276,4 +288,14 @@ function mergeUniqueValues<T extends string>(existing: T[], incoming: T[]) {
 
 function sameStringArray(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => right[index] === value)
+}
+
+function resolveGroupKey(existing: string | undefined, incoming: string | undefined) {
+  if (!existing) {
+    return incoming
+  }
+  if (!incoming || incoming === existing) {
+    return existing
+  }
+  throw new Error(`Planning request group mismatch: ${existing} != ${incoming}`)
 }

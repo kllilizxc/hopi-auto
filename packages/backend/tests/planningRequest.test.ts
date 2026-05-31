@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { requestGoalPlanning } from '../src/runtime/planningRequest'
+import { requestGoalPlanning, requestGoalPlanningBatch } from '../src/runtime/planningRequest'
 import { createBoardStore } from '../src/storage/boardStore'
 import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
 
@@ -157,6 +157,89 @@ describe('requestGoalPlanning', () => {
           acceptanceCriteria: ['The database integration plan is visible in todo.yml.'],
           decisionRefs: ['db-provider'],
           requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('creates grouped planning follow-through across multiple visible planning tasks', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    const result = await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh the durable goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape the visible planning graph after the auth goal context is clear.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    expect(result).toMatchObject({
+      groupKey: 'auth-follow-through',
+      entries: [
+        {
+          taskKey: 'goal-docs',
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+        },
+        {
+          taskKey: 'task-graph',
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+        },
+      ],
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Clarify auth goal context',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose auth task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
         }),
       ],
     })

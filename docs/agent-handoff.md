@@ -37,6 +37,7 @@ Phase 1 backend is complete:
 - Durable planning requests now also support explicit `goal.md` update targets, and planner follow-through evidence/policy now treats `goal.md`, `design.md`, and `todo.yml` as one inspectable requested-update contract.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
+- Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
 - Reviewer and merger prompts now correlate prior run history, artifact refs, transcript evidence, and durable write traces instead of relying on write-trace policy alone.
 - Planning reviewer and merger prompts now also enforce durable follow-through evidence against open planning requests, planning write traces, and prior run evidence.
 - The Bun backend now serves the active Bun UI at `/`.
@@ -72,6 +73,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-decision-driven-planning-request-enrichment-design.md`: current authority note for enriching open planning requests when visible decision blockers are opened for planning tasks.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-planner-follow-through-design.md`: current authority note for routing resolved engineering decisions through visible planner follow-through before engineering resumes.
 - `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-targets-design.md`: current authority note for using `goal.md` as a first-class planning follow-through target.
+- `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`: current authority note for run-history and artifact-aware reviewer/merger policy.
 - `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`: current authority note for planning follow-through reviewer/merger policy.
 
@@ -506,7 +508,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- richer assistant action coverage beyond the current decision-linked planning/decision/preference loop, especially workflows that span more than one visible planning task or require Goal doc maintenance beyond the explicit `goal.md` / `design.md` / `todo.yml` target surface
+- richer assistant action coverage beyond the current grouped planning/decision/preference loop, especially workflows that require Goal doc maintenance beyond the explicit `goal.md` / `design.md` / `todo.yml` target surface or richer coordination after grouped planning work exists
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
@@ -516,8 +518,8 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Extend Goal assistant and planner/runtime behavior beyond the current automatic decision-to-planner follow-through loop, especially planner workflows after answers materially reshape `goal.md`, `design.md`, and `todo.yml`.
-2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, requested update targets, scheduler-enforced coverage checks, automatic decision-to-request enrichment, and Goal-doc-aware coverage policy.
+1. Extend Goal assistant and planner/runtime behavior beyond the current automatic decision-to-planner and grouped-planning follow-through loop, especially planner workflows after answers materially reshape `goal.md`, `design.md`, and `todo.yml`.
+2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, requested update targets, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, and grouped multi-task follow-through.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 

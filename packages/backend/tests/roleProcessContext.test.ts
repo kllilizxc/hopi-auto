@@ -207,6 +207,64 @@ requests:
     expect(context).not.toContain('src/other.ts')
   })
 
+  test('shows sibling open planning requests from the same planning group', async () => {
+    const rootDir = testRoot()
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-3b', 'planning-requests.yml'),
+      `version: 1
+goalKey: goal-3b
+requests:
+  - requestKey: PR-1
+    groupKey: auth-follow-through
+    title: Clarify auth goal context
+    description: Refresh durable Goal context first.
+    acceptanceCriteria:
+      - Goal context is durable.
+    taskRef: P-1
+    requestedUpdates:
+      - goal.md
+      - design.md
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+  - requestKey: PR-2
+    groupKey: auth-follow-through
+    title: Decompose auth task graph
+    description: Reshape todo.yml after the goal context is ready.
+    acceptanceCriteria:
+      - The auth task graph is visible.
+    taskRef: P-2
+    requestedUpdates:
+      - todo.yml
+    status: open
+    createdAt: 2026-06-01T00:01:00.000Z
+`,
+    )
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-3b',
+      goalTitle: 'Goal Three B',
+      runId: 'run-3b',
+      stepId: 'step-3b',
+      role: 'planner',
+      task: {
+        ref: 'P-1',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Clarify auth goal context',
+        description: 'Refresh durable Goal context first.',
+        acceptanceCriteria: ['Goal context is durable.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    expect(context).toContain('### Related Open Planning Group')
+    expect(context).toContain('Group key: auth-follow-through')
+    expect(context).toContain('PR-2 | P-2 | Decompose auth task graph')
+    expect(context).toContain('Requested durable updates: todo.yml')
+  })
+
   test('gives reviewer prompts explicit write-trace evidence policy for engineering review', async () => {
     const rootDir = testRoot()
     const traces = createWriteTraceStore(rootDir)

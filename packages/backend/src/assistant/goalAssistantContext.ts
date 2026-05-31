@@ -201,12 +201,36 @@ Required outcome shape:
     },
     {
       "kind": "request_planning",
+      "groupKey": "optional-stable-group-key",
       "title": "planning request title",
       "description": "why visible planning work is needed",
       "acceptanceCriteria": ["what the planner-visible request must accomplish"],
       "decisionRefs": ["optional linked decision key"],
       "requestedUpdates": ["goal.md", "design.md", "todo.yml"],
       "blockedBy": []
+    },
+    {
+      "kind": "request_planning_batch",
+      "groupKey": "stable-group-key",
+      "decisionRefs": ["optional linked decision key"],
+      "requests": [
+        {
+          "taskKey": "goal-docs",
+          "title": "first visible planning task title",
+          "description": "what this planning stage must accomplish",
+          "acceptanceCriteria": ["at least one acceptance criterion"],
+          "requestedUpdates": ["goal.md", "design.md"],
+          "blockedByTaskKeys": []
+        },
+        {
+          "taskKey": "task-graph",
+          "title": "second visible planning task title",
+          "description": "what this later planning stage must accomplish",
+          "acceptanceCriteria": ["at least one acceptance criterion"],
+          "requestedUpdates": ["todo.yml"],
+          "blockedByTaskKeys": ["goal-docs"]
+        }
+      ]
     },
     {
       "kind": "request_decision",
@@ -239,6 +263,7 @@ Rules:
 - Only move tasks through legal manual transitions.
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
+- Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.

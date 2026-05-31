@@ -47,6 +47,7 @@ interface GoalDecision {
 
 interface GoalPlanningRequest {
   requestKey: string
+  groupKey?: string
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -193,6 +194,7 @@ interface AssistantAction {
     | 'move_task'
     | 'create_planning_task'
     | 'request_planning'
+    | 'request_planning_batch'
     | 'request_decision'
     | 'resolve_decision'
     | 'record_preference'
@@ -205,6 +207,16 @@ interface AssistantAction {
   acceptanceCriteria?: string[]
   decisionRefs?: string[]
   requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
+  groupKey?: string
+  requests?: Array<{
+    taskKey: string
+    requestKey?: string
+    title: string
+    description: string
+    acceptanceCriteria: string[]
+    requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
+    blockedByTaskKeys?: string[]
+  }>
   decisionKey?: string
   summary?: string
   answer?: string
@@ -216,12 +228,16 @@ interface AssistantActionResult {
     | 'move_task'
     | 'create_planning_task'
     | 'request_planning'
+    | 'request_planning_batch'
     | 'request_decision'
     | 'resolve_decision'
     | 'record_preference'
     | 'update_preference'
   taskRef?: string
   requestKey?: string
+  taskRefs?: string[]
+  requestKeys?: string[]
+  groupKey?: string
   status?: TaskStatus
   decisionKey?: string
   summary: string
@@ -432,6 +448,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
   if (form.dataset.role === 'planning-request-form') {
     event.preventDefault()
     const formData = new FormData(form)
+    const groupKey = `${formData.get('groupKey') ?? ''}`.trim()
     const title = `${formData.get('title') ?? ''}`.trim()
     const acceptanceCriteria = `${formData.get('acceptanceCriteria') ?? ''}`
       .split('\n')
@@ -457,6 +474,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
     void createPlanningRequest(
       {
         requestKey: `${formData.get('requestKey') ?? ''}`.trim(),
+        groupKey,
         title,
         description: `${formData.get('description') ?? ''}`.trim(),
         acceptanceCriteria,
@@ -939,6 +957,7 @@ async function createDecision(
 async function createPlanningRequest(
   input: {
     requestKey: string
+    groupKey: string
     title: string
     description: string
     acceptanceCriteria: string[]
@@ -953,6 +972,7 @@ async function createPlanningRequest(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         requestKey: input.requestKey || undefined,
+        groupKey: input.groupKey || undefined,
         title: input.title,
         description: input.description,
         acceptanceCriteria: input.acceptanceCriteria,
@@ -1216,6 +1236,7 @@ function render() {
                     name="decisionRefs"
                     placeholder="linked decision refs (comma separated)"
                   />
+                  <input name="groupKey" type="text" placeholder="optional planning group key" />
                   <textarea
                     name="description"
                     placeholder="Why this planning follow-through is needed"
@@ -1461,6 +1482,11 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       <strong>${escapeHtml(request.requestKey)}</strong>
       <p>${escapeHtml(request.title)}</p>
       <div class="assistant-summary">Task: ${escapeHtml(request.taskRef)}</div>
+      ${
+        request.groupKey
+          ? `<div class="assistant-summary">Planning group: ${escapeHtml(request.groupKey)}</div>`
+          : ''
+      }
       ${
         request.decisionRefs.length > 0
           ? `<div class="assistant-summary">Linked decisions: ${escapeHtml(request.decisionRefs.join(', '))}</div>`

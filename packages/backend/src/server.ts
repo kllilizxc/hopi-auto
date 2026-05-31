@@ -70,6 +70,7 @@ const createDecisionSchema = z.object({
 
 const createPlanningRequestSchema = z.object({
   requestKey: z.string().min(1).optional(),
+  groupKey: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -275,6 +276,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               requestKey: body.requestKey,
+              groupKey: body.groupKey,
               title: body.title,
               description: body.description,
               acceptanceCriteria: body.acceptanceCriteria,
@@ -396,7 +398,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           broadcast({ type: 'assistant_changed', goalKey: currentGoalKey })
           broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           if (
-            result.actionResults.some((actionResult) => actionResult.kind === 'request_planning')
+            result.actionResults.some(
+              (actionResult) =>
+                actionResult.kind === 'request_planning' ||
+                actionResult.kind === 'request_planning_batch',
+            )
           ) {
             broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
           }

@@ -11,7 +11,7 @@ import {
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
 import { requestGoalDecision, resolveGoalDecision } from '../runtime/decisionRequest'
-import { requestGoalPlanning } from '../runtime/planningRequest'
+import { requestGoalPlanning, requestGoalPlanningBatch } from '../runtime/planningRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
@@ -228,6 +228,7 @@ async function applyAssistantAction(
       },
       {
         goalKey,
+        groupKey: action.groupKey,
         title: action.title,
         description: action.description,
         acceptanceCriteria: action.acceptanceCriteria,
@@ -246,6 +247,31 @@ async function applyAssistantAction(
       summary: result.created
         ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
         : `Planning request already open in ${result.request.requestKey} for ${result.request.taskRef}.`,
+    }
+  }
+
+  if (action.kind === 'request_planning_batch') {
+    const result = await requestGoalPlanningBatch(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        groupKey: action.groupKey,
+        decisionRefs: action.decisionRefs,
+        requests: action.requests,
+        writer: 'assistant',
+        reason: `assistant request planning batch ${action.groupKey}`,
+      },
+    )
+
+    return {
+      kind: 'request_planning_batch',
+      groupKey: result.groupKey,
+      requestKeys: result.entries.map((entry) => entry.requestKey),
+      taskRefs: result.entries.map((entry) => entry.taskRef),
+      summary: `Requested grouped planning follow-through ${result.groupKey} across ${result.entries.map((entry) => entry.taskRef).join(', ')}.`,
     }
   }
 
@@ -427,6 +453,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
   }
   if (action.kind === 'request_planning') {
     return `Request planning: ${action.title}`
+  }
+  if (action.kind === 'request_planning_batch') {
+    return `Request grouped planning: ${action.groupKey}`
   }
   if (action.kind === 'request_decision') {
     return `Request decision ${action.decisionKey}.`

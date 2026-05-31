@@ -110,6 +110,32 @@ describe('createPlanningRequestStore', () => {
       ],
     })
   })
+
+  test('supports stable planning request group keys', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Plan auth docs',
+      description: 'Coordinate auth follow-through across multiple planning tasks.',
+      acceptanceCriteria: ['The auth planning split is durable.'],
+      taskRef: 'P-3',
+      groupKey: 'auth-follow-through',
+    })
+
+    expect(created).toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-3',
+      groupKey: 'auth-follow-through',
+    })
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'auth-follow-through',
+        }),
+      ],
+    })
+  })
 })
 
 function testRoot() {

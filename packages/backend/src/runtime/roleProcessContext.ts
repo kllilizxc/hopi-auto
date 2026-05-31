@@ -7,6 +7,7 @@ import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
 import {
+  type GoalPlanningRequest,
   type GoalPlanningRequestUpdateTarget,
   type PlanningRequestStore,
   createPlanningRequestStore,
@@ -48,10 +49,20 @@ interface PlannerContextInputs {
   planningRequestsContent: string
   relevantPlanningRequests: Array<{
     requestKey: string
+    groupKey?: string
     title: string
     taskRef: string
     decisionRefs: string[]
     requestedUpdates: GoalPlanningRequestUpdateTarget[]
+  }>
+  relatedPlanningGroups: Array<{
+    groupKey: string
+    requests: Array<{
+      requestKey: string
+      taskRef: string
+      title: string
+      requestedUpdates: GoalPlanningRequestUpdateTarget[]
+    }>
   }>
   planningFollowThroughEvidence: {
     requestedUpdates: GoalPlanningRequestUpdateTarget[]
@@ -322,6 +333,7 @@ ${inputs.planningRequestsContent.trim()}
 \`\`\`
 
 ${renderRelevantPlanningRequests(inputs.relevantPlanningRequests)}
+${renderRelatedPlanningGroups(inputs.relatedPlanningGroups)}
 ${renderPlanningUpdateCoverage(inputs.planningFollowThroughEvidence)}
 
 ### Current preference.md
@@ -401,11 +413,13 @@ async function loadPlannerContextInputs(
     .filter((request) => request.status === 'open' && request.taskRef === taskRef)
     .map((request) => ({
       requestKey: request.requestKey,
+      groupKey: request.groupKey,
       title: request.title,
       taskRef: request.taskRef,
       decisionRefs: request.decisionRefs,
       requestedUpdates: request.requestedUpdates,
     }))
+  const relatedPlanningGroups = summarizeRelatedPlanningGroups(planningRequestSet.requests, taskRef)
   const planningFollowThroughEvidence = summarizePlanningFollowThroughEvidence(
     planningRequestSet.requests.filter(
       (request) => request.status === 'open' && request.taskRef === taskRef,
@@ -421,6 +435,7 @@ async function loadPlannerContextInputs(
     planningRequestsFile: paths.planningRequestsPath(goalKey),
     planningRequestsContent: await Bun.file(paths.planningRequestsPath(goalKey)).text(),
     relevantPlanningRequests,
+    relatedPlanningGroups,
     planningFollowThroughEvidence: {
       requestedUpdates: planningFollowThroughEvidence.requestedUpdates,
       observedUpdates: planningFollowThroughEvidence.observedUpdates,
@@ -513,6 +528,7 @@ ${requests
   .map((request) =>
     [
       `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
+      request.groupKey ? `  Planning group: ${request.groupKey}` : null,
       request.decisionRefs.length > 0
         ? `  Linked decisions: ${request.decisionRefs.join(', ')}`
         : null,
@@ -522,6 +538,31 @@ ${requests
     ]
       .filter(Boolean)
       .join('\n'),
+  )
+  .join('\n')}
+`
+}
+
+function renderRelatedPlanningGroups(groups: PlannerContextInputs['relatedPlanningGroups']) {
+  if (groups.length === 0) {
+    return ''
+  }
+
+  return `### Related Open Planning Group
+
+${groups
+  .map((group) =>
+    [
+      `- Group key: ${group.groupKey}`,
+      ...group.requests.map(
+        (request) =>
+          `  - ${request.requestKey} | ${request.taskRef} | ${request.title}${
+            request.requestedUpdates.length > 0
+              ? ` | Requested durable updates: ${request.requestedUpdates.join(', ')}`
+              : ''
+          }`,
+      ),
+    ].join('\n'),
   )
   .join('\n')}
 `
@@ -540,6 +581,44 @@ function renderPlanningUpdateCoverage(
 - Observed requested durable updates: ${evidence.observedUpdates.length > 0 ? evidence.observedUpdates.join(', ') : 'none yet'}
 - Missing requested durable updates: ${evidence.missingUpdates.length > 0 ? evidence.missingUpdates.join(', ') : 'none'}
 `
+}
+
+function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef: string) {
+  const currentGroupKeys = mergeUniqueStrings(
+    requests
+      .filter((request) => request.status === 'open' && request.taskRef === taskRef)
+      .map((request) => request.groupKey)
+      .filter((groupKey): groupKey is string => Boolean(groupKey)),
+  )
+
+  return currentGroupKeys
+    .map((groupKey) => ({
+      groupKey,
+      requests: requests
+        .filter(
+          (request) =>
+            request.status === 'open' &&
+            request.groupKey === groupKey &&
+            request.taskRef !== taskRef,
+        )
+        .map((request) => ({
+          requestKey: request.requestKey,
+          taskRef: request.taskRef,
+          title: request.title,
+          requestedUpdates: request.requestedUpdates,
+        })),
+    }))
+    .filter((group) => group.requests.length > 0)
+}
+
+function mergeUniqueStrings(values: string[]) {
+  const merged: string[] = []
+  for (const value of values) {
+    if (!merged.includes(value)) {
+      merged.push(value)
+    }
+  }
+  return merged
 }
 
 async function loadRelevantRunEvidence(options: {

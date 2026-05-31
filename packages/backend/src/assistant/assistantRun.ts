@@ -53,6 +53,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('request_planning'),
+    groupKey: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -66,6 +67,32 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
         }),
       )
       .default([]),
+  }),
+  z.object({
+    kind: z.literal('request_planning_batch'),
+    groupKey: z.string().min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    requests: z
+      .array(
+        z.object({
+          taskKey: z.string().min(1),
+          requestKey: z.string().min(1).optional(),
+          title: z.string().min(1),
+          description: z.string(),
+          acceptanceCriteria: z.array(z.string().min(1)).min(1),
+          requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
+          blockedBy: z
+            .array(
+              z.object({
+                kind: z.enum(BLOCKER_KINDS),
+                ref: z.string().min(1),
+              }),
+            )
+            .default([]),
+          blockedByTaskKeys: z.array(z.string().min(1)).default([]),
+        }),
+      )
+      .min(1),
   }),
   z.object({
     kind: z.literal('request_decision'),
@@ -106,6 +133,13 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning'),
     requestKey: z.string().min(1).optional(),
     taskRef: z.string().min(1),
+    summary: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('request_planning_batch'),
+    groupKey: z.string().min(1),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
     summary: z.string().min(1),
   }),
   z.object({

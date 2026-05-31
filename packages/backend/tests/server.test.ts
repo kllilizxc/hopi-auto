@@ -163,6 +163,25 @@ describe('createServer', () => {
     })
   })
 
+  test('accepts planning request group keys through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Clarify auth goal context',
+      description: 'Coordinate auth follow-through across multiple planning tasks.',
+      acceptanceCriteria: ['The grouped auth follow-through is durable.'],
+      groupKey: 'auth-follow-through',
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      groupKey: 'auth-follow-through',
+    })
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 
@@ -852,6 +871,90 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_decision',
+        }),
+      ]),
+    )
+  })
+
+  test('runs the configured Goal assistant and creates grouped planning follow-through', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Split the auth planning work into durable stages.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I split the auth planning follow-through into two coordinated visible planning tasks.', actions: [{ kind: 'request_planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }] })); console.log('assistant grouped planning requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Split the auth planning work into durable stages.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I split the auth planning follow-through into two coordinated visible planning tasks.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_batch',
+          groupKey: 'auth-follow-through',
+          requestKeys: ['PR-1', 'PR-2'],
+          taskRefs: ['P-1', 'P-2'],
+        }),
+      ]),
+    })
+
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Clarify auth goal context',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose auth task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+
+    const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
+    expect(thread.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'request_planning_batch',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_planning_batch',
         }),
       ]),
     )
