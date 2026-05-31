@@ -111,6 +111,72 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('enriches grouped sibling planning requests with the same decision lineage', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        title: 'Clarify auth goal context',
+        description: 'Refresh durable Goal context first.',
+        acceptanceCriteria: ['Goal context is durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    )
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        title: 'Decompose auth task graph',
+        description: 'Reshape todo.yml after the goal context is ready.',
+        acceptanceCriteria: ['The auth task graph is visible.'],
+      },
+    )
+
+    await requestGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        taskRef: 'P-1',
+      },
+    )
+
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('resolving an engineering-linked decision creates visible planner follow-through and rewires blockers', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

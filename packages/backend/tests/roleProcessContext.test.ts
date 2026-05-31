@@ -221,6 +221,8 @@ requests:
     acceptanceCriteria:
       - Goal context is durable.
     taskRef: P-1
+    decisionRefs:
+      - auth-strategy
     requestedUpdates:
       - goal.md
       - design.md
@@ -233,6 +235,8 @@ requests:
     acceptanceCriteria:
       - The auth task graph is visible.
     taskRef: P-2
+    decisionRefs:
+      - auth-strategy
     requestedUpdates:
       - todo.yml
     status: open
@@ -263,6 +267,7 @@ requests:
     expect(context).toContain('Group key: auth-follow-through')
     expect(context).toContain('PR-2 | P-2 | Decompose auth task graph')
     expect(context).toContain('Requested durable updates: todo.yml')
+    expect(context).toContain('Linked decisions: auth-strategy')
   })
 
   test('gives reviewer prompts explicit write-trace evidence policy for engineering review', async () => {

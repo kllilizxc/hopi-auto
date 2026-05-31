@@ -348,9 +348,21 @@ export async function enrichPlanningRequestsForTaskDecision(
   const openRequests = current.requests.filter(
     (request) => request.status === 'open' && request.taskRef === input.taskRef,
   )
+  const groupKeys = mergeUniqueGroupKeys(
+    openRequests
+      .map((request) => request.groupKey)
+      .filter((groupKey): groupKey is string => Boolean(groupKey)),
+  )
+  const groupedRequests = current.requests.filter(
+    (request) =>
+      request.status === 'open' &&
+      request.taskRef !== input.taskRef &&
+      request.groupKey !== undefined &&
+      groupKeys.includes(request.groupKey),
+  )
 
   const enriched = []
-  for (const request of openRequests) {
+  for (const request of [...openRequests, ...groupedRequests]) {
     enriched.push(
       await stores.planningRequests.mergeRequestMetadata(input.goalKey, request.requestKey, {
         decisionRefs: [input.decisionKey],
@@ -433,6 +445,16 @@ function validatePlanningBatchInput(requests: GoalPlanningBatchEntryInput[]) {
   for (const taskKey of taskKeys) {
     visit(taskKey)
   }
+}
+
+function mergeUniqueGroupKeys(values: string[]) {
+  const merged: string[] = []
+  for (const value of values) {
+    if (!merged.includes(value)) {
+      merged.push(value)
+    }
+  }
+  return merged
 }
 
 function findUpgradeableGenericFollowThrough(

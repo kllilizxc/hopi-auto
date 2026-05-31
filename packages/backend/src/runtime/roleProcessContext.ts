@@ -61,6 +61,7 @@ interface PlannerContextInputs {
       requestKey: string
       taskRef: string
       title: string
+      decisionRefs: string[]
       requestedUpdates: GoalPlanningRequestUpdateTarget[]
     }>
   }>
@@ -554,13 +555,18 @@ ${groups
   .map((group) =>
     [
       `- Group key: ${group.groupKey}`,
-      ...group.requests.map(
-        (request) =>
-          `  - ${request.requestKey} | ${request.taskRef} | ${request.title}${
-            request.requestedUpdates.length > 0
-              ? ` | Requested durable updates: ${request.requestedUpdates.join(', ')}`
-              : ''
-          }`,
+      ...group.requests.map((request) =>
+        [
+          `  - ${request.requestKey} | ${request.taskRef} | ${request.title}`,
+          request.decisionRefs.length > 0
+            ? `    Linked decisions: ${request.decisionRefs.join(', ')}`
+            : null,
+          request.requestedUpdates.length > 0
+            ? `    Requested durable updates: ${request.requestedUpdates.join(', ')}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
       ),
     ].join('\n'),
   )
@@ -605,6 +611,7 @@ function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef
           requestKey: request.requestKey,
           taskRef: request.taskRef,
           title: request.title,
+          decisionRefs: request.decisionRefs,
           requestedUpdates: request.requestedUpdates,
         })),
     }))
