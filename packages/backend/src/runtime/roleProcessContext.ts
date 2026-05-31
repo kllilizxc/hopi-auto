@@ -12,6 +12,7 @@ import {
 } from '../storage/planningRequestStore'
 import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
 import { type GoalDocsStore, createGoalDocsStore } from './goalDocsStore'
+import { type RunHistoryStore, createRunHistoryStore } from './runHistoryStore'
 import type { GoalWriteTraceEntry } from './writeTrace'
 import { type WriteTraceStore, createWriteTraceStore } from './writeTraceStore'
 
@@ -57,6 +58,16 @@ interface GoalDocsStatusInputs {
   designStatus: 'bootstrapped' | 'curated'
 }
 
+interface RelevantRunEvidence {
+  runId: string
+  stepId: string
+  role: AgentRole
+  outcome: string
+  artifacts: Array<{ ref: string; label: string }>
+  transcriptSummaries: string[]
+  worktreePath?: string
+}
+
 export function createRoleProcessContextBuilder(
   rootDir = process.cwd(),
   goalDocs: GoalDocsStore = createGoalDocsStore(rootDir),
@@ -64,6 +75,7 @@ export function createRoleProcessContextBuilder(
   decisions: DecisionStore = createDecisionStore(rootDir),
   planningRequests: PlanningRequestStore = createPlanningRequestStore(rootDir),
   preferences: PreferenceStore = createPreferenceStore(rootDir),
+  history: RunHistoryStore = createRunHistoryStore(rootDir),
   writeTraces: WriteTraceStore = createWriteTraceStore(rootDir),
 ): RoleProcessContextBuilder {
   const paths = createProjectPaths(rootDir)
@@ -82,6 +94,14 @@ export function createRoleProcessContextBuilder(
           limit: 12,
         })
       ).filter((entry) => entry.stepId !== options.stepId)
+      const relevantRunEvidence = await loadRelevantRunEvidence({
+        goalKey: options.goalKey,
+        runId: options.runId,
+        stepId: options.stepId,
+        role: options.role,
+        task: options.task,
+        history,
+      })
       const plannerInputs =
         options.role === 'planner'
           ? await loadPlannerContextInputs(
@@ -105,6 +125,7 @@ export function createRoleProcessContextBuilder(
           goalStatus: docsSnapshot.goal.status,
           designStatus: docsSnapshot.design.status,
         },
+        relevantRunEvidence,
         relevantTraces: filterRelevantTraces(relevantTraces, options.runId),
       })
       await Bun.write(contextFile, context)
@@ -141,6 +162,7 @@ function renderContextMarkdown(
       designFile: string
       plannerInputs?: PlannerContextInputs
       docsStatus: GoalDocsStatusInputs
+      relevantRunEvidence: RelevantRunEvidence[]
       relevantTraces: GoalWriteTraceEntry[]
     },
 ) {
@@ -178,6 +200,8 @@ ${renderPlannerInputs(options.plannerInputs)}
 
 - Write the structured outcome JSON to: ${options.outcomeFile}
 
+${renderRelevantRunEvidence(options.role, options.task.kind, options.relevantRunEvidence)}
+
 ${renderRelevantTraces(options.role, options.task.kind, options.relevantTraces)}
 
 ## Boundaries
@@ -206,6 +230,42 @@ function renderRelevantTraces(
 
 ${entries.map((entry) => renderTraceEntry(entry)).join('\n')}
 `
+}
+
+function renderRelevantRunEvidence(
+  role: AgentRole,
+  taskKind: TaskItem['kind'],
+  entries: RelevantRunEvidence[],
+) {
+  if (entries.length === 0) {
+    if (taskKind === 'engineering' && (role === 'reviewer' || role === 'merger')) {
+      return `## Relevant Run Evidence
+
+- No prior run-history evidence was recorded yet for this task.
+`
+    }
+
+    return ''
+  }
+
+  return `## Relevant Run Evidence
+
+${entries.map((entry) => renderRunEvidenceEntry(entry)).join('\n')}
+`
+}
+
+function renderRunEvidenceEntry(entry: RelevantRunEvidence) {
+  const artifacts =
+    entry.artifacts.length === 0
+      ? 'none'
+      : entry.artifacts.map((artifact) => `${artifact.ref} (${artifact.label})`).join(', ')
+  const transcript =
+    entry.transcriptSummaries.length === 0 ? 'none' : entry.transcriptSummaries.join(' | ')
+  const worktree = entry.worktreePath ? `\n  Worktree: ${entry.worktreePath}` : ''
+
+  return `- ${entry.runId} | ${entry.stepId} | ${entry.role} | ${entry.outcome}
+  Artifacts: ${artifacts}
+  Transcript: ${transcript}${worktree}`
 }
 
 function renderTraceEntry(entry: GoalWriteTraceEntry) {
@@ -359,6 +419,7 @@ function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
     return `## Role Evidence Policy
 
 - Reviewer must use relevant write traces as execution evidence.
+- Correlate artifact refs and prior run history with the claimed work before accepting.
 - If there are no relevant traces or the traces do not support the claimed work, prefer reject or fail over blind acceptance.
 `
   }
@@ -366,6 +427,7 @@ function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
   if (role === 'merger') {
     return `## Role Evidence Policy
 
+- Merger must inspect relevant run history and artifact evidence before returning success.
 - Merger must inspect relevant write traces before returning success.
 - Merger must not return success blindly when engineering write-trace evidence is missing.
 `
@@ -403,6 +465,51 @@ function renderRelevantPlanningRequests(
 
 ${requests.map((request) => `- ${request.requestKey} | ${request.title} | ${request.taskRef}`).join('\n')}
 `
+}
+
+async function loadRelevantRunEvidence(options: {
+  goalKey: string
+  runId: string
+  stepId: string
+  role: AgentRole
+  task: TaskItem
+  history: RunHistoryStore
+}) {
+  if (
+    options.task.kind !== 'engineering' ||
+    (options.role !== 'reviewer' && options.role !== 'merger')
+  ) {
+    return []
+  }
+
+  const goalHistory = await options.history.readGoalHistory(options.goalKey)
+  const currentRun = goalHistory.runs.find((run) => run.runId === options.runId)
+  const otherRuns = goalHistory.runs
+    .filter((run) => run.taskRef === options.task.ref && run.runId !== options.runId)
+    .toReversed()
+  const orderedRuns = [...(currentRun ? [currentRun] : []), ...otherRuns]
+
+  return orderedRuns
+    .flatMap((run) =>
+      run.steps
+        .filter((step) => step.stepId !== options.stepId)
+        .filter(
+          (step) =>
+            Boolean(step.execution?.worktree) ||
+            (step.execution?.artifacts.length ?? 0) > 0 ||
+            step.transcript.length > 0,
+        )
+        .map((step) => ({
+          runId: run.runId,
+          stepId: step.stepId,
+          role: step.role,
+          outcome: step.outcome,
+          artifacts: step.execution?.artifacts ?? [],
+          transcriptSummaries: step.transcript.map((entry) => entry.summary).slice(0, 4),
+          worktreePath: step.execution?.worktree?.path,
+        })),
+    )
+    .slice(0, 6)
 }
 
 function capitalizeRole(role: AgentRole) {

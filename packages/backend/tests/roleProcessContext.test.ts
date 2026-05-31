@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRoleProcessContextBuilder } from '../src/runtime/roleProcessContext'
+import { createRunHistoryStore } from '../src/runtime/runHistoryStore'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
 import { createPreferenceStore } from '../src/storage/preferenceStore'
@@ -240,6 +241,88 @@ requests:
     )
   })
 
+  test('includes prior run history artifacts and transcript evidence for engineering review', async () => {
+    const rootDir = testRoot()
+    const history = createRunHistoryStore(rootDir)
+    const runRef = await history.startStep({
+      goalKey: 'goal-6',
+      taskRef: 'T-6',
+      taskKind: 'engineering',
+      role: 'generator',
+      statusBefore: 'planned',
+      message: {
+        kind: 'system',
+        role: 'system',
+        content: 'generator dispatched for T-6',
+      },
+    })
+    await history.recordStepEvent({
+      goalKey: 'goal-6',
+      runId: runRef.runId,
+      stepId: runRef.stepId,
+      event: {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_call',
+        summary: 'Tool call: Bash',
+        toolName: 'Bash',
+      },
+    })
+    await history.recordStepEvent({
+      goalKey: 'goal-6',
+      runId: runRef.runId,
+      stepId: runRef.stepId,
+      event: {
+        kind: 'artifact',
+        ref: 'patch:T-6',
+        label: 'Generated patch',
+      },
+    })
+    await history.finishStep({
+      goalKey: 'goal-6',
+      runId: runRef.runId,
+      stepId: runRef.stepId,
+      statusAfter: 'in_review',
+      outcome: 'success',
+      message: {
+        kind: 'system',
+        role: 'system',
+        content: 'T-6 advanced to in_review',
+      },
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-6',
+      goalTitle: 'Goal Six',
+      runId: runRef.runId,
+      stepId: 'step-reviewer',
+      role: 'reviewer',
+      task: {
+        ref: 'T-6',
+        kind: 'engineering',
+        status: 'in_review',
+        title: 'Review auth implementation',
+        description: 'Review the generated auth changes.',
+        acceptanceCriteria: ['Reviewer sees prior runtime evidence.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Relevant Run Evidence')
+    expect(context).toContain(runRef.runId)
+    expect(context).toContain('generator | success')
+    expect(context).toContain('patch:T-6')
+    expect(context).toContain('Generated patch')
+    expect(context).toContain('Tool call: Bash')
+    expect(prompt).toContain(
+      'Correlate artifact refs and prior run history with the claimed work before accepting.',
+    )
+  })
+
   test('warns merger when engineering work has no durable write-trace evidence', async () => {
     const rootDir = testRoot()
     const builder = createRoleProcessContextBuilder(rootDir)
@@ -264,8 +347,13 @@ requests:
     const context = await readFile(bundle.contextFile, 'utf8')
     const prompt = await readFile(bundle.promptFile, 'utf8')
 
+    expect(context).toContain('## Relevant Run Evidence')
+    expect(context).toContain('No prior run-history evidence was recorded yet for this task.')
     expect(context).toContain('## Relevant Write Traces')
     expect(context).toContain('No durable write traces were recorded yet for this task.')
+    expect(prompt).toContain(
+      'Merger must inspect relevant run history and artifact evidence before returning success.',
+    )
     expect(prompt).toContain(
       'Merger must not return success blindly when engineering write-trace evidence is missing.',
     )
