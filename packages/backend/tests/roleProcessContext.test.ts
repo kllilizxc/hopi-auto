@@ -160,6 +160,88 @@ describe('createRoleProcessContextBuilder', () => {
     expect(context).toContain('src/view.ts')
     expect(context).not.toContain('src/other.ts')
   })
+
+  test('gives reviewer prompts explicit write-trace evidence policy for engineering review', async () => {
+    const rootDir = testRoot()
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry('goal-4', {
+      runId: 'run-4',
+      stepId: 'step-generator',
+      taskRef: 'T-4',
+      role: 'generator',
+      agent: 'process_runner',
+      cwd: '/tmp/worktree',
+      toolName: 'process',
+      callId: 'step-generator',
+      targetPaths: ['src/auth.ts', 'src/session.ts'],
+      changes: [
+        { path: 'src/auth.ts', kind: 'modified' },
+        { path: 'src/session.ts', kind: 'added' },
+      ],
+      argumentSummary: 'bun run generator',
+      resultSummary: 'exit 0 (2 changed files)',
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-4',
+      goalTitle: 'Goal Four',
+      runId: 'run-4',
+      stepId: 'step-reviewer',
+      role: 'reviewer',
+      task: {
+        ref: 'T-4',
+        kind: 'engineering',
+        status: 'in_review',
+        title: 'Review auth implementation',
+        description: 'Review the generated auth changes.',
+        acceptanceCriteria: ['Reviewer uses execution evidence before accepting.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Relevant Write Traces')
+    expect(context).toContain('Changes: modified src/auth.ts, added src/session.ts')
+    expect(prompt).toContain('## Role Evidence Policy')
+    expect(prompt).toContain('Reviewer must use relevant write traces as execution evidence.')
+    expect(prompt).toContain(
+      'If there are no relevant traces or the traces do not support the claimed work, prefer reject or fail over blind acceptance.',
+    )
+  })
+
+  test('warns merger when engineering work has no durable write-trace evidence', async () => {
+    const rootDir = testRoot()
+    const builder = createRoleProcessContextBuilder(rootDir)
+
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-5',
+      goalTitle: 'Goal Five',
+      runId: 'run-5',
+      stepId: 'step-merger',
+      role: 'merger',
+      task: {
+        ref: 'T-5',
+        kind: 'engineering',
+        status: 'merging',
+        title: 'Merge auth implementation',
+        description: 'Merge only if there is execution evidence.',
+        acceptanceCriteria: ['Merger sees the evidence gap.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Relevant Write Traces')
+    expect(context).toContain('No durable write traces were recorded yet for this task.')
+    expect(prompt).toContain(
+      'Merger must not return success blindly when engineering write-trace evidence is missing.',
+    )
+  })
 })
 
 function testRoot() {

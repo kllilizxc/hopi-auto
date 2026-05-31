@@ -22,6 +22,7 @@ Phase 1 backend is complete:
 - Built-in vendor transports now normalize machine-readable CLI output into structured step transcripts instead of storing raw vendor JSON lines.
 - Deterministic merger execution now performs real git merge completion and settled-run cleanup.
 - Durable write traces are now queryable, injected into relevant role context bundles, and surfaced through the Bun API and UI.
+- Reviewer and merger prompts now apply explicit write-trace evidence policy, including engineering evidence-gap guidance when no durable traces exist.
 - The first Goal assistant substrate slice is now implemented with durable `decisions.yml`, repo `preference.md`, Goal-scoped `assistant-thread.json`, planner-context plumbing for decisions/preferences, and minimum Bun API routes for those stores.
 - Live Goal assistant execution is now implemented with an explicit Goal-scoped runtime call, constrained durable actions, assistant run bundles under `.hopi/runtime/**`, and scheduler cleanup for resolved decision blockers.
 - Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
@@ -52,6 +53,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
+- `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
 
 Historical reference only:
 
@@ -199,7 +201,7 @@ Current backend source:
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
 - `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
 - `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap for `goal.md` and `design.md`.
-- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries and planner durable-input plumbing for `todo.yml`, `decisions.yml`, and `.hopi/preference.md`.
+- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, and `.hopi/preference.md`, plus trace-aware reviewer/merger evidence policy.
 - `packages/backend/src/runtime/worktreeManager.ts`: run-scoped git worktree preparation and cleanup.
 - `packages/backend/src/runtime/gitMergeExecutor.ts`: deterministic git merge completion and settled-run cleanup for merger success paths.
 - `packages/backend/src/runtime/writeTrace.ts`: durable write-trace types.
@@ -461,6 +463,7 @@ What is still missing:
 - richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond explicit decision unblock plus one-step reconcile
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper assistant-run inspection beyond the current summary/detail projection
+- deeper artifact/run-history correlation inside review/merge policy beyond the current trace-aware prompt layer
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -469,8 +472,8 @@ What is still missing:
 Next high-leverage phase:
 
 1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
-2. Feed durable write-trace evidence more deeply into role prompts and review/merge policy, without moving workflow truth out of docs.
-3. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, and the current deterministic scheduler core.
+2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, and the current deterministic scheduler core.
+3. Deepen review/merge evidence policy further with artifact/run-history correlation where it improves deterministic behavior.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 
 Keep this out of the next phase unless explicitly requested:

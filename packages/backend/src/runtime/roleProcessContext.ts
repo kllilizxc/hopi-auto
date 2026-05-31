@@ -88,6 +88,7 @@ export function createRoleProcessContextBuilder(
         promptFile,
         renderPromptMarkdown({
           role: options.role,
+          taskKind: options.task.kind,
           context,
           outcomeFile,
         }),
@@ -143,7 +144,7 @@ ${renderPlannerInputs(options.plannerInputs)}
 
 - Write the structured outcome JSON to: ${options.outcomeFile}
 
-${renderRelevantTraces(options.relevantTraces)}
+${renderRelevantTraces(options.role, options.task.kind, options.relevantTraces)}
 
 ## Boundaries
 
@@ -151,20 +152,36 @@ ${roleBoundaryText(options.role)}
 `
 }
 
-function renderRelevantTraces(entries: GoalWriteTraceEntry[]) {
+function renderRelevantTraces(
+  role: AgentRole,
+  taskKind: TaskItem['kind'],
+  entries: GoalWriteTraceEntry[],
+) {
   if (entries.length === 0) {
+    if (taskKind === 'engineering' && (role === 'reviewer' || role === 'merger')) {
+      return `## Relevant Write Traces
+
+- No durable write traces were recorded yet for this task.
+`
+    }
+
     return ''
   }
 
   return `## Relevant Write Traces
 
-${entries
-  .map(
-    (entry) =>
-      `- ${entry.timestamp} | ${entry.role} | ${entry.resultSummary} | ${entry.targetPaths.join(', ')}`,
-  )
-  .join('\n')}
+${entries.map((entry) => renderTraceEntry(entry)).join('\n')}
 `
+}
+
+function renderTraceEntry(entry: GoalWriteTraceEntry) {
+  const changes =
+    entry.changes.length === 0
+      ? 'none'
+      : entry.changes.map((change) => `${change.kind} ${change.path}`).join(', ')
+
+  return `- ${entry.timestamp} | ${entry.role} | ${entry.resultSummary} | ${entry.targetPaths.join(', ')}
+  Changes: ${changes}`
 }
 
 function renderPlannerInputs(inputs?: PlannerContextInputs) {
@@ -200,6 +217,7 @@ ${inputs.preferenceContent.trim()}
 
 function renderPromptMarkdown(options: {
   role: AgentRole
+  taskKind: TaskItem['kind']
   context: string
   outcomeFile: string
 }) {
@@ -231,6 +249,8 @@ Recommended outcome shape:
   "artifactLabel": "optional human label"
 }
 \`\`\`
+
+${renderRoleEvidencePolicy(options.role, options.taskKind)}
 
 ## Bundled Context
 
@@ -271,6 +291,30 @@ function roleBoundaryText(role: AgentRole) {
   }
 
   return 'Do not edit .hopi/docs/**. Generator, reviewer, and merger work must leave durable Goal docs unchanged.'
+}
+
+function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
+  if (taskKind !== 'engineering') {
+    return ''
+  }
+
+  if (role === 'reviewer') {
+    return `## Role Evidence Policy
+
+- Reviewer must use relevant write traces as execution evidence.
+- If there are no relevant traces or the traces do not support the claimed work, prefer reject or fail over blind acceptance.
+`
+  }
+
+  if (role === 'merger') {
+    return `## Role Evidence Policy
+
+- Merger must inspect relevant write traces before returning success.
+- Merger must not return success blindly when engineering write-trace evidence is missing.
+`
+  }
+
+  return ''
 }
 
 function capitalizeRole(role: AgentRole) {
