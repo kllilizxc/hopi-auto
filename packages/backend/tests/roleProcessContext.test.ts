@@ -323,6 +323,76 @@ requests:
     )
   })
 
+  test('gives planning reviewer prompt explicit durable follow-through policy', async () => {
+    const rootDir = testRoot()
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-7', 'planning-requests.yml'),
+      `version: 1
+goalKey: goal-7
+requests:
+  - requestKey: PR-1
+    title: Plan rollout follow-through
+    description: Turn the rollout answer into durable planning work.
+    acceptanceCriteria:
+      - The rollout follow-through is visible.
+    taskRef: P-7
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry('goal-7', {
+      runId: 'run-7',
+      stepId: 'step-planner',
+      taskRef: 'P-7',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner',
+      targetPaths: ['.hopi/docs/goals/goal-7/design.md', '.hopi/docs/goals/goal-7/todo.yml'],
+      changes: [
+        { path: '.hopi/docs/goals/goal-7/design.md', kind: 'modified' },
+        { path: '.hopi/docs/goals/goal-7/todo.yml', kind: 'modified' },
+      ],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (2 changed files)',
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-7',
+      goalTitle: 'Goal Seven',
+      runId: 'run-7',
+      stepId: 'step-reviewer',
+      role: 'reviewer',
+      task: {
+        ref: 'P-7',
+        kind: 'planning',
+        status: 'in_review',
+        title: 'Review rollout planning follow-through',
+        description: 'Review the planner follow-through before accepting.',
+        acceptanceCriteria: ['Planning reviewer verifies durable follow-through.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Planner Durable Inputs')
+    expect(context).toContain('.hopi/docs/goals/goal-7/planning-requests.yml')
+    expect(context).toContain('Plan rollout follow-through')
+    expect(context).toContain('### Relevant Open Planning Requests For This Task')
+    expect(context).toContain('.hopi/docs/goals/goal-7/design.md')
+    expect(prompt).toContain(
+      'Planning reviewer must verify durable planning follow-through against open planning requests before accepting.',
+    )
+    expect(prompt).toContain(
+      'If there is no durable planning evidence or the docs and task graph do not reflect the requested follow-through, prefer reject or fail over blind acceptance.',
+    )
+  })
+
   test('warns merger when engineering work has no durable write-trace evidence', async () => {
     const rootDir = testRoot()
     const builder = createRoleProcessContextBuilder(rootDir)
@@ -356,6 +426,58 @@ requests:
     )
     expect(prompt).toContain(
       'Merger must not return success blindly when engineering write-trace evidence is missing.',
+    )
+  })
+
+  test('warns planning merger when durable planning follow-through evidence is missing', async () => {
+    const rootDir = testRoot()
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-8', 'planning-requests.yml'),
+      `version: 1
+goalKey: goal-8
+requests:
+  - requestKey: PR-1
+    title: Plan auth follow-through
+    description: Turn the auth answer into durable planning work.
+    acceptanceCriteria:
+      - The auth follow-through is visible.
+    taskRef: P-8
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-8',
+      goalTitle: 'Goal Eight',
+      runId: 'run-8',
+      stepId: 'step-merger',
+      role: 'merger',
+      task: {
+        ref: 'P-8',
+        kind: 'planning',
+        status: 'merging',
+        title: 'Merge planning follow-through',
+        description: 'Merge only if durable planning evidence exists.',
+        acceptanceCriteria: ['Planning merger sees the evidence gap.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Relevant Run Evidence')
+    expect(context).toContain('No prior run-history evidence was recorded yet for this task.')
+    expect(context).toContain('## Relevant Write Traces')
+    expect(context).toContain('No durable planning write traces were recorded yet for this task.')
+    expect(context).toContain('Plan auth follow-through')
+    expect(prompt).toContain(
+      'Planning merger must inspect durable planning evidence before returning success.',
+    )
+    expect(prompt).toContain(
+      'Planning merger must not return success blindly when durable planning follow-through evidence is missing.',
     )
   })
 })

@@ -103,7 +103,7 @@ export function createRoleProcessContextBuilder(
         history,
       })
       const plannerInputs =
-        options.role === 'planner'
+        options.task.kind === 'planning'
           ? await loadPlannerContextInputs(
               options.goalKey,
               boardStore,
@@ -200,7 +200,7 @@ ${renderPlannerInputs(options.plannerInputs)}
 
 - Write the structured outcome JSON to: ${options.outcomeFile}
 
-${renderRelevantRunEvidence(options.role, options.task.kind, options.relevantRunEvidence)}
+${renderRelevantRunEvidence(options.role, options.relevantRunEvidence)}
 
 ${renderRelevantTraces(options.role, options.task.kind, options.relevantTraces)}
 
@@ -223,6 +223,13 @@ function renderRelevantTraces(
 `
     }
 
+    if (taskKind === 'planning' && (role === 'reviewer' || role === 'merger')) {
+      return `## Relevant Write Traces
+
+- No durable planning write traces were recorded yet for this task.
+`
+    }
+
     return ''
   }
 
@@ -232,13 +239,9 @@ ${entries.map((entry) => renderTraceEntry(entry)).join('\n')}
 `
 }
 
-function renderRelevantRunEvidence(
-  role: AgentRole,
-  taskKind: TaskItem['kind'],
-  entries: RelevantRunEvidence[],
-) {
+function renderRelevantRunEvidence(role: AgentRole, entries: RelevantRunEvidence[]) {
   if (entries.length === 0) {
-    if (taskKind === 'engineering' && (role === 'reviewer' || role === 'merger')) {
+    if (role === 'reviewer' || role === 'merger') {
       return `## Relevant Run Evidence
 
 - No prior run-history evidence was recorded yet for this task.
@@ -411,11 +414,7 @@ function roleBoundaryText(role: AgentRole) {
 }
 
 function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
-  if (taskKind !== 'engineering') {
-    return ''
-  }
-
-  if (role === 'reviewer') {
+  if (taskKind === 'engineering' && role === 'reviewer') {
     return `## Role Evidence Policy
 
 - Reviewer must use relevant write traces as execution evidence.
@@ -424,12 +423,30 @@ function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
 `
   }
 
-  if (role === 'merger') {
+  if (taskKind === 'engineering' && role === 'merger') {
     return `## Role Evidence Policy
 
 - Merger must inspect relevant run history and artifact evidence before returning success.
 - Merger must inspect relevant write traces before returning success.
 - Merger must not return success blindly when engineering write-trace evidence is missing.
+`
+  }
+
+  if (taskKind === 'planning' && role === 'reviewer') {
+    return `## Role Evidence Policy
+
+- Planning reviewer must verify durable planning follow-through against open planning requests before accepting.
+- Planning reviewer should correlate goal-doc and todo changes with prior run history and write traces.
+- If there is no durable planning evidence or the docs and task graph do not reflect the requested follow-through, prefer reject or fail over blind acceptance.
+`
+  }
+
+  if (taskKind === 'planning' && role === 'merger') {
+    return `## Role Evidence Policy
+
+- Planning merger must inspect durable planning evidence before returning success.
+- Planning merger should correlate prior run history, goal-doc changes, and planning-request follow-through.
+- Planning merger must not return success blindly when durable planning follow-through evidence is missing.
 `
   }
 
