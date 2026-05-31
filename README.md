@@ -124,6 +124,11 @@ The decision-driven planning request enrichment slice is documented in:
 - `docs/superpowers/specs/2026-06-01-decision-driven-planning-request-enrichment-design.md`
 - `docs/superpowers/plans/2026-06-01-decision-driven-planning-request-enrichment.md`
 
+The decision-resolution planner follow-through slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-decision-resolution-planner-follow-through-design.md`
+- `docs/superpowers/plans/2026-06-01-decision-resolution-planner-follow-through.md`
+
 The run-history and artifact-aware review/merge policy slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`

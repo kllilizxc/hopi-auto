@@ -281,6 +281,60 @@ describe('createServer', () => {
     })
   })
 
+  test('resolving an engineering decision through the API creates visible planner follow-through', async () => {
+    const workspaceRoot = rootDir()
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for the auth decision before engineering continues.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/auth-strategy/resolve',
+      { answer: 'Use Bun-native auth.' },
+    )
+
+    expect(resolveResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'T-7',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-1',
+          kind: 'planning',
+          status: 'planned',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [

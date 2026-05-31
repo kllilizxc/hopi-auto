@@ -75,6 +75,46 @@ export async function requestGoalPlanning(
     }
   }
 
+  const upgradeableGeneric = findUpgradeableGenericFollowThrough(
+    currentRequests.requests,
+    currentBoard.items,
+    input,
+  )
+  if (upgradeableGeneric) {
+    await stores.boardStore.mutateBoard(
+      input.goalKey,
+      input.writer ?? 'planning_request',
+      input.reason ?? `upgrade planning ${input.title}`,
+      (board) => {
+        const task = board.items.find((item) => item.ref === upgradeableGeneric.taskRef)
+        if (!task) {
+          throw new Error(`Task not found: ${upgradeableGeneric.taskRef}`)
+        }
+        task.title = input.title
+        task.description = input.description
+        task.acceptanceCriteria = [...input.acceptanceCriteria]
+      },
+    )
+
+    const upgraded = await stores.planningRequests.updateRequest(
+      input.goalKey,
+      upgradeableGeneric.requestKey,
+      {
+        title: input.title,
+        description: input.description,
+        acceptanceCriteria: input.acceptanceCriteria,
+        decisionRefs: input.decisionRefs,
+        requestedUpdates: input.requestedUpdates,
+      },
+    )
+
+    return {
+      request: upgraded,
+      created: false,
+      taskCreated: false,
+    }
+  }
+
   let taskRef = ''
   let taskCreated = false
   await stores.boardStore.mutateBoard(
@@ -218,4 +258,22 @@ function nextPlanningTaskRef(existingRefs: string[]) {
     }, 0) + 1
 
   return `P-${nextNumber}`
+}
+
+function findUpgradeableGenericFollowThrough(
+  requests: GoalPlanningRequest[],
+  tasks: { ref: string; status: string }[],
+  input: GoalPlanningRequestInput,
+) {
+  if (!input.decisionRefs || input.decisionRefs.length === 0) {
+    return undefined
+  }
+
+  return requests.find(
+    (request) =>
+      request.status === 'open' &&
+      request.title.startsWith('Plan follow-through for ') &&
+      request.decisionRefs.some((decisionRef) => input.decisionRefs?.includes(decisionRef)) &&
+      tasks.some((task) => task.ref === request.taskRef && task.status !== 'done'),
+  )
 }

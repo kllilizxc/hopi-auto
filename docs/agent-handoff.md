@@ -30,6 +30,7 @@ Phase 1 backend is complete:
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
+- Resolving a decision that was blocking engineering work now creates or reuses visible planner follow-through, rewires engineering blockers onto that planning task, and lets richer later planning requests upgrade the generic follow-through instead of duplicating it.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
 - Durable `planning-requests.yml` now exists as the planner follow-through input surface: assistant and API can open file-native planning requests linked to visible planning tasks, planner context consumes them, the Bun UI surfaces them, and planning task completion auto-resolves linked requests deterministically.
 - Durable planning requests now also carry decision lineage plus explicit `design.md` / `todo.yml` update targets, and reused open requests preserve newer follow-through metadata instead of dropping it.
@@ -68,6 +69,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-decision-linked-planning-follow-through-design.md`: current authority note for decision-linked planning requests and explicit `design.md` / `todo.yml` follow-through targets.
 - `docs/superpowers/specs/2026-06-01-planning-update-coverage-validation-design.md`: current authority note for requested-update coverage surfacing and scheduler hard guards on planning follow-through.
 - `docs/superpowers/specs/2026-06-01-decision-driven-planning-request-enrichment-design.md`: current authority note for enriching open planning requests when visible decision blockers are opened for planning tasks.
+- `docs/superpowers/specs/2026-06-01-decision-resolution-planner-follow-through-design.md`: current authority note for routing resolved engineering decisions through visible planner follow-through before engineering resumes.
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`: current authority note for run-history and artifact-aware reviewer/merger policy.
 - `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`: current authority note for planning follow-through reviewer/merger policy.
 
@@ -512,7 +514,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
+1. Extend Goal assistant and planner/runtime behavior beyond the current automatic decision-to-planner follow-through loop, especially planner workflows after answers materially reshape `design.md` and `todo.yml`.
 2. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, requested update targets, scheduler-enforced coverage checks, and automatic decision-to-request enrichment.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

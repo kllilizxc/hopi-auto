@@ -1,7 +1,7 @@
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
 import type { PlanningRequestStore } from '../storage/planningRequestStore'
-import { enrichPlanningRequestsForTaskDecision } from './planningRequest'
+import { enrichPlanningRequestsForTaskDecision, requestGoalPlanning } from './planningRequest'
 
 export interface GoalDecisionRequestInput {
   goalKey: string
@@ -99,6 +99,7 @@ export async function resolveGoalDecision(
   stores: {
     boardStore: BoardStore
     decisions: DecisionStore
+    planningRequests?: PlanningRequestStore
   },
   input: {
     goalKey: string
@@ -111,6 +112,11 @@ export async function resolveGoalDecision(
   const decision = await stores.decisions.resolveDecision(input.goalKey, input.decisionKey, {
     answer: input.answer,
   })
+  const followThroughTaskRef = await createDecisionResolutionFollowThrough(
+    stores,
+    input.goalKey,
+    decision,
+  )
   let blockerRemoved = false
 
   await stores.boardStore.mutateBoard(
@@ -123,6 +129,18 @@ export async function resolveGoalDecision(
           (blocker) => !(blocker.kind === 'decision' && blocker.ref === input.decisionKey),
         )
         if (nextBlockedBy.length !== task.blockedBy.length) {
+          if (
+            followThroughTaskRef &&
+            task.kind === 'engineering' &&
+            !nextBlockedBy.some(
+              (blocker) => blocker.kind === 'task' && blocker.ref === followThroughTaskRef,
+            )
+          ) {
+            nextBlockedBy.push({
+              kind: 'task',
+              ref: followThroughTaskRef,
+            })
+          }
           task.blockedBy = nextBlockedBy
           blockerRemoved = true
         }
@@ -134,4 +152,51 @@ export async function resolveGoalDecision(
     decision,
     blockerRemoved,
   }
+}
+
+async function createDecisionResolutionFollowThrough(
+  stores: {
+    boardStore: BoardStore
+    planningRequests?: PlanningRequestStore
+  },
+  goalKey: string,
+  decision: GoalDecision,
+) {
+  if (!stores.planningRequests) {
+    return undefined
+  }
+
+  const board = await stores.boardStore.readBoard(goalKey)
+  const affectedEngineeringTasks = board.items.filter(
+    (task) =>
+      task.kind === 'engineering' &&
+      task.blockedBy.some(
+        (blocker) => blocker.kind === 'decision' && blocker.ref === decision.decisionKey,
+      ),
+  )
+  if (affectedEngineeringTasks.length === 0) {
+    return undefined
+  }
+
+  const result = await requestGoalPlanning(
+    {
+      boardStore: stores.boardStore,
+      planningRequests: stores.planningRequests,
+    },
+    {
+      goalKey,
+      title: `Plan follow-through for ${decision.decisionKey}`,
+      description: `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
+      acceptanceCriteria: [
+        `design.md captures the follow-through for ${decision.decisionKey}.`,
+        `todo.yml reflects the follow-through for ${decision.decisionKey} before engineering resumes.`,
+      ],
+      decisionRefs: [decision.decisionKey],
+      requestedUpdates: ['design.md', 'todo.yml'],
+      writer: 'decision',
+      reason: `decision resolution follow-through ${decision.decisionKey}`,
+    },
+  )
+
+  return result.request.taskRef
 }

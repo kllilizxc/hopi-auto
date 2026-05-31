@@ -54,6 +54,17 @@ export interface PlanningRequestStore {
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
+  updateRequest(
+    goalKey: string,
+    requestKey: string,
+    input: {
+      title: string
+      description: string
+      acceptanceCriteria: string[]
+      decisionRefs?: string[]
+      requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+    },
+  ): Promise<GoalPlanningRequest>
   resolveRequest(
     goalKey: string,
     requestKey: string,
@@ -149,6 +160,38 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         return request
       })
     },
+    async updateRequest(goalKey, requestKey, input) {
+      const planningRequestsPath = paths.planningRequestsPath(goalKey)
+      const lockPath = `${planningRequestsPath}.lock`
+      return withFileLock(lockPath, async () => {
+        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const request = current.requests.find((item) => item.requestKey === requestKey)
+        if (!request) {
+          throw new Error(`Planning request not found: ${requestKey}`)
+        }
+
+        const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
+        const nextRequestedUpdates = mergeUniqueValues(
+          request.requestedUpdates,
+          input.requestedUpdates ?? [],
+        )
+        const changed =
+          request.title !== input.title ||
+          request.description !== input.description ||
+          !sameStringArray(request.acceptanceCriteria, input.acceptanceCriteria) ||
+          nextDecisionRefs.length !== request.decisionRefs.length ||
+          nextRequestedUpdates.length !== request.requestedUpdates.length
+        if (changed) {
+          request.title = input.title
+          request.description = input.description
+          request.acceptanceCriteria = [...input.acceptanceCriteria]
+          request.decisionRefs = nextDecisionRefs
+          request.requestedUpdates = nextRequestedUpdates
+          await writePlanningRequestSet(planningRequestsPath, current)
+        }
+        return request
+      })
+    },
     async resolveRequest(goalKey, requestKey, input) {
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
@@ -229,4 +272,8 @@ function mergeUniqueValues<T extends string>(existing: T[], incoming: T[]) {
     }
   }
   return merged
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => right[index] === value)
 }

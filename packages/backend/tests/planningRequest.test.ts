@@ -88,6 +88,79 @@ describe('requestGoalPlanning', () => {
       ],
     })
   })
+
+  test('reuses and upgrades a generic decision follow-through when a richer planning request arrives', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Plan follow-through for db-provider',
+        description:
+          'Update design.md and todo.yml to reflect the resolved decision "Choose the database provider" before engineering continues.',
+        acceptanceCriteria: [
+          'design.md captures the follow-through for db-provider.',
+          'todo.yml reflects the follow-through for db-provider before engineering resumes.',
+        ],
+        decisionRefs: ['db-provider'],
+        requestedUpdates: ['design.md', 'todo.yml'],
+      },
+    )
+
+    const reused = await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Plan database integration',
+        description: 'Define the database adapter and migration work.',
+        acceptanceCriteria: ['The database integration plan is visible in todo.yml.'],
+        decisionRefs: ['db-provider'],
+        requestedUpdates: ['design.md', 'todo.yml'],
+      },
+    )
+
+    expect(reused).toMatchObject({
+      created: false,
+      taskCreated: false,
+      request: {
+        requestKey: 'PR-1',
+        taskRef: 'P-1',
+        title: 'Plan database integration',
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          kind: 'planning',
+          title: 'Plan database integration',
+          description: 'Define the database adapter and migration work.',
+          acceptanceCriteria: ['The database integration plan is visible in todo.yml.'],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          title: 'Plan database integration',
+          description: 'Define the database adapter and migration work.',
+          acceptanceCriteria: ['The database integration plan is visible in todo.yml.'],
+          decisionRefs: ['db-provider'],
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
 })
 
 function testRoot() {
