@@ -524,6 +524,71 @@ requests:
     expect(planningRequests).toContain('status: open')
   })
 
+  test('returns planning review work to planned when requested goal.md evidence is still missing', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-3', kind: 'planning', status: 'in_review' }),
+    ])
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-3
+    title: Clarify goal boundaries
+    description: Refresh durable Goal context before planning concludes.
+    acceptanceCriteria:
+      - Goal context is durable.
+    taskRef: P-3
+    requestedUpdates:
+      - goal.md
+      - design.md
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-planner',
+      stepId: 'step-planner',
+      taskRef: 'P-3',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner',
+      targetPaths: ['.hopi/docs/goals/goal-1/design.md'],
+      changes: [{ path: '.hopi/docs/goals/goal-1/design.md', kind: 'modified' }],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (1 changed file)',
+    })
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'P-3:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-3',
+      from: 'in_review',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'P-3')).resolves.toMatchObject({ status: 'planned' })
+    await expect(attempts.get('P-3', 'planning_follow_through_missing')).resolves.toBe(1)
+    const planningRequests = await Bun.file(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+    ).text()
+    expect(planningRequests).toContain('- goal.md')
+    expect(planningRequests).toContain('status: open')
+  })
+
   test('appends reviewer work to the same active run', async () => {
     const rootDir = testRoot()
     const store = await seedBoard(rootDir, [task({ ref: 'T-1' })])

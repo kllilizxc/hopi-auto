@@ -84,6 +84,32 @@ describe('createPlanningRequestStore', () => {
       status: 'open',
     })
   })
+
+  test('supports goal.md as a requested durable update target', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Clarify product boundaries',
+      description: 'Refresh durable Goal context before more planning work continues.',
+      acceptanceCriteria: ['Goal context is durable.'],
+      taskRef: 'P-2',
+      requestedUpdates: ['goal.md', 'design.md'],
+    })
+
+    expect(created).toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-2',
+      requestedUpdates: ['goal.md', 'design.md'],
+    })
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+      ],
+    })
+  })
 })
 
 function testRoot() {

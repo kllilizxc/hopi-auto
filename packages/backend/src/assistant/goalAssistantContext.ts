@@ -205,7 +205,7 @@ Required outcome shape:
       "description": "why visible planning work is needed",
       "acceptanceCriteria": ["what the planner-visible request must accomplish"],
       "decisionRefs": ["optional linked decision key"],
-      "requestedUpdates": ["design.md", "todo.yml"],
+      "requestedUpdates": ["goal.md", "design.md", "todo.yml"],
       "blockedBy": []
     },
     {
@@ -240,7 +240,7 @@ Rules:
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
-- When a planning request exists because one or more answers reshape design or task decomposition, record that through decisionRefs and requestedUpdates.
+- When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.
 - If you resolve a decision whose durable topic may not exist yet, include a concise summary.
 - Prefer "record_preference" for adding one durable preference; use "update_preference" only when intentionally rewriting the full preference document.

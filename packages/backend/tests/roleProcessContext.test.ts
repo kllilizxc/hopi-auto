@@ -84,6 +84,7 @@ requests:
     decisionRefs:
       - rollout-strategy
     requestedUpdates:
+      - goal.md
       - design.md
       - todo.yml
     status: open
@@ -127,11 +128,14 @@ requests:
     expect(context).toContain('Choose the rollout strategy')
     expect(context).toContain('Plan rollout follow-through')
     expect(context).toContain('Linked decisions: rollout-strategy')
-    expect(context).toContain('Requested durable updates: design.md, todo.yml')
+    expect(context).toContain('Requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
       'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',
+    )
+    expect(prompt).toContain(
+      'If a relevant planning request targets goal.md, update durable Goal context before returning success.',
     )
     expect(prompt).toContain(
       'Address open planning requests linked to this task before returning success.',
@@ -352,6 +356,7 @@ requests:
     decisionRefs:
       - rollout-strategy
     requestedUpdates:
+      - goal.md
       - design.md
       - todo.yml
     status: open
@@ -368,13 +373,18 @@ requests:
       cwd: '/tmp/root',
       toolName: 'process',
       callId: 'step-planner',
-      targetPaths: ['.hopi/docs/goals/goal-7/design.md', '.hopi/docs/goals/goal-7/todo.yml'],
+      targetPaths: [
+        '.hopi/docs/goals/goal-7/goal.md',
+        '.hopi/docs/goals/goal-7/design.md',
+        '.hopi/docs/goals/goal-7/todo.yml',
+      ],
       changes: [
+        { path: '.hopi/docs/goals/goal-7/goal.md', kind: 'modified' },
         { path: '.hopi/docs/goals/goal-7/design.md', kind: 'modified' },
         { path: '.hopi/docs/goals/goal-7/todo.yml', kind: 'modified' },
       ],
       argumentSummary: 'bun run planner',
-      resultSummary: 'exit 0 (2 changed files)',
+      resultSummary: 'exit 0 (3 changed files)',
     })
 
     const builder = createRoleProcessContextBuilder(rootDir)
@@ -403,10 +413,11 @@ requests:
     expect(context).toContain('Plan rollout follow-through')
     expect(context).toContain('### Relevant Open Planning Requests For This Task')
     expect(context).toContain('Linked decisions: rollout-strategy')
-    expect(context).toContain('Requested durable updates: design.md, todo.yml')
+    expect(context).toContain('Requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('### Requested Planning Update Coverage')
-    expect(context).toContain('Observed requested durable updates: design.md, todo.yml')
+    expect(context).toContain('Observed requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('Missing requested durable updates: none')
+    expect(context).toContain('.hopi/docs/goals/goal-7/goal.md')
     expect(context).toContain('.hopi/docs/goals/goal-7/design.md')
     expect(prompt).toContain(
       'Planning reviewer must verify durable planning follow-through against open planning requests before accepting.',

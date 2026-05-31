@@ -52,7 +52,7 @@ interface GoalPlanningRequest {
   acceptanceCriteria: string[]
   taskRef: string
   decisionRefs: string[]
-  requestedUpdates: Array<'design.md' | 'todo.yml'>
+  requestedUpdates: Array<'goal.md' | 'design.md' | 'todo.yml'>
   status: 'open' | 'resolved'
   createdAt: string
   resolvedAt?: string
@@ -204,7 +204,7 @@ interface AssistantAction {
   description?: string
   acceptanceCriteria?: string[]
   decisionRefs?: string[]
-  requestedUpdates?: Array<'design.md' | 'todo.yml'>
+  requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
   decisionKey?: string
   summary?: string
   answer?: string
@@ -445,7 +445,8 @@ root.addEventListener('submit', (event: SubmitEvent) => {
       .getAll('requestedUpdates')
       .map((value) => `${value}`.trim())
       .filter(
-        (value): value is 'design.md' | 'todo.yml' => value === 'design.md' || value === 'todo.yml',
+        (value): value is 'goal.md' | 'design.md' | 'todo.yml' =>
+          value === 'goal.md' || value === 'design.md' || value === 'todo.yml',
       )
     if (!title || acceptanceCriteria.length === 0) {
       return
@@ -942,7 +943,7 @@ async function createPlanningRequest(
     description: string
     acceptanceCriteria: string[]
     decisionRefs: string[]
-    requestedUpdates: Array<'design.md' | 'todo.yml'>
+    requestedUpdates: Array<'goal.md' | 'design.md' | 'todo.yml'>
   },
   form: HTMLFormElement,
 ) {
@@ -1225,6 +1226,10 @@ function render() {
                   ></textarea>
                   <div class="planning-update-targets">
                     <span class="assistant-note">Requested durable updates</span>
+                    <label>
+                      <input type="checkbox" name="requestedUpdates" value="goal.md" />
+                      <span>goal.md</span>
+                    </label>
                     <label>
                       <input type="checkbox" name="requestedUpdates" value="design.md" />
                       <span>design.md</span>

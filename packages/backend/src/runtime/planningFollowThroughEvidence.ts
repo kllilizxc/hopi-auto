@@ -6,7 +6,11 @@ import type {
 import type { GoalWriteTraceEntry } from './writeTrace'
 import type { WriteTraceStore } from './writeTraceStore'
 
-const ORDERED_UPDATE_TARGETS: GoalPlanningRequestUpdateTarget[] = ['design.md', 'todo.yml']
+const ORDERED_UPDATE_TARGETS: GoalPlanningRequestUpdateTarget[] = [
+  'goal.md',
+  'design.md',
+  'todo.yml',
+]
 
 export interface PlanningFollowThroughEvidence {
   requestKeys: string[]

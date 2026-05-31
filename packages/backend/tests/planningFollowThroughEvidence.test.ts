@@ -23,7 +23,7 @@ describe('summarizePlanningFollowThroughEvidence', () => {
           acceptanceCriteria: ['The migration follow-through is visible in todo.yml.'],
           taskRef: 'P-1',
           decisionRefs: ['migration-strategy'],
-          requestedUpdates: ['todo.yml'],
+          requestedUpdates: ['goal.md', 'todo.yml'],
           status: 'open',
           createdAt: '2026-06-01T00:01:00.000Z',
         },
@@ -46,13 +46,30 @@ describe('summarizePlanningFollowThroughEvidence', () => {
           argumentSummary: 'bun run planner',
           resultSummary: 'exit 0 (1 changed file)',
         },
+        {
+          id: 'trace-2',
+          timestamp: '2026-06-01T00:03:00.000Z',
+          goalKey: 'goal-1',
+          runId: 'run-1',
+          stepId: 'step-1',
+          taskRef: 'P-1',
+          role: 'planner',
+          agent: 'process_runner',
+          cwd: '/tmp/root',
+          toolName: 'process',
+          callId: 'call-2',
+          targetPaths: ['.hopi/docs/goals/goal-1/goal.md'],
+          changes: [{ path: '.hopi/docs/goals/goal-1/goal.md', kind: 'modified' }],
+          argumentSummary: 'bun run planner',
+          resultSummary: 'exit 0 (1 changed file)',
+        },
       ],
     )
 
     expect(evidence.requestKeys).toEqual(['PR-1', 'PR-2'])
     expect(evidence.decisionRefs).toEqual(['db-provider', 'migration-strategy'])
-    expect(evidence.requestedUpdates).toEqual(['design.md', 'todo.yml'])
-    expect(evidence.observedUpdates).toEqual(['design.md'])
+    expect(evidence.requestedUpdates).toEqual(['goal.md', 'design.md', 'todo.yml'])
+    expect(evidence.observedUpdates).toEqual(['goal.md', 'design.md'])
     expect(evidence.missingUpdates).toEqual(['todo.yml'])
   })
 })

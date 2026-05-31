@@ -6,7 +6,7 @@ import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
 const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
-const PLANNING_REQUEST_UPDATE_TARGETS = ['design.md', 'todo.yml'] as const
+export const PLANNING_REQUEST_UPDATE_TARGETS = ['goal.md', 'design.md', 'todo.yml'] as const
 
 export type GoalPlanningRequestStatus = (typeof PLANNING_REQUEST_STATUSES)[number]
 export type GoalPlanningRequestUpdateTarget = (typeof PLANNING_REQUEST_UPDATE_TARGETS)[number]

@@ -133,6 +133,36 @@ describe('createServer', () => {
     ).resolves.toContain('requestedUpdates:')
   })
 
+  test('accepts goal.md as a requested durable update through the planning-request API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Clarify product boundaries',
+      description: 'Refresh durable Goal context before planning continues.',
+      acceptanceCriteria: ['Goal context is durable.'],
+      requestedUpdates: ['goal.md', 'design.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      requestedUpdates: ['goal.md', 'design.md'],
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+      ],
+    })
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 

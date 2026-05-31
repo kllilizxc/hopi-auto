@@ -492,6 +492,7 @@ function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusIn
   return `## Planner Design Policy
 
 ${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
+- If a relevant planning request targets goal.md, update durable Goal context before returning success.
 - When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
 - Address open planning requests linked to this task before returning success.
 - If a relevant planning request targets design.md, update durable design rationale before returning success.
