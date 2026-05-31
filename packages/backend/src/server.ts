@@ -12,7 +12,7 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
-import { requestGoalDecision } from './runtime/decisionRequest'
+import { requestGoalDecision, resolveGoalDecision } from './runtime/decisionRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
@@ -205,11 +205,24 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
             throw new HttpError(404, `Decision not found: ${decisionKey}`)
           }
-          const result = await decisions.resolveDecision(currentGoalKey, decisionKey, {
-            answer: body.answer,
-          })
+          const result = await resolveGoalDecision(
+            {
+              boardStore: store,
+              decisions,
+            },
+            {
+              goalKey: currentGoalKey,
+              decisionKey,
+              answer: body.answer,
+              writer: 'api',
+              reason: `api resolve decision ${decisionKey}`,
+            },
+          )
           broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
-          return jsonResponse(result)
+          if (result.blockerRemoved) {
+            broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          }
+          return jsonResponse(result.decision)
         }
 
         if (

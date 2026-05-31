@@ -184,6 +184,12 @@ textarea {
   margin-bottom: 20px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .panel-heading h2,
 .runtime-column h3 {
   margin: 0;
@@ -203,6 +209,21 @@ textarea {
 
 .goal-chip.soft {
   color: var(--muted);
+}
+
+.secondary-button {
+  padding: 10px 14px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 12px;
+  background: rgba(217, 249, 243, 0.72);
+  color: #115e59;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-button:disabled {
+  opacity: 0.72;
+  cursor: wait;
 }
 
 .empty-state,
@@ -505,6 +526,10 @@ textarea {
   color: var(--muted);
   font-size: 0.86rem;
   line-height: 1.5;
+}
+
+.reconcile-note {
+  margin-bottom: 14px;
 }
 
 .assistant-actions-row {

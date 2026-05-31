@@ -16,6 +16,11 @@ export interface GoalDecisionRequestResult {
   blockerAdded: boolean
 }
 
+export interface GoalDecisionResolveResult {
+  decision: GoalDecision
+  blockerRemoved: boolean
+}
+
 export async function requestGoalDecision(
   stores: {
     boardStore: BoardStore
@@ -66,5 +71,46 @@ export async function requestGoalDecision(
     decision,
     created: !existing,
     blockerAdded,
+  }
+}
+
+export async function resolveGoalDecision(
+  stores: {
+    boardStore: BoardStore
+    decisions: DecisionStore
+  },
+  input: {
+    goalKey: string
+    decisionKey: string
+    answer: string
+    writer?: string
+    reason?: string
+  },
+): Promise<GoalDecisionResolveResult> {
+  const decision = await stores.decisions.resolveDecision(input.goalKey, input.decisionKey, {
+    answer: input.answer,
+  })
+  let blockerRemoved = false
+
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'decision',
+    input.reason ?? `resolve decision ${input.decisionKey}`,
+    (board) => {
+      for (const task of board.items) {
+        const nextBlockedBy = task.blockedBy.filter(
+          (blocker) => !(blocker.kind === 'decision' && blocker.ref === input.decisionKey),
+        )
+        if (nextBlockedBy.length !== task.blockedBy.length) {
+          task.blockedBy = nextBlockedBy
+          blockerRemoved = true
+        }
+      }
+    },
+  )
+
+  return {
+    decision,
+    blockerRemoved,
   }
 }

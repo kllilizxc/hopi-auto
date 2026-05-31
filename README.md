@@ -84,6 +84,11 @@ The Goal assistant decision-request and management slice is documented in:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`
 - `docs/superpowers/plans/2026-06-01-goal-assistant-decision-requests-and-management.md`
 
+The decision follow-through and explicit reconcile-control slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`
+- `docs/superpowers/plans/2026-06-01-decision-resolution-follow-through-and-reconcile-controls.md`
+
 The deterministic merge execution slice is documented in:
 
 - `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`

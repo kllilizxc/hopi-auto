@@ -27,6 +27,7 @@ Phase 1 backend is complete:
 - Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
+- Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - The Bun backend now serves the active Bun UI at `/`.
 - Richer planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
 
@@ -50,6 +51,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: current authority note for assistant inspection APIs and Bun UI surfacing.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
+- `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 
 Historical reference only:
 
@@ -188,11 +190,10 @@ Current backend source:
 - `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
 - `packages/backend/src/storage/preferenceStore.ts`: bootstrap, persistence, and deduplicated durable preference recording for repo-level `preference.md`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
-- `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus visible task-blocker linking.
+- `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus resolution-side visible blocker cleanup.
 - `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
 - `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
 - `packages/backend/src/assistant/assistantRunStore.ts`: read-side assistant run inspection store.
-- `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests and preference recording.
 - `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests, decision requests, and preference recording.
 - `packages/backend/src/runtime/attemptStore.ts`: ignored runtime attempt budget overlay.
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
@@ -440,6 +441,7 @@ Current UI capabilities:
 - structured step evidence for worktree path and artifact references when present
 - selected-step durable write-trace rendering for run-scoped file-change evidence
 - assistant prompt submission
+- explicit one-step `Reconcile Once` control
 - repo preference surfacing and editing
 - direct decision topic creation and resolution
 - decision topic surfacing
@@ -456,7 +458,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner-request follow-through after decisions are answered
+- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner follow-through that goes beyond explicit decision unblock plus one-step reconcile
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper assistant-run inspection beyond the current summary/detail projection
 
@@ -466,7 +468,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Extend Goal assistant beyond the current constrained preference/planning loop, especially planner-request follow-through and richer decision/preference handling.
+1. Extend Goal assistant and planner/runtime behavior beyond the current explicit unblock-and-reconcile loop, especially planner follow-through after answers materially reshape `design.md` and `todo.yml`.
 2. Feed durable write-trace evidence more deeply into role prompts and review/merge policy, without moving workflow truth out of docs.
 3. Add richer planner/runtime workflows on top of `goal.md`, `design.md`, and the current deterministic scheduler core.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

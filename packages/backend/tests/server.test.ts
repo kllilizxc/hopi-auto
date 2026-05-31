@@ -158,6 +158,43 @@ describe('createServer', () => {
     })
   })
 
+  test('resolving a decision through the API immediately removes linked board blockers', async () => {
+    const workspaceRoot = rootDir()
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'P-4',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Wait for the auth decision.',
+        acceptanceCriteria: ['The planning path is visible.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-4',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/auth-strategy/resolve',
+      { answer: 'Use Bun-native auth.' },
+    )
+
+    expect(resolveResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-4',
+          blockedBy: [],
+        }),
+      ],
+    })
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -567,6 +604,40 @@ describe('createServer', () => {
         }),
       ]),
     )
+  })
+
+  test('a resolved decision leaves linked planning work dispatchable on the next reconcile', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'P-8',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Wait for the auth decision before planning continues.',
+        acceptanceCriteria: ['Planning continues after the decision answer.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-8',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    await postJson(server, '/api/goals/test/decisions/auth-strategy/resolve', {
+      answer: 'Use Bun-native auth.',
+    })
+
+    const reconcileResponse = await postJson(server, '/api/goals/test/reconcile', {})
+    expect(reconcileResponse.status).toBe(200)
+    await expect(reconcileResponse.json()).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-8',
+      from: 'planned',
+      to: 'in_review',
+    })
   })
 
   test('returns HTTP 400 for invalid request bodies', async () => {

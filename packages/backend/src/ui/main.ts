@@ -250,6 +250,8 @@ interface AppState {
   loadingAssistantRun: boolean
   runningAssistant: boolean
   savingPreferences: boolean
+  reconcilingGoal: boolean
+  lastReconcileSummary: string | null
   error: string | null
 }
 
@@ -295,6 +297,8 @@ const state: AppState = {
   loadingAssistantRun: false,
   runningAssistant: false,
   savingPreferences: false,
+  reconcilingGoal: false,
+  lastReconcileSummary: null,
   error: null,
 }
 
@@ -426,6 +430,8 @@ root.addEventListener('submit', (event: SubmitEvent) => {
   state.loadingAssistantRun = false
   state.runningAssistant = false
   state.savingPreferences = false
+  state.reconcilingGoal = false
+  state.lastReconcileSummary = null
   render()
   void loadGoalData()
 })
@@ -480,6 +486,17 @@ root.addEventListener('click', (event: MouseEvent) => {
     state.loadingAssistantRun = true
     render()
     void loadSelectedAssistantRun()
+  }
+
+  if (actionTarget.dataset.action === 'reconcile-goal') {
+    if (state.reconcilingGoal) {
+      return
+    }
+
+    state.reconcilingGoal = true
+    state.error = null
+    render()
+    void reconcileGoal()
   }
 })
 
@@ -817,6 +834,33 @@ async function resolveDecision(decisionKey: string, answer: string, form: HTMLFo
   }
 }
 
+async function reconcileGoal() {
+  try {
+    const response = await fetch(`/api/goals/${state.goalKey}/reconcile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(errorBody?.error ?? `Reconcile failed with ${response.status}`)
+    }
+
+    const result = (await response.json()) as
+      | { kind: 'idle' }
+      | { kind: 'advanced'; taskRef: string; from: TaskStatus; to: TaskStatus }
+      | { kind: 'blocked'; taskRef: string; blocker: BlockerRef }
+    state.lastReconcileSummary = summarizeReconcileResult(result)
+    await loadGoalData()
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error)
+    render()
+  } finally {
+    state.reconcilingGoal = false
+    render()
+  }
+}
+
 function render() {
   const currentSelectedStep = selectedStep()
   const currentSelectedAssistantRun = state.selectedAssistantRun
@@ -855,8 +899,24 @@ function render() {
               <p class="kicker">Workflow truth</p>
               <h2>${escapeHtml(state.board?.goal.title ?? 'Loading goal board')}</h2>
             </div>
-            <span class="goal-chip">${escapeHtml(state.goalKey)}</span>
+            <div class="panel-actions">
+              <button
+                type="button"
+                class="secondary-button"
+                data-action="reconcile-goal"
+                ${state.reconcilingGoal ? 'disabled' : ''}
+              >
+                ${state.reconcilingGoal ? 'Reconciling...' : 'Reconcile Once'}
+              </button>
+              <span class="goal-chip">${escapeHtml(state.goalKey)}</span>
+            </div>
           </div>
+
+          ${
+            state.lastReconcileSummary
+              ? `<div class="assistant-note reconcile-note">${escapeHtml(state.lastReconcileSummary)}</div>`
+              : ''
+          }
 
           ${state.loadingBoard ? '<div class="empty-state">Loading board and runs...</div>' : ''}
 
@@ -1214,6 +1274,21 @@ function renderAssistantEvent(event: AssistantEvent) {
       <p>${escapeHtml(summarizeAssistantEvent(event))}</p>
     </article>
   `
+}
+
+function summarizeReconcileResult(
+  result:
+    | { kind: 'idle' }
+    | { kind: 'advanced'; taskRef: string; from: TaskStatus; to: TaskStatus }
+    | { kind: 'blocked'; taskRef: string; blocker: BlockerRef },
+) {
+  if (result.kind === 'idle') {
+    return 'Reconcile found no dispatchable work.'
+  }
+  if (result.kind === 'advanced') {
+    return `${result.taskRef} advanced from ${result.from} to ${result.to}.`
+  }
+  return `${result.taskRef} is blocked by ${result.blocker.kind}:${result.blocker.ref}.`
 }
 
 function renderStepSummary(step: RunStep, index: number) {

@@ -10,7 +10,7 @@ import {
   type AssistantThreadStore,
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
-import { requestGoalDecision } from '../runtime/decisionRequest'
+import { requestGoalDecision, resolveGoalDecision } from '../runtime/decisionRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
@@ -295,13 +295,25 @@ async function applyAssistantAction(
         taskRef: action.taskRef,
       })
     }
-    await stores.decisions.resolveDecision(goalKey, action.decisionKey, {
-      answer: action.answer,
-    })
+    const result = await resolveGoalDecision(
+      {
+        boardStore: stores.boardStore,
+        decisions: stores.decisions,
+      },
+      {
+        goalKey,
+        decisionKey: action.decisionKey,
+        answer: action.answer,
+        writer: 'assistant',
+        reason: `assistant resolve decision ${action.decisionKey}`,
+      },
+    )
     return {
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
-      summary: `Resolved decision ${action.decisionKey}.`,
+      summary: result.blockerRemoved
+        ? `Resolved decision ${action.decisionKey} and cleared linked blockers.`
+        : `Resolved decision ${action.decisionKey}.`,
     }
   }
 
