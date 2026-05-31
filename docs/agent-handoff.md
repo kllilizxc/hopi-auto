@@ -26,6 +26,7 @@ Phase 1 backend is complete:
 - Live Goal assistant execution is now implemented with an explicit Goal-scoped runtime call, constrained durable actions, assistant run bundles under `.hopi/runtime/**`, and scheduler cleanup for resolved decision blockers.
 - Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
+- Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - The Bun backend now serves the active Bun UI at `/`.
 - Richer planner/runtime behavior still remains intentionally out of scope for the current implementation slice.
 
@@ -48,6 +49,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-live-goal-assistant-execution-design.md`: current authority note for explicit Goal assistant execution.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: current authority note for assistant inspection APIs and Bun UI surfacing.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
+- `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 
 Historical reference only:
 
@@ -186,10 +188,12 @@ Current backend source:
 - `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
 - `packages/backend/src/storage/preferenceStore.ts`: bootstrap, persistence, and deduplicated durable preference recording for repo-level `preference.md`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
+- `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus visible task-blocker linking.
 - `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
 - `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
 - `packages/backend/src/assistant/assistantRunStore.ts`: read-side assistant run inspection store.
 - `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests and preference recording.
+- `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests, decision requests, and preference recording.
 - `packages/backend/src/runtime/attemptStore.ts`: ignored runtime attempt budget overlay.
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
 - `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
@@ -378,6 +382,7 @@ GET  /api/preferences
 POST /api/preferences
 GET  /api/goals/:goalKey/board
 GET  /api/goals/:goalKey/decisions
+POST /api/goals/:goalKey/decisions
 POST /api/goals/:goalKey/decisions/:decisionKey/resolve
 GET  /api/goals/:goalKey/runs
 GET  /api/goals/:goalKey/runs/:runId
@@ -436,6 +441,7 @@ Current UI capabilities:
 - selected-step durable write-trace rendering for run-scoped file-change evidence
 - assistant prompt submission
 - repo preference surfacing and editing
+- direct decision topic creation and resolution
 - decision topic surfacing
 - assistant thread surfacing
 - assistant run list and assistant run detail inspection
@@ -446,11 +452,11 @@ Current non-UI Goal assistant substrate:
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - planner context wiring for decisions and preferences
-- explicit Goal assistant execution with constrained durable actions, including `request_planning` and `record_preference`
+- explicit Goal assistant execution with constrained durable actions, including `request_planning`, `request_decision`, and `record_preference`
 
 What is still missing:
 
-- richer assistant action coverage beyond the current preference/planning loop, especially planner-request follow-through beyond same-title reuse
+- richer assistant action coverage beyond the current planning/decision/preference loop, especially planner-request follow-through after decisions are answered
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper assistant-run inspection beyond the current summary/detail projection
 

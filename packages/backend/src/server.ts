@@ -12,6 +12,7 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
+import { requestGoalDecision } from './runtime/decisionRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
@@ -53,6 +54,12 @@ const moveTaskSchema = z.object({
 
 const resolveDecisionSchema = z.object({
   answer: z.string().min(1),
+})
+
+const createDecisionSchema = z.object({
+  decisionKey: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  taskRef: z.string().min(1).optional(),
 })
 
 const assistantMessageSchema = z.object({
@@ -161,6 +168,30 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           return jsonResponse(await decisions.readGoalDecisions(currentGoalKey))
         }
 
+        if (request.method === 'POST' && isGoalRoute(parts, 'decisions') && parts.length === 4) {
+          const currentGoalKey = requireGoalKey(parts)
+          const body = await parseJsonBody(request, createDecisionSchema)
+          const result = await requestGoalDecision(
+            {
+              boardStore: store,
+              decisions,
+            },
+            {
+              goalKey: currentGoalKey,
+              decisionKey: body.decisionKey,
+              summary: body.summary,
+              taskRef: body.taskRef,
+              writer: 'api',
+              reason: `api request decision ${body.decisionKey ?? body.summary}`,
+            },
+          )
+          broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
+          if (result.blockerAdded) {
+            broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          }
+          return jsonResponse(result.decision, result.created ? 201 : 200)
+        }
+
         if (
           request.method === 'POST' &&
           isGoalRoute(parts, 'decisions') &&
@@ -174,9 +205,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
             throw new HttpError(404, `Decision not found: ${decisionKey}`)
           }
-          return jsonResponse(
-            await decisions.resolveDecision(currentGoalKey, decisionKey, { answer: body.answer }),
-          )
+          const result = await decisions.resolveDecision(currentGoalKey, decisionKey, {
+            answer: body.answer,
+          })
+          broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
+          return jsonResponse(result)
         }
 
         if (

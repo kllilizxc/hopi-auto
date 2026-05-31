@@ -167,6 +167,7 @@ interface AssistantAction {
     | 'move_task'
     | 'create_planning_task'
     | 'request_planning'
+    | 'request_decision'
     | 'resolve_decision'
     | 'record_preference'
     | 'update_preference'
@@ -187,6 +188,7 @@ interface AssistantActionResult {
     | 'move_task'
     | 'create_planning_task'
     | 'request_planning'
+    | 'request_decision'
     | 'resolve_decision'
     | 'record_preference'
     | 'update_preference'
@@ -353,6 +355,42 @@ root.addEventListener('submit', (event: SubmitEvent) => {
     return
   }
 
+  if (form.dataset.role === 'decision-create-form') {
+    event.preventDefault()
+    const formData = new FormData(form)
+    const summary = `${formData.get('summary') ?? ''}`.trim()
+    if (!summary) {
+      return
+    }
+
+    state.error = null
+    render()
+    void createDecision(
+      {
+        decisionKey: `${formData.get('decisionKey') ?? ''}`.trim(),
+        summary,
+        taskRef: `${formData.get('taskRef') ?? ''}`.trim(),
+      },
+      form,
+    )
+    return
+  }
+
+  if (form.dataset.role === 'decision-resolve-form') {
+    event.preventDefault()
+    const formData = new FormData(form)
+    const decisionKey = `${formData.get('decisionKey') ?? ''}`.trim()
+    const answer = `${formData.get('answer') ?? ''}`.trim()
+    if (!decisionKey || !answer) {
+      return
+    }
+
+    state.error = null
+    render()
+    void resolveDecision(decisionKey, answer, form)
+    return
+  }
+
   if (form.dataset.role !== 'goal-form') {
     return
   }
@@ -452,6 +490,11 @@ eventSource.onmessage = (event) => {
     (payload.type === 'board_changed' || payload.type === 'assistant_changed') &&
     payload.goalKey === state.goalKey
   ) {
+    void loadGoalData()
+    return
+  }
+
+  if (payload.type === 'decisions_changed' && payload.goalKey === state.goalKey) {
     void loadGoalData()
     return
   }
@@ -723,6 +766,57 @@ async function savePreferences(content: string) {
   }
 }
 
+async function createDecision(
+  input: {
+    decisionKey: string
+    summary: string
+    taskRef: string
+  },
+  form: HTMLFormElement,
+) {
+  try {
+    const response = await fetch(`/api/goals/${state.goalKey}/decisions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decisionKey: input.decisionKey || undefined,
+        summary: input.summary,
+        taskRef: input.taskRef || undefined,
+      }),
+    })
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(errorBody?.error ?? `Decision create failed with ${response.status}`)
+    }
+
+    form.reset()
+    await loadGoalData()
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error)
+    render()
+  }
+}
+
+async function resolveDecision(decisionKey: string, answer: string, form: HTMLFormElement) {
+  try {
+    const response = await fetch(`/api/goals/${state.goalKey}/decisions/${decisionKey}/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    })
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(errorBody?.error ?? `Decision resolve failed with ${response.status}`)
+    }
+
+    form.reset()
+    await loadGoalData()
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error)
+    render()
+  }
+}
+
 function render() {
   const currentSelectedStep = selectedStep()
   const currentSelectedAssistantRun = state.selectedAssistantRun
@@ -877,6 +971,15 @@ function render() {
                   <h3>Decisions</h3>
                   <span class="goal-chip soft">${state.decisions.length}</span>
                 </div>
+                <form class="decision-form" data-role="decision-create-form">
+                  <input name="summary" placeholder="Open one visible decision topic" />
+                  <input name="decisionKey" placeholder="decision key (optional)" />
+                  <input name="taskRef" placeholder="task ref to block (optional)" />
+                  <div class="assistant-actions-row">
+                    <button type="submit">Create Decision</button>
+                    <span class="assistant-note">Link a task ref to make the blocker visible on the board.</span>
+                  </div>
+                </form>
                 <div class="assistant-list">
                   ${
                     state.decisions.length === 0
@@ -1007,10 +1110,18 @@ function renderDecision(decision: GoalDecision) {
       </div>
       <strong>${escapeHtml(decision.decisionKey)}</strong>
       <p>${escapeHtml(decision.summary)}</p>
+      ${decision.taskRef ? `<div class="assistant-summary">Task: ${escapeHtml(decision.taskRef)}</div>` : ''}
       ${
         decision.answer
           ? `<div class="assistant-summary">Answer: ${escapeHtml(decision.answer)}</div>`
-          : '<div class="assistant-summary">Open decision topic</div>'
+          : `
+              <div class="assistant-summary">Open decision topic</div>
+              <form class="decision-resolve-form" data-role="decision-resolve-form">
+                <input type="hidden" name="decisionKey" value="${escapeAttribute(decision.decisionKey)}" />
+                <textarea name="answer" placeholder="Record the explicit answer"></textarea>
+                <button type="submit">Resolve Decision</button>
+              </form>
+            `
       }
     </article>
   `

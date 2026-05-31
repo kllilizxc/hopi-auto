@@ -79,6 +79,11 @@ The Goal assistant preference and planner-request slice is documented in:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`
 - `docs/superpowers/plans/2026-06-01-goal-assistant-preferences-and-planning-request.md`
 
+The Goal assistant decision-request and management slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`
+- `docs/superpowers/plans/2026-06-01-goal-assistant-decision-requests-and-management.md`
+
 The deterministic merge execution slice is documented in:
 
 - `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`

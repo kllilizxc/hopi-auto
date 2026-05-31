@@ -31,6 +31,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-goal-assistant-surfacing-and-inspection.md`: implementation plan for the assistant surfacing and inspection slice.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: approved and implemented design for repo preference editing plus safer assistant planning/preference actions.
 - `docs/superpowers/plans/2026-06-01-goal-assistant-preferences-and-planning-request.md`: implementation plan for the preference and planner-request slice.
+- `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: approved and implemented design for assistant decision requests and direct decision management on the Bun product path.
+- `docs/superpowers/plans/2026-06-01-goal-assistant-decision-requests-and-management.md`: implementation plan for the decision-request and management slice.
 - `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`: approved design for deterministic merger execution and settled-run cleanup.
 - `docs/superpowers/plans/2026-05-31-merge-execution-and-cleanup.md`: implementation plan for the merger execution slice.
 

@@ -65,6 +65,12 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
       .default([]),
   }),
   z.object({
+    kind: z.literal('request_decision'),
+    decisionKey: z.string().min(1),
+    summary: z.string().min(1),
+    taskRef: z.string().min(1).optional(),
+  }),
+  z.object({
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1).optional(),
@@ -96,6 +102,11 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('request_planning'),
     taskRef: z.string().min(1),
+    summary: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('request_decision'),
+    decisionKey: z.string().min(1),
     summary: z.string().min(1),
   }),
   z.object({

@@ -158,6 +158,58 @@ describe('createServer', () => {
     })
   })
 
+  test('creates and links Goal decisions through the API', async () => {
+    const workspaceRoot = rootDir()
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'P-3',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Clarify the auth path before decomposition.',
+        acceptanceCriteria: ['The auth planning path is visible.'],
+      }),
+    ])
+
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-3',
+    })
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      status: 'open',
+      taskRef: 'P-3',
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      goalKey: 'test',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          status: 'open',
+          taskRef: 'P-3',
+        }),
+      ],
+    })
+
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-3',
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        }),
+      ],
+    })
+  })
+
   test('reads and updates repo preferences through the API', async () => {
     const workspaceRoot = rootDir()
     await createPreferenceStore(workspaceRoot).writePreferences(
@@ -430,6 +482,91 @@ describe('createServer', () => {
         'Prefer Bun-native services when they meet the Goal requirements.',
       ),
     })
+  })
+
+  test('runs the configured Goal assistant and follows through with a visible decision request', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'P-7',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Clarify the auth integration plan.',
+        acceptanceCriteria: ['The auth planning path is visible.'],
+      }),
+    ])
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Plan auth integration')) throw new Error('missing planning context'); if (!prompt.includes('We need one auth decision before planning can continue.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the visible planning task and opened one decision topic before planning continues.', actions: [{ kind: 'request_planning', title: 'Plan auth integration', description: 'Clarify the auth integration plan.', acceptanceCriteria: ['The auth planning path is visible.'] }, { kind: 'request_decision', decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', taskRef: 'P-7' }] })); console.log('assistant decision requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'We need one auth decision before planning can continue.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I reused the visible planning task and opened one decision topic before planning continues.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning',
+          taskRef: 'P-7',
+        }),
+        expect.objectContaining({
+          kind: 'request_decision',
+          decisionKey: 'auth-strategy',
+        }),
+      ]),
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          status: 'open',
+          taskRef: 'P-7',
+        }),
+      ],
+    })
+
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-7',
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        }),
+      ],
+    })
+
+    const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
+    expect(thread.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'request_decision',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_decision',
+        }),
+      ]),
+    )
   })
 
   test('returns HTTP 400 for invalid request bodies', async () => {

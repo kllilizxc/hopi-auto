@@ -190,6 +190,12 @@ Required outcome shape:
       "blockedBy": []
     },
     {
+      "kind": "request_decision",
+      "decisionKey": "stable-decision-key",
+      "summary": "highest-leverage missing answer",
+      "taskRef": "optional task ref to block visibly"
+    },
+    {
       "kind": "resolve_decision",
       "decisionKey": "stable-decision-key",
       "summary": "required if the decision topic does not already exist",
@@ -214,6 +220,7 @@ Rules:
 - Only move tasks through legal manual transitions.
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
+- Use "request_decision" when one explicit missing answer should block visible planning follow-through.
 - If you resolve a decision whose durable topic may not exist yet, include a concise summary.
 - Prefer "record_preference" for adding one durable preference; use "update_preference" only when intentionally rewriting the full preference document.
 - Keep the message grounded in the current Goal state.

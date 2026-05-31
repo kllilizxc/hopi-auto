@@ -421,6 +421,8 @@ textarea {
 
 .assistant-form,
 .preference-form,
+.decision-form,
+.decision-resolve-form,
 .assistant-card,
 .assistant-run-card {
   padding: 16px;
@@ -444,7 +446,8 @@ textarea {
 }
 
 .assistant-form textarea,
-.preference-form textarea {
+.preference-form textarea,
+.decision-resolve-form textarea {
   width: 100%;
   min-height: 140px;
   margin-bottom: 10px;
@@ -461,8 +464,25 @@ textarea {
   min-height: 180px;
 }
 
+.decision-form input,
+.decision-resolve-form input {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.decision-resolve-form textarea {
+  min-height: 96px;
+}
+
 .assistant-form button,
-.preference-form button {
+.preference-form button,
+.decision-form button,
+.decision-resolve-form button {
   padding: 12px 16px;
   border: none;
   border-radius: 12px;
@@ -473,7 +493,9 @@ textarea {
 }
 
 .assistant-form button:disabled,
-.preference-form button:disabled {
+.preference-form button:disabled,
+.decision-form button:disabled,
+.decision-resolve-form button:disabled {
   opacity: 0.72;
   cursor: wait;
 }
@@ -532,6 +554,18 @@ textarea {
   margin-bottom: 6px;
 }
 
+.decision-form {
+  margin-bottom: 14px;
+}
+
+.decision-resolve-form {
+  margin-top: 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
 .assistant-entry-top {
   display: flex;
   align-items: center;
@@ -572,6 +606,7 @@ textarea {
 }
 
 .assistant-kind.kind-assistant_message,
+.assistant-kind.kind-request_decision,
 .assistant-kind.kind-resolve_decision,
 .assistant-kind.kind-create_planning_task,
 .assistant-kind.kind-request_planning,

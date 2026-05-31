@@ -10,6 +10,7 @@ import {
   type AssistantThreadStore,
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
+import { requestGoalDecision } from '../runtime/decisionRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
@@ -250,6 +251,41 @@ async function applyAssistantAction(
     }
   }
 
+  if (action.kind === 'request_decision') {
+    const result = await requestGoalDecision(
+      {
+        boardStore: stores.boardStore,
+        decisions: stores.decisions,
+      },
+      {
+        goalKey,
+        decisionKey: action.decisionKey,
+        summary: action.summary,
+        taskRef: action.taskRef,
+        writer: 'assistant',
+        reason: `assistant request decision ${action.decisionKey}`,
+      },
+    )
+
+    if (result.decision.status === 'resolved') {
+      return {
+        kind: 'request_decision',
+        decisionKey: result.decision.decisionKey,
+        summary: `Decision ${result.decision.decisionKey} is already resolved.`,
+      }
+    }
+
+    return {
+      kind: 'request_decision',
+      decisionKey: result.decision.decisionKey,
+      summary: result.blockerAdded
+        ? `Requested decision ${result.decision.decisionKey} and linked it to ${action.taskRef}.`
+        : result.created
+          ? `Requested decision ${result.decision.decisionKey}.`
+          : `Decision ${result.decision.decisionKey} is already open.`,
+    }
+  }
+
   if (action.kind === 'resolve_decision') {
     const current = await stores.decisions.readGoalDecisions(goalKey)
     if (!current.decisions.some((item) => item.decisionKey === action.decisionKey)) {
@@ -379,6 +415,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
   }
   if (action.kind === 'request_planning') {
     return `Request planning: ${action.title}`
+  }
+  if (action.kind === 'request_decision') {
+    return `Request decision ${action.decisionKey}.`
   }
   if (action.kind === 'resolve_decision') {
     return `Resolve decision ${action.decisionKey}.`
