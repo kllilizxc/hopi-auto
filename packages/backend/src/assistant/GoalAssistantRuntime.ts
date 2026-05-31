@@ -254,6 +254,7 @@ async function applyAssistantAction(
       {
         boardStore: stores.boardStore,
         decisions: stores.decisions,
+        planningRequests: stores.planningRequests,
       },
       {
         goalKey,

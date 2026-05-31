@@ -1,5 +1,7 @@
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
+import type { PlanningRequestStore } from '../storage/planningRequestStore'
+import { enrichPlanningRequestsForTaskDecision } from './planningRequest'
 
 export interface GoalDecisionRequestInput {
   goalKey: string
@@ -25,6 +27,7 @@ export async function requestGoalDecision(
   stores: {
     boardStore: BoardStore
     decisions: DecisionStore
+    planningRequests?: PlanningRequestStore
   },
   input: GoalDecisionRequestInput,
 ): Promise<GoalDecisionRequestResult> {
@@ -65,6 +68,24 @@ export async function requestGoalDecision(
         }
       },
     )
+  }
+
+  const linkedTaskRef = input.taskRef ?? decision.taskRef
+  if (linkedTaskRef && stores.planningRequests) {
+    const board = await stores.boardStore.readBoard(input.goalKey)
+    const task = board.items.find((item) => item.ref === linkedTaskRef)
+    if (task?.kind === 'planning') {
+      await enrichPlanningRequestsForTaskDecision(
+        {
+          planningRequests: stores.planningRequests,
+        },
+        {
+          goalKey: input.goalKey,
+          taskRef: linkedTaskRef,
+          decisionKey: decision.decisionKey,
+        },
+      )
+    }
   }
 
   return {

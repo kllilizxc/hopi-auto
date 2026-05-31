@@ -119,6 +119,11 @@ The planning update coverage validation slice is documented in:
 - `docs/superpowers/specs/2026-06-01-planning-update-coverage-validation-design.md`
 - `docs/superpowers/plans/2026-06-01-planning-update-coverage-validation.md`
 
+The decision-driven planning request enrichment slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-decision-driven-planning-request-enrichment-design.md`
+- `docs/superpowers/plans/2026-06-01-decision-driven-planning-request-enrichment.md`
+
 The run-history and artifact-aware review/merge policy slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`

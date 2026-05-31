@@ -205,6 +205,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               boardStore: store,
               decisions,
+              planningRequests,
             },
             {
               goalKey: currentGoalKey,

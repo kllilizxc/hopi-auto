@@ -295,6 +295,12 @@ describe('createServer', () => {
     ])
 
     const server = startServer(undefined, workspaceRoot)
+    const planningResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Plan auth integration',
+      description: 'Clarify the auth path before decomposition.',
+      acceptanceCriteria: ['The auth planning path is visible.'],
+    })
+    expect(planningResponse.status).toBe(201)
 
     const createResponse = await postJson(server, '/api/goals/test/decisions', {
       decisionKey: 'auth-strategy',
@@ -328,6 +334,17 @@ describe('createServer', () => {
         expect.objectContaining({
           ref: 'P-3',
           blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          taskRef: 'P-3',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
     })
@@ -717,6 +734,17 @@ describe('createServer', () => {
           summary: 'Choose the auth strategy',
           status: 'open',
           taskRef: 'P-7',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          taskRef: 'P-7',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
     })

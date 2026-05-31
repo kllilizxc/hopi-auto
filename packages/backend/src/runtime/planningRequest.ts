@@ -179,6 +179,34 @@ export async function resolvePlanningRequestsForTask(
   return resolved
 }
 
+export async function enrichPlanningRequestsForTaskDecision(
+  stores: {
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    taskRef: string
+    decisionKey: string
+  },
+) {
+  const current = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const openRequests = current.requests.filter(
+    (request) => request.status === 'open' && request.taskRef === input.taskRef,
+  )
+
+  const enriched = []
+  for (const request of openRequests) {
+    enriched.push(
+      await stores.planningRequests.mergeRequestMetadata(input.goalKey, request.requestKey, {
+        decisionRefs: [input.decisionKey],
+        requestedUpdates: request.requestedUpdates.length === 0 ? ['design.md', 'todo.yml'] : [],
+      }),
+    )
+  }
+
+  return enriched
+}
+
 function nextPlanningTaskRef(existingRefs: string[]) {
   const nextNumber =
     existingRefs.reduce((max, ref) => {
