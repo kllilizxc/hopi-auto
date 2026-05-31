@@ -13,6 +13,7 @@ import {
 } from '../storage/planningRequestStore'
 import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
 import { type GoalDocsStore, createGoalDocsStore } from './goalDocsStore'
+import { summarizePlanningFollowThroughEvidence } from './planningFollowThroughEvidence'
 import { type RunHistoryStore, createRunHistoryStore } from './runHistoryStore'
 import type { GoalWriteTraceEntry } from './writeTrace'
 import { type WriteTraceStore, createWriteTraceStore } from './writeTraceStore'
@@ -52,6 +53,11 @@ interface PlannerContextInputs {
     decisionRefs: string[]
     requestedUpdates: GoalPlanningRequestUpdateTarget[]
   }>
+  planningFollowThroughEvidence: {
+    requestedUpdates: GoalPlanningRequestUpdateTarget[]
+    observedUpdates: GoalPlanningRequestUpdateTarget[]
+    missingUpdates: GoalPlanningRequestUpdateTarget[]
+  }
   preferenceFile: string
   preferenceContent: string
 }
@@ -115,6 +121,7 @@ export function createRoleProcessContextBuilder(
               preferences,
               paths,
               options.task.ref,
+              filterRelevantTraces(relevantTraces, options.runId),
             )
           : undefined
       await mkdir(dirname(contextFile), { recursive: true })
@@ -315,6 +322,7 @@ ${inputs.planningRequestsContent.trim()}
 \`\`\`
 
 ${renderRelevantPlanningRequests(inputs.relevantPlanningRequests)}
+${renderPlanningUpdateCoverage(inputs.planningFollowThroughEvidence)}
 
 ### Current preference.md
 
@@ -383,11 +391,27 @@ async function loadPlannerContextInputs(
   preferences: PreferenceStore,
   paths: ReturnType<typeof createProjectPaths>,
   taskRef: string,
+  relevantTraces: GoalWriteTraceEntry[],
 ): Promise<PlannerContextInputs> {
   const board = await boardStore.readBoard(goalKey)
   await decisions.ensureGoalDecisions(goalKey)
   const planningRequestSet = await planningRequests.ensureGoalPlanningRequests(goalKey)
   const preferenceDocument = await preferences.readPreferences()
+  const relevantPlanningRequests = planningRequestSet.requests
+    .filter((request) => request.status === 'open' && request.taskRef === taskRef)
+    .map((request) => ({
+      requestKey: request.requestKey,
+      title: request.title,
+      taskRef: request.taskRef,
+      decisionRefs: request.decisionRefs,
+      requestedUpdates: request.requestedUpdates,
+    }))
+  const planningFollowThroughEvidence = summarizePlanningFollowThroughEvidence(
+    planningRequestSet.requests.filter(
+      (request) => request.status === 'open' && request.taskRef === taskRef,
+    ),
+    relevantTraces,
+  )
 
   return {
     todoFile: paths.todoPath(goalKey),
@@ -396,15 +420,12 @@ async function loadPlannerContextInputs(
     decisionsContent: await Bun.file(paths.decisionsPath(goalKey)).text(),
     planningRequestsFile: paths.planningRequestsPath(goalKey),
     planningRequestsContent: await Bun.file(paths.planningRequestsPath(goalKey)).text(),
-    relevantPlanningRequests: planningRequestSet.requests
-      .filter((request) => request.status === 'open' && request.taskRef === taskRef)
-      .map((request) => ({
-        requestKey: request.requestKey,
-        title: request.title,
-        taskRef: request.taskRef,
-        decisionRefs: request.decisionRefs,
-        requestedUpdates: request.requestedUpdates,
-      })),
+    relevantPlanningRequests,
+    planningFollowThroughEvidence: {
+      requestedUpdates: planningFollowThroughEvidence.requestedUpdates,
+      observedUpdates: planningFollowThroughEvidence.observedUpdates,
+      missingUpdates: planningFollowThroughEvidence.missingUpdates,
+    },
     preferenceFile: preferenceDocument.path,
     preferenceContent: preferenceDocument.content,
   }
@@ -502,6 +523,21 @@ ${requests
       .join('\n'),
   )
   .join('\n')}
+`
+}
+
+function renderPlanningUpdateCoverage(
+  evidence: PlannerContextInputs['planningFollowThroughEvidence'],
+) {
+  if (evidence.requestedUpdates.length === 0) {
+    return ''
+  }
+
+  return `### Requested Planning Update Coverage
+
+- Requested durable updates: ${evidence.requestedUpdates.join(', ')}
+- Observed requested durable updates: ${evidence.observedUpdates.length > 0 ? evidence.observedUpdates.join(', ') : 'none yet'}
+- Missing requested durable updates: ${evidence.missingUpdates.length > 0 ? evidence.missingUpdates.join(', ') : 'none'}
 `
 }
 

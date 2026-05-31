@@ -2,9 +2,11 @@ import type { AgentOutcome, AgentRole, AgentRunner, AgentRuntimeEvent } from '..
 import type { BlockerRef, FailureKind, TaskItem, TaskStatus } from '../domain/board'
 import type { AttemptStore } from '../runtime/attemptStore'
 import { type GitMergeExecutor, createGitMergeExecutor } from '../runtime/gitMergeExecutor'
+import { inspectPlanningFollowThroughEvidence } from '../runtime/planningFollowThroughEvidence'
 import { resolvePlanningRequestsForTask } from '../runtime/planningRequest'
 import type { RunStatus, StepOutcome } from '../runtime/runHistory'
 import type { RunHistoryStore } from '../runtime/runHistoryStore'
+import { type WriteTraceStore, createWriteTraceStore } from '../runtime/writeTraceStore'
 import type { BoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import {
@@ -17,6 +19,7 @@ export interface ReconcileOptions {
   store: BoardStore
   decisions?: DecisionStore
   planningRequests?: PlanningRequestStore
+  writeTraces?: WriteTraceStore
   attempts: AttemptStore
   history?: RunHistoryStore
   runner: AgentRunner
@@ -53,6 +56,7 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
   const decisions = options.decisions ?? createDecisionStore(options.store.paths.rootDir)
   const planningRequests =
     options.planningRequests ?? createPlanningRequestStore(options.store.paths.rootDir)
+  const writeTraces = options.writeTraces ?? createWriteTraceStore(options.store.paths.rootDir)
 
   if (await cleanupResolvedBlockers(options.store, decisions, options.goalKey, writer)) {
     return { kind: 'idle' }
@@ -139,8 +143,19 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
   }
 
   const resolution = await resolveOutcome(task, from, step, outcome, options.attempts, maxAttempts)
+  const validated = await validatePlanningFollowThroughIfNeeded({
+    goalKey: options.goalKey,
+    task,
+    step,
+    outcome,
+    resolution,
+    attempts: options.attempts,
+    maxAttempts,
+    planningRequests,
+    writeTraces,
+  })
   try {
-    await finalizeTask(options.store, options.goalKey, writer, task.ref, resolution)
+    await finalizeTask(options.store, options.goalKey, writer, task.ref, validated.resolution)
   } catch (error) {
     await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
     await finishHistoryStep(options.history, runRef, {
@@ -153,7 +168,7 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
     throw error
   }
 
-  if (task.kind === 'planning' && resolution.to === 'done') {
+  if (task.kind === 'planning' && validated.resolution.to === 'done') {
     await resolvePlanningRequestsForTask(
       {
         boardStore: options.store,
@@ -170,17 +185,17 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
 
   await finishHistoryStep(options.history, runRef, {
     goalKey: options.goalKey,
-    statusAfter: resolution.to,
-    outcome: stepOutcomeForAgentOutcome(outcome),
-    runStatus: runStatusForResolution(resolution),
-    message: statusMessage(messageForOutcome(task.ref, outcome, resolution.to)),
+    statusAfter: validated.resolution.to,
+    outcome: stepOutcomeForAgentOutcome(validated.outcome),
+    runStatus: runStatusForResolution(validated.resolution),
+    message: statusMessage(messageForOutcome(task.ref, validated.outcome, validated.resolution.to)),
   })
 
-  if (resolution.blocker) {
-    return { kind: 'blocked', taskRef: task.ref, blocker: resolution.blocker }
+  if (validated.resolution.blocker) {
+    return { kind: 'blocked', taskRef: task.ref, blocker: validated.resolution.blocker }
   }
 
-  return { kind: 'advanced', taskRef: task.ref, from, to: resolution.to }
+  return { kind: 'advanced', taskRef: task.ref, from, to: validated.resolution.to }
 }
 
 async function cleanupResolvedBlockers(
@@ -315,6 +330,56 @@ async function resolveOutcome(
     failureKind: outcome.kind === 'timeout' ? 'timeout' : 'agent_failed',
     retryStatus: from,
   })
+}
+
+async function validatePlanningFollowThroughIfNeeded(options: {
+  goalKey: string
+  task: TaskItem
+  step: DispatchStep
+  outcome: AgentOutcome
+  resolution: OutcomeResolution
+  attempts: AttemptStore
+  maxAttempts: number
+  planningRequests: PlanningRequestStore
+  writeTraces: WriteTraceStore
+}) {
+  if (
+    options.task.kind !== 'planning' ||
+    options.outcome.kind !== 'success' ||
+    (options.step.role !== 'reviewer' && options.step.role !== 'merger')
+  ) {
+    return {
+      outcome: options.outcome,
+      resolution: options.resolution,
+    }
+  }
+
+  const evidence = await inspectPlanningFollowThroughEvidence({
+    goalKey: options.goalKey,
+    taskRef: options.task.ref,
+    planningRequests: options.planningRequests,
+    writeTraces: options.writeTraces,
+  })
+  if (evidence.missingUpdates.length === 0) {
+    return {
+      outcome: options.outcome,
+      resolution: options.resolution,
+    }
+  }
+
+  return {
+    outcome: {
+      kind: 'fail' as const,
+      reason: `Missing requested planning follow-through evidence: ${evidence.missingUpdates.join(', ')}`,
+    },
+    resolution: await resolveFailure({
+      task: options.task,
+      attempts: options.attempts,
+      maxAttempts: options.maxAttempts,
+      failureKind: 'planning_follow_through_missing',
+      retryStatus: 'planned',
+    }),
+  }
 }
 
 async function resolveFailure(options: {

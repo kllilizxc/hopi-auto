@@ -410,10 +410,31 @@ requests:
     acceptanceCriteria:
       - The auth plan is durable.
     taskRef: P-1
+    requestedUpdates:
+      - design.md
+      - todo.yml
     status: open
     createdAt: 2026-06-01T00:00:00.000Z
 `,
     )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-planning',
+      stepId: 'step-planner',
+      taskRef: 'P-1',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner',
+      targetPaths: ['.hopi/docs/goals/goal-1/design.md', '.hopi/docs/goals/goal-1/todo.yml'],
+      changes: [
+        { path: '.hopi/docs/goals/goal-1/design.md', kind: 'modified' },
+        { path: '.hopi/docs/goals/goal-1/todo.yml', kind: 'modified' },
+      ],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (2 changed files)',
+    })
 
     await expect(
       reconcileOnce({
@@ -437,6 +458,70 @@ requests:
     ).text()
     expect(planningRequests).toContain('status: resolved')
     expect(planningRequests).toContain('resolution: Planning task P-1 completed.')
+  })
+
+  test('returns planning review work to planned when requested durable updates are still missing', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-2', kind: 'planning', status: 'in_review' }),
+    ])
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-2
+    title: Plan auth reshape
+    description: Capture the auth design follow-through.
+    acceptanceCriteria:
+      - The auth plan is durable.
+    taskRef: P-2
+    requestedUpdates:
+      - design.md
+      - todo.yml
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-planner',
+      stepId: 'step-planner',
+      taskRef: 'P-2',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner',
+      targetPaths: ['.hopi/docs/goals/goal-1/design.md'],
+      changes: [{ path: '.hopi/docs/goals/goal-1/design.md', kind: 'modified' }],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (1 changed file)',
+    })
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'P-2:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-2',
+      from: 'in_review',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'P-2')).resolves.toMatchObject({ status: 'planned' })
+    await expect(attempts.get('P-2', 'planning_follow_through_missing')).resolves.toBe(1)
+    const planningRequests = await Bun.file(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+    ).text()
+    expect(planningRequests).toContain('status: open')
   })
 
   test('appends reviewer work to the same active run', async () => {

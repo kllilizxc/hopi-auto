@@ -5,6 +5,7 @@ export const FAILURE_KINDS = [
   'agent_failed',
   'reviewer_rejected',
   'merge_conflict',
+  'planning_follow_through_missing',
   'timeout',
 ] as const
 

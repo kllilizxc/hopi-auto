@@ -404,6 +404,9 @@ requests:
     expect(context).toContain('### Relevant Open Planning Requests For This Task')
     expect(context).toContain('Linked decisions: rollout-strategy')
     expect(context).toContain('Requested durable updates: design.md, todo.yml')
+    expect(context).toContain('### Requested Planning Update Coverage')
+    expect(context).toContain('Observed requested durable updates: design.md, todo.yml')
+    expect(context).toContain('Missing requested durable updates: none')
     expect(context).toContain('.hopi/docs/goals/goal-7/design.md')
     expect(prompt).toContain(
       'Planning reviewer must verify durable planning follow-through against open planning requests before accepting.',
@@ -462,6 +465,9 @@ requests:
     acceptanceCriteria:
       - The auth follow-through is visible.
     taskRef: P-8
+    requestedUpdates:
+      - design.md
+      - todo.yml
     status: open
     createdAt: 2026-06-01T00:00:00.000Z
 `,
@@ -493,6 +499,8 @@ requests:
     expect(context).toContain('## Relevant Write Traces')
     expect(context).toContain('No durable planning write traces were recorded yet for this task.')
     expect(context).toContain('Plan auth follow-through')
+    expect(context).toContain('### Requested Planning Update Coverage')
+    expect(context).toContain('Missing requested durable updates: design.md, todo.yml')
     expect(prompt).toContain(
       'Planning merger must inspect durable planning evidence before returning success.',
     )
