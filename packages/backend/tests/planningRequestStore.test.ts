@@ -111,6 +111,56 @@ describe('createPlanningRequestStore', () => {
     })
   })
 
+  test('normalizes extra Goal-local requested update paths', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout notes',
+      description: 'Record the rollout-specific planning notes durably.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      taskRef: 'P-3',
+      requestedUpdates: ['goal.md', './notes//rollout.md', 'research.md'],
+    })
+
+    expect(created).toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-3',
+      requestedUpdates: ['goal.md', 'notes/rollout.md', 'research.md'],
+    })
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          requestedUpdates: ['goal.md', 'notes/rollout.md', 'research.md'],
+        }),
+      ],
+    })
+  })
+
+  test('rejects traversal and reserved Goal state files as requested update targets', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    await expect(
+      store.createRequest(goalKey, {
+        title: 'Escape Goal docs',
+        description: 'This should fail.',
+        acceptanceCriteria: ['The invalid target is rejected.'],
+        taskRef: 'P-4',
+        requestedUpdates: ['../escape.md'],
+      }),
+    ).rejects.toThrow('Invalid requested update target')
+
+    await expect(
+      store.createRequest(goalKey, {
+        title: 'Rewrite decision store',
+        description: 'This should also fail.',
+        acceptanceCriteria: ['The reserved target is rejected.'],
+        taskRef: 'P-4',
+        requestedUpdates: ['decisions.yml'],
+      }),
+    ).rejects.toThrow('Invalid requested update target')
+  })
+
   test('supports stable planning request group keys', async () => {
     const store = createPlanningRequestStore(testRoot())
 

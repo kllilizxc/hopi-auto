@@ -206,7 +206,7 @@ Required outcome shape:
       "description": "why visible planning work is needed",
       "acceptanceCriteria": ["what the planner-visible request must accomplish"],
       "decisionRefs": ["optional linked decision key"],
-      "requestedUpdates": ["goal.md", "design.md", "todo.yml"],
+      "requestedUpdates": ["goal.md", "design.md", "notes/rollout.md", "todo.yml"],
       "blockedBy": []
     },
     {
@@ -219,7 +219,7 @@ Required outcome shape:
           "title": "first visible planning task title",
           "description": "what this planning stage must accomplish",
           "acceptanceCriteria": ["at least one acceptance criterion"],
-          "requestedUpdates": ["goal.md", "design.md"],
+          "requestedUpdates": ["goal.md", "design.md", "research.md"],
           "blockedByTaskKeys": []
         },
         {
@@ -267,6 +267,8 @@ Rules:
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
+- Treat requestedUpdates as Goal-local relative paths under .hopi/docs/goals/<goalKey>/, such as goal.md, design.md, todo.yml, research.md, or notes/rollout.md.
+- Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.
 - If you resolve a decision whose durable topic may not exist yet, include a concise summary.
 - Prefer "record_preference" for adding one durable preference; use "update_preference" only when intentionally rewriting the full preference document.

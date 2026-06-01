@@ -163,6 +163,36 @@ describe('createServer', () => {
     })
   })
 
+  test('accepts extra Goal-local requested update paths through the planning-request API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      requestedUpdates: ['goal.md', './notes//rollout.md', 'research.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      requestedUpdates: ['goal.md', 'notes/rollout.md', 'research.md'],
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          requestedUpdates: ['goal.md', 'notes/rollout.md', 'research.md'],
+        }),
+      ],
+    })
+  })
+
   test('accepts planning request group keys through the API', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -1238,6 +1268,54 @@ describe('createServer', () => {
           blockedBy: [{ kind: 'task', ref: 'P-3' }],
         }),
       ]),
+    })
+  })
+
+  test('accepts custom Goal-local requested update paths from assistant planning actions', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Capture rollout notes before planning continues.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I created one planning follow-through request with durable rollout notes.', actions: [{ kind: 'request_planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], requestedUpdates: ['goal.md', 'notes/rollout.md'] }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Capture rollout notes before planning continues.',
+    })
+
+    expect(response.status).toBe(200)
+    const result = await readJson<{
+      actionResults: Array<{ kind: string; requestKey?: string; taskRef?: string }>
+    }>(response)
+    expect(result.actionResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning',
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+        }),
+      ]),
+    )
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          requestedUpdates: ['goal.md', 'notes/rollout.md'],
+        }),
+      ],
     })
   })
 

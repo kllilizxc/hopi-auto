@@ -22,8 +22,8 @@ import { createBoardStore } from './storage/boardStore'
 import { createDecisionStore } from './storage/decisionStore'
 import { createProjectPaths } from './storage/paths'
 import {
-  PLANNING_REQUEST_UPDATE_TARGETS,
   createPlanningRequestStore,
+  goalPlanningRequestUpdateTargetArraySchema,
 } from './storage/planningRequestStore'
 import { createPreferenceStore } from './storage/preferenceStore'
 import indexPage from './ui/index.html'
@@ -76,7 +76,7 @@ const createPlanningRequestSchema = z.object({
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   blockedBy: z.array(blockerSchema).default([]),
 })
 

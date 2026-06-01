@@ -1,5 +1,5 @@
 import { mkdir, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, posix as pathPosix } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { withFileLock } from './lock'
@@ -7,9 +7,15 @@ import { createProjectPaths } from './paths'
 
 const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
 export const PLANNING_REQUEST_UPDATE_TARGETS = ['goal.md', 'design.md', 'todo.yml'] as const
+const RESERVED_GOAL_UPDATE_TARGETS = new Set([
+  'decisions.yml',
+  'planning-requests.yml',
+  'events.jsonl',
+  'write-trace.jsonl',
+])
 
 export type GoalPlanningRequestStatus = (typeof PLANNING_REQUEST_STATUSES)[number]
-export type GoalPlanningRequestUpdateTarget = (typeof PLANNING_REQUEST_UPDATE_TARGETS)[number]
+export type GoalPlanningRequestUpdateTarget = string
 
 export interface GoalPlanningRequest {
   requestKey: string
@@ -80,6 +86,55 @@ export interface PlanningRequestStore {
   ): Promise<GoalPlanningRequest>
 }
 
+export function normalizeGoalPlanningRequestUpdateTarget(
+  value: string,
+): GoalPlanningRequestUpdateTarget {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    throw new Error('Invalid requested update target: path is required')
+  }
+
+  const slashNormalized = trimmed.replaceAll('\\', '/')
+  if (slashNormalized.startsWith('/')) {
+    throw new Error('Invalid requested update target: absolute paths are not allowed')
+  }
+
+  if (slashNormalized.split('/').some((segment) => segment === '..')) {
+    throw new Error('Invalid requested update target: parent traversal is not allowed')
+  }
+
+  const normalized = pathPosix.normalize(slashNormalized)
+  if (normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error('Invalid requested update target: path must stay within Goal docs')
+  }
+
+  if (RESERVED_GOAL_UPDATE_TARGETS.has(normalized)) {
+    throw new Error(`Invalid requested update target: ${normalized} is a reserved Goal state file`)
+  }
+
+  return normalized
+}
+
+export const goalPlanningRequestUpdateTargetSchema = z
+  .string()
+  .min(1)
+  .transform((value, ctx) => {
+    try {
+      return normalizeGoalPlanningRequestUpdateTarget(value)
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: error instanceof Error ? error.message : 'Invalid requested update target',
+      })
+      return z.NEVER
+    }
+  })
+
+export const goalPlanningRequestUpdateTargetArraySchema = z
+  .array(goalPlanningRequestUpdateTargetSchema)
+  .default([])
+  .transform((values) => mergeUniqueValues([], values))
+
 const GoalPlanningRequestSchema = z.object({
   requestKey: z.string().min(1),
   groupKey: z.string().min(1).optional(),
@@ -89,7 +144,7 @@ const GoalPlanningRequestSchema = z.object({
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   taskRef: z.string().min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   status: z.enum(PLANNING_REQUEST_STATUSES),
   createdAt: z.string().datetime(),
   resolvedAt: z.string().datetime().optional(),
@@ -134,6 +189,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           input.groupKey,
           input.groupTaskKey,
         )
+        const requestedUpdates = normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates)
 
         const request: GoalPlanningRequest = {
           requestKey,
@@ -144,7 +200,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           acceptanceCriteria: input.acceptanceCriteria,
           taskRef: input.taskRef,
           decisionRefs: mergeUniqueValues([], input.decisionRefs ?? []),
-          requestedUpdates: mergeUniqueValues([], input.requestedUpdates ?? []),
+          requestedUpdates,
           status: 'open',
           createdAt: new Date().toISOString(),
         }
@@ -166,7 +222,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
-          input.requestedUpdates ?? [],
+          normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
@@ -205,7 +261,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
-          input.requestedUpdates ?? [],
+          normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
@@ -318,6 +374,12 @@ function mergeUniqueValues<T extends string>(existing: T[], incoming: T[]) {
     }
   }
   return merged
+}
+
+function normalizeGoalPlanningRequestUpdateTargets(
+  values: GoalPlanningRequestUpdateTarget[] | undefined,
+) {
+  return mergeUniqueValues([], (values ?? []).map(normalizeGoalPlanningRequestUpdateTarget))
 }
 
 function sameStringArray(left: string[], right: string[]) {

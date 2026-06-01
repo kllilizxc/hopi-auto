@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { BLOCKER_KINDS, TASK_STATUSES } from '../domain/board'
-import { PLANNING_REQUEST_UPDATE_TARGETS } from '../storage/planningRequestStore'
+import { goalPlanningRequestUpdateTargetArraySchema } from '../storage/planningRequestStore'
 
 const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -58,7 +58,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
     blockedBy: z
       .array(
         z.object({
@@ -80,7 +80,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
           title: z.string().min(1),
           description: z.string(),
           acceptanceCriteria: z.array(z.string().min(1)).min(1),
-          requestedUpdates: z.array(z.enum(PLANNING_REQUEST_UPDATE_TARGETS)).default([]),
+          requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
           blockedBy: z
             .array(
               z.object({

@@ -1,16 +1,11 @@
-import type {
-  GoalPlanningRequest,
-  GoalPlanningRequestUpdateTarget,
-  PlanningRequestStore,
+import {
+  type GoalPlanningRequest,
+  type GoalPlanningRequestUpdateTarget,
+  PLANNING_REQUEST_UPDATE_TARGETS,
+  type PlanningRequestStore,
 } from '../storage/planningRequestStore'
 import type { GoalWriteTraceEntry } from './writeTrace'
 import type { WriteTraceStore } from './writeTraceStore'
-
-const ORDERED_UPDATE_TARGETS: GoalPlanningRequestUpdateTarget[] = [
-  'goal.md',
-  'design.md',
-  'todo.yml',
-]
 
 export interface PlanningFollowThroughEvidence {
   requestKeys: string[]
@@ -79,5 +74,9 @@ function mergeOrderedStrings(values: string[]) {
 }
 
 function mergeOrderedUpdateTargets(values: GoalPlanningRequestUpdateTarget[]) {
-  return ORDERED_UPDATE_TARGETS.filter((target) => values.includes(target))
+  const ordered = mergeOrderedStrings(values)
+  const coreTargetSet = new Set<string>(PLANNING_REQUEST_UPDATE_TARGETS)
+  const coreTargets = PLANNING_REQUEST_UPDATE_TARGETS.filter((target) => ordered.includes(target))
+  const extraTargets = ordered.filter((target) => !coreTargetSet.has(target))
+  return [...coreTargets, ...extraTargets]
 }

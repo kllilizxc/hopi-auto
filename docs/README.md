@@ -53,6 +53,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-decision-resolution-planner-follow-through.md`: implementation plan for the decision-resolution planner follow-through slice.
 - `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-targets-design.md`: approved and implemented design for using `goal.md` as a first-class planning follow-through target.
 - `docs/superpowers/plans/2026-06-01-goal-doc-planning-update-targets.md`: implementation plan for the Goal-doc planning update target slice.
+- `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-paths-design.md`: approved and implemented design for generalized Goal-local planning requested-update paths beyond the built-in core files.
+- `docs/superpowers/plans/2026-06-01-goal-doc-planning-update-paths.md`: implementation plan for the generalized Goal-doc planning update path slice.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: approved and implemented design for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/plans/2026-06-01-grouped-planning-follow-through.md`: implementation plan for the grouped planning follow-through slice.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: approved and implemented design for propagating decision lineage across grouped planning follow-through.

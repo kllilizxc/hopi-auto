@@ -41,6 +41,7 @@ export interface RoleProcessContextBuilder {
 }
 
 interface PlannerContextInputs {
+  goalDocsRoot: string
   todoFile: string
   todoContent: string
   decisionsFile: string
@@ -312,6 +313,7 @@ function renderPlannerInputs(inputs?: PlannerContextInputs) {
 
   return `## Planner Durable Inputs
 
+- Goal-local requested update root: ${inputs.goalDocsRoot}
 - todo.yml: ${inputs.todoFile}
 - decisions.yml: ${inputs.decisionsFile}
 - planning-requests.yml: ${inputs.planningRequestsFile}
@@ -432,6 +434,7 @@ async function loadPlannerContextInputs(
   )
 
   return {
+    goalDocsRoot: dirname(paths.todoPath(goalKey)),
     todoFile: paths.todoPath(goalKey),
     todoContent: stringifyBoardYaml(board),
     decisionsFile: paths.decisionsPath(goalKey),
@@ -452,7 +455,7 @@ async function loadPlannerContextInputs(
 
 function roleBoundaryText(role: AgentRole) {
   if (role === 'planner') {
-    return 'Planner may edit goal.md and design.md when needed to record durable Goal context.'
+    return 'Planner may edit goal.md and design.md plus other Goal-local durable docs under .hopi/docs/goals/<goalKey>/ when needed to record durable Goal context.'
   }
 
   return 'Do not edit .hopi/docs/**. Generator, reviewer, and merger work must leave durable Goal docs unchanged.'
@@ -511,10 +514,12 @@ function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusIn
   return `## Planner Design Policy
 
 ${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
+- Requested update paths are relative to the Goal docs directory from the bundled context.
 - If a relevant planning request targets goal.md, update durable Goal context before returning success.
 - When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
 - Address open planning requests linked to this task before returning success.
 - If a relevant planning request targets design.md, update durable design rationale before returning success.
+- If a relevant planning request targets another Goal-local path, create or update that durable document before returning success.
 - If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.
 `
 }

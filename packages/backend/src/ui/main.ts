@@ -54,7 +54,7 @@ interface GoalPlanningRequest {
   acceptanceCriteria: string[]
   taskRef: string
   decisionRefs: string[]
-  requestedUpdates: Array<'goal.md' | 'design.md' | 'todo.yml'>
+  requestedUpdates: string[]
   status: 'open' | 'resolved'
   createdAt: string
   resolvedAt?: string
@@ -207,7 +207,7 @@ interface AssistantAction {
   description?: string
   acceptanceCriteria?: string[]
   decisionRefs?: string[]
-  requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
+  requestedUpdates?: string[]
   groupKey?: string
   groupTaskKey?: string
   requests?: Array<{
@@ -216,7 +216,7 @@ interface AssistantAction {
     title: string
     description: string
     acceptanceCriteria: string[]
-    requestedUpdates?: Array<'goal.md' | 'design.md' | 'todo.yml'>
+    requestedUpdates?: string[]
     blockedByTaskKeys?: string[]
   }>
   decisionKey?: string
@@ -462,13 +462,10 @@ root.addEventListener('submit', (event: SubmitEvent) => {
       .split(/[\n,]/)
       .map((item) => item.trim())
       .filter(Boolean)
-    const requestedUpdates = formData
-      .getAll('requestedUpdates')
-      .map((value) => `${value}`.trim())
-      .filter(
-        (value): value is 'goal.md' | 'design.md' | 'todo.yml' =>
-          value === 'goal.md' || value === 'design.md' || value === 'todo.yml',
-      )
+    const requestedUpdates = `${formData.get('requestedUpdates') ?? ''}`
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
     if (!title || acceptanceCriteria.length === 0) {
       return
     }
@@ -968,7 +965,7 @@ async function createPlanningRequest(
     description: string
     acceptanceCriteria: string[]
     decisionRefs: string[]
-    requestedUpdates: Array<'goal.md' | 'design.md' | 'todo.yml'>
+    requestedUpdates: string[]
   },
   form: HTMLFormElement,
 ) {
@@ -1259,22 +1256,14 @@ function render() {
                   ></textarea>
                   <div class="planning-update-targets">
                     <span class="assistant-note">Requested durable updates</span>
-                    <label>
-                      <input type="checkbox" name="requestedUpdates" value="goal.md" />
-                      <span>goal.md</span>
-                    </label>
-                    <label>
-                      <input type="checkbox" name="requestedUpdates" value="design.md" />
-                      <span>design.md</span>
-                    </label>
-                    <label>
-                      <input type="checkbox" name="requestedUpdates" value="todo.yml" />
-                      <span>todo.yml</span>
-                    </label>
+                    <textarea
+                      name="requestedUpdates"
+                      placeholder="One Goal-local relative path per line or comma.&#10;goal.md&#10;design.md&#10;notes/rollout.md"
+                    ></textarea>
                   </div>
                   <div class="assistant-actions-row">
                     <button type="submit">Create Planning Request</button>
-                    <span class="assistant-note">A visible planning task will be reused or created deterministically.</span>
+                    <span class="assistant-note">Use Goal-local relative paths under .hopi/docs/goals/&lt;goalKey&gt;/. A visible planning task will be reused or created deterministically.</span>
                   </div>
                 </form>
                 <div class="assistant-list">

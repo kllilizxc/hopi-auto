@@ -148,6 +148,62 @@ requests:
     )
   })
 
+  test('shows Goal-local requested update roots and generic planner guidance for extra doc paths', async () => {
+    const rootDir = testRoot()
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2b', 'planning-requests.yml'),
+      `version: 1
+goalKey: goal-2b
+requests:
+  - requestKey: PR-1
+    title: Capture rollout notes
+    description: Record rollout details before more planning work continues.
+    acceptanceCriteria:
+      - Rollout notes are durable.
+    taskRef: P-1
+    decisionRefs:
+      - rollout-strategy
+    requestedUpdates:
+      - goal.md
+      - notes/rollout.md
+      - research.md
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const builder = createRoleProcessContextBuilder(rootDir)
+
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-2b',
+      goalTitle: 'Goal Two B',
+      runId: 'run-2b',
+      stepId: 'step-2b',
+      role: 'planner',
+      task: {
+        ref: 'P-1',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+    expect(context).toContain('Goal-local durable docs under .hopi/docs/goals/<goalKey>/')
+    expect(context).toContain('Goal-local requested update root:')
+    expect(context).toContain('.hopi/docs/goals/goal-2b')
+    expect(context).toContain('Requested durable updates: goal.md, notes/rollout.md, research.md')
+    expect(prompt).toContain(
+      'Requested update paths are relative to the Goal docs directory from the bundled context.',
+    )
+    expect(prompt).toContain(
+      'If a relevant planning request targets another Goal-local path, create or update that durable document before returning success.',
+    )
+  })
+
   test('includes relevant earlier write traces in the context bundle', async () => {
     const rootDir = testRoot()
     const traces = createWriteTraceStore(rootDir)
