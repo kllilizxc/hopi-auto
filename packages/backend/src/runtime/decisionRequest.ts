@@ -1,6 +1,7 @@
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
 import type {
+  GoalPlanningRequestAnswer,
   GoalPlanningRequestUpdateTarget,
   PlanningRequestStore,
 } from '../storage/planningRequestStore'
@@ -56,12 +57,14 @@ export interface GoalDecisionPlanningFollowThroughInput {
   title: string
   description: string
   acceptanceCriteria: string[]
+  answers?: GoalPlanningRequestAnswer[]
   requestedUpdates?: GoalPlanningRequestUpdateTarget[]
 }
 
 export interface GoalDecisionPlanningBatchFollowThroughInput {
   kind: 'planning_batch'
   groupKey: string
+  answers?: GoalPlanningRequestAnswer[]
   requests: GoalPlanningBatchEntryInput[]
 }
 
@@ -536,6 +539,7 @@ async function materializeExplicitDecisionFollowThrough(
         goalKey,
         groupKey: followThrough.groupKey,
         decisionRefs,
+        answers: followThrough.answers,
         requests: followThrough.requests,
         reuseTaskRefByTaskKey: reusablePlanningTaskRef
           ? {
@@ -577,6 +581,7 @@ async function materializeExplicitDecisionFollowThrough(
       description: followThrough.description,
       acceptanceCriteria: followThrough.acceptanceCriteria,
       decisionRefs,
+      answers: followThrough.answers,
       requestedUpdates: followThrough.requestedUpdates,
       reuseTaskRef: reusablePlanningTaskRef,
       writer: writer ?? 'decision',

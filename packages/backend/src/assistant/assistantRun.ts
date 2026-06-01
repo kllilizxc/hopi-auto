@@ -64,11 +64,13 @@ const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    answers: goalPlanningRequestAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   }),
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    answers: goalPlanningRequestAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),
   }),
 ])

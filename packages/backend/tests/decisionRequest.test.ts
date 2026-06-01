@@ -886,6 +886,135 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('answering multiple durable topics can attach non-decision captured answers to shared follow-through', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed engineering task', (board) => {
+      board.items.push({
+        ref: 'T-9',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-9',
+    })
+
+    const result = await answerGoalDecisions(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        answers: [
+          {
+            decisionKey: 'auth-strategy',
+            summary: 'Choose the auth strategy',
+            answer: 'Use Bun-native auth.',
+          },
+          {
+            decisionKey: 'rollout-strategy',
+            summary: 'Choose the rollout strategy',
+            answer: 'Use a staged rollout.',
+          },
+        ],
+        followThrough: {
+          kind: 'planning_batch',
+          groupKey: 'auth-rollout-follow-through',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before wider rollout.',
+            },
+          ],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Capture auth rollout goal context',
+              description: 'Record the auth and rollout answers across Goal docs.',
+              acceptanceCriteria: ['The auth and rollout answers are durable.'],
+              requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth rollout task graph',
+              description: 'Reflect the auth and rollout answers in todo.yml.',
+              acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          status: 'resolved',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          status: 'resolved',
+        }),
+      ],
+      createdDecisionKeys: ['rollout-strategy'],
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+      },
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before wider rollout.',
+            },
+          ],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before wider rollout.',
+            },
+          ],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('resolving an engineering-linked decision can create grouped planner follow-through from explicit metadata', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

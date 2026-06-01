@@ -264,11 +264,23 @@ Required outcome shape:
             "title": "first independent planning workflow title",
             "description": "what this first workflow must accomplish after the answer",
             "acceptanceCriteria": ["at least one acceptance criterion"],
+            "answers": [
+              {
+                "summary": "optional extra user answer summary",
+                "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic"
+              }
+            ],
             "requestedUpdates": ["goal.md", "design.md"]
           },
           {
             "kind": "planning_batch",
             "groupKey": "stable-group-key",
+            "answers": [
+              {
+                "summary": "optional shared extra answer summary",
+                "answer": "explicit user answer that should shape every task in this grouped workflow"
+              }
+            ],
             "requests": [
               {
                 "taskKey": "task-graph",
@@ -309,6 +321,12 @@ Required outcome shape:
       "followThrough": {
         "kind": "planning_batch",
         "groupKey": "shared-group-key",
+        "answers": [
+          {
+            "summary": "optional non-decision answer summary",
+            "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic"
+          }
+        ],
         "requests": [
           {
             "taskKey": "goal-docs",
@@ -338,6 +356,12 @@ Required outcome shape:
       "followThrough": {
         "kind": "planning_batch",
         "groupKey": "stable-group-key",
+        "answers": [
+          {
+            "summary": "optional non-decision answer summary",
+            "answer": "explicit user answer that should shape this planner follow-through without becoming a decision topic"
+          }
+        ],
         "requests": [
           {
             "taskKey": "goal-docs",
@@ -385,6 +409,7 @@ Rules:
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
+- When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
 - When resolving a planning-linked decision and the answer should reshape the current planning surface, prefer "followThrough" on "resolve_decision" so runtime can reuse that visible planning task instead of creating a wrapper.
