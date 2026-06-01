@@ -80,9 +80,19 @@ interface GoalDocsSnapshot {
   design: GoalDocSnapshot
 }
 
+interface PreferenceEntry {
+  preferenceKey: string
+  status: 'active' | 'retired'
+  summary: string
+  rationale?: string
+  retiredReason?: string
+  supersededBy?: string
+}
+
 interface PreferenceDocument {
   path: string
   content: string
+  entries: PreferenceEntry[]
 }
 
 interface RunSummary {
@@ -210,6 +220,7 @@ interface AssistantAction {
     | 'record_answers'
     | 'resolve_decision'
     | 'record_preference'
+    | 'retire_preference'
     | 'update_preference'
   taskRef?: string
   status?: TaskStatus
@@ -246,6 +257,10 @@ interface AssistantAction {
   answer?: string
   content?: string
   reuseTaskRef?: string
+  preferenceKey?: string
+  rationale?: string
+  supersedes?: string[]
+  supersededBy?: string
 }
 
 interface AssistantActionResult {
@@ -260,6 +275,7 @@ interface AssistantActionResult {
     | 'record_answers'
     | 'resolve_decision'
     | 'record_preference'
+    | 'retire_preference'
     | 'update_preference'
   taskRef?: string
   requestKey?: string
@@ -303,6 +319,8 @@ interface AssistantActionResult {
   status?: TaskStatus
   decisionKey?: string
   decisionKeys?: string[]
+  preferenceKey?: string
+  retiredPreferenceKeys?: string[]
   summary: string
 }
 
@@ -355,6 +373,7 @@ interface AppState {
   assistantInput: string
   preferenceEditor: string
   preferenceContent: string
+  preferenceEntries: PreferenceEntry[]
   preferenceDirty: boolean
   goalDocs: GoalDocsSnapshot | null
   planningRequests: GoalPlanningRequest[]
@@ -405,6 +424,7 @@ const state: AppState = {
   assistantInput: '',
   preferenceEditor: '',
   preferenceContent: '',
+  preferenceEntries: [],
   preferenceDirty: false,
   goalDocs: null,
   planningRequests: [],
@@ -779,6 +799,7 @@ async function loadGoalData() {
     const canReplacePreferenceEditor =
       !state.preferenceDirty || state.preferenceEditor === state.preferenceContent
     state.preferenceContent = preferences.content
+    state.preferenceEntries = preferences.entries
     if (canReplacePreferenceEditor) {
       state.preferenceEditor = preferences.content
       state.preferenceDirty = false
@@ -819,6 +840,7 @@ async function loadGoalData() {
     state.planningRequests = []
     state.preferenceContent = ''
     state.preferenceEditor = ''
+    state.preferenceEntries = []
     state.preferenceDirty = false
     state.decisions = []
     state.assistantThread = []
@@ -974,6 +996,7 @@ async function savePreferences(content: string) {
     const result = (await response.json()) as PreferenceDocument
     state.preferenceContent = result.content
     state.preferenceEditor = result.content
+    state.preferenceEntries = result.entries
     state.preferenceDirty = false
     render()
   } catch (error) {
@@ -1261,8 +1284,39 @@ function render() {
                   <span class="goal-chip soft">repo</span>
                 </div>
                 <p class="assistant-note">
-                  Durable repo guidance feeds planner and assistant context. Edit this file-native document directly here when the preference is explicit and stable.
+                  Durable repo guidance feeds planner and assistant context. The canonical file keeps stable keys plus active or retired lifecycle state inside .hopi/preference.md.
                 </p>
+                <div class="evidence-list">
+                  ${
+                    state.preferenceEntries.length === 0
+                      ? '<span class="assistant-note">No durable preference entries recorded yet.</span>'
+                      : state.preferenceEntries
+                          .map((entry) => {
+                            const detail = [
+                              entry.rationale ? `rationale: ${entry.rationale}` : null,
+                              entry.retiredReason ? `retired: ${entry.retiredReason}` : null,
+                              entry.supersededBy ? `supersededBy: ${entry.supersededBy}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' | ')
+                            return `
+                              <article class="evidence-card">
+                                <div class="trace-entry-top">
+                                  <span class="evidence-pill">${escapeHtml(entry.status)}</span>
+                                  <span class="evidence-pill soft">${escapeHtml(entry.preferenceKey)}</span>
+                                </div>
+                                <p class="trace-summary">${escapeHtml(entry.summary)}</p>
+                                ${
+                                  detail
+                                    ? `<p class="assistant-note">${escapeHtml(detail)}</p>`
+                                    : ''
+                                }
+                              </article>
+                            `
+                          })
+                          .join('')
+                  }
+                </div>
                 <form class="preference-form" data-role="preference-form">
                   <textarea
                     id="preference-input"

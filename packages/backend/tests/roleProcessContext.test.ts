@@ -137,6 +137,8 @@ requests:
     )
     expect(context).toContain('Requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('Prefer incremental rollouts.')
+    expect(context).toContain('### Parsed Preferences')
+    expect(context).toContain('active | prefer-incremental-rollouts | Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
       'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',

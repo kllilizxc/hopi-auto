@@ -27,7 +27,7 @@ Phase 1 backend is complete:
 - Live Goal assistant execution is now implemented with an explicit Goal-scoped runtime call, constrained durable actions, assistant run bundles under `.hopi/runtime/**`, and scheduler cleanup for resolved decision blockers.
 - Goal assistant inspection APIs and Bun UI surfacing are now implemented for assistant prompts, decision/thread viewing, assistant run summaries, and assistant run detail inspection.
 - Exact assistant bundle inspection is now implemented on the Bun product path for `context.md`, `prompt.md`, `outcome.json`, and `result.json`.
-- Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and `record_preference` actions.
+- Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and durable preference lifecycle actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Resolving a decision that was blocking engineering work now creates or reuses visible planner follow-through, rewires engineering blockers onto that planning task, and lets richer later planning requests upgrade the generic follow-through instead of duplicating it.
@@ -59,6 +59,7 @@ Phase 1 backend is complete:
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
 - Normalized tool-call transcript summaries now also capture stable target detail such as shell commands and file paths when vendor payloads expose them, so run detail and reviewer/merger evidence can show what a tool invocation actually touched without introducing a second tool-log store.
+- Durable repo preferences now also use one canonical structured `.hopi/preference.md` document with stable `preferenceKey`, active or retired lifecycle state, optional rationale, structured record/retire APIs, and assistant preference actions that no longer rely on append-only deduplicated bullet guidance.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -90,6 +91,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`: current authority note for assistant inspection APIs and Bun UI surfacing.
 - `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`: current authority note for exact assistant bundle inspection on the Bun product path.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
+- `docs/superpowers/specs/2026-06-02-structured-preference-lifecycle-design.md`: current authority note for canonical structured repo preferences with stable keys, active/retired lifecycle, and assistant/API preference mutations.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
@@ -272,7 +274,7 @@ Current backend source:
 - `packages/backend/src/storage/lock.ts`: file lock with same-process queue and stale lock handling.
 - `packages/backend/src/storage/boardStore.ts`: atomic board reads, mutations, and event appends.
 - `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
-- `packages/backend/src/storage/preferenceStore.ts`: bootstrap, persistence, and deduplicated durable preference recording for repo-level `preference.md`.
+- `packages/backend/src/storage/preferenceStore.ts`: canonical structured repo preference storage with stable keys, active/retired lifecycle, and file-native migration/validation for `.hopi/preference.md`.
 - `packages/backend/src/storage/planningRequestStore.ts`: durable Goal planning-request storage in `planning-requests.yml`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
 - `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus resolution-side visible blocker cleanup.
@@ -280,12 +282,12 @@ Current backend source:
 - `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
 - `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
 - `packages/backend/src/assistant/assistantRunStore.ts`: read-side assistant run inspection store.
-- `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests, decision requests, and preference recording.
+- `packages/backend/src/assistant/GoalAssistantRuntime.ts`: explicit Goal assistant execution runtime and constrained durable action application, including structured planning requests, decision requests, and structured preference record/retire lifecycle.
 - `packages/backend/src/runtime/attemptStore.ts`: ignored runtime attempt budget overlay.
 - `packages/backend/src/runtime/runHistory.ts`: runtime run, step, message, and summary types.
 - `packages/backend/src/runtime/runHistoryStore.ts`: Goal-scoped run history persistence under `.hopi/runtime/goals/<goalKey>/run-history.json`.
 - `packages/backend/src/runtime/goalDocsStore.ts`: deterministic bootstrap plus inspectable `goal.md` / `design.md` content and `bootstrapped` versus `curated` status.
-- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, `planning-requests.yml`, `.hopi/preference.md`, Goal doc status, and reviewer/merger evidence correlation across run history, artifact refs, transcript summaries, write traces, and planning follow-through requests.
+- `packages/backend/src/runtime/roleProcessContext.ts`: per-step `context.md` / `prompt.md` bundle generation with role-specific boundaries, planner durable-input plumbing for `todo.yml`, `decisions.yml`, `planning-requests.yml`, structured `.hopi/preference.md`, Goal doc status, and reviewer/merger evidence correlation across run history, artifact refs, transcript summaries, write traces, and planning follow-through requests.
 - `packages/backend/src/runtime/worktreeManager.ts`: run-scoped git worktree preparation and cleanup.
 - `packages/backend/src/runtime/gitMergeExecutor.ts`: deterministic git merge completion and settled-run cleanup for merger success paths.
 - `packages/backend/src/runtime/writeTrace.ts`: durable write-trace types.
@@ -469,6 +471,8 @@ Routes:
 ```text
 GET  /api/preferences
 POST /api/preferences
+POST /api/preferences/record
+POST /api/preferences/retire
 GET  /api/goals/:goalKey/board
 GET  /api/goals/:goalKey/docs
 GET  /api/goals/:goalKey/planning-requests
@@ -572,7 +576,7 @@ Current non-UI Goal assistant substrate:
 - decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - assistant decision action-result surfacing that returns the same shared runtime follow-through structure, including generated workflow keys, instead of flattening decision follow-through into lossy summary arrays
 - transcript tool-correlation evidence that persists stable tool invocation keys and stable tool target details, letting reviewer/merger context see real tool interactions instead of only flat transcript summaries
-- durable repo preferences in `.hopi/preference.md`
+- durable structured repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
 - planner context wiring for Goal docs, decisions, planning requests, and preferences
@@ -585,7 +589,6 @@ Current non-UI Goal assistant substrate:
 What is still missing:
 
 - deeper answer interpretation when assistant should infer how to split less-structured user replies between durable decision topics and non-decision planner inputs without manually explicit action payloads
-- deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -595,7 +598,6 @@ Next high-leverage phase:
 
 1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, grouped-surface reuse for the first child in direct and decision-backed workflow graphs, generated durable `W-*` identity for workflow graphs that omit explicit `workflowKey`, cross-workflow blocker propagation when that reused surface was already blocking engineering, stable `workflowTaskKey`-backed reuse for standalone direct-workflow children, stable `blockedByWorkflowKeys`-backed child dependencies across direct workflow tails, workflow-root shared decision/answer context for direct workflow graphs, workflow-root shared non-decision answers for decision-backed workflow graphs, durable workflow-root shared-context persistence across later `workflowKey` extensions, and shared workflow-graph authority across both direct-planning and decision-backed multi-workflow follow-through.
 2. Explore deeper answer interpretation only if product needs assistant to infer how less-structured replies should split between durable decision topics and non-decision planner inputs without manually explicit action payloads.
-3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 
 Keep this out of the next phase unless explicitly requested:
 

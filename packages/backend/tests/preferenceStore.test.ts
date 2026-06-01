@@ -10,32 +10,99 @@ afterEach(async () => {
 })
 
 describe('createPreferenceStore', () => {
-  test('bootstraps a missing preference file with a durable placeholder', async () => {
+  test('bootstraps a missing preference file with a canonical structured document', async () => {
     const store = createPreferenceStore(testRoot())
 
     const preferences = await store.readPreferences()
     expect(preferences.path).toContain('.hopi/preference.md')
-    expect(preferences.content).toContain('Durable project preferences have not been recorded yet.')
+    expect(preferences.content).toContain('# Preferences')
+    expect(preferences.content).toContain('```yaml')
+    expect(preferences.content).toContain('preferences: []')
+    expect(preferences.entries).toEqual([])
   })
 
-  test('writes and reads updated preference content', async () => {
+  test('writes and reads structured preference content with parsed entries', async () => {
     const store = createPreferenceStore(testRoot())
 
-    await store.writePreferences('# Preferences\n\n- Prefer Bun-first APIs.\n')
+    await store.writePreferences(`# Preferences
+
+\`\`\`yaml
+version: 1
+preferences:
+  - preferenceKey: prefer-bun-first
+    status: active
+    summary: Prefer Bun-first APIs.
+    rationale: Bun is the runtime boundary.
+\`\`\`
+`)
     await expect(store.readPreferences()).resolves.toMatchObject({
-      content: '# Preferences\n\n- Prefer Bun-first APIs.\n',
+      entries: [
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'active',
+          summary: 'Prefer Bun-first APIs.',
+          rationale: 'Bun is the runtime boundary.',
+        },
+      ],
     })
   })
 
-  test('records durable preference entries without duplicating existing guidance', async () => {
+  test('records structured preference entries with stable keys and supersedes older guidance', async () => {
     const store = createPreferenceStore(testRoot())
 
-    await store.recordPreference('Prefer Bun-first APIs.')
-    await store.recordPreference('Prefer Bun-first APIs.')
-    await store.recordPreference('Keep workflow truth file-native.')
+    await store.recordPreference({
+      preferenceKey: 'prefer-deterministic-workflows',
+      summary: 'Prefer deterministic workflows.',
+    })
+    await store.recordPreference({
+      preferenceKey: 'prefer-bun-first',
+      summary: 'Prefer Bun-first APIs.',
+      rationale: 'Bun is the runtime boundary.',
+      supersedes: ['prefer-deterministic-workflows'],
+    })
 
     await expect(store.readPreferences()).resolves.toMatchObject({
-      content: '# Preferences\n\n- Prefer Bun-first APIs.\n- Keep workflow truth file-native.\n',
+      entries: [
+        {
+          preferenceKey: 'prefer-deterministic-workflows',
+          status: 'retired',
+          summary: 'Prefer deterministic workflows.',
+          supersededBy: 'prefer-bun-first',
+          retiredReason: 'Superseded by prefer-bun-first.',
+        },
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'active',
+          summary: 'Prefer Bun-first APIs.',
+          rationale: 'Bun is the runtime boundary.',
+        },
+      ],
+    })
+  })
+
+  test('retires an existing structured preference with an explicit reason', async () => {
+    const store = createPreferenceStore(testRoot())
+
+    await store.recordPreference({
+      preferenceKey: 'prefer-bun-first',
+      summary: 'Prefer Bun-first APIs.',
+      rationale: 'Bun is the runtime boundary.',
+    })
+    await store.retirePreference({
+      preferenceKey: 'prefer-bun-first',
+      reason: 'The runtime boundary is now fixed elsewhere.',
+    })
+
+    await expect(store.readPreferences()).resolves.toMatchObject({
+      entries: [
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'retired',
+          summary: 'Prefer Bun-first APIs.',
+          rationale: 'Bun is the runtime boundary.',
+          retiredReason: 'The runtime boundary is now fixed elsewhere.',
+        },
+      ],
     })
   })
 })

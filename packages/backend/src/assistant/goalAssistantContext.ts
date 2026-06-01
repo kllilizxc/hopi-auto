@@ -16,7 +16,11 @@ import {
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
-import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
+import {
+  type PreferenceEntry,
+  type PreferenceStore,
+  createPreferenceStore,
+} from '../storage/preferenceStore'
 
 export interface PrepareGoalAssistantBundleOptions {
   goalKey: string
@@ -67,6 +71,7 @@ export function createGoalAssistantContextBuilder(
         planningRequestsContent: await Bun.file(paths.planningRequestsPath(options.goalKey)).text(),
         preferenceFile: preferenceDocument.path,
         preferenceContent: preferenceDocument.content,
+        preferenceEntries: preferenceDocument.entries,
         threadEntries: thread.entries.slice(-12),
         runSummaries: runs.slice(0, 6),
         traces,
@@ -106,6 +111,7 @@ function renderAssistantContext(options: {
   planningRequestsContent: string
   preferenceFile: string
   preferenceContent: string
+  preferenceEntries: PreferenceEntry[]
   threadEntries: Awaited<ReturnType<AssistantThreadStore['readThread']>>['entries']
   runSummaries: Awaited<ReturnType<RunHistoryStore['listRuns']>>
   traces: Awaited<ReturnType<WriteTraceStore['listEntries']>>
@@ -147,6 +153,8 @@ ${(options.planningRequestsContent || 'version: 1\n').trim()}
 \`\`\`md
 ${options.preferenceContent.trim()}
 \`\`\`
+
+${renderStructuredPreferences(options.preferenceEntries)}
 
 ${renderRecentThread(options.threadEntries)}
 
@@ -449,11 +457,19 @@ Required outcome shape:
     },
     {
       "kind": "record_preference",
-      "summary": "one durable repo-level preference"
+      "preferenceKey": "stable-preference-key",
+      "summary": "one durable repo-level preference",
+      "rationale": "why this guidance should persist",
+      "supersedes": ["older-preference-key"]
+    },
+    {
+      "kind": "retire_preference",
+      "preferenceKey": "older-preference-key",
+      "reason": "why this durable guidance should stop applying"
     },
     {
       "kind": "update_preference",
-      "content": "# Preferences\\n\\n- Durable preference."
+      "content": "# Preferences\\n\\n<canonical structured preference document>"
     }
   ]
 }
@@ -497,7 +513,9 @@ Rules:
 - Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.
 - If you resolve a decision whose durable topic may not exist yet, include a concise summary.
-- Prefer "record_preference" for adding one durable preference; use "update_preference" only when intentionally rewriting the full preference document.
+- Prefer "record_preference" when one stable repo preference should be created, updated in place through a stable key, or supersede older keyed guidance.
+- Use "retire_preference" when a previously durable preference should stop applying and there is no clearer replacement to supersede it in the same reply.
+- Use "update_preference" only when intentionally rewriting the full canonical preference document.
 - Keep the message grounded in the current Goal state.
 
 ## Bundled Context
@@ -557,6 +575,24 @@ ${traces
     (entry) =>
       `- ${entry.timestamp} | ${entry.taskRef} | ${entry.role} | ${entry.resultSummary} | ${entry.targetPaths.join(', ')}`,
   )
+  .join('\n')}
+`
+}
+
+function renderStructuredPreferences(entries: PreferenceEntry[]) {
+  if (entries.length === 0) {
+    return '## Parsed Preferences\n\n- No durable preference entries recorded yet.\n'
+  }
+
+  return `## Parsed Preferences
+
+${entries
+  .map((entry) => {
+    const rationale = entry.rationale ? ` | rationale: ${entry.rationale}` : ''
+    const retiredReason = entry.retiredReason ? ` | retired: ${entry.retiredReason}` : ''
+    const supersededBy = entry.supersededBy ? ` | supersededBy: ${entry.supersededBy}` : ''
+    return `- ${entry.status} | ${entry.preferenceKey} | ${entry.summary}${rationale}${retiredReason}${supersededBy}`
+  })
   .join('\n')}
 `
 }

@@ -449,10 +449,30 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_preference') {
-    await stores.preferences.recordPreference(action.summary)
+    await stores.preferences.recordPreference({
+      preferenceKey: action.preferenceKey,
+      summary: action.summary,
+      rationale: action.rationale,
+      supersedes: action.supersedes,
+    })
     return {
       kind: 'record_preference',
+      preferenceKey: action.preferenceKey ?? slugifyPreferenceSummary(action.summary),
+      retiredPreferenceKeys: action.supersedes ?? [],
       summary: `Recorded durable preference: ${action.summary}`,
+    }
+  }
+
+  if (action.kind === 'retire_preference') {
+    await stores.preferences.retirePreference({
+      preferenceKey: action.preferenceKey,
+      reason: action.reason,
+      supersededBy: action.supersededBy,
+    })
+    return {
+      kind: 'retire_preference',
+      preferenceKey: action.preferenceKey,
+      summary: `Retired durable preference: ${action.preferenceKey}`,
     }
   }
 
@@ -607,9 +627,21 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
     return `Resolve decision ${action.decisionKey}.`
   }
   if (action.kind === 'record_preference') {
-    return `Record durable preference: ${action.summary}`
+    return `Record durable preference ${action.preferenceKey ?? slugifyPreferenceSummary(action.summary)}: ${action.summary}`
+  }
+  if (action.kind === 'retire_preference') {
+    return `Retire durable preference ${action.preferenceKey}.`
   }
   return 'Update durable preferences.'
+}
+
+function slugifyPreferenceSummary(summary: string) {
+  const normalized = summary
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'preference'
 }
 
 function summarizeResolvedDecisionResult(

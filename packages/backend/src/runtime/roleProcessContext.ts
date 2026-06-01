@@ -13,7 +13,11 @@ import {
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
-import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
+import {
+  type PreferenceEntry,
+  type PreferenceStore,
+  createPreferenceStore,
+} from '../storage/preferenceStore'
 import { type GoalDocsStore, createGoalDocsStore } from './goalDocsStore'
 import { summarizePlanningFollowThroughEvidence } from './planningFollowThroughEvidence'
 import { type RunHistoryStore, createRunHistoryStore } from './runHistoryStore'
@@ -81,6 +85,7 @@ interface PlannerContextInputs {
   }
   preferenceFile: string
   preferenceContent: string
+  preferenceEntries: PreferenceEntry[]
 }
 
 interface GoalDocsStatusInputs {
@@ -352,6 +357,29 @@ ${renderPlanningUpdateCoverage(inputs.planningFollowThroughEvidence)}
 \`\`\`md
 ${inputs.preferenceContent.trim()}
 \`\`\`
+
+${renderPreferenceEntries(inputs.preferenceEntries)}
+`
+}
+
+function renderPreferenceEntries(entries: PreferenceEntry[]) {
+  if (entries.length === 0) {
+    return `### Parsed Preferences
+
+- No durable preference entries recorded yet.
+`
+  }
+
+  return `### Parsed Preferences
+
+${entries
+  .map((entry) => {
+    const rationale = entry.rationale ? ` | rationale: ${entry.rationale}` : ''
+    const retiredReason = entry.retiredReason ? ` | retired: ${entry.retiredReason}` : ''
+    const supersededBy = entry.supersededBy ? ` | supersededBy: ${entry.supersededBy}` : ''
+    return `- ${entry.status} | ${entry.preferenceKey} | ${entry.summary}${rationale}${retiredReason}${supersededBy}`
+  })
+  .join('\n')}
 `
 }
 
@@ -460,6 +488,7 @@ async function loadPlannerContextInputs(
     },
     preferenceFile: preferenceDocument.path,
     preferenceContent: preferenceDocument.content,
+    preferenceEntries: preferenceDocument.entries,
   }
 }
 

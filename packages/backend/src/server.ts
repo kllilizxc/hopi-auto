@@ -32,7 +32,11 @@ import {
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from './storage/planningRequestStore'
-import { createPreferenceStore } from './storage/preferenceStore'
+import {
+  PREFERENCE_KEY_PATTERN,
+  PreferenceStoreError,
+  createPreferenceStore,
+} from './storage/preferenceStore'
 import indexPage from './ui/index.html'
 
 export interface ServerOptions {
@@ -213,6 +217,19 @@ const updatePreferenceSchema = z.object({
   content: z.string().min(1),
 })
 
+const recordPreferenceSchema = z.object({
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+  summary: z.string().min(1),
+  rationale: z.string().min(1).optional(),
+  supersedes: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
+})
+
+const retirePreferenceSchema = z.object({
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  reason: z.string().min(1),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+})
+
 export function createServer(options: ServerOptions = {}): Bun.Server<undefined> {
   const rootDir = options.rootDir ?? process.cwd()
   const store = createBoardStore(rootDir)
@@ -263,6 +280,20 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         if (request.method === 'POST' && url.pathname === '/api/preferences') {
           const body = await parseJsonBody(request, updatePreferenceSchema)
           const document = await preferences.writePreferences(body.content)
+          broadcast({ type: 'preferences_changed' })
+          return jsonResponse(document)
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/preferences/record') {
+          const body = await parseJsonBody(request, recordPreferenceSchema)
+          const document = await preferences.recordPreference(body)
+          broadcast({ type: 'preferences_changed' })
+          return jsonResponse(document)
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/preferences/retire') {
+          const body = await parseJsonBody(request, retirePreferenceSchema)
+          const document = await preferences.retirePreference(body)
           broadcast({ type: 'preferences_changed' })
           return jsonResponse(document)
         }
@@ -726,6 +757,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         }
         if (error instanceof GoalAssistantNotConfiguredError) {
           return jsonResponse({ error: error.message }, 409)
+        }
+        if (error instanceof PreferenceStoreError) {
+          return jsonResponse({ error: error.message }, 400)
         }
 
         const correlationId = crypto.randomUUID()

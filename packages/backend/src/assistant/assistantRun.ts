@@ -5,6 +5,7 @@ import {
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from '../storage/planningRequestStore'
+import { PREFERENCE_KEY_PATTERN } from '../storage/preferenceStore'
 
 const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -266,7 +267,16 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('record_preference'),
+    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
     summary: z.string().min(1),
+    rationale: z.string().min(1).optional(),
+    supersedes: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
+  }),
+  z.object({
+    kind: z.literal('retire_preference'),
+    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+    reason: z.string().min(1),
+    supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
   }),
   z.object({
     kind: z.literal('update_preference'),
@@ -340,6 +350,13 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('record_preference'),
+    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+    retiredPreferenceKeys: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)),
+    summary: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('retire_preference'),
+    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
     summary: z.string().min(1),
   }),
   z.object({

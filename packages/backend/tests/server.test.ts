@@ -2486,7 +2486,16 @@ describe('createServer', () => {
   test('reads and updates repo preferences through the API', async () => {
     const workspaceRoot = rootDir()
     await createPreferenceStore(workspaceRoot).writePreferences(
-      '# Preferences\n\n- Prefer deterministic workflows.\n',
+      `# Preferences
+
+\`\`\`yaml
+version: 1
+preferences:
+  - preferenceKey: prefer-deterministic-workflows
+    status: active
+    summary: Prefer deterministic workflows.
+\`\`\`
+`,
     )
 
     const server = startServer(undefined, workspaceRoot)
@@ -2494,19 +2503,141 @@ describe('createServer', () => {
     const beforeResponse = await fetch(apiUrl(server, '/api/preferences'))
     expect(beforeResponse.status).toBe(200)
     await expect(beforeResponse.json()).resolves.toMatchObject({
-      content: '# Preferences\n\n- Prefer deterministic workflows.\n',
+      entries: [
+        {
+          preferenceKey: 'prefer-deterministic-workflows',
+          status: 'active',
+          summary: 'Prefer deterministic workflows.',
+        },
+      ],
     })
 
     const updateResponse = await postJson(server, '/api/preferences', {
-      content: '# Preferences\n\n- Prefer Bun-first APIs.\n- Keep Goal docs file-native.\n',
+      content: `# Preferences
+
+\`\`\`yaml
+version: 1
+preferences:
+  - preferenceKey: prefer-bun-first
+    status: active
+    summary: Prefer Bun-first APIs.
+  - preferenceKey: keep-goal-docs-file-native
+    status: active
+    summary: Keep Goal docs file-native.
+\`\`\`
+`,
     })
     expect(updateResponse.status).toBe(200)
     await expect(updateResponse.json()).resolves.toMatchObject({
-      content: '# Preferences\n\n- Prefer Bun-first APIs.\n- Keep Goal docs file-native.\n',
+      entries: [
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'active',
+          summary: 'Prefer Bun-first APIs.',
+        },
+        {
+          preferenceKey: 'keep-goal-docs-file-native',
+          status: 'active',
+          summary: 'Keep Goal docs file-native.',
+        },
+      ],
     })
 
     await expect(createPreferenceStore(workspaceRoot).readPreferences()).resolves.toMatchObject({
-      content: '# Preferences\n\n- Prefer Bun-first APIs.\n- Keep Goal docs file-native.\n',
+      entries: [
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'active',
+          summary: 'Prefer Bun-first APIs.',
+        },
+        {
+          preferenceKey: 'keep-goal-docs-file-native',
+          status: 'active',
+          summary: 'Keep Goal docs file-native.',
+        },
+      ],
+    })
+  })
+
+  test('records and retires structured repo preferences through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const recordResponse = await postJson(server, '/api/preferences/record', {
+      preferenceKey: 'prefer-deterministic-workflows',
+      summary: 'Prefer deterministic workflows.',
+    })
+    expect(recordResponse.status).toBe(200)
+    await expect(recordResponse.json()).resolves.toMatchObject({
+      entries: [
+        {
+          preferenceKey: 'prefer-deterministic-workflows',
+          status: 'active',
+          summary: 'Prefer deterministic workflows.',
+        },
+      ],
+    })
+
+    const supersedingResponse = await postJson(server, '/api/preferences/record', {
+      preferenceKey: 'prefer-bun-first',
+      summary: 'Prefer Bun-first APIs.',
+      rationale: 'Bun is the runtime boundary.',
+      supersedes: ['prefer-deterministic-workflows'],
+    })
+    expect(supersedingResponse.status).toBe(200)
+    await expect(supersedingResponse.json()).resolves.toMatchObject({
+      entries: [
+        {
+          preferenceKey: 'prefer-deterministic-workflows',
+          status: 'retired',
+          retiredReason: 'Superseded by prefer-bun-first.',
+          supersededBy: 'prefer-bun-first',
+        },
+        {
+          preferenceKey: 'prefer-bun-first',
+          status: 'active',
+          summary: 'Prefer Bun-first APIs.',
+          rationale: 'Bun is the runtime boundary.',
+        },
+      ],
+    })
+
+    const retireResponse = await postJson(server, '/api/preferences/retire', {
+      preferenceKey: 'prefer-bun-first',
+      reason: 'The runtime boundary is now fixed elsewhere.',
+    })
+    expect(retireResponse.status).toBe(200)
+    await expect(retireResponse.json()).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          preferenceKey: 'prefer-bun-first',
+          status: 'retired',
+          summary: 'Prefer Bun-first APIs.',
+          retiredReason: 'The runtime boundary is now fixed elsewhere.',
+        }),
+      ]),
+    })
+  })
+
+  test('returns HTTP 400 for invalid structured preference mutations', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const invalidWriteResponse = await postJson(server, '/api/preferences', {
+      content: '# Preferences\n\nnot valid structured content\n',
+    })
+    expect(invalidWriteResponse.status).toBe(400)
+    await expect(invalidWriteResponse.json()).resolves.toMatchObject({
+      error: 'Invalid preference.md format: expected a fenced yaml preference document.',
+    })
+
+    const invalidRetireResponse = await postJson(server, '/api/preferences/retire', {
+      preferenceKey: 'missing-preference',
+      reason: 'No longer applies.',
+    })
+    expect(invalidRetireResponse.status).toBe(400)
+    await expect(invalidRetireResponse.json()).resolves.toMatchObject({
+      error: 'Unknown preference key to retire: missing-preference',
     })
   })
 
@@ -2558,13 +2689,17 @@ describe('createServer', () => {
         blockedBy: [{ kind: 'decision', ref: 'db-provider' }],
       }),
     ])
+    await createPreferenceStore(workspaceRoot).recordPreference({
+      preferenceKey: 'prefer-deterministic-workflows',
+      summary: 'Prefer deterministic workflows.',
+    })
     await writeAdapterConfig(workspaceRoot, {
       version: 1,
       assistant: {
         cmd: [
           'bun',
           '-e',
-          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('db-provider')) throw new Error('missing decision topic'); if (!prompt.includes('Use Postgres and create planning work.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'Use Postgres and create visible planning work.', actions: [{ kind: 'resolve_decision', decisionKey: 'db-provider', summary: 'Choose the database provider', taskRef: 'T-2', answer: 'Use Postgres.' }, { kind: 'request_planning', title: 'Plan database integration', description: 'Define the database adapter and migration work.', acceptanceCriteria: ['The database integration plan is visible in todo.yml.'], decisionRefs: ['db-provider'], requestedUpdates: ['design.md', 'todo.yml'] }, { kind: 'record_preference', summary: 'Prefer Bun-native services when they meet the Goal requirements.' }] })); console.log('assistant finished')",
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('db-provider')) throw new Error('missing decision topic'); if (!prompt.includes('Use Postgres and create planning work.')) throw new Error('missing user message'); if (!prompt.includes('prefer-deterministic-workflows')) throw new Error('missing structured preference key'); await Bun.write(outcomeFile, JSON.stringify({ message: 'Use Postgres and create visible planning work.', actions: [{ kind: 'resolve_decision', decisionKey: 'db-provider', summary: 'Choose the database provider', taskRef: 'T-2', answer: 'Use Postgres.' }, { kind: 'request_planning', title: 'Plan database integration', description: 'Define the database adapter and migration work.', acceptanceCriteria: ['The database integration plan is visible in todo.yml.'], decisionRefs: ['db-provider'], requestedUpdates: ['design.md', 'todo.yml'] }, { kind: 'record_preference', preferenceKey: 'prefer-bun-native-services', summary: 'Prefer Bun-native services when they meet the Goal requirements.', rationale: 'The runtime boundary is Bun-first.' }, { kind: 'retire_preference', preferenceKey: 'prefer-deterministic-workflows', reason: 'Structured workflow authority now governs deterministic execution.' }] })); console.log('assistant finished')",
           '${PROMPT_FILE}',
           '${OUTCOME_FILE}',
         ],
@@ -2589,6 +2724,7 @@ describe('createServer', () => {
         taskRef?: string
         requestKey?: string
         decisionKey?: string
+        preferenceKey?: string
       }>
     }>(response)
     expect(result.goalKey).toBe('test')
@@ -2616,6 +2752,11 @@ describe('createServer', () => {
         }),
         expect.objectContaining({
           kind: 'record_preference',
+          preferenceKey: 'prefer-bun-native-services',
+        }),
+        expect.objectContaining({
+          kind: 'retire_preference',
+          preferenceKey: 'prefer-deterministic-workflows',
         }),
       ]),
     )
@@ -2700,6 +2841,14 @@ describe('createServer', () => {
           kind: 'action_result',
           actionType: 'record_preference',
         }),
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'retire_preference',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'retire_preference',
+        }),
       ]),
     )
 
@@ -2734,6 +2883,11 @@ describe('createServer', () => {
         }),
         expect.objectContaining({
           kind: 'record_preference',
+          preferenceKey: 'prefer-bun-native-services',
+        }),
+        expect.objectContaining({
+          kind: 'retire_preference',
+          preferenceKey: 'prefer-deterministic-workflows',
         }),
       ]),
     })
@@ -2747,7 +2901,7 @@ describe('createServer', () => {
           assistantRunId: result.assistantRunId,
           status: 'completed',
           message: 'Use Postgres and create visible planning work.',
-          actionCount: 3,
+          actionCount: 4,
         },
       ],
     })
@@ -2773,6 +2927,11 @@ describe('createServer', () => {
         }),
         expect.objectContaining({
           kind: 'record_preference',
+          preferenceKey: 'prefer-bun-native-services',
+        }),
+        expect.objectContaining({
+          kind: 'retire_preference',
+          preferenceKey: 'prefer-deterministic-workflows',
         }),
       ]),
     })
@@ -2804,9 +2963,19 @@ describe('createServer', () => {
     })
 
     await expect(createPreferenceStore(workspaceRoot).readPreferences()).resolves.toMatchObject({
-      content: expect.stringContaining(
-        'Prefer Bun-native services when they meet the Goal requirements.',
-      ),
+      entries: [
+        expect.objectContaining({
+          preferenceKey: 'prefer-deterministic-workflows',
+          status: 'retired',
+          retiredReason: 'Structured workflow authority now governs deterministic execution.',
+        }),
+        expect.objectContaining({
+          preferenceKey: 'prefer-bun-native-services',
+          status: 'active',
+          summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+          rationale: 'The runtime boundary is Bun-first.',
+        }),
+      ],
     })
   })
 
