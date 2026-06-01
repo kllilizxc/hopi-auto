@@ -485,6 +485,72 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('resolving an unlinked decision with explicit follow-through creates standalone planning work', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+    })
+
+    const result = await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'rollout-strategy',
+        answer: 'Use a staged Bun-first rollout.',
+        followThrough: {
+          kind: 'planning',
+          title: 'Capture rollout answer',
+          description: 'Record the rollout answer across Goal docs and decomposition.',
+          acceptanceCriteria: ['The rollout answer is durable before execution continues.'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decision: {
+        decisionKey: 'rollout-strategy',
+        status: 'resolved',
+      },
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+        blockerTaskRefs: ['P-1'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          kind: 'planning',
+          status: 'planned',
+          title: 'Capture rollout answer',
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('resolving an engineering-linked decision can create grouped planner follow-through from explicit metadata', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

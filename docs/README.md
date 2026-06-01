@@ -59,6 +59,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-decision-resolution-explicit-planner-workflows.md`: implementation plan for the explicit decision-resolution planner workflow slice.
 - `docs/superpowers/specs/2026-06-01-planning-linked-decision-follow-through-design.md`: approved and implemented design for reusing the current planning surface when a linked planning decision resolves into explicit durable follow-through.
 - `docs/superpowers/plans/2026-06-01-planning-linked-decision-follow-through.md`: implementation plan for the planning-linked decision follow-through slice.
+- `docs/superpowers/specs/2026-06-01-standalone-decision-follow-through-design.md`: approved and implemented design for creating visible planner follow-through from an explicit answered decision even before there is a visible blocker or reusable planning surface.
+- `docs/superpowers/plans/2026-06-01-standalone-decision-follow-through.md`: implementation plan for the standalone decision follow-through slice.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: approved and implemented design for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/plans/2026-06-01-grouped-planning-follow-through.md`: implementation plan for the grouped planning follow-through slice.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: approved and implemented design for propagating decision lineage across grouped planning follow-through.

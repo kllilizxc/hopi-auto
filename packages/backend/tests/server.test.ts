@@ -551,6 +551,54 @@ describe('createServer', () => {
     })
   })
 
+  test('resolving an unlinked decision through the API can create standalone planner follow-through', async () => {
+    const workspaceRoot = rootDir()
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/rollout-strategy/resolve',
+      {
+        answer: 'Use a staged Bun-first rollout.',
+        followThrough: {
+          kind: 'planning',
+          title: 'Capture rollout answer',
+          description: 'Record the rollout answer across Goal docs and decomposition.',
+          acceptanceCriteria: ['The rollout answer is durable before execution continues.'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        },
+      },
+    )
+
+    expect(resolveResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          kind: 'planning',
+          status: 'planned',
+          title: 'Capture rollout answer',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -1368,6 +1416,91 @@ describe('createServer', () => {
           groupTaskKey: 'task-graph',
           taskRef: 'P-9',
           decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and creates planner follow-through for a newly answered standalone decision', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Record the rollout answer and open planner follow-through.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded the rollout answer as a durable decision and opened visible planner follow-through.', actions: [{ kind: 'resolve_decision', decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy', answer: 'Use a staged Bun-first rollout.', followThrough: { kind: 'planning_batch', groupKey: 'rollout-follow-through', requests: [{ taskKey: 'goal-docs', title: 'Capture rollout answer', description: 'Record the rollout answer across Goal docs and rollout notes.', acceptanceCriteria: ['The rollout answer is durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose rollout task graph', description: 'Reflect the rollout answer in todo.yml before execution continues.', acceptanceCriteria: ['The rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Record the rollout answer and open planner follow-through.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I recorded the rollout answer as a durable decision and opened visible planner follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'resolve_decision',
+          decisionKey: 'rollout-strategy',
+          followThroughGroupKey: 'rollout-follow-through',
+          followThroughTaskRefs: ['P-1', 'P-2'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          status: 'resolved',
+          answer: 'Use a staged Bun-first rollout.',
+        }),
+      ],
+    })
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture rollout answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose rollout task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          taskRef: 'P-1',
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          taskRef: 'P-2',
+          decisionRefs: ['rollout-strategy'],
           requestedUpdates: ['todo.yml'],
         }),
       ],

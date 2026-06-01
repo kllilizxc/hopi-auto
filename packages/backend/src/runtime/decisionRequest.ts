@@ -230,7 +230,7 @@ async function createDecisionResolutionFollowThrough(
   if (!followThrough && affectedEngineeringTasks.length === 0) {
     return undefined
   }
-  if (!linkedPlanningTask && affectedEngineeringTasks.length === 0) {
+  if (!followThrough && !linkedPlanningTask && affectedEngineeringTasks.length === 0) {
     return undefined
   }
 
