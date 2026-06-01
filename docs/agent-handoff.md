@@ -57,6 +57,7 @@ Phase 1 backend is complete:
 - Higher-order workflow graphs now also get a generated durable top-level `W-*` identity by default when callers omit `workflowKey`, so direct and decision-backed `workflow_batch` flows inherit extension authority, blocker tracking, and shared-context persistence without requiring hand-crafted workflow keys.
 - Decision `resolve`, `answer`, and `answers` Bun API routes now also return the full shared runtime result, so callers can observe `blockerRemoved`, creation metadata, full `followThrough`, and any runtime-generated `W-*` workflow key instead of losing that authority behind decision-only response bodies.
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
+- Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -120,6 +121,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-generated-workflow-key-design.md`: current authority note for making higher-order workflow graphs durable by default through runtime-generated `W-*` workflow keys.
 - `docs/superpowers/specs/2026-06-01-decision-api-follow-through-result-design.md`: current authority note for surfacing full shared decision-runtime results, including generated workflow keys, on Bun decision answer/resolve APIs.
 - `docs/superpowers/specs/2026-06-01-assistant-decision-follow-through-result-design.md`: current authority note for surfacing the same shared decision-runtime follow-through structure on assistant action results, persisted run detail, and Bun UI run inspection.
+- `docs/superpowers/specs/2026-06-02-transcript-tool-correlation-design.md`: current authority note for persisting stable tool invocation keys on normalized transcript events and correlating tool call/result evidence across run detail and reviewer/merger context.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -567,6 +569,7 @@ Current non-UI Goal assistant substrate:
 - durable workflow-root shared-context persistence that lets both direct and answer-driven workflow graphs extend one `workflowKey` later without restating the same shared decision lineage or captured answers
 - decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - assistant decision action-result surfacing that returns the same shared runtime follow-through structure, including generated workflow keys, instead of flattening decision follow-through into lossy summary arrays
+- transcript tool-correlation evidence that persists stable tool invocation keys and lets reviewer/merger context see real tool interactions instead of only flat transcript summaries
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`

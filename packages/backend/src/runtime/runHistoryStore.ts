@@ -224,6 +224,7 @@ function applyStepEvent(
           kind: event.entryKind,
           summary: event.summary,
           toolName: event.toolName,
+          toolInvocationKey: event.toolInvocationKey,
           vendorEventType: event.vendorEventType,
         },
         createdAt,

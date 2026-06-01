@@ -5230,7 +5230,18 @@ console.log(JSON.stringify({
 }))
 console.log(JSON.stringify({
   method: 'item/completed',
-  params: { item: { type: 'local_shell_call', tool_name: 'Bash' } },
+  params: { item: { type: 'local_shell_call', tool_name: 'Bash', call_id: 'shell-1' } },
+}))
+console.log(JSON.stringify({
+  method: 'item/completed',
+  params: {
+    item: {
+      type: 'local_shell_call_output',
+      tool_name: 'Bash',
+      call_id: 'shell-1',
+      content: 'Command completed successfully.',
+    },
+  },
 }))
 await Bun.write(
   process.env.HOPI_OUTCOME_FILE!,
@@ -5295,7 +5306,16 @@ await Bun.write(
               transport: 'codex',
               kind: 'tool_call',
               toolName: 'Bash',
+              toolInvocationKey: 'shell-1',
               summary: 'Tool call: Bash',
+              vendorEventType: 'item/completed',
+            },
+            {
+              transport: 'codex',
+              kind: 'tool_result',
+              toolName: 'Bash',
+              toolInvocationKey: 'shell-1',
+              summary: 'Command completed successfully.',
               vendorEventType: 'item/completed',
             },
           ],

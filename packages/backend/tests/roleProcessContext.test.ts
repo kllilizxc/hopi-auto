@@ -412,6 +412,20 @@ requests:
         entryKind: 'tool_call',
         summary: 'Tool call: Bash',
         toolName: 'Bash',
+        toolInvocationKey: 'shell-1',
+      },
+    })
+    await history.recordStepEvent({
+      goalKey: 'goal-6',
+      runId: runRef.runId,
+      stepId: runRef.stepId,
+      event: {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_result',
+        summary: 'Command completed successfully.',
+        toolName: 'Bash',
+        toolInvocationKey: 'shell-1',
       },
     })
     await history.recordStepEvent({
@@ -463,7 +477,7 @@ requests:
     expect(context).toContain('generator | success')
     expect(context).toContain('patch:T-6')
     expect(context).toContain('Generated patch')
-    expect(context).toContain('Tool call: Bash')
+    expect(context).toContain('Bash [shell-1] -> Command completed successfully.')
     expect(prompt).toContain(
       'Correlate artifact refs and prior run history with the claimed work before accepting.',
     )

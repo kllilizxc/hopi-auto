@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { normalizeProcessOutputLine } from '../src/agent/vendorTranscript'
 
 describe('normalizeProcessOutputLine', () => {
-  test('normalizes Codex JSONL agent messages and tool calls into transcript events', () => {
+  test('normalizes Codex JSONL agent messages and tool interactions with invocation keys', () => {
     const assistant = normalizeProcessOutputLine({
       format: 'codex_jsonl',
       stream: 'stdout',
@@ -28,6 +28,23 @@ describe('normalizeProcessOutputLine', () => {
           item: {
             type: 'local_shell_call',
             tool_name: 'Bash',
+            call_id: 'shell-1',
+          },
+        },
+      }),
+    })
+    const toolResult = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'local_shell_call_output',
+            tool_name: 'Bash',
+            call_id: 'shell-1',
+            content: 'Command completed successfully.',
           },
         },
       }),
@@ -48,7 +65,19 @@ describe('normalizeProcessOutputLine', () => {
         transport: 'codex',
         entryKind: 'tool_call',
         toolName: 'Bash',
+        toolInvocationKey: 'shell-1',
         summary: 'Tool call: Bash',
+        vendorEventType: 'item/completed',
+      },
+    ])
+    expect(toolResult).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_result',
+        toolName: 'Bash',
+        toolInvocationKey: 'shell-1',
+        summary: 'Command completed successfully.',
         vendorEventType: 'item/completed',
       },
     ])
@@ -64,7 +93,12 @@ describe('normalizeProcessOutputLine', () => {
         message: {
           content: [
             { type: 'text', text: 'Reviewed the generated patch.' },
-            { type: 'tool_use', name: 'Read', input: { file_path: 'src/server.ts' } },
+            {
+              type: 'tool_use',
+              id: 'toolu_1',
+              name: 'Read',
+              input: { file_path: 'src/server.ts' },
+            },
           ],
         },
       }),
@@ -77,7 +111,9 @@ describe('normalizeProcessOutputLine', () => {
       line: JSON.stringify({
         type: 'user',
         message: {
-          content: [{ type: 'tool_result', content: 'File contents loaded.' }],
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_1', content: 'File contents loaded.' },
+          ],
         },
       }),
     })
@@ -95,6 +131,7 @@ describe('normalizeProcessOutputLine', () => {
         transport: 'claude',
         entryKind: 'tool_call',
         toolName: 'Read',
+        toolInvocationKey: 'toolu_1',
         summary: 'Tool call: Read',
         vendorEventType: 'assistant',
       },
@@ -104,6 +141,7 @@ describe('normalizeProcessOutputLine', () => {
         kind: 'transcript',
         transport: 'claude',
         entryKind: 'tool_result',
+        toolInvocationKey: 'toolu_1',
         summary: 'File contents loaded.',
         vendorEventType: 'user',
       },
@@ -128,6 +166,18 @@ describe('normalizeProcessOutputLine', () => {
       line: JSON.stringify({
         type: 'tool_use',
         name: 'edit',
+        callId: 'edit-1',
+      }),
+    })
+    const toolResult = normalizeProcessOutputLine({
+      format: 'opencode_json',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'tool_result',
+        name: 'edit',
+        callId: 'edit-1',
+        content: 'Applied the UI change to the modal.',
       }),
     })
 
@@ -146,8 +196,20 @@ describe('normalizeProcessOutputLine', () => {
         transport: 'opencode',
         entryKind: 'tool_call',
         toolName: 'edit',
+        toolInvocationKey: 'edit-1',
         summary: 'Tool call: edit',
         vendorEventType: 'tool_use',
+      },
+    ])
+    expect(toolResult).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'opencode',
+        entryKind: 'tool_result',
+        toolName: 'edit',
+        toolInvocationKey: 'edit-1',
+        summary: 'Applied the UI change to the modal.',
+        vendorEventType: 'tool_result',
       },
     ])
   })

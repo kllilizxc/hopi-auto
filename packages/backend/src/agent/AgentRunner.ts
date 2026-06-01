@@ -26,6 +26,7 @@ export type AgentRuntimeEvent =
       entryKind: AgentTranscriptEntryKind
       summary: string
       toolName?: string
+      toolInvocationKey?: string
       vendorEventType?: string
     }
   | {

@@ -65,6 +65,7 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     return [
       transcriptEvent('codex', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
         toolName: toolName ?? undefined,
+        toolInvocationKey: extractToolInvocationKey(item, 'tool_call') ?? undefined,
         vendorEventType: eventType ?? 'item/completed',
       }),
     ]
@@ -75,6 +76,7 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     return [
       transcriptEvent('codex', 'tool_result', text, {
         toolName: extractToolName(item) ?? undefined,
+        toolInvocationKey: extractToolInvocationKey(item, 'tool_result') ?? undefined,
         vendorEventType: eventType ?? 'item/completed',
       }),
     ]
@@ -169,6 +171,7 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
     return [
       transcriptEvent('opencode', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
         toolName: toolName ?? undefined,
+        toolInvocationKey: extractToolInvocationKey(value, 'tool_call') ?? undefined,
         vendorEventType: eventType,
       }),
     ]
@@ -179,6 +182,7 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
     return [
       transcriptEvent('opencode', 'tool_result', text, {
         toolName: extractToolName(value) ?? undefined,
+        toolInvocationKey: extractToolInvocationKey(value, 'tool_result') ?? undefined,
         vendorEventType: eventType,
       }),
     ]
@@ -240,6 +244,7 @@ function normalizeContentBlocks(
       events.push(
         transcriptEvent(transport, 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
           toolName: toolName ?? undefined,
+          toolInvocationKey: extractToolInvocationKey(value, 'tool_call') ?? undefined,
           vendorEventType,
         }),
       )
@@ -249,6 +254,7 @@ function normalizeContentBlocks(
     if (blockType === 'tool_result') {
       events.push(
         transcriptEvent(transport, 'tool_result', extractText(value) ?? 'Tool result', {
+          toolInvocationKey: extractToolInvocationKey(value, 'tool_result') ?? undefined,
           vendorEventType,
         }),
       )
@@ -264,6 +270,7 @@ function transcriptEvent(
   summary: string,
   options: {
     toolName?: string
+    toolInvocationKey?: string
     vendorEventType?: string
   } = {},
 ): AgentRuntimeEvent {
@@ -273,6 +280,7 @@ function transcriptEvent(
     entryKind,
     summary: compactSummary(summary),
     toolName: options.toolName,
+    toolInvocationKey: options.toolInvocationKey,
     vendorEventType: options.vendorEventType,
   }
 }
@@ -319,6 +327,25 @@ function extractToolName(value: Record<string, unknown> | undefined) {
     stringValue(value?.name) ??
     stringValue(objectValue(value?.tool)?.name) ??
     stringValue(objectValue(value?.invocation)?.tool_name)
+  )
+}
+
+function extractToolInvocationKey(
+  value: Record<string, unknown> | undefined,
+  entryKind: 'tool_call' | 'tool_result',
+) {
+  return (
+    stringValue(value?.call_id) ??
+    stringValue(value?.callId) ??
+    stringValue(value?.tool_call_id) ??
+    stringValue(value?.toolCallId) ??
+    stringValue(value?.tool_use_id) ??
+    stringValue(value?.toolUseId) ??
+    stringValue(value?.invocation_id) ??
+    stringValue(objectValue(value?.invocation)?.call_id) ??
+    stringValue(objectValue(value?.invocation)?.callId) ??
+    stringValue(objectValue(value?.invocation)?.id) ??
+    (entryKind === 'tool_call' ? stringValue(value?.id) : undefined)
   )
 }
 

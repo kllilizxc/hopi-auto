@@ -707,11 +707,74 @@ async function loadRelevantRunEvidence(options: {
           role: step.role,
           outcome: step.outcome,
           artifacts: step.execution?.artifacts ?? [],
-          transcriptSummaries: step.transcript.map((entry) => entry.summary).slice(0, 4),
+          transcriptSummaries: summarizeTranscriptEvidence(step.transcript).slice(0, 4),
           worktreePath: step.execution?.worktree?.path,
         })),
     )
     .slice(0, 6)
+}
+
+function summarizeTranscriptEvidence(
+  entries: Array<{
+    kind: 'status' | 'assistant' | 'tool_call' | 'tool_result' | 'error'
+    summary: string
+    toolName?: string
+    toolInvocationKey?: string
+  }>,
+) {
+  const summaries: string[] = []
+  const interactions = new Map<
+    string,
+    {
+      toolName?: string
+      callSummary?: string
+      resultSummaries: string[]
+    }
+  >()
+  const orderedKeys: string[] = []
+
+  for (const entry of entries) {
+    if (entry.toolInvocationKey && (entry.kind === 'tool_call' || entry.kind === 'tool_result')) {
+      const current = interactions.get(entry.toolInvocationKey)
+      if (!current) {
+        interactions.set(entry.toolInvocationKey, {
+          toolName: entry.toolName,
+          callSummary: entry.kind === 'tool_call' ? entry.summary : undefined,
+          resultSummaries: entry.kind === 'tool_result' ? [entry.summary] : [],
+        })
+        orderedKeys.push(entry.toolInvocationKey)
+      } else {
+        current.toolName ??= entry.toolName
+        if (entry.kind === 'tool_call') {
+          current.callSummary ??= entry.summary
+        } else {
+          current.resultSummaries.push(entry.summary)
+        }
+      }
+      continue
+    }
+
+    summaries.push(entry.summary)
+  }
+
+  for (const key of orderedKeys) {
+    const interaction = interactions.get(key)
+    if (!interaction) {
+      continue
+    }
+
+    const toolLabel = interaction.toolName ?? interaction.callSummary ?? 'Tool interaction'
+    if (interaction.resultSummaries.length > 0) {
+      summaries.push(`${toolLabel} [${key}] -> ${interaction.resultSummaries.join(' / ')}`)
+      continue
+    }
+
+    if (interaction.callSummary) {
+      summaries.push(`${interaction.callSummary} [${key}]`)
+    }
+  }
+
+  return summaries
 }
 
 function capitalizeRole(role: AgentRole) {

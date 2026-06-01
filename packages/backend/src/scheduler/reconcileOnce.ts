@@ -583,6 +583,7 @@ function historyEventForRuntimeEvent(event: AgentRuntimeEvent) {
       entryKind: event.entryKind,
       summary: event.summary,
       toolName: event.toolName,
+      toolInvocationKey: event.toolInvocationKey,
       vendorEventType: event.vendorEventType,
     }
   }

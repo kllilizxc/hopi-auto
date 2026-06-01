@@ -112,6 +112,7 @@ interface RunTranscriptEntry {
   kind: 'status' | 'assistant' | 'tool_call' | 'tool_result' | 'error'
   summary: string
   toolName?: string
+  toolInvocationKey?: string
   vendorEventType?: string
 }
 
@@ -1907,7 +1908,14 @@ function renderStepTranscript(step: RunStep) {
                 <p class="trace-summary">${escapeHtml(entry.summary)}</p>
                 ${
                   entry.toolName
-                    ? `<div class="evidence-list"><span class="evidence-pill">tool: ${escapeHtml(entry.toolName)}</span></div>`
+                    ? `<div class="evidence-list">
+                        <span class="evidence-pill">tool: ${escapeHtml(entry.toolName)}</span>
+                        ${
+                          entry.toolInvocationKey
+                            ? `<span class="evidence-pill soft">tool key: ${escapeHtml(entry.toolInvocationKey)}</span>`
+                            : ''
+                        }
+                      </div>`
                     : ''
                 }
               </article>

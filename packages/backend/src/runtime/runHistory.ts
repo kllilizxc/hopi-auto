@@ -56,6 +56,7 @@ export interface RunTranscriptEntryInput {
   kind: AgentTranscriptEntryKind
   summary: string
   toolName?: string
+  toolInvocationKey?: string
   vendorEventType?: string
 }
 
@@ -78,6 +79,7 @@ export type RunStepEventInput =
       entryKind: AgentTranscriptEntryKind
       summary: string
       toolName?: string
+      toolInvocationKey?: string
       vendorEventType?: string
     }
   | {
@@ -159,6 +161,7 @@ const RunTranscriptEntrySchema = z.object({
   kind: z.enum(AGENT_TRANSCRIPT_ENTRY_KINDS),
   summary: z.string().min(1),
   toolName: z.string().min(1).optional(),
+  toolInvocationKey: z.string().min(1).optional(),
   vendorEventType: z.string().min(1).optional(),
 })
 
