@@ -95,6 +95,7 @@ export type GoalDecisionWorkflowLeafFollowThroughInput =
 export interface GoalDecisionWorkflowBatchFollowThroughInput {
   kind: 'workflow_batch'
   workflowKey?: string
+  answers?: GoalPlanningRequestAnswer[]
   workflows: GoalDecisionWorkflowLeafFollowThroughInput[]
 }
 
@@ -473,6 +474,7 @@ async function createDecisionResolutionFollowThrough(
       {
         goalKey,
         workflowKey: followThrough.workflowKey,
+        answers: followThrough.answers,
         reuseTaskRef: reusablePlanningTaskRef,
         workflows: followThrough.workflows.map((workflow) => {
           if (workflow.kind === 'planning_batch') {

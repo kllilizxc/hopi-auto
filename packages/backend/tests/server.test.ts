@@ -1763,6 +1763,139 @@ describe('createServer', () => {
     })
   })
 
+  test('records multiple durable answers through the API and shares one non-decision answer across a workflow graph', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          answer: 'Use a staged rollout.',
+        },
+      ],
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answer: 'Start with five enterprise customers before broader rollout.',
+          },
+        ],
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            answers: [
+              {
+                summary: 'Rollback trigger',
+                answer: 'Abort after two regressions.',
+              },
+            ],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+                description: 'Record the auth and rollout answers across Goal docs.',
+                acceptanceCriteria: ['The auth and rollout answers are durable.'],
+                requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth rollout task graph',
+                description: 'Reflect the auth and rollout answers in todo.yml.',
+                acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the shared auth rollout workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          status: 'resolved',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          status: 'resolved',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('resolving a decision through the API can create a durable workflow graph that later direct planning extends', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -3733,6 +3866,95 @@ describe('createServer', () => {
         }),
       ]),
     )
+  })
+
+  test('runs the configured Goal assistant and shares one non-decision answer across a decision-backed workflow graph', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Resolve auth and rollout, and keep the pilot scope on the workflow graph.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded both decisions and shared the pilot scope across one workflow graph.', actions: [{ kind: 'record_answers', answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', answer: 'Use Bun-native auth.' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy', answer: 'Use a staged rollout.' }], followThrough: { kind: 'workflow_batch', workflowKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers before broader rollout.' }], workflows: [{ kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Rollback trigger', answer: 'Abort after two regressions.' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }, { kind: 'planning', workflowTaskKey: 'handoff-review', title: 'Review auth rollout readiness', description: 'Inspect the shared auth rollout workflow before handoff.', acceptanceCriteria: ['The auth rollout review is visible.'], requestedUpdates: ['design.md'] }] } }] })); console.log('assistant shared decision workflow context requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Resolve auth and rollout, and keep the pilot scope on the workflow graph.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I recorded both decisions and shared the pilot scope across one workflow graph.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          followThroughGroupKeys: ['auth-rollout-follow-through'],
+          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+          ],
+        }),
+      ],
+    })
   })
 
   test('runs the configured Goal assistant and records multiple durable answers into shared planner follow-through', async () => {

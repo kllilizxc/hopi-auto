@@ -170,6 +170,7 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('workflow_batch'),
     workflowKey: z.string().min(1).optional(),
+    answers: goalPlanningRequestAnswerArraySchema,
     workflows: z.array(resolveDecisionWorkflowLeafFollowThroughSchema).min(1),
   }),
 ])

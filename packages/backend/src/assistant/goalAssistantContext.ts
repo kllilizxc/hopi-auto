@@ -313,6 +313,12 @@ Required outcome shape:
       "followThrough": {
         "kind": "workflow_batch",
         "workflowKey": "optional stable top-level workflow key for later extension",
+        "answers": [
+          {
+            "summary": "optional shared user answer summary",
+            "answer": "explicit user answer that should shape every child in this decision-backed workflow graph"
+          }
+        ],
         "workflows": [
           {
             "kind": "planning",
@@ -475,6 +481,7 @@ Rules:
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
+- When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.
 - When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
 - When resolving a planning-linked decision and the answer should reshape the current planning surface, prefer "followThrough" on "resolve_decision" so runtime can reuse that visible planning task instead of creating a wrapper.
 - When a decision answer should immediately open durable planner work even before there is a visible blocker or reusable planning surface, prefer "followThrough" on "resolve_decision" so runtime can create that visible planning workflow in one action.
