@@ -238,6 +238,7 @@ interface AssistantAction {
   summary?: string
   answer?: string
   content?: string
+  reuseTaskRef?: string
 }
 
 interface AssistantActionResult {

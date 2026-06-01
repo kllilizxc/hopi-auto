@@ -246,6 +246,7 @@ Required outcome shape:
     },
     {
       "kind": "request_planning_workflows",
+      "reuseTaskRef": "optional current planning task ref to reuse only for the first child workflow",
       "workflows": [
         {
           "kind": "planning",
@@ -444,6 +445,7 @@ Rules:
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
 - Prefer "request_planning_workflows" when one user reply should atomically open more than one independent durable planning workflow without routing through a decision-answer action first.
+- When "request_planning_workflows" should expand an existing visible planning surface instead of creating a wrapper, set "reuseTaskRef" and let runtime reuse that task only for the first child workflow.
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through requestedUpdates plus answers and use decisionRefs only for real durable decision topics.

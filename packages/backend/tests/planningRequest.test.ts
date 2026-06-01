@@ -451,6 +451,143 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('reuses an existing planning surface as the first workflow in a direct workflow batch', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Draft auth goal context',
+        description: 'Capture the current auth context before decomposition.',
+        acceptanceCriteria: ['The current auth context is visible.'],
+        requestedUpdates: ['goal.md'],
+      },
+    )
+
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        reuseTaskRef: 'P-1',
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            decisionRefs: ['auth-strategy'],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Clarify auth goal context',
+                description: 'Refresh durable Goal context before decomposition.',
+                acceptanceCriteria: ['Goal context captures the auth direction.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth task graph',
+                description: 'Reshape todo.yml after the goal context is stable.',
+                acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            title: 'Capture rollout notes',
+            description: 'Record rollout details in parallel with auth planning.',
+            acceptanceCriteria: ['Rollout notes are durable.'],
+            decisionRefs: ['rollout-strategy'],
+            requestedUpdates: ['notes/rollout.md'],
+          },
+        ],
+      },
+    )
+
+    expect(result).toMatchObject({
+      kind: 'workflow_batch',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-2', 'P-3'],
+      createdRequestKeys: ['PR-2', 'PR-3'],
+      createdTaskRefs: ['P-2', 'P-3'],
+      workflows: [
+        {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          requestKeys: ['PR-1', 'PR-2'],
+          taskRefs: ['P-1', 'P-2'],
+          blockerTaskRefs: ['P-2'],
+          createdRequestKeys: ['PR-2'],
+          createdTaskRefs: ['P-2'],
+        },
+        {
+          kind: 'planning',
+          requestKeys: ['PR-3'],
+          taskRefs: ['P-3'],
+          blockerTaskRefs: ['P-3'],
+          createdRequestKeys: ['PR-3'],
+          createdTaskRefs: ['P-3'],
+        },
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['notes/rollout.md'],
+        }),
+      ],
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Clarify auth goal context',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose auth task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-3',
+          title: 'Capture rollout notes',
+          blockedBy: [],
+        }),
+      ],
+    })
+  })
+
   test('reuses an existing planning task as the first grouped planning stage', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

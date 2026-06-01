@@ -160,6 +160,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('request_planning_workflows'),
+    reuseTaskRef: z.string().min(1).optional(),
     workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
   }),
   z.object({

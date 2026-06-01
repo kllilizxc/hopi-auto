@@ -6,6 +6,7 @@ import { ProcessAgentRunner } from '../src/agent/ProcessAgentRunner'
 import type { TaskItem, TodoBoard } from '../src/domain/board'
 import { createServer } from '../src/index'
 import { createAssistantThreadStore } from '../src/runtime/assistantThreadStore'
+import { requestGoalPlanning } from '../src/runtime/planningRequest'
 import { createRunHistoryStore } from '../src/runtime/runHistoryStore'
 import { createWorktreeManager } from '../src/runtime/worktreeManager'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
@@ -313,6 +314,95 @@ describe('createServer', () => {
           decisionRefs: ['auth-strategy'],
           answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
           requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('reuses an existing planning surface as the first workflow through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const seedResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Draft auth goal context',
+      description: 'Capture the current auth context before decomposition.',
+      acceptanceCriteria: ['The current auth context is visible.'],
+      requestedUpdates: ['goal.md'],
+    })
+
+    expect(seedResponse.status).toBe(201)
+
+    const response = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      reuseTaskRef: 'P-1',
+      workflows: [
+        {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context before decomposition.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+        {
+          kind: 'planning',
+          title: 'Capture rollout notes',
+          description: 'Record rollout details in parallel with auth planning.',
+          acceptanceCriteria: ['Rollout notes are durable.'],
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['notes/rollout.md'],
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      kind: 'workflow_batch',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-2', 'P-3'],
+      createdRequestKeys: ['PR-2', 'PR-3'],
+      createdTaskRefs: ['P-2', 'P-3'],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['notes/rollout.md'],
         }),
       ],
     })
@@ -1761,6 +1851,101 @@ describe('createServer', () => {
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
           answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+        }),
+      ],
+    })
+
+    const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
+    expect(thread.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'request_planning_workflows',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_planning_workflows',
+        }),
+      ]),
+    )
+  })
+
+  test('runs the configured Goal assistant and reuses the current planning surface as the first workflow', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    const planningRequests = createPlanningRequestStore(workspaceRoot)
+    const boardStore = createBoardStore(workspaceRoot)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'test',
+        title: 'Draft auth goal context',
+        description: 'Capture the current auth context before decomposition.',
+        acceptanceCriteria: ['The current auth context is visible.'],
+        requestedUpdates: ['goal.md'],
+      },
+    )
+
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Reuse the current planning surface and split it into independent workflows.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the current planning surface and opened two independent durable planning workflows.', actions: [{ kind: 'request_planning_workflows', reuseTaskRef: 'P-1', workflows: [{ kind: 'planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }, { kind: 'planning', title: 'Capture rollout notes', description: 'Record rollout details in parallel with auth planning.', acceptanceCriteria: ['Rollout notes are durable.'], decisionRefs: ['rollout-strategy'], requestedUpdates: ['notes/rollout.md'] }] }] })); console.log('assistant workflow batch reuse requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Reuse the current planning surface and split it into independent workflows.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I reused the current planning surface and opened two independent durable planning workflows.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_workflows',
+          groupKeys: ['auth-follow-through'],
+          requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+          taskRefs: ['P-1', 'P-2', 'P-3'],
+          blockerTaskRefs: ['P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          decisionRefs: ['rollout-strategy'],
         }),
       ],
     })

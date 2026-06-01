@@ -475,12 +475,14 @@ export async function requestGoalPlanningWorkflows(
   },
   input: {
     goalKey: string
+    reuseTaskRef?: string
     workflows: GoalPlanningWorkflowLeafInput[]
     writer?: string
     reason?: string
   },
 ): Promise<GoalPlanningWorkflowsResult> {
   const workflows: GoalPlanningWorkflowLeafResult[] = []
+  let currentReusablePlanningTaskRef = input.reuseTaskRef
 
   for (const workflow of input.workflows) {
     if (workflow.kind === 'planning_batch') {
@@ -490,6 +492,11 @@ export async function requestGoalPlanningWorkflows(
         decisionRefs: workflow.decisionRefs,
         answers: workflow.answers,
         requests: workflow.requests,
+        reuseTaskRefByTaskKey: currentReusablePlanningTaskRef
+          ? {
+              [workflow.requests[0]?.taskKey ?? '']: currentReusablePlanningTaskRef,
+            }
+          : undefined,
         writer: input.writer,
         reason: input.reason,
       })
@@ -510,6 +517,7 @@ export async function requestGoalPlanningWorkflows(
           .filter((entry) => entry.taskCreated)
           .map((entry) => entry.taskRef),
       })
+      currentReusablePlanningTaskRef = undefined
       continue
     }
 
@@ -524,6 +532,7 @@ export async function requestGoalPlanningWorkflows(
       answers: workflow.answers,
       requestedUpdates: workflow.requestedUpdates,
       blockedBy: workflow.blockedBy,
+      reuseTaskRef: currentReusablePlanningTaskRef,
       writer: input.writer,
       reason: input.reason,
     })
@@ -542,6 +551,7 @@ export async function requestGoalPlanningWorkflows(
       createdRequestKeys: result.created ? [result.request.requestKey] : [],
       createdTaskRefs: result.taskCreated ? [result.request.taskRef] : [],
     })
+    currentReusablePlanningTaskRef = undefined
   }
 
   return {

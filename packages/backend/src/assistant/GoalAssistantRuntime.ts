@@ -305,6 +305,7 @@ async function applyAssistantAction(
       },
       {
         goalKey,
+        reuseTaskRef: action.reuseTaskRef,
         workflows: action.workflows,
         writer: 'assistant',
         reason: 'assistant request planning workflows',
