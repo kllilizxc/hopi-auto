@@ -1164,6 +1164,83 @@ describe('createServer', () => {
     })
   })
 
+  test('grouped planning extension keeps engineering blocked on the current grouped tail through the API path', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for planner follow-through before engineering continues.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (prompt.includes('Add one grouped planning review step after the task graph.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I added one later grouped planning review step after the task graph stage.', actions: [{ kind: 'request_planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'review-pass', title: 'Review auth planning follow-through', description: 'Inspect the grouped planning artifacts before handoff.', acceptanceCriteria: ['The grouped planning review is visible.'], requestedUpdates: ['design.md'], blockedByTaskKeys: ['task-graph'] }] }] })); console.log('assistant grouped planning extended'); process.exit(0); } if (prompt.includes('Split the auth planning work into durable stages.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I split the auth planning follow-through into two coordinated visible planning tasks.', actions: [{ kind: 'request_planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }] })); console.log('assistant grouped planning requested'); process.exit(0); } throw new Error('missing user message');",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/auth-strategy/resolve',
+      { answer: 'Use Bun-native auth.' },
+    )
+    expect(resolveResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-7',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ]),
+    })
+
+    const initialResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Split the auth planning work into durable stages.',
+    })
+    expect(initialResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-7',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+
+    const extensionResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Add one grouped planning review step after the task graph.',
+    })
+    expect(extensionResponse.status).toBe(200)
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-7',
+          blockedBy: [{ kind: 'task', ref: 'P-3' }],
+        }),
+      ]),
+    })
+  })
+
   test('a resolved decision leaves linked planning work dispatchable on the next reconcile', async () => {
     const workspaceRoot = await initGitRepo(rootDir())
     await seedBoard(workspaceRoot, [

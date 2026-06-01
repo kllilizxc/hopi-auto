@@ -56,6 +56,17 @@ export async function requestGoalPlanning(
   },
   input: GoalPlanningRequestInput,
 ): Promise<GoalPlanningRequestResult> {
+  return requestGoalPlanningInternal(stores, input, true)
+}
+
+async function requestGoalPlanningInternal(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: GoalPlanningRequestInput,
+  syncGroupedBlockers: boolean,
+): Promise<GoalPlanningRequestResult> {
   const currentRequests = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
   const currentBoard = await stores.boardStore.readBoard(input.goalKey)
   const existingByKey = input.requestKey
@@ -84,11 +95,11 @@ export async function requestGoalPlanning(
         requestedUpdates: input.requestedUpdates,
       },
     )
-    return {
+    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
       created: false,
       taskCreated: false,
-    }
+    })
   }
 
   if (existingByGroupTaskKey) {
@@ -102,11 +113,11 @@ export async function requestGoalPlanning(
         requestedUpdates: input.requestedUpdates,
       },
     )
-    return {
+    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
       created: false,
       taskCreated: false,
-    }
+    })
   }
 
   const existingOpen = currentRequests.requests.find(
@@ -126,11 +137,11 @@ export async function requestGoalPlanning(
         requestedUpdates: input.requestedUpdates,
       },
     )
-    return {
+    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
       created: false,
       taskCreated: false,
-    }
+    })
   }
 
   const upgradeableGeneric = findUpgradeableGenericFollowThrough(
@@ -168,11 +179,11 @@ export async function requestGoalPlanning(
       },
     )
 
-    return {
+    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: upgraded,
       created: false,
       taskCreated: false,
-    }
+    })
   }
 
   let taskRef = ''
@@ -216,11 +227,11 @@ export async function requestGoalPlanning(
     requestedUpdates: input.requestedUpdates,
   })
 
-  return {
+  return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
     request,
     created: true,
     taskCreated,
-  }
+  })
 }
 
 export async function requestGoalPlanningBatch(
@@ -242,19 +253,23 @@ export async function requestGoalPlanningBatch(
 
   const entries: GoalPlanningBatchResult['entries'] = []
   for (const request of input.requests) {
-    const result = await requestGoalPlanning(stores, {
-      goalKey: input.goalKey,
-      requestKey: request.requestKey,
-      groupKey: input.groupKey,
-      groupTaskKey: request.taskKey,
-      title: request.title,
-      description: request.description,
-      acceptanceCriteria: request.acceptanceCriteria,
-      decisionRefs: input.decisionRefs,
-      requestedUpdates: request.requestedUpdates,
-      writer: input.writer,
-      reason: input.reason,
-    })
+    const result = await requestGoalPlanningInternal(
+      stores,
+      {
+        goalKey: input.goalKey,
+        requestKey: request.requestKey,
+        groupKey: input.groupKey,
+        groupTaskKey: request.taskKey,
+        title: request.title,
+        description: request.description,
+        acceptanceCriteria: request.acceptanceCriteria,
+        decisionRefs: input.decisionRefs,
+        requestedUpdates: request.requestedUpdates,
+        writer: input.writer,
+        reason: input.reason,
+      },
+      false,
+    )
     entries.push({
       taskKey: request.taskKey,
       requestKey: result.request.requestKey,
@@ -311,11 +326,56 @@ export async function requestGoalPlanningBatch(
       }
     },
   )
+  await syncGroupedPlanningEngineeringBlockers(stores, {
+    goalKey: input.goalKey,
+    groupKey: input.groupKey,
+    writer: input.writer,
+    reason: input.reason,
+  })
 
   return {
     groupKey: input.groupKey,
     entries,
   }
+}
+
+export async function syncGroupedPlanningEngineeringBlockers(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    groupKey?: string
+    writer?: string
+    reason?: string
+  },
+) {
+  const current = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const groupKeys = input.groupKey
+    ? [input.groupKey]
+    : findGroupedPlanningKeysBlockingEngineering(
+        current.requests,
+        (await stores.boardStore.readBoard(input.goalKey)).items,
+      )
+
+  let changed = false
+  for (const groupKey of groupKeys) {
+    if (
+      await syncGroupedPlanningEngineeringBlockersForGroup(
+        stores,
+        current.requests,
+        input.goalKey,
+        groupKey,
+        input.writer,
+        input.reason,
+      )
+    ) {
+      changed = true
+    }
+  }
+
+  return changed
 }
 
 export async function resolveGoalPlanningRequest(
@@ -416,6 +476,27 @@ export async function enrichPlanningRequestsForTaskDecision(
   return enriched
 }
 
+async function finalizeGoalPlanningRequestResult(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: GoalPlanningRequestInput,
+  syncGroupedBlockers: boolean,
+  result: GoalPlanningRequestResult,
+) {
+  if (syncGroupedBlockers && input.groupKey) {
+    await syncGroupedPlanningEngineeringBlockers(stores, {
+      goalKey: input.goalKey,
+      groupKey: input.groupKey,
+      writer: input.writer,
+      reason: input.reason,
+    })
+  }
+
+  return result
+}
+
 function nextPlanningTaskRef(existingRefs: string[]) {
   const nextNumber =
     existingRefs.reduce((max, ref) => {
@@ -496,6 +577,36 @@ function mergeUniqueGroupKeys(values: string[]) {
   return merged
 }
 
+function findGroupedPlanningKeysBlockingEngineering(
+  requests: GoalPlanningRequest[],
+  tasks: Array<{ kind: string; blockedBy: BlockerRef[] }>,
+) {
+  const taskRefToGroupKey = new Map<string, string>()
+  for (const request of requests) {
+    if (request.groupKey) {
+      taskRefToGroupKey.set(request.taskRef, request.groupKey)
+    }
+  }
+
+  const groupKeys: string[] = []
+  for (const task of tasks) {
+    if (task.kind !== 'engineering') {
+      continue
+    }
+    for (const blocker of task.blockedBy) {
+      if (blocker.kind !== 'task') {
+        continue
+      }
+      const groupKey = taskRefToGroupKey.get(blocker.ref)
+      if (groupKey && !groupKeys.includes(groupKey)) {
+        groupKeys.push(groupKey)
+      }
+    }
+  }
+
+  return groupKeys
+}
+
 function mapExistingGroupedTaskRefs(
   requests: GoalPlanningRequest[],
   groupKey: string,
@@ -513,6 +624,123 @@ function mapExistingGroupedTaskRefs(
     }
   }
   return refs
+}
+
+async function syncGroupedPlanningEngineeringBlockersForGroup(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  requests: GoalPlanningRequest[],
+  goalKey: string,
+  groupKey: string,
+  writer?: string,
+  reason?: string,
+) {
+  const groupedRequests = requests.filter((request) => request.groupKey === groupKey)
+  if (groupedRequests.length === 0) {
+    return false
+  }
+
+  const board = await stores.boardStore.readBoard(goalKey)
+  const groupTaskRefs = uniqueStringValues(groupedRequests.map((request) => request.taskRef))
+  const groupTaskRefSet = new Set(groupTaskRefs)
+  const sinkTaskRefs = findOpenGroupedPlanningSinkTaskRefs(groupedRequests, board.items)
+  const nextBlockedByByTaskRef = new Map<string, BlockerRef[]>()
+
+  for (const task of board.items) {
+    if (
+      task.kind !== 'engineering' ||
+      !task.blockedBy.some((blocker) => blocker.kind === 'task' && groupTaskRefSet.has(blocker.ref))
+    ) {
+      continue
+    }
+
+    const nextBlockedBy = task.blockedBy.filter(
+      (blocker) => !(blocker.kind === 'task' && groupTaskRefSet.has(blocker.ref)),
+    )
+    for (const sinkTaskRef of sinkTaskRefs) {
+      nextBlockedBy.push({
+        kind: 'task',
+        ref: sinkTaskRef,
+      })
+    }
+
+    if (!sameBlockerList(task.blockedBy, nextBlockedBy)) {
+      nextBlockedByByTaskRef.set(task.ref, nextBlockedBy)
+    }
+  }
+
+  if (nextBlockedByByTaskRef.size === 0) {
+    return false
+  }
+
+  await stores.boardStore.mutateBoard(
+    goalKey,
+    writer ?? 'planning_request',
+    reason ?? `sync grouped planning blockers ${groupKey}`,
+    (nextBoard) => {
+      for (const task of nextBoard.items) {
+        const nextBlockedBy = nextBlockedByByTaskRef.get(task.ref)
+        if (nextBlockedBy) {
+          task.blockedBy = [...nextBlockedBy]
+        }
+      }
+    },
+  )
+
+  return true
+}
+
+function findOpenGroupedPlanningSinkTaskRefs(
+  requests: GoalPlanningRequest[],
+  tasks: Array<{ ref: string; status: string; blockedBy: BlockerRef[] }>,
+) {
+  const taskByRef = new Map(tasks.map((task) => [task.ref, task]))
+  const openTaskRefs = uniqueStringValues(
+    requests
+      .filter((request) => {
+        const task = taskByRef.get(request.taskRef)
+        return request.status === 'open' && task?.status !== 'done'
+      })
+      .map((request) => request.taskRef),
+  )
+  const openTaskRefSet = new Set(openTaskRefs)
+  const prerequisiteRefs = new Set<string>()
+
+  for (const taskRef of openTaskRefs) {
+    const task = taskByRef.get(taskRef)
+    if (!task) {
+      continue
+    }
+    for (const blocker of task.blockedBy) {
+      if (blocker.kind === 'task' && openTaskRefSet.has(blocker.ref)) {
+        prerequisiteRefs.add(blocker.ref)
+      }
+    }
+  }
+
+  const sinkTaskRefs = openTaskRefs.filter((taskRef) => !prerequisiteRefs.has(taskRef))
+  return sinkTaskRefs.length > 0 ? sinkTaskRefs : openTaskRefs
+}
+
+function uniqueStringValues(values: string[]) {
+  const unique: string[] = []
+  for (const value of values) {
+    if (!unique.includes(value)) {
+      unique.push(value)
+    }
+  }
+  return unique
+}
+
+function sameBlockerList(left: BlockerRef[], right: BlockerRef[]) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (blocker, index) => blocker.kind === right[index]?.kind && blocker.ref === right[index]?.ref,
+    )
+  )
 }
 
 function findUpgradeableGenericFollowThrough(

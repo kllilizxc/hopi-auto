@@ -12,6 +12,7 @@ import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { reconcileOnce } from '../src/scheduler/reconcileOnce'
 import { createBoardStore } from '../src/storage/boardStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
+import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
 
 const goalKey = 'goal-1'
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'reconcile-once')
@@ -50,6 +51,73 @@ describe('reconcileOnce', () => {
     const events = await Bun.file(store.paths.eventsPath(goalKey)).text()
     expect(events).toContain('"action":"task_blocker_resolved"')
     expect(events).toContain('"reason":"task:T-1"')
+  })
+
+  test('retargets engineering blockers to the next grouped planning leaf during cleanup', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({
+        ref: 'P-1',
+        kind: 'planning',
+        status: 'done',
+        title: 'Clarify auth goal context',
+        description: 'Goal context is durable.',
+      }),
+      task({
+        ref: 'P-2',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Decompose auth task graph',
+        description: 'Todo follow-through stays open.',
+        blockedBy: [{ kind: 'task', ref: 'P-1' }],
+      }),
+      task({
+        ref: 'T-2',
+        blockedBy: [{ kind: 'task', ref: 'P-1' }],
+      }),
+    ])
+    const planningRequests = createPlanningRequestStore(rootDir)
+    await planningRequests.createRequest(goalKey, {
+      requestKey: 'PR-1',
+      groupKey: 'auth-follow-through',
+      groupTaskKey: 'goal-docs',
+      title: 'Clarify auth goal context',
+      description: 'Goal context is durable.',
+      acceptanceCriteria: ['Goal context is durable.'],
+      taskRef: 'P-1',
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['goal.md', 'design.md'],
+    })
+    await planningRequests.resolveRequest(goalKey, 'PR-1', {
+      resolution: 'Planning task P-1 completed.',
+    })
+    await planningRequests.createRequest(goalKey, {
+      requestKey: 'PR-2',
+      groupKey: 'auth-follow-through',
+      groupTaskKey: 'task-graph',
+      title: 'Decompose auth task graph',
+      description: 'Todo follow-through stays open.',
+      acceptanceCriteria: ['The auth task graph is visible.'],
+      taskRef: 'P-2',
+      decisionRefs: ['auth-strategy'],
+      requestedUpdates: ['todo.yml'],
+    })
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runner: new MockAgentRunner(),
+      }),
+    ).resolves.toEqual({ kind: 'idle' })
+
+    await expect(readTask(store, 'P-2')).resolves.toMatchObject({
+      blockedBy: [],
+    })
+    await expect(readTask(store, 'T-2')).resolves.toMatchObject({
+      blockedBy: [{ kind: 'task', ref: 'P-2' }],
+    })
   })
 
   test('removes decision blockers whose decision topic is resolved', async () => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestGoalDecision, resolveGoalDecision } from '../src/runtime/decisionRequest'
-import { requestGoalPlanning } from '../src/runtime/planningRequest'
+import { requestGoalPlanning, requestGoalPlanningBatch } from '../src/runtime/planningRequest'
 import { createBoardStore } from '../src/storage/boardStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
 import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
@@ -243,6 +243,197 @@ describe('requestGoalDecision', () => {
         }),
       ],
     })
+  })
+
+  test('retargets engineering blockers to the current grouped planning tail when follow-through is extended', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed engineering task', (board) => {
+      board.items.push({
+        ref: 'T-9',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for the auth decision.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-9',
+    })
+
+    await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        answer: 'Use Bun-native auth.',
+      },
+    )
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'review-pass',
+            title: 'Review auth planning follow-through',
+            description: 'Inspect the grouped planning artifacts before handoff.',
+            acceptanceCriteria: ['The grouped planning review is visible.'],
+            requestedUpdates: ['design.md'],
+            blockedByTaskKeys: ['task-graph'],
+          },
+        ],
+      },
+    )
+
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-3' }],
+        }),
+      ]),
+    })
+  })
+
+  test('fans engineering blockers out to each current grouped planning leaf', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed engineering task', (board) => {
+      board.items.push({
+        ref: 'T-9',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for the auth decision.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-9',
+    })
+
+    await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        answer: 'Use Bun-native auth.',
+      },
+    )
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'api-shape',
+            title: 'Plan auth API shape',
+            description: 'Define the Bun API contract after Goal context is stable.',
+            acceptanceCriteria: ['The auth API plan is visible.'],
+            requestedUpdates: ['design.md'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    const board = await boardStore.readBoard('goal-1')
+    const engineeringTask = board.items.find((item) => item.ref === 'T-9')
+    expect(engineeringTask).toBeDefined()
+    expect(engineeringTask?.blockedBy).toEqual(
+      expect.arrayContaining([
+        { kind: 'task', ref: 'P-2' },
+        { kind: 'task', ref: 'P-3' },
+      ]),
+    )
+    expect(engineeringTask?.blockedBy).toHaveLength(2)
   })
 })
 

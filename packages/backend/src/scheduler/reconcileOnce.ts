@@ -3,7 +3,10 @@ import type { BlockerRef, FailureKind, TaskItem, TaskStatus } from '../domain/bo
 import type { AttemptStore } from '../runtime/attemptStore'
 import { type GitMergeExecutor, createGitMergeExecutor } from '../runtime/gitMergeExecutor'
 import { inspectPlanningFollowThroughEvidence } from '../runtime/planningFollowThroughEvidence'
-import { resolvePlanningRequestsForTask } from '../runtime/planningRequest'
+import {
+  resolvePlanningRequestsForTask,
+  syncGroupedPlanningEngineeringBlockers,
+} from '../runtime/planningRequest'
 import type { RunStatus, StepOutcome } from '../runtime/runHistory'
 import type { RunHistoryStore } from '../runtime/runHistoryStore'
 import { type WriteTraceStore, createWriteTraceStore } from '../runtime/writeTraceStore'
@@ -58,7 +61,15 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
     options.planningRequests ?? createPlanningRequestStore(options.store.paths.rootDir)
   const writeTraces = options.writeTraces ?? createWriteTraceStore(options.store.paths.rootDir)
 
-  if (await cleanupResolvedBlockers(options.store, decisions, options.goalKey, writer)) {
+  if (
+    await cleanupResolvedBlockers(
+      options.store,
+      decisions,
+      planningRequests,
+      options.goalKey,
+      writer,
+    )
+  ) {
     return { kind: 'idle' }
   }
 
@@ -181,6 +192,17 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
         writer,
       },
     )
+    await syncGroupedPlanningEngineeringBlockers(
+      {
+        boardStore: options.store,
+        planningRequests,
+      },
+      {
+        goalKey: options.goalKey,
+        writer,
+        reason: `sync grouped planning blockers after ${task.ref}`,
+      },
+    )
   }
 
   await finishHistoryStep(options.history, runRef, {
@@ -201,9 +223,23 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
 async function cleanupResolvedBlockers(
   store: BoardStore,
   decisions: DecisionStore,
+  planningRequests: PlanningRequestStore | undefined,
   goalKey: string,
   writer: string,
 ): Promise<boolean> {
+  const groupedBlockerSyncChanged = planningRequests
+    ? await syncGroupedPlanningEngineeringBlockers(
+        {
+          boardStore: store,
+          planningRequests,
+        },
+        {
+          goalKey,
+          writer,
+          reason: 'sync grouped planning blockers during cleanup',
+        },
+      )
+    : false
   const board = await store.readBoard(goalKey)
   const doneRefs = new Set(
     board.items.filter((task) => task.status === 'done').map((task) => task.ref),
@@ -228,6 +264,9 @@ async function cleanupResolvedBlockers(
   }
 
   if (removed.length === 0) {
+    if (groupedBlockerSyncChanged) {
+      return true
+    }
     return false
   }
 

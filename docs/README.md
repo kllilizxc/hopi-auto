@@ -59,6 +59,8 @@ Start with `docs/agent-handoff.md`.
 - `docs/superpowers/plans/2026-06-01-grouped-planning-decision-enrichment.md`: implementation plan for the grouped planning decision-enrichment slice.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: approved and implemented design for durable grouped task keys plus later grouped-planning extension.
 - `docs/superpowers/plans/2026-06-01-incremental-grouped-planning-extension.md`: implementation plan for the incremental grouped-planning extension slice.
+- `docs/superpowers/specs/2026-06-01-grouped-planning-blocker-propagation-design.md`: approved and implemented design for keeping engineering blocked on the current open grouped-planning leaves.
+- `docs/superpowers/plans/2026-06-01-grouped-planning-blocker-propagation.md`: implementation plan for the grouped-planning blocker propagation slice.
 - `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`: approved and implemented design for run-history and artifact-aware reviewer/merger policy.
 - `docs/superpowers/plans/2026-06-01-run-history-and-artifact-aware-review-merge-policy.md`: implementation plan for the run-history and artifact-aware review/merge slice.
 - `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`: approved and implemented design for planning follow-through reviewer/merger policy.
