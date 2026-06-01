@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { requestGoalDecision, resolveGoalDecision } from '../src/runtime/decisionRequest'
+import {
+  answerGoalDecision,
+  requestGoalDecision,
+  resolveGoalDecision,
+} from '../src/runtime/decisionRequest'
 import { requestGoalPlanning, requestGoalPlanningBatch } from '../src/runtime/planningRequest'
 import { createBoardStore } from '../src/storage/boardStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
@@ -546,6 +550,109 @@ describe('requestGoalDecision', () => {
           taskRef: 'P-1',
           decisionRefs: ['rollout-strategy'],
           requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('answering a new durable topic can create standalone grouped planner follow-through without a preexisting decision key', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    const result = await answerGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        summary: 'Choose the rollout strategy',
+        answer: 'Use a staged Bun-first rollout.',
+        followThrough: {
+          kind: 'planning_batch',
+          groupKey: 'rollout-follow-through',
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Capture rollout answer',
+              description: 'Record the rollout answer across Goal docs and rollout notes.',
+              acceptanceCriteria: ['The rollout answer is durable.'],
+              requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose rollout task graph',
+              description: 'Reflect the rollout answer in todo.yml before execution continues.',
+              acceptanceCriteria: ['The rollout task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      created: true,
+      decision: {
+        decisionKey: 'D-1',
+        summary: 'Choose the rollout strategy',
+        status: 'resolved',
+        answer: 'Use a staged Bun-first rollout.',
+      },
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'rollout-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+      },
+    })
+    await expect(decisions.readGoalDecisions('goal-1')).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Choose the rollout strategy',
+          status: 'resolved',
+          answer: 'Use a staged Bun-first rollout.',
+        }),
+      ],
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture rollout answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose rollout task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['todo.yml'],
         }),
       ],
     })

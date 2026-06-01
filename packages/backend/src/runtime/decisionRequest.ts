@@ -33,6 +33,10 @@ export interface GoalDecisionResolveResult {
   followThrough?: GoalDecisionFollowThroughResult
 }
 
+export interface GoalDecisionAnswerResult extends GoalDecisionResolveResult {
+  created: boolean
+}
+
 export interface GoalDecisionPlanningFollowThroughInput {
   kind: 'planning'
   title: string
@@ -194,6 +198,49 @@ export async function resolveGoalDecision(
     decision,
     blockerRemoved,
     followThrough,
+  }
+}
+
+export async function answerGoalDecision(
+  stores: {
+    boardStore: BoardStore
+    decisions: DecisionStore
+    planningRequests?: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    summary: string
+    decisionKey?: string
+    taskRef?: string
+    answer: string
+    followThrough?: GoalDecisionFollowThroughInput
+    writer?: string
+    reason?: string
+  },
+): Promise<GoalDecisionAnswerResult> {
+  const current = await stores.decisions.readGoalDecisions(input.goalKey)
+  const existing = input.decisionKey
+    ? current.decisions.find((decision) => decision.decisionKey === input.decisionKey)
+    : undefined
+  const decision =
+    existing ??
+    (await stores.decisions.createDecision(input.goalKey, {
+      decisionKey: input.decisionKey,
+      summary: input.summary,
+      taskRef: input.taskRef,
+    }))
+  const result = await resolveGoalDecision(stores, {
+    goalKey: input.goalKey,
+    decisionKey: decision.decisionKey,
+    answer: input.answer,
+    followThrough: input.followThrough,
+    writer: input.writer,
+    reason: input.reason ?? `record answer ${decision.decisionKey}`,
+  })
+
+  return {
+    created: !existing,
+    ...result,
   }
 }
 

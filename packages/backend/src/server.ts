@@ -12,7 +12,11 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
-import { requestGoalDecision, resolveGoalDecision } from './runtime/decisionRequest'
+import {
+  answerGoalDecision,
+  requestGoalDecision,
+  resolveGoalDecision,
+} from './runtime/decisionRequest'
 import { createGoalDocsStore } from './runtime/goalDocsStore'
 import { requestGoalPlanning } from './runtime/planningRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
@@ -103,6 +107,14 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
 ])
 
 const resolveDecisionSchema = z.object({
+  answer: z.string().min(1),
+  followThrough: resolveDecisionFollowThroughSchema.optional(),
+})
+
+const answerDecisionSchema = z.object({
+  decisionKey: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  taskRef: z.string().min(1).optional(),
   answer: z.string().min(1),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -250,6 +262,41 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           )
           broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
           if (result.blockerAdded) {
+            broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          }
+          return jsonResponse(result.decision, result.created ? 201 : 200)
+        }
+
+        if (
+          request.method === 'POST' &&
+          isGoalRoute(parts, 'decisions') &&
+          parts.length === 5 &&
+          parts[4] === 'answer'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const body = await parseJsonBody(request, answerDecisionSchema)
+          const result = await answerGoalDecision(
+            {
+              boardStore: store,
+              decisions,
+              planningRequests,
+            },
+            {
+              goalKey: currentGoalKey,
+              decisionKey: body.decisionKey,
+              summary: body.summary,
+              taskRef: body.taskRef,
+              answer: body.answer,
+              followThrough: body.followThrough,
+              writer: 'api',
+              reason: `api record answer ${body.decisionKey ?? body.summary}`,
+            },
+          )
+          broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
+          if (result.followThrough) {
+            broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
+          }
+          if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
           return jsonResponse(result.decision, result.created ? 201 : 200)
@@ -433,7 +480,8 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             result.actionResults.some(
               (actionResult) =>
                 actionResult.kind === 'request_decision' ||
-                actionResult.kind === 'resolve_decision',
+                actionResult.kind === 'resolve_decision' ||
+                actionResult.kind === 'record_answer',
             )
           ) {
             broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
@@ -444,7 +492,8 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               (actionResult) =>
                 actionResult.kind === 'request_planning' ||
                 actionResult.kind === 'request_planning_batch' ||
-                (actionResult.kind === 'resolve_decision' &&
+                ((actionResult.kind === 'resolve_decision' ||
+                  actionResult.kind === 'record_answer') &&
                   (actionResult.followThroughRequestKeys?.length ?? 0) > 0),
             )
           ) {

@@ -699,6 +699,7 @@ textarea {
 
 .assistant-kind.kind-assistant_message,
 .assistant-kind.kind-request_decision,
+.assistant-kind.kind-record_answer,
 .assistant-kind.kind-resolve_decision,
 .assistant-kind.kind-create_planning_task,
 .assistant-kind.kind-request_planning,

@@ -514,6 +514,7 @@ Current non-UI Goal assistant substrate:
 - engineering-linked decision resolution with explicit single or grouped planner follow-through on the shared planning-request path
 - planning-linked decision resolution with explicit single or grouped follow-through that can reuse the current planning surface instead of creating a wrapper task
 - standalone answered decision follow-through that can create visible planner work even before there is a blocker or reusable planning surface
+- answer-first durable decision capture that lets assistant or API record one explicit answer, auto-create or reuse the durable decision topic, and route single or grouped planner follow-through through the same shared resolution helper
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -526,7 +527,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- richer assistant/planner workflows beyond explicit decision-resolution follow-through, especially answers that are not yet intentionally captured through one durable decision action
+- richer assistant/planner workflows beyond one explicit durable decision capture, especially answers that should fan out into more than one durable planner/doc workflow or do not map cleanly to one decision topic first
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
@@ -536,7 +537,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Extend Goal assistant and planner/runtime behavior beyond explicit decision-resolution follow-through, especially answers that should create durable planner workflows before the assistant has explicitly encoded them as one durable decision action.
+1. Extend Goal assistant and planner/runtime behavior beyond one answer-first durable decision capture, especially when a user answer should create more than one durable planner/doc workflow or otherwise needs answer-driven planning without forcing everything through a single decision topic.
 2. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, and current-open-leaf blocker propagation for grouped planning.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

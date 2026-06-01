@@ -599,6 +599,80 @@ describe('createServer', () => {
     })
   })
 
+  test('records a durable answer through the API and opens grouped planner follow-through without a preexisting decision topic', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/decisions/answer', {
+      summary: 'Choose the rollout strategy',
+      answer: 'Use a staged Bun-first rollout.',
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'rollout-follow-through',
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture rollout answer',
+            description: 'Record the rollout answer across Goal docs and rollout notes.',
+            acceptanceCriteria: ['The rollout answer is durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose rollout task graph',
+            description: 'Reflect the rollout answer in todo.yml before execution continues.',
+            acceptanceCriteria: ['The rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      decisionKey: 'D-1',
+      summary: 'Choose the rollout strategy',
+      status: 'resolved',
+      answer: 'Use a staged Bun-first rollout.',
+    })
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture rollout answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose rollout task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          taskRef: 'P-1',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          taskRef: 'P-2',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -1504,6 +1578,86 @@ describe('createServer', () => {
           requestedUpdates: ['todo.yml'],
         }),
       ],
+    })
+  })
+
+  test('runs the configured Goal assistant and records an answer-first durable workflow before any explicit decision key exists', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Record the rollout answer before any explicit decision topic exists.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded the rollout answer as a new durable decision and opened grouped planner follow-through.', actions: [{ kind: 'record_answer', summary: 'Choose the rollout strategy', answer: 'Use a staged Bun-first rollout.', followThrough: { kind: 'planning_batch', groupKey: 'rollout-follow-through', requests: [{ taskKey: 'goal-docs', title: 'Capture rollout answer', description: 'Record the rollout answer across Goal docs and rollout notes.', acceptanceCriteria: ['The rollout answer is durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose rollout task graph', description: 'Reflect the rollout answer in todo.yml before execution continues.', acceptanceCriteria: ['The rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Record the rollout answer before any explicit decision topic exists.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I recorded the rollout answer as a new durable decision and opened grouped planner follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answer',
+          decisionKey: 'D-1',
+          followThroughGroupKey: 'rollout-follow-through',
+          followThroughTaskRefs: ['P-1', 'P-2'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Choose the rollout strategy',
+          status: 'resolved',
+          answer: 'Use a staged Bun-first rollout.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          groupKey: 'rollout-follow-through',
+          decisionRefs: ['D-1'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          groupKey: 'rollout-follow-through',
+          decisionRefs: ['D-1'],
+        }),
+      ],
+    })
+    await expect(
+      createAssistantThreadStore(workspaceRoot).readThread('test'),
+    ).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'record_answer',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'record_answer',
+        }),
+      ]),
     })
   })
 

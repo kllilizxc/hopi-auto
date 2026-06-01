@@ -10,7 +10,11 @@ import {
   type AssistantThreadStore,
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
-import { requestGoalDecision, resolveGoalDecision } from '../runtime/decisionRequest'
+import {
+  answerGoalDecision,
+  requestGoalDecision,
+  type resolveGoalDecision,
+} from '../runtime/decisionRequest'
 import { requestGoalPlanning, requestGoalPlanningBatch } from '../runtime/planningRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
@@ -312,15 +316,7 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'resolve_decision') {
-    const current = await stores.decisions.readGoalDecisions(goalKey)
-    if (!current.decisions.some((item) => item.decisionKey === action.decisionKey)) {
-      await stores.decisions.createDecision(goalKey, {
-        decisionKey: action.decisionKey,
-        summary: action.summary ?? `Decision: ${action.decisionKey}`,
-        taskRef: action.taskRef,
-      })
-    }
-    const result = await resolveGoalDecision(
+    const result = await answerGoalDecision(
       {
         boardStore: stores.boardStore,
         decisions: stores.decisions,
@@ -328,7 +324,9 @@ async function applyAssistantAction(
       },
       {
         goalKey,
+        summary: action.summary ?? `Decision: ${action.decisionKey}`,
         decisionKey: action.decisionKey,
+        taskRef: action.taskRef,
         answer: action.answer,
         followThrough: action.followThrough,
         writer: 'assistant',
@@ -342,6 +340,34 @@ async function applyAssistantAction(
       followThroughRequestKeys: result.followThrough?.requestKeys,
       followThroughTaskRefs: result.followThrough?.taskRefs,
       summary: summarizeResolvedDecisionResult(action.decisionKey, result),
+    }
+  }
+
+  if (action.kind === 'record_answer') {
+    const result = await answerGoalDecision(
+      {
+        boardStore: stores.boardStore,
+        decisions: stores.decisions,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        summary: action.summary,
+        decisionKey: action.decisionKey,
+        taskRef: action.taskRef,
+        answer: action.answer,
+        followThrough: action.followThrough,
+        writer: 'assistant',
+        reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
+      },
+    )
+    return {
+      kind: 'record_answer',
+      decisionKey: result.decision.decisionKey,
+      followThroughGroupKey: result.followThrough?.groupKey,
+      followThroughRequestKeys: result.followThrough?.requestKeys,
+      followThroughTaskRefs: result.followThrough?.taskRefs,
+      summary: summarizeRecordedAnswerResult(result.decision.decisionKey, result),
     }
   }
 
@@ -462,6 +488,15 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
   if (action.kind === 'request_decision') {
     return `Request decision ${action.decisionKey}.`
   }
+  if (action.kind === 'record_answer') {
+    if (action.followThrough?.kind === 'planning_batch') {
+      return `Record answer with grouped planning follow-through ${action.followThrough.groupKey}.`
+    }
+    if (action.followThrough?.kind === 'planning') {
+      return 'Record answer with explicit planning follow-through.'
+    }
+    return `Record answer for ${action.decisionKey ?? action.summary}.`
+  }
   if (action.kind === 'resolve_decision') {
     if (action.followThrough?.kind === 'planning_batch') {
       return `Resolve decision ${action.decisionKey} with grouped planning follow-through ${action.followThrough.groupKey}.`
@@ -491,6 +526,22 @@ function summarizeResolvedDecisionResult(
     return `Resolved decision ${decisionKey} and cleared linked blockers.`
   }
   return `Resolved decision ${decisionKey}.`
+}
+
+function summarizeRecordedAnswerResult(
+  decisionKey: string,
+  result: Awaited<ReturnType<typeof answerGoalDecision>>,
+) {
+  if (result.followThrough?.kind === 'planning_batch') {
+    return `Recorded answer in decision ${decisionKey} and opened grouped planning follow-through ${result.followThrough.groupKey}.`
+  }
+  if (result.followThrough?.kind === 'planning') {
+    return `Recorded answer in decision ${decisionKey} and opened planning follow-through ${result.followThrough.taskRefs.join(', ')}.`
+  }
+  if (result.blockerRemoved) {
+    return `Recorded answer in decision ${decisionKey} and cleared linked blockers.`
+  }
+  return `Recorded answer in decision ${decisionKey}.`
 }
 
 function isLegalManualTransition(from: TaskStatus, to: TaskStatus) {
