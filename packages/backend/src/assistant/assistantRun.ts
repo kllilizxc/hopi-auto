@@ -205,6 +205,8 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning_workflows'),
     workflowKey: z.string().min(1).optional(),
     reuseTaskRef: z.string().min(1).optional(),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    answers: goalPlanningRequestAnswerArraySchema,
     workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
   }),
   z.object({

@@ -248,6 +248,13 @@ Required outcome shape:
       "kind": "request_planning_workflows",
       "workflowKey": "optional stable top-level workflow key for later extension",
       "reuseTaskRef": "optional current planning task ref to reuse only for the first child workflow",
+      "decisionRefs": ["optional shared decision key that should apply across the whole workflow graph"],
+      "answers": [
+        {
+          "summary": "optional shared user answer summary",
+          "answer": "explicit user answer that should shape every child in this workflow graph"
+        }
+      ],
       "workflows": [
         {
           "kind": "planning",
@@ -454,6 +461,7 @@ Rules:
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
 - Prefer "request_planning_workflows" when one user reply should atomically open more than one independent durable planning workflow without routing through a decision-answer action first.
 - When one direct multi-workflow planning surface should be extendable later, set a stable "workflowKey" on "request_planning_workflows" and reuse that same key on later extension actions.
+- When the same decision lineage or captured non-decision answers apply across the whole direct workflow graph, put them once on the root "request_planning_workflows" action and add child-level decisionRefs or answers only where a child needs extra context beyond that shared baseline.
 - When one standalone child inside that direct workflow should be updated or reused later without relying on request ids or title collisions, set a stable "workflowTaskKey" on that "planning" child and reuse the same key on later extension actions.
 - When a later direct workflow child should wait on an earlier child, set "blockedByWorkflowKeys" on that child and reference stable earlier child identities: "workflowTaskKey" for standalone planning children, or "groupKey" for planning_batch children.
 - When "request_planning_workflows" should expand an existing visible planning surface instead of creating a wrapper, set "reuseTaskRef" and let runtime reuse that task only for the first child workflow.

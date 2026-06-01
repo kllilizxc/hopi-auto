@@ -536,6 +536,8 @@ export async function requestGoalPlanningWorkflows(
     goalKey: string
     workflowKey?: string
     reuseTaskRef?: string
+    decisionRefs?: string[]
+    answers?: GoalPlanningRequestAnswer[]
     workflows: GoalPlanningWorkflowLeafInput[]
     writer?: string
     reason?: string
@@ -552,6 +554,8 @@ export async function requestGoalPlanningWorkflows(
 
   const workflows: GoalPlanningWorkflowLeafResult[] = []
   let currentReusablePlanningTaskRef = input.reuseTaskRef
+  const workflowDecisionRefs = uniqueStringValues(input.decisionRefs ?? [])
+  const workflowAnswers = mergePlanningRequestAnswers([], input.answers ?? [])
   let currentWorkflowChildren = input.workflowKey
     ? await describeOpenPlanningWorkflowChildren(stores, {
         goalKey: input.goalKey,
@@ -578,8 +582,11 @@ export async function requestGoalPlanningWorkflows(
         workflowKey: input.workflowKey,
         groupKey: workflow.groupKey,
         blockedByWorkflowKeys,
-        decisionRefs: workflow.decisionRefs,
-        answers: workflow.answers,
+        decisionRefs: uniqueStringValues([
+          ...workflowDecisionRefs,
+          ...(workflow.decisionRefs ?? []),
+        ]),
+        answers: mergePlanningRequestAnswers(workflowAnswers, workflow.answers ?? []),
         requests: workflow.requests.map((request) => ({
           ...request,
           blockedBy: isPlanningBatchRootRequest(request)
@@ -635,8 +642,8 @@ export async function requestGoalPlanningWorkflows(
       title: workflow.title,
       description: workflow.description,
       acceptanceCriteria: workflow.acceptanceCriteria,
-      decisionRefs: workflow.decisionRefs,
-      answers: workflow.answers,
+      decisionRefs: uniqueStringValues([...workflowDecisionRefs, ...(workflow.decisionRefs ?? [])]),
+      answers: mergePlanningRequestAnswers(workflowAnswers, workflow.answers ?? []),
       requestedUpdates: workflow.requestedUpdates,
       blockedBy: mergeBlockerRefs(workflow.blockedBy ?? [], workflowDependencyBlockers),
       reuseTaskRef: currentReusablePlanningTaskRef,
@@ -1638,6 +1645,22 @@ function uniqueStringValues(values: string[]) {
     }
   }
   return unique
+}
+
+function mergePlanningRequestAnswers(
+  existing: GoalPlanningRequestAnswer[],
+  incoming: GoalPlanningRequestAnswer[],
+) {
+  const merged = [...existing]
+  const seen = new Set(existing.map((value) => `${value.summary}\u0000${value.answer}`))
+  for (const value of incoming) {
+    const key = `${value.summary}\u0000${value.answer}`
+    if (!seen.has(key)) {
+      merged.push(value)
+      seen.add(key)
+    }
+  }
+  return merged
 }
 
 function sameBlockerList(left: BlockerRef[], right: BlockerRef[]) {
