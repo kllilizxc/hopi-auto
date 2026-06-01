@@ -618,6 +618,151 @@ describe('createServer', () => {
     )
   })
 
+  test('reuses a direct workflow child through the API with a stable workflow task key', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const firstResponse = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      workflowKey: 'auth-rollout-follow-through',
+      workflows: [
+        {
+          kind: 'planning',
+          workflowTaskKey: 'rollout-notes',
+          title: 'Capture rollout notes',
+          description: 'Record rollout details before more planning work continues.',
+          acceptanceCriteria: ['Rollout notes are durable.'],
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['notes/rollout.md'],
+        },
+        {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context before decomposition.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(firstResponse.status).toBe(201)
+
+    const response = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      workflowKey: 'auth-rollout-follow-through',
+      workflows: [
+        {
+          kind: 'planning',
+          workflowTaskKey: 'rollout-notes',
+          title: 'Prepare rollout readiness package',
+          description: 'Upgrade the rollout notes into a reusable readiness package.',
+          acceptanceCriteria: ['The rollout readiness package is durable.'],
+          requestedUpdates: ['notes/rollout.md', 'design.md'],
+        },
+        {
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          title: 'Review auth rollout readiness',
+          description: 'Inspect the current auth rollout workflow before handoff.',
+          acceptanceCriteria: ['The auth rollout review is visible.'],
+          requestedUpdates: ['design.md'],
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3', 'PR-4'],
+      taskRefs: ['P-1', 'P-2', 'P-3', 'P-4'],
+      blockerTaskRefs: ['P-1', 'P-3', 'P-4'],
+      createdRequestKeys: ['PR-4'],
+      createdTaskRefs: ['P-4'],
+      workflows: [
+        expect.objectContaining({
+          kind: 'planning',
+          workflowTaskKey: 'rollout-notes',
+          requestKeys: ['PR-1'],
+          taskRefs: ['P-1'],
+        }),
+        expect.objectContaining({
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          requestKeys: ['PR-2', 'PR-3'],
+          taskRefs: ['P-2', 'P-3'],
+        }),
+        expect.objectContaining({
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          requestKeys: ['PR-4'],
+          taskRefs: ['P-4'],
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'rollout-notes',
+          title: 'Prepare rollout readiness package',
+          requestedUpdates: ['notes/rollout.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-4',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          title: 'Review auth rollout readiness',
+        }),
+      ],
+    })
+
+    const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
+    const board = await readJson<TodoBoard>(boardResponse)
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Prepare rollout readiness package',
+          acceptanceCriteria: ['The rollout readiness package is durable.'],
+        }),
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Review auth rollout readiness',
+        }),
+      ]),
+    )
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 
@@ -2371,6 +2516,111 @@ describe('createServer', () => {
             { kind: 'task', ref: 'P-3' },
             { kind: 'task', ref: 'P-4' },
           ],
+        }),
+      ]),
+    )
+  })
+
+  test('runs the configured Goal assistant and reuses a direct workflow child through a stable workflow task key', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (prompt.includes('Upgrade the rollout child and add one final review child.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I upgraded the rollout child and added a final review child.', actions: [{ kind: 'request_planning_workflows', workflowKey: 'auth-rollout-follow-through', workflows: [{ kind: 'planning', workflowTaskKey: 'rollout-notes', title: 'Prepare rollout readiness package', description: 'Upgrade the rollout notes into a reusable readiness package.', acceptanceCriteria: ['The rollout readiness package is durable.'], requestedUpdates: ['notes/rollout.md', 'design.md'] }, { kind: 'planning', workflowTaskKey: 'handoff-review', title: 'Review auth rollout readiness', description: 'Inspect the current auth rollout workflow before handoff.', acceptanceCriteria: ['The auth rollout review is visible.'], requestedUpdates: ['design.md'] }] }] })); console.log('assistant workflow child reused'); process.exit(0); } if (prompt.includes('Open the auth rollout workflow with one rollout child and one grouped auth child.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I opened the auth rollout workflow with one rollout child and one grouped auth child.', actions: [{ kind: 'request_planning_workflows', workflowKey: 'auth-rollout-follow-through', workflows: [{ kind: 'planning', workflowTaskKey: 'rollout-notes', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], decisionRefs: ['rollout-strategy'], requestedUpdates: ['notes/rollout.md'] }, { kind: 'planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }] }] })); console.log('assistant workflow child opened'); process.exit(0); } throw new Error('missing user message');",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+
+    const firstResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Open the auth rollout workflow with one rollout child and one grouped auth child.',
+    })
+    expect(firstResponse.status).toBe(200)
+
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Upgrade the rollout child and add one final review child.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I upgraded the rollout child and added a final review child.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_workflows',
+          workflowKey: 'auth-rollout-follow-through',
+          requestKeys: ['PR-1', 'PR-2', 'PR-3', 'PR-4'],
+          taskRefs: ['P-1', 'P-2', 'P-3', 'P-4'],
+          blockerTaskRefs: ['P-1', 'P-3', 'P-4'],
+          workflows: [
+            expect.objectContaining({
+              kind: 'planning',
+              workflowTaskKey: 'rollout-notes',
+              requestKeys: ['PR-1'],
+            }),
+            expect.objectContaining({
+              kind: 'planning_batch',
+              groupKey: 'auth-follow-through',
+              requestKeys: ['PR-2', 'PR-3'],
+            }),
+            expect.objectContaining({
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              requestKeys: ['PR-4'],
+            }),
+          ],
+        }),
+      ]),
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'rollout-notes',
+          title: 'Prepare rollout readiness package',
+          requestedUpdates: ['notes/rollout.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-4',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          title: 'Review auth rollout readiness',
+        }),
+      ],
+    })
+
+    const board = await createBoardStore(workspaceRoot).readBoard('test')
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Prepare rollout readiness package',
+        }),
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Review auth rollout readiness',
         }),
       ]),
     )

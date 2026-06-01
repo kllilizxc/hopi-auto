@@ -11,6 +11,7 @@ export interface GoalPlanningRequestInput {
   goalKey: string
   requestKey?: string
   workflowKey?: string
+  workflowTaskKey?: string
   groupKey?: string
   groupTaskKey?: string
   title: string
@@ -56,6 +57,7 @@ export interface GoalPlanningBatchResult {
 export interface GoalPlanningWorkflowInput {
   kind: 'planning'
   requestKey?: string
+  workflowTaskKey?: string
   groupKey?: string
   title: string
   description: string
@@ -80,6 +82,7 @@ export type GoalPlanningWorkflowLeafInput =
 
 export interface GoalPlanningWorkflowResult {
   kind: 'planning'
+  workflowTaskKey?: string
   groupKey?: string
   requestKeys: string[]
   taskRefs: string[]
@@ -164,12 +167,25 @@ async function requestGoalPlanningInternal(
             ),
         )
       : undefined
+  const existingByWorkflowTaskKey =
+    input.workflowKey && input.workflowTaskKey
+      ? currentRequests.requests.find(
+          (request) =>
+            request.status === 'open' &&
+            request.workflowKey === input.workflowKey &&
+            request.workflowTaskKey === input.workflowTaskKey &&
+            currentBoard.items.some(
+              (task) => task.ref === request.taskRef && task.status !== 'done',
+            ),
+        )
+      : undefined
   if (existingByKey) {
     const enriched = await stores.planningRequests.mergeRequestMetadata(
       input.goalKey,
       existingByKey.requestKey,
       {
         workflowKey: input.workflowKey,
+        workflowTaskKey: input.workflowTaskKey,
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
@@ -203,6 +219,7 @@ async function requestGoalPlanningInternal(
       existingByGroupTaskKey.requestKey,
       {
         workflowKey: input.workflowKey,
+        workflowTaskKey: input.workflowTaskKey,
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
@@ -217,49 +234,65 @@ async function requestGoalPlanningInternal(
     })
   }
 
-  const existingOpen = currentRequests.requests.find(
-    (request) =>
-      request.status === 'open' &&
-      request.title === input.title &&
-      currentBoard.items.some((task) => task.ref === request.taskRef && task.status !== 'done'),
-  )
-  if (existingOpen) {
-    const enriched = await stores.planningRequests.mergeRequestMetadata(
-      input.goalKey,
-      existingOpen.requestKey,
-      {
-        workflowKey: input.workflowKey,
-        groupKey: input.groupKey,
-        groupTaskKey: input.groupTaskKey,
-        decisionRefs: input.decisionRefs,
-        answers: input.answers,
-        requestedUpdates: input.requestedUpdates,
-      },
-    )
-    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
-      request: enriched,
-      created: false,
-      taskCreated: false,
-    })
-  }
-
-  const upgradeableGeneric = findUpgradeableGenericFollowThrough(
-    currentRequests.requests,
-    currentBoard.items,
-    input,
-  )
-  if (upgradeableGeneric) {
-    const upgraded = await updateExistingPlanningRequest(
+  if (existingByWorkflowTaskKey) {
+    const updated = await updateExistingPlanningRequest(
       stores,
       input,
-      upgradeableGeneric.requestKey,
+      existingByWorkflowTaskKey.requestKey,
     )
-
     return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
-      request: upgraded,
+      request: updated,
       created: false,
       taskCreated: false,
     })
+  }
+
+  if (!input.workflowTaskKey) {
+    const existingOpen = currentRequests.requests.find(
+      (request) =>
+        request.status === 'open' &&
+        request.title === input.title &&
+        currentBoard.items.some((task) => task.ref === request.taskRef && task.status !== 'done'),
+    )
+    if (existingOpen) {
+      const enriched = await stores.planningRequests.mergeRequestMetadata(
+        input.goalKey,
+        existingOpen.requestKey,
+        {
+          workflowKey: input.workflowKey,
+          workflowTaskKey: input.workflowTaskKey,
+          groupKey: input.groupKey,
+          groupTaskKey: input.groupTaskKey,
+          decisionRefs: input.decisionRefs,
+          answers: input.answers,
+          requestedUpdates: input.requestedUpdates,
+        },
+      )
+      return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
+        request: enriched,
+        created: false,
+        taskCreated: false,
+      })
+    }
+
+    const upgradeableGeneric = findUpgradeableGenericFollowThrough(
+      currentRequests.requests,
+      currentBoard.items,
+      input,
+    )
+    if (upgradeableGeneric) {
+      const upgraded = await updateExistingPlanningRequest(
+        stores,
+        input,
+        upgradeableGeneric.requestKey,
+      )
+
+      return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
+        request: upgraded,
+        created: false,
+        taskCreated: false,
+      })
+    }
   }
 
   let taskRef = ''
@@ -281,9 +314,12 @@ async function requestGoalPlanningInternal(
         return
       }
 
-      const existingTask = board.items.find(
-        (item) => item.kind === 'planning' && item.title === input.title && item.status !== 'done',
-      )
+      const existingTask = input.workflowTaskKey
+        ? undefined
+        : board.items.find(
+            (item) =>
+              item.kind === 'planning' && item.title === input.title && item.status !== 'done',
+          )
       if (existingTask) {
         taskRef = existingTask.ref
         return
@@ -306,6 +342,7 @@ async function requestGoalPlanningInternal(
   const request = await stores.planningRequests.createRequest(input.goalKey, {
     requestKey: input.requestKey,
     workflowKey: input.workflowKey,
+    workflowTaskKey: input.workflowTaskKey,
     groupKey: input.groupKey,
     groupTaskKey: input.groupTaskKey,
     title: input.title,
@@ -355,6 +392,7 @@ async function updateExistingPlanningRequest(
 
   return stores.planningRequests.updateRequest(input.goalKey, request.requestKey, {
     workflowKey: input.workflowKey,
+    workflowTaskKey: input.workflowTaskKey,
     groupKey: input.groupKey,
     groupTaskKey: input.groupTaskKey,
     title: input.title,
@@ -535,6 +573,7 @@ export async function requestGoalPlanningWorkflows(
     const result = await requestGoalPlanning(stores, {
       goalKey: input.goalKey,
       workflowKey: input.workflowKey,
+      workflowTaskKey: workflow.workflowTaskKey,
       requestKey: workflow.requestKey,
       groupKey: workflow.groupKey,
       title: workflow.title,
@@ -556,6 +595,7 @@ export async function requestGoalPlanningWorkflows(
       : [result.request.taskRef]
     workflows.push({
       kind: 'planning',
+      workflowTaskKey: workflow.workflowTaskKey,
       groupKey: workflow.groupKey,
       requestKeys: [result.request.requestKey],
       taskRefs: [result.request.taskRef],
@@ -1193,6 +1233,7 @@ async function describeOpenPlanningWorkflowState(
 
     workflows.push({
       kind: 'planning',
+      workflowTaskKey: request.workflowTaskKey,
       groupKey: request.groupKey,
       requestKeys: [request.requestKey],
       taskRefs: [request.taskRef],

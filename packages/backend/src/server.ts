@@ -98,6 +98,7 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning'),
     requestKey: z.string().min(1).optional(),
+    workflowTaskKey: z.string().min(1).optional(),
     groupKey: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string(),

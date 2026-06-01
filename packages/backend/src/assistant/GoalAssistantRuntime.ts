@@ -317,6 +317,7 @@ async function applyAssistantAction(
       kind: 'request_planning_workflows',
       workflowKey: result.workflowKey,
       groupKeys: result.groupKeys,
+      workflows: result.workflows,
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
       blockerTaskRefs: result.blockerTaskRefs,

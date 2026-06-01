@@ -55,6 +55,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning'),
     requestKey: z.string().min(1).optional(),
+    workflowTaskKey: z.string().min(1).optional(),
     groupKey: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string(),
@@ -77,6 +78,24 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+  }),
+])
+
+const assistantPlanningWorkflowLeafResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    workflowTaskKey: z.string().min(1).optional(),
+    groupKey: z.string().min(1).optional(),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
   }),
 ])
 
@@ -231,6 +250,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning_workflows'),
     workflowKey: z.string().min(1).optional(),
     groupKeys: z.array(z.string().min(1)),
+    workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
