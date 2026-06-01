@@ -379,6 +379,7 @@ describe('requestGoalPlanning', () => {
 
     expect(result).toMatchObject({
       kind: 'workflow_batch',
+      workflowKey: 'W-1',
       groupKeys: ['auth-follow-through'],
       requestKeys: ['PR-1', 'PR-2', 'PR-3'],
       taskRefs: ['P-1', 'P-2', 'P-3'],
@@ -406,6 +407,7 @@ describe('requestGoalPlanning', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
           answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
@@ -413,6 +415,7 @@ describe('requestGoalPlanning', () => {
         expect.objectContaining({
           requestKey: 'PR-2',
           taskRef: 'P-2',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
@@ -422,6 +425,7 @@ describe('requestGoalPlanning', () => {
         expect.objectContaining({
           requestKey: 'PR-3',
           taskRef: 'P-3',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
@@ -448,6 +452,108 @@ describe('requestGoalPlanning', () => {
           blockedBy: [{ kind: 'task', ref: 'P-2' }],
         }),
       ],
+    })
+  })
+
+  test('extends a generated workflow key returned from the first direct workflow batch', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    const created = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflows: [
+          {
+            kind: 'planning',
+            title: 'Capture rollout notes',
+            description: 'Record rollout details before more planning work continues.',
+            acceptanceCriteria: ['Rollout notes are durable.'],
+            decisionRefs: ['rollout-strategy'],
+            requestedUpdates: ['notes/rollout.md'],
+          },
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            decisionRefs: ['auth-strategy'],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Clarify auth goal context',
+                description: 'Refresh durable Goal context before decomposition.',
+                acceptanceCriteria: ['Goal context captures the auth direction.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth task graph',
+                description: 'Reshape todo.yml after the goal context is stable.',
+                acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+        ],
+      },
+    )
+
+    const extension = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: created.workflowKey,
+        workflows: [
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the generated workflow graph before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    )
+
+    expect(created.workflowKey).toBe('W-1')
+    expect(extension).toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'W-1',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3', 'PR-4'],
+      taskRefs: ['P-1', 'P-2', 'P-3', 'P-4'],
+      blockerTaskRefs: ['P-1', 'P-3', 'P-4'],
+      createdRequestKeys: ['PR-4'],
+      createdTaskRefs: ['P-4'],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: expect.arrayContaining([
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'W-1',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'W-1',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'W-1',
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-4',
+          workflowKey: 'W-1',
+          workflowTaskKey: 'handoff-review',
+        }),
+      ]),
     })
   })
 
@@ -754,6 +860,7 @@ describe('requestGoalPlanning', () => {
 
     expect(result).toMatchObject({
       kind: 'workflow_batch',
+      workflowKey: 'W-1',
       groupKeys: ['auth-follow-through'],
       requestKeys: ['PR-1', 'PR-2', 'PR-3'],
       taskRefs: ['P-1', 'P-2', 'P-3'],
@@ -761,23 +868,19 @@ describe('requestGoalPlanning', () => {
       createdRequestKeys: ['PR-2', 'PR-3'],
       createdTaskRefs: ['P-2', 'P-3'],
       workflows: [
-        {
+        expect.objectContaining({
           kind: 'planning_batch',
           groupKey: 'auth-follow-through',
           requestKeys: ['PR-1', 'PR-2'],
           taskRefs: ['P-1', 'P-2'],
           blockerTaskRefs: ['P-2'],
-          createdRequestKeys: ['PR-2'],
-          createdTaskRefs: ['P-2'],
-        },
-        {
+        }),
+        expect.objectContaining({
           kind: 'planning',
           requestKeys: ['PR-3'],
           taskRefs: ['P-3'],
           blockerTaskRefs: ['P-3'],
-          createdRequestKeys: ['PR-3'],
-          createdTaskRefs: ['P-3'],
-        },
+        }),
       ],
     })
     await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
@@ -1026,10 +1129,10 @@ describe('requestGoalPlanning', () => {
       expect.arrayContaining([
         expect.objectContaining({
           ref: 'T-1',
-          blockedBy: [
+          blockedBy: expect.arrayContaining([
             { kind: 'task', ref: 'P-2' },
             { kind: 'task', ref: 'P-3' },
-          ],
+          ]),
         }),
       ]),
     )

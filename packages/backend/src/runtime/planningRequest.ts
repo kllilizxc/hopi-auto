@@ -560,16 +560,14 @@ export async function requestGoalPlanningWorkflows(
     reason?: string
   },
 ): Promise<GoalPlanningWorkflowsResult> {
+  const workflowKey = await resolvePlanningWorkflowKey(
+    stores.planningRequests,
+    input.goalKey,
+    input.workflowKey,
+  )
+
   if (input.reuseTaskRef && input.reuseGroupKey) {
     throw new Error('Direct workflow reuse can target only one existing surface at a time')
-  }
-  if (!input.workflowKey) {
-    const dependentWorkflow = input.workflows.find(
-      (workflow) => (workflow.blockedByWorkflowKeys?.length ?? 0) > 0,
-    )
-    if (dependentWorkflow) {
-      throw new Error('Direct workflow child dependencies require a workflowKey')
-    }
   }
   if (input.reuseGroupKey) {
     const firstWorkflow = input.workflows[0]
@@ -586,12 +584,10 @@ export async function requestGoalPlanningWorkflows(
   const workflows: GoalPlanningWorkflowLeafResult[] = []
   let currentReusablePlanningTaskRef = input.reuseTaskRef
   let currentReusablePlanningGroupKey = input.reuseGroupKey
-  const persistedWorkflowSharedContext = input.workflowKey
-    ? await readPersistedWorkflowSharedContext(stores, {
-        goalKey: input.goalKey,
-        workflowKey: input.workflowKey,
-      })
-    : undefined
+  const persistedWorkflowSharedContext = await readPersistedWorkflowSharedContext(stores, {
+    goalKey: input.goalKey,
+    workflowKey,
+  })
   const workflowDecisionRefs = uniqueStringValues([
     ...(persistedWorkflowSharedContext?.decisionRefs ?? []),
     ...(input.decisionRefs ?? []),
@@ -600,29 +596,27 @@ export async function requestGoalPlanningWorkflows(
     persistedWorkflowSharedContext?.answers ?? [],
     input.answers ?? [],
   )
-  const persistedWorkflowDecisionRefs = input.workflowKey ? workflowDecisionRefs : undefined
-  const persistedWorkflowAnswers = input.workflowKey ? workflowAnswers : undefined
+  const persistedWorkflowDecisionRefs = workflowDecisionRefs
+  const persistedWorkflowAnswers = workflowAnswers
   const reusableGroupedSourceBlockerTaskRefs = currentReusablePlanningGroupKey
     ? await listGroupedPlanningSinkTaskRefs(stores, {
         goalKey: input.goalKey,
         groupKey: currentReusablePlanningGroupKey,
       })
     : []
-  let currentWorkflowChildren = input.workflowKey
-    ? await describeOpenPlanningWorkflowChildren(stores, {
-        goalKey: input.goalKey,
-        workflowKey: input.workflowKey,
-      })
-    : []
+  let currentWorkflowChildren = await describeOpenPlanningWorkflowChildren(stores, {
+    goalKey: input.goalKey,
+    workflowKey,
+  })
 
   for (const workflow of input.workflows) {
     const blockedByWorkflowKeys = workflow.blockedByWorkflowKeys ?? []
     const childDependencyKey =
       workflow.kind === 'planning' ? workflow.workflowTaskKey : workflow.groupKey
     const workflowDependencyBlockers =
-      input.workflowKey && blockedByWorkflowKeys.length > 0
+      blockedByWorkflowKeys.length > 0
         ? resolveWorkflowDependencyBlockers(currentWorkflowChildren, {
-            workflowKey: input.workflowKey,
+            workflowKey,
             dependencyKey: childDependencyKey,
             blockedByWorkflowKeys,
           })
@@ -633,7 +627,7 @@ export async function requestGoalPlanningWorkflows(
         currentReusablePlanningGroupKey && currentReusablePlanningGroupKey === workflow.groupKey
           ? await reuseGoalPlanningBatchWorkflow(stores, {
               goalKey: input.goalKey,
-              workflowKey: input.workflowKey,
+              workflowKey,
               workflowSharedDecisionRefs: persistedWorkflowDecisionRefs,
               workflowSharedAnswers: persistedWorkflowAnswers,
               groupKey: workflow.groupKey,
@@ -654,7 +648,7 @@ export async function requestGoalPlanningWorkflows(
             })
           : await requestGoalPlanningBatch(stores, {
               goalKey: input.goalKey,
-              workflowKey: input.workflowKey,
+              workflowKey,
               workflowSharedDecisionRefs: persistedWorkflowDecisionRefs,
               workflowSharedAnswers: persistedWorkflowAnswers,
               groupKey: workflow.groupKey,
@@ -712,7 +706,7 @@ export async function requestGoalPlanningWorkflows(
 
     const result = await requestGoalPlanning(stores, {
       goalKey: input.goalKey,
-      workflowKey: input.workflowKey,
+      workflowKey,
       workflowTaskKey: workflow.workflowTaskKey,
       workflowSharedDecisionRefs: persistedWorkflowDecisionRefs,
       workflowSharedAnswers: persistedWorkflowAnswers,
@@ -765,54 +759,31 @@ export async function requestGoalPlanningWorkflows(
   const createdTaskRefs = uniqueStringValues(
     workflows.flatMap((workflow) => workflow.createdTaskRefs),
   )
+  await stores.planningRequests.syncWorkflowSharedContext(input.goalKey, workflowKey, {
+    workflowSharedDecisionRefs: workflowDecisionRefs,
+    workflowSharedAnswers: workflowAnswers,
+  })
 
-  if (input.workflowKey) {
-    await stores.planningRequests.syncWorkflowSharedContext(input.goalKey, input.workflowKey, {
-      workflowSharedDecisionRefs: workflowDecisionRefs,
-      workflowSharedAnswers: workflowAnswers,
-    })
+  await syncWorkflowPlanningChildDependenciesForWorkflow(stores, {
+    goalKey: input.goalKey,
+    workflowKey,
+    writer: input.writer,
+    reason: input.reason,
+  })
 
-    await syncWorkflowPlanningChildDependenciesForWorkflow(stores, {
-      goalKey: input.goalKey,
-      workflowKey: input.workflowKey,
-      writer: input.writer,
-      reason: input.reason,
-    })
+  await syncWorkflowPlanningEngineeringBlockersForWorkflow(stores, {
+    goalKey: input.goalKey,
+    workflowKey,
+    writer: input.writer,
+    reason: input.reason,
+  })
 
-    await syncWorkflowPlanningEngineeringBlockersForWorkflow(stores, {
-      goalKey: input.goalKey,
-      workflowKey: input.workflowKey,
-      writer: input.writer,
-      reason: input.reason,
-    })
-
-    const current = await describeOpenPlanningWorkflowState(stores, {
-      goalKey: input.goalKey,
-      workflowKey: input.workflowKey,
-    })
-    return {
-      ...current,
-      createdRequestKeys,
-      createdTaskRefs,
-    }
-  }
-
-  const result: GoalPlanningWorkflowsResult = {
-    kind: 'workflow_batch',
-    workflowKey: undefined,
-    workflows,
-    groupKeys: uniqueStringValues(
-      workflows.flatMap((workflow) =>
-        workflow.kind === 'planning_batch'
-          ? [workflow.groupKey]
-          : workflow.groupKey
-            ? [workflow.groupKey]
-            : [],
-      ),
-    ),
-    requestKeys: uniqueStringValues(workflows.flatMap((workflow) => workflow.requestKeys)),
-    taskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.taskRefs)),
-    blockerTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.blockerTaskRefs)),
+  const current = await describeOpenPlanningWorkflowState(stores, {
+    goalKey: input.goalKey,
+    workflowKey,
+  })
+  const result = {
+    ...current,
     createdRequestKeys,
     createdTaskRefs,
   }
@@ -1135,6 +1106,32 @@ function nextPlanningTaskRef(existingRefs: string[]) {
     }, 0) + 1
 
   return `P-${nextNumber}`
+}
+
+async function resolvePlanningWorkflowKey(
+  planningRequests: PlanningRequestStore,
+  goalKey: string,
+  workflowKey: string | undefined,
+) {
+  if (workflowKey) {
+    return workflowKey
+  }
+
+  const requestSet = await planningRequests.readGoalPlanningRequests(goalKey)
+  return nextPlanningWorkflowKey(requestSet.requests.map((request) => request.workflowKey))
+}
+
+function nextPlanningWorkflowKey(existingWorkflowKeys: Array<string | undefined>) {
+  const nextNumber =
+    existingWorkflowKeys.reduce((max, workflowKey) => {
+      const match = /^W-(\d+)$/.exec(workflowKey ?? '')
+      if (!match) {
+        return max
+      }
+      return Math.max(max, Number.parseInt(match[1] ?? '0', 10))
+    }, 0) + 1
+
+  return `W-${nextNumber}`
 }
 
 async function validateExistingTaskBlockers(

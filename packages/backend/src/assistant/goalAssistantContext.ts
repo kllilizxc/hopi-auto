@@ -246,7 +246,7 @@ Required outcome shape:
     },
     {
       "kind": "request_planning_workflows",
-      "workflowKey": "optional stable top-level workflow key for later extension",
+      "workflowKey": "optional stable top-level workflow key for later extension; omit it and runtime will generate a durable W-* key",
       "reuseTaskRef": "optional current planning task ref to reuse only for the first child workflow",
       "reuseGroupKey": "optional current grouped planning surface to reuse only for the first child workflow when that child is planning_batch",
       "decisionRefs": ["optional shared decision key that should apply across the whole workflow graph"],
@@ -467,7 +467,7 @@ Rules:
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
 - Prefer "request_planning_workflows" when one user reply should atomically open more than one independent durable planning workflow without routing through a decision-answer action first.
-- When one direct multi-workflow planning surface should be extendable later, set a stable "workflowKey" on "request_planning_workflows" and reuse that same key on later extension actions.
+- When one direct multi-workflow planning surface should be extendable later, either set a stable semantic "workflowKey" yourself or omit it and reuse the generated "W-*" key that runtime returns on the first action result.
 - When the same decision lineage or captured non-decision answers apply across the whole direct workflow graph, put them once on the root "request_planning_workflows" action and add child-level decisionRefs or answers only where a child needs extra context beyond that shared baseline.
 - Once a durable direct workflow graph has already persisted root shared context on one "workflowKey", later extension actions on that same key can omit repeated root decisionRefs or answers unless you are intentionally expanding that shared baseline.
 - When one standalone child inside that direct workflow should be updated or reused later without relying on request ids or title collisions, set a stable "workflowTaskKey" on that "planning" child and reuse the same key on later extension actions.

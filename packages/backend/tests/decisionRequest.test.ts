@@ -1939,6 +1939,7 @@ describe('requestGoalDecision', () => {
       blockerRemoved: true,
       followThrough: {
         kind: 'workflow_batch',
+        workflowKey: 'W-1',
         groupKeys: [],
         requestKeys: ['PR-1', 'PR-2'],
         taskRefs: ['P-4', 'P-5'],
@@ -1974,12 +1975,14 @@ describe('requestGoalDecision', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           taskRef: 'P-4',
+          workflowKey: 'W-1',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
           taskRef: 'P-5',
+          workflowKey: 'W-1',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['research.md'],
         }),

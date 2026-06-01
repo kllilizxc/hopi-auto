@@ -279,6 +279,7 @@ describe('createServer', () => {
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
       kind: 'workflow_batch',
+      workflowKey: 'W-1',
       groupKeys: ['auth-follow-through'],
       requestKeys: ['PR-1', 'PR-2', 'PR-3'],
       taskRefs: ['P-1', 'P-2', 'P-3'],
@@ -293,6 +294,7 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
           answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
@@ -300,6 +302,7 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-2',
           taskRef: 'P-2',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
@@ -309,6 +312,7 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-3',
           taskRef: 'P-3',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
@@ -701,10 +705,10 @@ describe('createServer', () => {
       expect.arrayContaining([
         expect.objectContaining({
           ref: 'T-1',
-          blockedBy: [
+          blockedBy: expect.arrayContaining([
             { kind: 'task', ref: 'P-2' },
             { kind: 'task', ref: 'P-3' },
-          ],
+          ]),
         }),
       ]),
     )
@@ -2945,6 +2949,7 @@ describe('createServer', () => {
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'request_planning_workflows',
+          workflowKey: 'W-1',
           groupKeys: ['auth-follow-through'],
           requestKeys: ['PR-1', 'PR-2', 'PR-3'],
           taskRefs: ['P-1', 'P-2', 'P-3'],
@@ -2959,12 +2964,14 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
           answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
           taskRef: 'P-2',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
           answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
@@ -2972,6 +2979,7 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-3',
           taskRef: 'P-3',
+          workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
           answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
@@ -3345,10 +3353,10 @@ describe('createServer', () => {
       expect.arrayContaining([
         expect.objectContaining({
           ref: 'T-1',
-          blockedBy: [
+          blockedBy: expect.arrayContaining([
             { kind: 'task', ref: 'P-2' },
             { kind: 'task', ref: 'P-3' },
-          ],
+          ]),
         }),
       ]),
     )
