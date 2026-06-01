@@ -387,9 +387,8 @@ async function applyAssistantAction(
     return {
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
-      followThroughGroupKeys: collectFollowThroughGroupKeys(result.followThrough),
-      followThroughRequestKeys: result.followThrough?.requestKeys,
-      followThroughTaskRefs: result.followThrough?.taskRefs,
+      blockerRemoved: result.blockerRemoved,
+      followThrough: result.followThrough,
       summary: summarizeResolvedDecisionResult(action.decisionKey, result),
     }
   }
@@ -415,9 +414,9 @@ async function applyAssistantAction(
     return {
       kind: 'record_answer',
       decisionKey: result.decision.decisionKey,
-      followThroughGroupKeys: collectFollowThroughGroupKeys(result.followThrough),
-      followThroughRequestKeys: result.followThrough?.requestKeys,
-      followThroughTaskRefs: result.followThrough?.taskRefs,
+      created: result.created,
+      blockerRemoved: result.blockerRemoved,
+      followThrough: result.followThrough,
       summary: summarizeRecordedAnswerResult(result.decision.decisionKey, result),
     }
   }
@@ -442,9 +441,9 @@ async function applyAssistantAction(
     return {
       kind: 'record_answers',
       decisionKeys: result.decisions.map((decision) => decision.decisionKey),
-      followThroughGroupKeys: collectFollowThroughGroupKeys(result.followThrough),
-      followThroughRequestKeys: result.followThrough?.requestKeys,
-      followThroughTaskRefs: result.followThrough?.taskRefs,
+      createdDecisionKeys: result.createdDecisionKeys,
+      blockerRemoved: result.blockerRemoved,
+      followThrough: result.followThrough,
       summary: summarizeRecordedAnswersResult(result),
     }
   }
@@ -666,23 +665,6 @@ function summarizeRecordedAnswersResult(result: Awaited<ReturnType<typeof answer
     return `Recorded answers in decisions ${decisionKeys} and cleared linked blockers.`
   }
   return `Recorded answers in decisions ${decisionKeys}.`
-}
-
-function collectFollowThroughGroupKeys(
-  followThrough:
-    | Awaited<ReturnType<typeof answerGoalDecision>>['followThrough']
-    | Awaited<ReturnType<typeof answerGoalDecisions>>['followThrough'],
-) {
-  if (!followThrough) {
-    return undefined
-  }
-  if (followThrough.kind === 'planning_batch') {
-    return [followThrough.groupKey]
-  }
-  if (followThrough.kind === 'workflow_batch') {
-    return followThrough.groupKeys.length > 0 ? followThrough.groupKeys : undefined
-  }
-  return undefined
 }
 
 function isLegalManualTransition(from: TaskStatus, to: TaskStatus) {

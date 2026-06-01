@@ -644,7 +644,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 ((actionResult.kind === 'resolve_decision' ||
                   actionResult.kind === 'record_answer' ||
                   actionResult.kind === 'record_answers') &&
-                  (actionResult.followThroughRequestKeys?.length ?? 0) > 0),
+                  (actionResult.followThrough?.requestKeys.length ?? 0) > 0),
             )
           ) {
             broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })

@@ -102,6 +102,32 @@ const assistantPlanningWorkflowLeafResultSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
+const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    workflowTaskKey: z.string().min(1).optional(),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  }),
+  z.object({
+    kind: z.literal('workflow_batch'),
+    workflowKey: z.string().min(1).optional(),
+    workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
+    groupKeys: z.array(z.string().min(1)),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  }),
+])
+
 const assistantDecisionAnswerSchema = z.object({
   summary: z.string().min(1),
   decisionKey: z.string().min(1).optional(),
@@ -292,25 +318,24 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('record_answer'),
     decisionKey: z.string().min(1),
-    followThroughGroupKeys: z.array(z.string().min(1)).optional(),
-    followThroughRequestKeys: z.array(z.string().min(1)).optional(),
-    followThroughTaskRefs: z.array(z.string().min(1)).optional(),
+    created: z.boolean(),
+    blockerRemoved: z.boolean(),
+    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('record_answers'),
     decisionKeys: z.array(z.string().min(1)).min(1),
-    followThroughGroupKeys: z.array(z.string().min(1)).optional(),
-    followThroughRequestKeys: z.array(z.string().min(1)).optional(),
-    followThroughTaskRefs: z.array(z.string().min(1)).optional(),
+    createdDecisionKeys: z.array(z.string().min(1)),
+    blockerRemoved: z.boolean(),
+    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
-    followThroughGroupKeys: z.array(z.string().min(1)).optional(),
-    followThroughRequestKeys: z.array(z.string().min(1)).optional(),
-    followThroughTaskRefs: z.array(z.string().min(1)).optional(),
+    blockerRemoved: z.boolean(),
+    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({

@@ -3793,8 +3793,14 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'auth-strategy',
-          followThroughGroupKeys: ['auth-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2'],
+          blockerRemoved: true,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-1', 'P-2'],
+            blockerTaskRefs: ['P-2'],
+          },
         }),
       ]),
     })
@@ -3896,8 +3902,14 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'auth-strategy',
-          followThroughGroupKeys: ['auth-follow-through'],
-          followThroughTaskRefs: ['P-8', 'P-9'],
+          blockerRemoved: true,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-8', 'P-9'],
+            blockerTaskRefs: ['P-9'],
+          },
         }),
       ]),
     })
@@ -3974,8 +3986,14 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'rollout-strategy',
-          followThroughGroupKeys: ['rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2'],
+          blockerRemoved: false,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-1', 'P-2'],
+            blockerTaskRefs: ['P-2'],
+          },
         }),
       ]),
     })
@@ -4059,8 +4077,15 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'record_answer',
           decisionKey: 'D-1',
-          followThroughGroupKeys: ['rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2'],
+          created: true,
+          blockerRemoved: false,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-1', 'P-2'],
+            blockerTaskRefs: ['P-2'],
+          },
         }),
       ]),
     })
@@ -4132,16 +4157,23 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
-      message: 'I recorded the auth answer and opened two independent planner workflows.',
-      actionResults: expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'record_answer',
-          decisionKey: 'D-1',
-          followThroughGroupKeys: ['auth-rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
-        }),
-      ]),
+    const responseBody = await response.json()
+    expect(responseBody.message).toBe(
+      'I recorded the auth answer and opened two independent planner workflows.',
+    )
+    expect(responseBody.actionResults[0]).toMatchObject({
+      kind: 'record_answer',
+      decisionKey: 'D-1',
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'W-1',
+        groupKeys: ['auth-rollout-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-1', 'P-3'],
+      },
     })
 
     await expect(
@@ -4221,16 +4253,23 @@ describe('createServer', () => {
     })
 
     expect(firstResponse.status).toBe(200)
-    await expect(firstResponse.json()).resolves.toMatchObject({
-      message: 'I recorded the auth answer and opened one durable workflow graph.',
-      actionResults: expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'record_answer',
-          decisionKey: 'D-1',
-          followThroughGroupKeys: ['rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
-        }),
-      ]),
+    const firstResponseBody = await firstResponse.json()
+    expect(firstResponseBody.message).toBe(
+      'I recorded the auth answer and opened one durable workflow graph.',
+    )
+    expect(firstResponseBody.actionResults[0]).toMatchObject({
+      kind: 'record_answer',
+      decisionKey: 'D-1',
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        groupKeys: ['rollout-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-3'],
+      },
     })
 
     const response = await postJson(server, '/api/goals/test/assistant/run', {
@@ -4318,16 +4357,23 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
-      message: 'I recorded both decisions and shared the pilot scope across one workflow graph.',
-      actionResults: expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'record_answers',
-          decisionKeys: ['auth-strategy', 'rollout-strategy'],
-          followThroughGroupKeys: ['auth-rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
-        }),
-      ]),
+    const responseBody = await response.json()
+    expect(responseBody.message).toBe(
+      'I recorded both decisions and shared the pilot scope across one workflow graph.',
+    )
+    expect(responseBody.actionResults[0]).toMatchObject({
+      kind: 'record_answers',
+      decisionKeys: ['auth-strategy', 'rollout-strategy'],
+      createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        groupKeys: ['auth-rollout-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-2', 'P-3'],
+      },
     })
 
     await expect(
@@ -4432,8 +4478,15 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'record_answers',
           decisionKeys: ['auth-strategy', 'rollout-strategy'],
-          followThroughGroupKeys: ['auth-rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2'],
+          createdDecisionKeys: ['rollout-strategy'],
+          blockerRemoved: true,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-1', 'P-2'],
+            blockerTaskRefs: ['P-2'],
+          },
         }),
       ]),
     })
@@ -4537,8 +4590,15 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'record_answers',
           decisionKeys: ['auth-strategy', 'rollout-strategy'],
-          followThroughGroupKeys: ['auth-rollout-follow-through'],
-          followThroughTaskRefs: ['P-1', 'P-2'],
+          createdDecisionKeys: ['rollout-strategy'],
+          blockerRemoved: true,
+          followThrough: {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            requestKeys: ['PR-1', 'PR-2'],
+            taskRefs: ['P-1', 'P-2'],
+            blockerTaskRefs: ['P-2'],
+          },
         }),
       ]),
     })
