@@ -116,13 +116,14 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
-    requests: z.array(planningBatchEntrySchema).min(1),
+    requests: z.array(planningBatchEntrySchema).default([]),
   }),
 ])
 
 const createPlanningWorkflowBatchSchema = z.object({
   workflowKey: z.string().min(1).optional(),
   reuseTaskRef: z.string().min(1).optional(),
+  reuseGroupKey: z.string().min(1).optional(),
   decisionRefs: z.array(z.string().min(1)).default([]),
   answers: goalPlanningRequestAnswerArraySchema,
   workflows: z.array(planningWorkflowLeafSchema).min(1),
@@ -161,7 +162,7 @@ const resolveDecisionWorkflowLeafFollowThroughSchema = z.discriminatedUnion('kin
     groupKey: z.string().min(1),
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     answers: goalPlanningRequestAnswerArraySchema,
-    requests: z.array(planningBatchEntrySchema).min(1),
+    requests: z.array(planningBatchEntrySchema).default([]),
   }),
 ])
 
@@ -478,6 +479,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               workflowKey: body.workflowKey,
               reuseTaskRef: body.reuseTaskRef,
+              reuseGroupKey: body.reuseGroupKey,
               decisionRefs: body.decisionRefs,
               answers: body.answers,
               workflows: body.workflows,

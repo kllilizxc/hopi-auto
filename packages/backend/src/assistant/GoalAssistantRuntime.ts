@@ -307,6 +307,7 @@ async function applyAssistantAction(
         goalKey,
         workflowKey: action.workflowKey,
         reuseTaskRef: action.reuseTaskRef,
+        reuseGroupKey: action.reuseGroupKey,
         decisionRefs: action.decisionRefs,
         answers: action.answers,
         workflows: action.workflows,

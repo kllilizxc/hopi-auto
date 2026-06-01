@@ -827,6 +827,125 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('reuses an existing grouped planning surface as the first workflow in a direct workflow batch', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        reuseGroupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            requests: [],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the reused auth workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    )
+
+    expect(result).toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-2', 'P-3'],
+      createdRequestKeys: ['PR-3'],
+      createdTaskRefs: ['P-3'],
+      workflows: [
+        expect.objectContaining({
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          requestKeys: ['PR-1', 'PR-2'],
+          taskRefs: ['P-1', 'P-2'],
+          blockerTaskRefs: ['P-2'],
+        }),
+        expect.objectContaining({
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          requestKeys: ['PR-3'],
+          taskRefs: ['P-3'],
+          blockerTaskRefs: ['P-3'],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowSharedDecisionRefs: ['auth-strategy'],
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowSharedDecisionRefs: ['auth-strategy'],
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowSharedDecisionRefs: ['auth-strategy'],
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['design.md'],
+        }),
+      ],
+    })
+  })
+
   test('fans engineering blockers out to every current sink when a reused planning surface expands into direct workflow batch', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

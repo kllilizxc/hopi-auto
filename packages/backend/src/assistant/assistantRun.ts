@@ -80,7 +80,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
-    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+    requests: z.array(assistantPlanningBatchEntrySchema).default([]),
   }),
 ])
 
@@ -142,7 +142,7 @@ const resolveDecisionWorkflowLeafFollowThroughSchema = z.discriminatedUnion('kin
     groupKey: z.string().min(1),
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     answers: goalPlanningRequestAnswerArraySchema,
-    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+    requests: z.array(assistantPlanningBatchEntrySchema).default([]),
   }),
 ])
 
@@ -206,6 +206,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning_workflows'),
     workflowKey: z.string().min(1).optional(),
     reuseTaskRef: z.string().min(1).optional(),
+    reuseGroupKey: z.string().min(1).optional(),
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
     workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),

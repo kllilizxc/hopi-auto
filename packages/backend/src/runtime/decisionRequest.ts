@@ -85,7 +85,7 @@ export interface GoalDecisionWorkflowPlanningBatchFollowThroughInput {
   groupKey: string
   blockedByWorkflowKeys?: string[]
   answers?: GoalPlanningRequestAnswer[]
-  requests: GoalPlanningBatchEntryInput[]
+  requests?: GoalPlanningBatchEntryInput[]
 }
 
 export type GoalDecisionWorkflowLeafFollowThroughInput =
@@ -454,6 +454,14 @@ async function createDecisionResolutionFollowThrough(
   )
   const reusablePlanningTaskRef =
     linkedPlanningTaskRefs.length === 1 ? linkedPlanningTaskRefs[0] : undefined
+  const reusablePlanningGroupKey =
+    reusablePlanningTaskRef && stores.planningRequests
+      ? await findReusablePlanningGroupKey(
+          stores.planningRequests,
+          goalKey,
+          reusablePlanningTaskRef,
+        )
+      : undefined
   const resolvedDecisionKeySet = new Set(decisionRefs)
   const affectedEngineeringTasks = board.items.filter(
     (task) =>
@@ -466,6 +474,12 @@ async function createDecisionResolutionFollowThrough(
     return undefined
   }
   if (followThrough?.kind === 'workflow_batch') {
+    const reuseGroupKey =
+      reusablePlanningGroupKey &&
+      followThrough.workflows[0]?.kind === 'planning_batch' &&
+      followThrough.workflows[0].groupKey === reusablePlanningGroupKey
+        ? reusablePlanningGroupKey
+        : undefined
     const result = await requestGoalPlanningWorkflows(
       {
         boardStore: stores.boardStore,
@@ -474,9 +488,10 @@ async function createDecisionResolutionFollowThrough(
       {
         goalKey,
         workflowKey: followThrough.workflowKey,
+        reuseGroupKey,
         decisionRefs,
         answers: followThrough.answers,
-        reuseTaskRef: reusablePlanningTaskRef,
+        reuseTaskRef: reuseGroupKey ? undefined : reusablePlanningTaskRef,
         workflows: followThrough.workflows.map((workflow) => {
           if (workflow.kind === 'planning_batch') {
             return {
@@ -484,7 +499,7 @@ async function createDecisionResolutionFollowThrough(
               groupKey: workflow.groupKey,
               blockedByWorkflowKeys: workflow.blockedByWorkflowKeys,
               answers: workflow.answers,
-              requests: workflow.requests,
+              requests: workflow.requests ?? [],
             }
           }
 
@@ -693,4 +708,19 @@ function defaultDecisionFollowThroughDescription(decisions: GoalDecision[]) {
   }
 
   return `Update design.md and todo.yml to reflect the resolved decisions ${describeDecisionKeys(decisions)} before engineering continues.`
+}
+
+async function findReusablePlanningGroupKey(
+  planningRequests: PlanningRequestStore,
+  goalKey: string,
+  taskRef: string,
+) {
+  const requestSet = await planningRequests.readGoalPlanningRequests(goalKey)
+  return requestSet.requests.find(
+    (request) =>
+      request.status === 'open' &&
+      request.taskRef === taskRef &&
+      request.groupKey &&
+      request.groupTaskKey,
+  )?.groupKey
 }
