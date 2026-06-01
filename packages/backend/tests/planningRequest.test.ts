@@ -999,6 +999,162 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('keeps a direct workflow child blocked on the current sink of an upstream workflow child', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    const initial = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requests: [
+              {
+                taskKey: 'capture-notes',
+                title: 'Capture rollout notes',
+                description: 'Record rollout details before review.',
+                acceptanceCriteria: ['Rollout notes are durable.'],
+                requestedUpdates: ['notes/rollout.md'],
+              },
+              {
+                taskKey: 'validate-plan',
+                title: 'Validate rollout plan',
+                description: 'Check the rollout notes before handoff review.',
+                acceptanceCriteria: ['The rollout plan is validated.'],
+                requestedUpdates: ['design.md'],
+                blockedByTaskKeys: ['capture-notes'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the rollout workflow after the rollout child finishes.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+            blockedByWorkflowKeys: ['rollout-follow-through'],
+          },
+        ],
+      },
+    )
+
+    expect(initial).toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      groupKeys: ['rollout-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-3'],
+      workflows: [
+        {
+          kind: 'planning_batch',
+          groupKey: 'rollout-follow-through',
+          requestKeys: ['PR-1', 'PR-2'],
+          taskRefs: ['P-1', 'P-2'],
+          blockerTaskRefs: ['P-2'],
+        },
+        {
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          requestKeys: ['PR-3'],
+          taskRefs: ['P-3'],
+          blockerTaskRefs: ['P-3'],
+        },
+      ],
+    })
+
+    const extension = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requests: [
+              {
+                taskKey: 'finalize-plan',
+                title: 'Finalize rollout plan',
+                description: 'Add the final rollout stage before handoff review.',
+                acceptanceCriteria: ['The rollout plan is finalized.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['validate-plan'],
+              },
+            ],
+          },
+        ],
+      },
+    )
+
+    expect(extension).toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      groupKeys: ['rollout-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-4', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-4', 'P-3'],
+      blockerTaskRefs: ['P-3'],
+      createdRequestKeys: ['PR-4'],
+      createdTaskRefs: ['P-4'],
+      workflows: [
+        {
+          kind: 'planning_batch',
+          groupKey: 'rollout-follow-through',
+          requestKeys: ['PR-1', 'PR-2', 'PR-4'],
+          taskRefs: ['P-1', 'P-2', 'P-4'],
+          blockerTaskRefs: ['P-4'],
+        },
+        {
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          requestKeys: ['PR-3'],
+          taskRefs: ['P-3'],
+          blockerTaskRefs: ['P-3'],
+        },
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: expect.arrayContaining([
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          blockedByWorkflowKeys: ['rollout-follow-through'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-4',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'rollout-follow-through',
+          groupTaskKey: 'finalize-plan',
+        }),
+      ]),
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-3',
+          blockedBy: [{ kind: 'task', ref: 'P-4' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-4',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+  })
+
   test('reuses an existing planning task as the first grouped planning stage', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

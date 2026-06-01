@@ -53,6 +53,7 @@ interface PlannerContextInputs {
     requestKey: string
     workflowKey?: string
     workflowTaskKey?: string
+    blockedByWorkflowKeys: string[]
     groupKey?: string
     groupTaskKey?: string
     title: string
@@ -425,6 +426,7 @@ async function loadPlannerContextInputs(
       requestKey: request.requestKey,
       workflowKey: request.workflowKey,
       workflowTaskKey: request.workflowTaskKey,
+      blockedByWorkflowKeys: request.blockedByWorkflowKeys,
       groupKey: request.groupKey,
       groupTaskKey: request.groupTaskKey,
       title: request.title,
@@ -547,6 +549,9 @@ ${requests
       `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
       request.workflowKey ? `  Workflow key: ${request.workflowKey}` : null,
       request.workflowTaskKey ? `  Workflow task key: ${request.workflowTaskKey}` : null,
+      request.blockedByWorkflowKeys.length > 0
+        ? `  Workflow dependencies: ${request.blockedByWorkflowKeys.join(', ')}`
+        : null,
       request.groupKey ? `  Planning group: ${request.groupKey}` : null,
       request.groupTaskKey ? `  Grouped task key: ${request.groupTaskKey}` : null,
       request.decisionRefs.length > 0

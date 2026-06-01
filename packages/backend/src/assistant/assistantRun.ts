@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { BLOCKER_KINDS, TASK_STATUSES } from '../domain/board'
 import {
   goalPlanningRequestAnswerArraySchema,
+  goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from '../storage/planningRequestStore'
 
@@ -56,6 +57,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     kind: z.literal('planning'),
     requestKey: z.string().min(1).optional(),
     workflowTaskKey: z.string().min(1).optional(),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     groupKey: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string(),
@@ -75,6 +77,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),

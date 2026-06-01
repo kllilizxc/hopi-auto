@@ -252,6 +252,7 @@ Required outcome shape:
         {
           "kind": "planning",
           "workflowTaskKey": "optional stable child key for reusing this standalone workflow later",
+          "blockedByWorkflowKeys": ["optional earlier workflow child key that this child should wait for"],
           "title": "first independent planning workflow title",
           "description": "what this visible planning workflow must accomplish",
           "acceptanceCriteria": ["at least one acceptance criterion"],
@@ -267,6 +268,7 @@ Required outcome shape:
         {
           "kind": "planning_batch",
           "groupKey": "stable-group-key",
+          "blockedByWorkflowKeys": ["optional earlier workflow child key that this grouped child should wait for"],
           "decisionRefs": ["optional linked decision key"],
           "requests": [
             {
@@ -449,6 +451,7 @@ Rules:
 - Prefer "request_planning_workflows" when one user reply should atomically open more than one independent durable planning workflow without routing through a decision-answer action first.
 - When one direct multi-workflow planning surface should be extendable later, set a stable "workflowKey" on "request_planning_workflows" and reuse that same key on later extension actions.
 - When one standalone child inside that direct workflow should be updated or reused later without relying on request ids or title collisions, set a stable "workflowTaskKey" on that "planning" child and reuse the same key on later extension actions.
+- When a later direct workflow child should wait on an earlier child, set "blockedByWorkflowKeys" on that child and reference stable earlier child identities: "workflowTaskKey" for standalone planning children, or "groupKey" for planning_batch children.
 - When "request_planning_workflows" should expand an existing visible planning surface instead of creating a wrapper, set "reuseTaskRef" and let runtime reuse that task only for the first child workflow.
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.

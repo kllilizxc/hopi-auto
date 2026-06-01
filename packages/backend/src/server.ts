@@ -29,6 +29,7 @@ import { createProjectPaths } from './storage/paths'
 import {
   createPlanningRequestStore,
   goalPlanningRequestAnswerArraySchema,
+  goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from './storage/planningRequestStore'
 import { createPreferenceStore } from './storage/preferenceStore'
@@ -99,6 +100,7 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     kind: z.literal('planning'),
     requestKey: z.string().min(1).optional(),
     workflowTaskKey: z.string().min(1).optional(),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     groupKey: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string(),
@@ -111,6 +113,7 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
     answers: goalPlanningRequestAnswerArraySchema,
     requests: z.array(planningBatchEntrySchema).min(1),

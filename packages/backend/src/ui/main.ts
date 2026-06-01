@@ -49,6 +49,7 @@ interface GoalPlanningRequest {
   requestKey: string
   workflowKey?: string
   workflowTaskKey?: string
+  blockedByWorkflowKeys: string[]
   groupKey?: string
   groupTaskKey?: string
   title: string
@@ -220,6 +221,7 @@ interface AssistantAction {
   groupKey?: string
   groupTaskKey?: string
   workflowTaskKey?: string
+  blockedByWorkflowKeys?: string[]
   requests?: Array<{
     taskKey: string
     requestKey?: string
@@ -1533,6 +1535,11 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       ${
         request.workflowTaskKey
           ? `<div class="assistant-summary">Workflow task key: ${escapeHtml(request.workflowTaskKey)}</div>`
+          : ''
+      }
+      ${
+        request.blockedByWorkflowKeys.length > 0
+          ? `<div class="assistant-summary">Workflow dependencies: ${escapeHtml(request.blockedByWorkflowKeys.join(', '))}</div>`
           : ''
       }
       ${
