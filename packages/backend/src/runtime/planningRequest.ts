@@ -378,6 +378,24 @@ export async function syncGroupedPlanningEngineeringBlockers(
   return changed
 }
 
+export async function listGroupedPlanningSinkTaskRefs(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    groupKey: string
+  },
+) {
+  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  return findOpenGroupedPlanningSinkTaskRefs(
+    requestSet.requests.filter((request) => request.groupKey === input.groupKey),
+    board.items,
+  )
+}
+
 export async function resolveGoalPlanningRequest(
   stores: {
     boardStore: BoardStore

@@ -30,6 +30,39 @@ const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
+const assistantPlanningBatchEntrySchema = z.object({
+  taskKey: z.string().min(1),
+  requestKey: z.string().min(1).optional(),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  blockedBy: z
+    .array(
+      z.object({
+        kind: z.enum(BLOCKER_KINDS),
+        ref: z.string().min(1),
+      }),
+    )
+    .default([]),
+  blockedByTaskKeys: z.array(z.string().min(1)).default([]),
+})
+
+const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    title: z.string().min(1),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+  }),
+])
+
 export const assistantActionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('move_task'),
@@ -72,27 +105,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning_batch'),
     groupKey: z.string().min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    requests: z
-      .array(
-        z.object({
-          taskKey: z.string().min(1),
-          requestKey: z.string().min(1).optional(),
-          title: z.string().min(1),
-          description: z.string(),
-          acceptanceCriteria: z.array(z.string().min(1)).min(1),
-          requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
-          blockedBy: z
-            .array(
-              z.object({
-                kind: z.enum(BLOCKER_KINDS),
-                ref: z.string().min(1),
-              }),
-            )
-            .default([]),
-          blockedByTaskKeys: z.array(z.string().min(1)).default([]),
-        }),
-      )
-      .min(1),
+    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
   }),
   z.object({
     kind: z.literal('request_decision'),
@@ -106,6 +119,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     summary: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1),
+    followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),
   z.object({
     kind: z.literal('record_preference'),
@@ -150,6 +164,9 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
+    followThroughGroupKey: z.string().min(1).optional(),
+    followThroughRequestKeys: z.array(z.string().min(1)).optional(),
+    followThroughTaskRefs: z.array(z.string().min(1)).optional(),
     summary: z.string().min(1),
   }),
   z.object({

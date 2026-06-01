@@ -139,6 +139,11 @@ The generalized Goal-doc planning update path slice is documented in:
 - `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-paths-design.md`
 - `docs/superpowers/plans/2026-06-01-goal-doc-planning-update-paths.md`
 
+The explicit decision-resolution planner workflow slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-decision-resolution-explicit-planner-workflows-design.md`
+- `docs/superpowers/plans/2026-06-01-decision-resolution-explicit-planner-workflows.md`
+
 The grouped planning follow-through slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`

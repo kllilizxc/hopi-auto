@@ -330,6 +330,7 @@ async function applyAssistantAction(
         goalKey,
         decisionKey: action.decisionKey,
         answer: action.answer,
+        followThrough: action.followThrough,
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
       },
@@ -337,9 +338,10 @@ async function applyAssistantAction(
     return {
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
-      summary: result.blockerRemoved
-        ? `Resolved decision ${action.decisionKey} and cleared linked blockers.`
-        : `Resolved decision ${action.decisionKey}.`,
+      followThroughGroupKey: result.followThrough?.groupKey,
+      followThroughRequestKeys: result.followThrough?.requestKeys,
+      followThroughTaskRefs: result.followThrough?.taskRefs,
+      summary: summarizeResolvedDecisionResult(action.decisionKey, result),
     }
   }
 
@@ -461,12 +463,34 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
     return `Request decision ${action.decisionKey}.`
   }
   if (action.kind === 'resolve_decision') {
+    if (action.followThrough?.kind === 'planning_batch') {
+      return `Resolve decision ${action.decisionKey} with grouped planning follow-through ${action.followThrough.groupKey}.`
+    }
+    if (action.followThrough?.kind === 'planning') {
+      return `Resolve decision ${action.decisionKey} with explicit planning follow-through.`
+    }
     return `Resolve decision ${action.decisionKey}.`
   }
   if (action.kind === 'record_preference') {
     return `Record durable preference: ${action.summary}`
   }
   return 'Update durable preferences.'
+}
+
+function summarizeResolvedDecisionResult(
+  decisionKey: string,
+  result: Awaited<ReturnType<typeof resolveGoalDecision>>,
+) {
+  if (result.followThrough?.kind === 'planning_batch') {
+    return `Resolved decision ${decisionKey} and routed engineering through grouped planning follow-through ${result.followThrough.groupKey}.`
+  }
+  if (result.followThrough?.kind === 'planning') {
+    return `Resolved decision ${decisionKey} and routed engineering through planning follow-through ${result.followThrough.taskRefs.join(', ')}.`
+  }
+  if (result.blockerRemoved) {
+    return `Resolved decision ${decisionKey} and cleared linked blockers.`
+  }
+  return `Resolved decision ${decisionKey}.`
 }
 
 function isLegalManualTransition(from: TaskStatus, to: TaskStatus) {

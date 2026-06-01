@@ -1,7 +1,16 @@
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
-import type { PlanningRequestStore } from '../storage/planningRequestStore'
-import { enrichPlanningRequestsForTaskDecision, requestGoalPlanning } from './planningRequest'
+import type {
+  GoalPlanningRequestUpdateTarget,
+  PlanningRequestStore,
+} from '../storage/planningRequestStore'
+import type { GoalPlanningBatchEntryInput } from './planningRequest'
+import {
+  enrichPlanningRequestsForTaskDecision,
+  listGroupedPlanningSinkTaskRefs,
+  requestGoalPlanning,
+  requestGoalPlanningBatch,
+} from './planningRequest'
 
 export interface GoalDecisionRequestInput {
   goalKey: string
@@ -21,6 +30,33 @@ export interface GoalDecisionRequestResult {
 export interface GoalDecisionResolveResult {
   decision: GoalDecision
   blockerRemoved: boolean
+  followThrough?: GoalDecisionFollowThroughResult
+}
+
+export interface GoalDecisionPlanningFollowThroughInput {
+  kind: 'planning'
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+}
+
+export interface GoalDecisionPlanningBatchFollowThroughInput {
+  kind: 'planning_batch'
+  groupKey: string
+  requests: GoalPlanningBatchEntryInput[]
+}
+
+export type GoalDecisionFollowThroughInput =
+  | GoalDecisionPlanningFollowThroughInput
+  | GoalDecisionPlanningBatchFollowThroughInput
+
+export interface GoalDecisionFollowThroughResult {
+  kind: GoalDecisionFollowThroughInput['kind']
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+  groupKey?: string
 }
 
 export async function requestGoalDecision(
@@ -105,6 +141,7 @@ export async function resolveGoalDecision(
     goalKey: string
     decisionKey: string
     answer: string
+    followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
   },
@@ -112,10 +149,13 @@ export async function resolveGoalDecision(
   const decision = await stores.decisions.resolveDecision(input.goalKey, input.decisionKey, {
     answer: input.answer,
   })
-  const followThroughTaskRef = await createDecisionResolutionFollowThrough(
+  const followThrough = await createDecisionResolutionFollowThrough(
     stores,
     input.goalKey,
     decision,
+    input.followThrough,
+    input.writer,
+    input.reason,
   )
   let blockerRemoved = false
 
@@ -129,17 +169,19 @@ export async function resolveGoalDecision(
           (blocker) => !(blocker.kind === 'decision' && blocker.ref === input.decisionKey),
         )
         if (nextBlockedBy.length !== task.blockedBy.length) {
-          if (
-            followThroughTaskRef &&
-            task.kind === 'engineering' &&
-            !nextBlockedBy.some(
-              (blocker) => blocker.kind === 'task' && blocker.ref === followThroughTaskRef,
-            )
-          ) {
-            nextBlockedBy.push({
-              kind: 'task',
-              ref: followThroughTaskRef,
-            })
+          if (followThrough && task.kind === 'engineering') {
+            for (const blockerTaskRef of followThrough.blockerTaskRefs) {
+              if (
+                !nextBlockedBy.some(
+                  (blocker) => blocker.kind === 'task' && blocker.ref === blockerTaskRef,
+                )
+              ) {
+                nextBlockedBy.push({
+                  kind: 'task',
+                  ref: blockerTaskRef,
+                })
+              }
+            }
           }
           task.blockedBy = nextBlockedBy
           blockerRemoved = true
@@ -151,6 +193,7 @@ export async function resolveGoalDecision(
   return {
     decision,
     blockerRemoved,
+    followThrough,
   }
 }
 
@@ -161,6 +204,9 @@ async function createDecisionResolutionFollowThrough(
   },
   goalKey: string,
   decision: GoalDecision,
+  followThrough: GoalDecisionFollowThroughInput | undefined,
+  writer?: string,
+  reason?: string,
 ) {
   if (!stores.planningRequests) {
     return undefined
@@ -178,6 +224,42 @@ async function createDecisionResolutionFollowThrough(
     return undefined
   }
 
+  if (followThrough?.kind === 'planning_batch') {
+    const result = await requestGoalPlanningBatch(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        groupKey: followThrough.groupKey,
+        decisionRefs: [decision.decisionKey],
+        requests: followThrough.requests,
+        writer: writer ?? 'decision',
+        reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
+      },
+    )
+    const blockerTaskRefs = await listGroupedPlanningSinkTaskRefs(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        groupKey: result.groupKey,
+      },
+    )
+
+    return {
+      kind: 'planning_batch' as const,
+      groupKey: result.groupKey,
+      requestKeys: result.entries.map((entry) => entry.requestKey),
+      taskRefs: result.entries.map((entry) => entry.taskRef),
+      blockerTaskRefs,
+    }
+  }
+
+  const explicitPlanning = followThrough?.kind === 'planning' ? followThrough : undefined
   const result = await requestGoalPlanning(
     {
       boardStore: stores.boardStore,
@@ -185,18 +267,25 @@ async function createDecisionResolutionFollowThrough(
     },
     {
       goalKey,
-      title: `Plan follow-through for ${decision.decisionKey}`,
-      description: `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
-      acceptanceCriteria: [
+      title: explicitPlanning?.title ?? `Plan follow-through for ${decision.decisionKey}`,
+      description:
+        explicitPlanning?.description ??
+        `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
+      acceptanceCriteria: explicitPlanning?.acceptanceCriteria ?? [
         `design.md captures the follow-through for ${decision.decisionKey}.`,
         `todo.yml reflects the follow-through for ${decision.decisionKey} before engineering resumes.`,
       ],
       decisionRefs: [decision.decisionKey],
-      requestedUpdates: ['design.md', 'todo.yml'],
-      writer: 'decision',
-      reason: `decision resolution follow-through ${decision.decisionKey}`,
+      requestedUpdates: explicitPlanning?.requestedUpdates ?? ['design.md', 'todo.yml'],
+      writer: writer ?? 'decision',
+      reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
     },
   )
 
-  return result.request.taskRef
+  return {
+    kind: 'planning' as const,
+    requestKeys: [result.request.requestKey],
+    taskRefs: [result.request.taskRef],
+    blockerTaskRefs: [result.request.taskRef],
+  }
 }

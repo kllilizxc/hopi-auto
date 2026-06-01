@@ -243,7 +243,29 @@ Required outcome shape:
       "decisionKey": "stable-decision-key",
       "summary": "required if the decision topic does not already exist",
       "taskRef": "optional linked task ref",
-      "answer": "explicit user answer"
+      "answer": "explicit user answer",
+      "followThrough": {
+        "kind": "planning_batch",
+        "groupKey": "stable-group-key",
+        "requests": [
+          {
+            "taskKey": "goal-docs",
+            "title": "first visible planning task title",
+            "description": "what this planning stage must accomplish after the answer",
+            "acceptanceCriteria": ["at least one acceptance criterion"],
+            "requestedUpdates": ["goal.md", "design.md", "research.md"],
+            "blockedByTaskKeys": []
+          },
+          {
+            "taskKey": "task-graph",
+            "title": "second visible planning task title",
+            "description": "what this later planning stage must accomplish",
+            "acceptanceCriteria": ["at least one acceptance criterion"],
+            "requestedUpdates": ["todo.yml"],
+            "blockedByTaskKeys": ["goal-docs"]
+          }
+        ]
+      }
     },
     {
       "kind": "record_preference",
@@ -267,6 +289,8 @@ Rules:
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
+- When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
+- Never include decisionRefs inside resolve_decision.followThrough; runtime injects the resolved decision lineage automatically.
 - Treat requestedUpdates as Goal-local relative paths under .hopi/docs/goals/<goalKey>/, such as goal.md, design.md, todo.yml, research.md, or notes/rollout.md.
 - Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.

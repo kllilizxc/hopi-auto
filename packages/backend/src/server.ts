@@ -58,10 +58,6 @@ const moveTaskSchema = z.object({
   reason: z.string().min(1).default('manual transition'),
 })
 
-const resolveDecisionSchema = z.object({
-  answer: z.string().min(1),
-})
-
 const createDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
@@ -78,6 +74,37 @@ const createPlanningRequestSchema = z.object({
   decisionRefs: z.array(z.string().min(1)).default([]),
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   blockedBy: z.array(blockerSchema).default([]),
+})
+
+const planningBatchEntrySchema = z.object({
+  taskKey: z.string().min(1),
+  requestKey: z.string().min(1).optional(),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  blockedBy: z.array(blockerSchema).default([]),
+  blockedByTaskKeys: z.array(z.string().min(1)).default([]),
+})
+
+const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    title: z.string().min(1),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    requests: z.array(planningBatchEntrySchema).min(1),
+  }),
+])
+
+const resolveDecisionSchema = z.object({
+  answer: z.string().min(1),
+  followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
 
 const assistantMessageSchema = z.object({
@@ -251,12 +278,16 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey,
               answer: body.answer,
+              followThrough: body.followThrough,
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,
             },
           )
           broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
-          if (result.blockerRemoved) {
+          if (result.followThrough) {
+            broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
+          }
+          if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
           return jsonResponse(result.decision)
@@ -398,12 +429,23 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             content: body.content,
           })
           broadcast({ type: 'assistant_changed', goalKey: currentGoalKey })
+          if (
+            result.actionResults.some(
+              (actionResult) =>
+                actionResult.kind === 'request_decision' ||
+                actionResult.kind === 'resolve_decision',
+            )
+          ) {
+            broadcast({ type: 'decisions_changed', goalKey: currentGoalKey })
+          }
           broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           if (
             result.actionResults.some(
               (actionResult) =>
                 actionResult.kind === 'request_planning' ||
-                actionResult.kind === 'request_planning_batch',
+                actionResult.kind === 'request_planning_batch' ||
+                (actionResult.kind === 'resolve_decision' &&
+                  (actionResult.followThroughRequestKeys?.length ?? 0) > 0),
             )
           ) {
             broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
