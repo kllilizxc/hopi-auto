@@ -126,11 +126,32 @@ const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
+const resolveDecisionWorkflowLeafFollowThroughSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    workflowTaskKey: z.string().min(1).optional(),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
+    title: z.string().min(1),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    answers: goalPlanningRequestAnswerArraySchema,
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
+    answers: goalPlanningRequestAnswerArraySchema,
+    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+  }),
+])
+
 const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
   ...resolveDecisionLeafFollowThroughSchema.options,
   z.object({
     kind: z.literal('workflow_batch'),
-    workflows: z.array(resolveDecisionLeafFollowThroughSchema).min(1),
+    workflowKey: z.string().min(1).optional(),
+    workflows: z.array(resolveDecisionWorkflowLeafFollowThroughSchema).min(1),
   }),
 ])
 

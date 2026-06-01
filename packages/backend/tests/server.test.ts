@@ -1653,6 +1653,150 @@ describe('createServer', () => {
     })
   })
 
+  test('resolving a decision through the API can create a durable workflow graph that later direct planning extends', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const taskResponse = await postJson(server, '/api/goals/test/tasks', {
+      ref: 'T-9',
+      kind: 'engineering',
+      title: 'Implement auth integration',
+      description: 'Wait for the auth decision.',
+      acceptanceCriteria: ['The auth path is implemented.'],
+      blockedBy: [],
+    })
+    expect(taskResponse.status).toBe(201)
+
+    const decisionResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-9',
+    })
+    expect(decisionResponse.status).toBe(201)
+
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/auth-strategy/resolve',
+      {
+        answer: 'Use Bun-native auth.',
+        followThrough: {
+          kind: 'workflow_batch',
+          workflowKey: 'auth-rollout-follow-through',
+          workflows: [
+            {
+              kind: 'planning_batch',
+              groupKey: 'rollout-follow-through',
+              requests: [
+                {
+                  taskKey: 'capture-notes',
+                  title: 'Capture rollout notes',
+                  description: 'Record rollout details before review.',
+                  acceptanceCriteria: ['Rollout notes are durable.'],
+                  requestedUpdates: ['notes/rollout.md'],
+                },
+                {
+                  taskKey: 'validate-plan',
+                  title: 'Validate rollout plan',
+                  description: 'Check the rollout notes before handoff review.',
+                  acceptanceCriteria: ['The rollout plan is validated.'],
+                  requestedUpdates: ['design.md'],
+                  blockedByTaskKeys: ['capture-notes'],
+                },
+              ],
+            },
+            {
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              title: 'Review auth rollout readiness',
+              description: 'Inspect the rollout workflow after the rollout child finishes.',
+              acceptanceCriteria: ['The auth rollout review is visible.'],
+              requestedUpdates: ['design.md'],
+              blockedByWorkflowKeys: ['rollout-follow-through'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(resolveResponse.status).toBe(200)
+
+    const extensionResponse = await postJson(
+      server,
+      '/api/goals/test/planning-requests/workflows',
+      {
+        workflowKey: 'auth-rollout-follow-through',
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requests: [
+              {
+                taskKey: 'finalize-plan',
+                title: 'Finalize rollout plan',
+                description: 'Add the final rollout stage before handoff review.',
+                acceptanceCriteria: ['The rollout plan is finalized.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['validate-plan'],
+              },
+            ],
+          },
+        ],
+      },
+    )
+
+    expect(extensionResponse.status).toBe(201)
+    await expect(extensionResponse.json()).resolves.toMatchObject({
+      workflowKey: 'auth-rollout-follow-through',
+      requestKeys: ['PR-1', 'PR-2', 'PR-4', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-4', 'P-3'],
+      blockerTaskRefs: ['P-3'],
+      workflows: [
+        expect.objectContaining({
+          kind: 'planning_batch',
+          groupKey: 'rollout-follow-through',
+          blockerTaskRefs: ['P-4'],
+        }),
+        expect.objectContaining({
+          kind: 'planning',
+          workflowTaskKey: 'handoff-review',
+          blockerTaskRefs: ['P-3'],
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: expect.arrayContaining([
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          blockedByWorkflowKeys: ['rollout-follow-through'],
+          decisionRefs: ['auth-strategy'],
+        }),
+      ]),
+    })
+
+    const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
+    const board = await readJson<TodoBoard>(boardResponse)
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-3' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-3',
+          blockedBy: [{ kind: 'task', ref: 'P-4' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-4',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    )
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -3297,6 +3441,103 @@ describe('createServer', () => {
         }),
       ]),
     })
+  })
+
+  test('runs the configured Goal assistant and creates a durable decision-backed workflow graph that later planning extends', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (prompt.includes('Extend the durable auth workflow with a final rollout stage.')) { await Bun.write(outcomeFile, JSON.stringify({ message: 'I extended the durable auth workflow with a final rollout stage.', actions: [{ kind: 'request_planning_workflows', workflowKey: 'auth-rollout-follow-through', workflows: [{ kind: 'planning_batch', groupKey: 'rollout-follow-through', requests: [{ taskKey: 'finalize-plan', title: 'Finalize rollout plan', description: 'Add the final rollout stage before handoff review.', acceptanceCriteria: ['The rollout plan is finalized.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['validate-plan'] }] }] }] })); console.log('assistant workflow extended'); process.exit(0); } if (!prompt.includes('Use Bun-native auth and open one durable workflow graph.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded the auth answer and opened one durable workflow graph.', actions: [{ kind: 'record_answer', summary: 'Choose the auth strategy', answer: 'Use Bun-native auth.', followThrough: { kind: 'workflow_batch', workflowKey: 'auth-rollout-follow-through', workflows: [{ kind: 'planning_batch', groupKey: 'rollout-follow-through', requests: [{ taskKey: 'capture-notes', title: 'Capture rollout notes', description: 'Record rollout details before review.', acceptanceCriteria: ['Rollout notes are durable.'], requestedUpdates: ['notes/rollout.md'] }, { taskKey: 'validate-plan', title: 'Validate rollout plan', description: 'Check the rollout notes before handoff review.', acceptanceCriteria: ['The rollout plan is validated.'], requestedUpdates: ['design.md'], blockedByTaskKeys: ['capture-notes'] }] }, { kind: 'planning', workflowTaskKey: 'handoff-review', title: 'Review auth rollout readiness', description: 'Inspect the rollout workflow after the rollout child finishes.', acceptanceCriteria: ['The auth rollout review is visible.'], requestedUpdates: ['design.md'], blockedByWorkflowKeys: ['rollout-follow-through'] }] } }] })); console.log('assistant finished');",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const firstResponse = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Use Bun-native auth and open one durable workflow graph.',
+    })
+
+    expect(firstResponse.status).toBe(200)
+    await expect(firstResponse.json()).resolves.toMatchObject({
+      message: 'I recorded the auth answer and opened one durable workflow graph.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answer',
+          decisionKey: 'D-1',
+          followThroughGroupKeys: ['rollout-follow-through'],
+          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Extend the durable auth workflow with a final rollout stage.',
+    })
+
+    expect(response.status).toBe(200)
+    const responseBody = await response.json()
+    expect(responseBody.message).toBe(
+      'I extended the durable auth workflow with a final rollout stage.',
+    )
+    expect(responseBody.actionResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_workflows',
+          workflowKey: 'auth-rollout-follow-through',
+          requestKeys: ['PR-1', 'PR-2', 'PR-4', 'PR-3'],
+          taskRefs: ['P-1', 'P-2', 'P-4', 'P-3'],
+          blockerTaskRefs: ['P-3'],
+          workflows: [
+            expect.objectContaining({
+              kind: 'planning_batch',
+              groupKey: 'rollout-follow-through',
+              blockerTaskRefs: ['P-4'],
+            }),
+            expect.objectContaining({
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              blockerTaskRefs: ['P-3'],
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: expect.arrayContaining([
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          blockedByWorkflowKeys: ['rollout-follow-through'],
+          decisionRefs: ['D-1'],
+        }),
+      ]),
+    })
+
+    const board = await createBoardStore(workspaceRoot).readBoard('test')
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-3',
+          blockedBy: [{ kind: 'task', ref: 'P-4' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-4',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    )
   })
 
   test('runs the configured Goal assistant and records multiple durable answers into shared planner follow-through', async () => {

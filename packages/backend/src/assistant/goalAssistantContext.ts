@@ -305,9 +305,12 @@ Required outcome shape:
       "answer": "explicit user answer",
       "followThrough": {
         "kind": "workflow_batch",
+        "workflowKey": "optional stable top-level workflow key for later extension",
         "workflows": [
           {
             "kind": "planning",
+            "workflowTaskKey": "optional stable child key for reusing this standalone workflow later",
+            "blockedByWorkflowKeys": ["optional earlier workflow child key that this child should wait for"],
             "title": "first independent planning workflow title",
             "description": "what this first workflow must accomplish after the answer",
             "acceptanceCriteria": ["at least one acceptance criterion"],
@@ -322,6 +325,7 @@ Required outcome shape:
           {
             "kind": "planning_batch",
             "groupKey": "stable-group-key",
+            "blockedByWorkflowKeys": ["optional earlier workflow child key that this grouped child should wait for"],
             "answers": [
               {
                 "summary": "optional shared extra answer summary",
@@ -468,6 +472,7 @@ Rules:
 - When a decision answer should immediately open durable planner work even before there is a visible blocker or reusable planning surface, prefer "followThrough" on "resolve_decision" so runtime can create that visible planning workflow in one action.
 - Prefer "resolve_decision" when there is already a specific visible durable decision topic you intend to resolve directly.
 - Inside "workflow_batch" follow-through, use only "planning" or "planning_batch" child workflows.
+- When one answer-driven "workflow_batch" should remain extendable later, set a stable "workflowKey" and then use the same direct-workflow child graph rules as "request_planning_workflows": standalone children can use "workflowTaskKey", and later children can wait on earlier child sinks through "blockedByWorkflowKeys".
 - Never include decisionRefs inside resolve_decision.followThrough, record_answer.followThrough, or record_answers.followThrough; runtime injects the resolved decision lineage automatically.
 - Treat requestedUpdates as Goal-local relative paths under .hopi/docs/goals/<goalKey>/, such as goal.md, design.md, todo.yml, research.md, or notes/rollout.md.
 - Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.

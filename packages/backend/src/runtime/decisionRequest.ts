@@ -11,6 +11,7 @@ import {
   listGroupedPlanningSinkTaskRefs,
   requestGoalPlanning,
   requestGoalPlanningBatch,
+  requestGoalPlanningWorkflows,
 } from './planningRequest'
 
 export interface GoalDecisionRequestInput {
@@ -68,9 +69,33 @@ export interface GoalDecisionPlanningBatchFollowThroughInput {
   requests: GoalPlanningBatchEntryInput[]
 }
 
+export interface GoalDecisionWorkflowPlanningFollowThroughInput {
+  kind: 'planning'
+  workflowTaskKey?: string
+  blockedByWorkflowKeys?: string[]
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  answers?: GoalPlanningRequestAnswer[]
+  requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+}
+
+export interface GoalDecisionWorkflowPlanningBatchFollowThroughInput {
+  kind: 'planning_batch'
+  groupKey: string
+  blockedByWorkflowKeys?: string[]
+  answers?: GoalPlanningRequestAnswer[]
+  requests: GoalPlanningBatchEntryInput[]
+}
+
+export type GoalDecisionWorkflowLeafFollowThroughInput =
+  | GoalDecisionWorkflowPlanningFollowThroughInput
+  | GoalDecisionWorkflowPlanningBatchFollowThroughInput
+
 export interface GoalDecisionWorkflowBatchFollowThroughInput {
   kind: 'workflow_batch'
-  workflows: GoalDecisionLeafFollowThroughInput[]
+  workflowKey?: string
+  workflows: GoalDecisionWorkflowLeafFollowThroughInput[]
 }
 
 export type GoalDecisionLeafFollowThroughInput =
@@ -83,6 +108,7 @@ export type GoalDecisionFollowThroughInput =
 
 export interface GoalDecisionPlanningFollowThroughResult {
   kind: 'planning'
+  workflowTaskKey?: string
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
@@ -102,6 +128,7 @@ export type GoalDecisionLeafFollowThroughResult =
 
 export interface GoalDecisionWorkflowBatchFollowThroughResult {
   kind: 'workflow_batch'
+  workflowKey?: string
   workflows: GoalDecisionLeafFollowThroughResult[]
   groupKeys: string[]
   requestKeys: string[]
@@ -438,36 +465,70 @@ async function createDecisionResolutionFollowThrough(
     return undefined
   }
   if (followThrough?.kind === 'workflow_batch') {
-    let currentReusablePlanningTaskRef = reusablePlanningTaskRef
-    const workflows: GoalDecisionLeafFollowThroughResult[] = []
-    for (const workflow of followThrough.workflows) {
-      const result = await materializeExplicitDecisionFollowThrough(
-        stores,
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
         goalKey,
-        decisionRefs,
-        primaryDecision,
-        workflow,
-        currentReusablePlanningTaskRef,
-        writer,
-        reason,
-      )
-      workflows.push(result)
-      currentReusablePlanningTaskRef = undefined
-    }
+        workflowKey: followThrough.workflowKey,
+        reuseTaskRef: reusablePlanningTaskRef,
+        workflows: followThrough.workflows.map((workflow) => {
+          if (workflow.kind === 'planning_batch') {
+            return {
+              kind: 'planning_batch' as const,
+              groupKey: workflow.groupKey,
+              blockedByWorkflowKeys: workflow.blockedByWorkflowKeys,
+              decisionRefs,
+              answers: workflow.answers,
+              requests: workflow.requests,
+            }
+          }
+
+          return {
+            kind: 'planning' as const,
+            workflowTaskKey: workflow.workflowTaskKey,
+            blockedByWorkflowKeys: workflow.blockedByWorkflowKeys,
+            title: workflow.title,
+            description: workflow.description,
+            acceptanceCriteria: workflow.acceptanceCriteria,
+            decisionRefs,
+            answers: workflow.answers,
+            requestedUpdates: workflow.requestedUpdates,
+          }
+        }),
+        writer: writer ?? 'decision',
+        reason: reason ?? `decision resolution follow-through ${primaryDecision.decisionKey}`,
+      },
+    )
 
     return {
       kind: 'workflow_batch' as const,
-      workflows,
-      groupKeys: mergeOrderedStrings(
-        workflows.flatMap((workflow) =>
-          workflow.kind === 'planning_batch' ? [workflow.groupKey] : [],
-        ),
-      ),
-      requestKeys: mergeOrderedStrings(workflows.flatMap((workflow) => workflow.requestKeys)),
-      taskRefs: mergeOrderedStrings(workflows.flatMap((workflow) => workflow.taskRefs)),
-      blockerTaskRefs: mergeOrderedStrings(
-        workflows.flatMap((workflow) => workflow.blockerTaskRefs),
-      ),
+      workflowKey: result.workflowKey,
+      workflows: result.workflows.map((workflow) => {
+        if (workflow.kind === 'planning_batch') {
+          return {
+            kind: 'planning_batch' as const,
+            groupKey: workflow.groupKey,
+            requestKeys: workflow.requestKeys,
+            taskRefs: workflow.taskRefs,
+            blockerTaskRefs: workflow.blockerTaskRefs,
+          }
+        }
+
+        return {
+          kind: 'planning' as const,
+          workflowTaskKey: workflow.workflowTaskKey,
+          requestKeys: workflow.requestKeys,
+          taskRefs: workflow.taskRefs,
+          blockerTaskRefs: workflow.blockerTaskRefs,
+        }
+      }),
+      groupKeys: result.groupKeys,
+      requestKeys: result.requestKeys,
+      taskRefs: result.taskRefs,
+      blockerTaskRefs: result.blockerTaskRefs,
     }
   }
 
