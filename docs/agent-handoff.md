@@ -37,6 +37,7 @@ Phase 1 backend is complete:
 - Durable planning requests now also support explicit `goal.md` update targets, and planner follow-through evidence/policy now treats `goal.md`, `design.md`, and `todo.yml` as one inspectable requested-update contract.
 - Planning requests now also support validated Goal-local relative requested-update paths beyond the built-in `goal.md` / `design.md` / `todo.yml` trio, and assistant/API/UI/planner evidence all share that same normalized path model.
 - Engineering-linked decision resolution can now carry one explicit single or grouped planner follow-through directly through the shared decision-resolution path, and grouped engineering blockers rewire to the current grouped sink tasks instead of relying on a later separate planning action.
+- Planning-linked decision resolution can now reuse the current planning task as the explicit follow-through surface, including grouped staged follow-through without introducing a duplicate wrapper planning task.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -80,6 +81,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-targets-design.md`: current authority note for using `goal.md` as a first-class planning follow-through target.
 - `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-paths-design.md`: current authority note for generalized Goal-local planning requested-update paths beyond the built-in core files.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-explicit-planner-workflows-design.md`: current authority note for carrying explicit single or grouped planner follow-through on engineering-linked decision resolution.
+- `docs/superpowers/specs/2026-06-01-planning-linked-decision-follow-through-design.md`: current authority note for reusing the current planning surface when linked planning decisions resolve into explicit durable follow-through.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -508,6 +510,7 @@ Current non-UI Goal assistant substrate:
 - decision-linked planning request metadata for explicit `design.md` / `todo.yml` reshape intent
 - shared decision-request flows that backfill planning request lineage and default requested updates when a planning task becomes visibly blocked by one decision
 - engineering-linked decision resolution with explicit single or grouped planner follow-through on the shared planning-request path
+- planning-linked decision resolution with explicit single or grouped follow-through that can reuse the current planning surface instead of creating a wrapper task
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -520,7 +523,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- richer assistant/planner workflows beyond engineering-linked decision resolution, especially user or planning answers that should open durable planner work without relying on a pre-existing engineering blocker
+- richer assistant/planner workflows beyond linked decision resolution, especially answers that are not already represented as one visible decision topic plus one current planning surface
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
 - deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
@@ -530,7 +533,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Extend Goal assistant and planner/runtime behavior beyond engineering-linked decision-resolution follow-through, especially answers that should create durable planner workflows without relying on an existing engineering decision bridge.
+1. Extend Goal assistant and planner/runtime behavior beyond linked decision-resolution follow-through, especially answers that should create durable planner workflows before there is one visible decision topic or one reusable planning surface.
 2. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, and current-open-leaf blocker propagation for grouped planning.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

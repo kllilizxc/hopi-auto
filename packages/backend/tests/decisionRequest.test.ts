@@ -327,6 +327,164 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('resolving a planning-linked decision with explicit follow-through reuses the current planning surface', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed planning task', (board) => {
+      board.items.push({
+        ref: 'P-4',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Wait for the auth answer before planning continues.',
+        acceptanceCriteria: ['Planning continues after the auth answer.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-4',
+    })
+
+    const result = await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        answer: 'Use Bun-native auth.',
+        followThrough: {
+          kind: 'planning',
+          title: 'Clarify auth goal context',
+          description: 'Refresh durable Goal context and rollout notes after the auth answer.',
+          acceptanceCriteria: ['Goal context captures the auth direction.'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decision: {
+        decisionKey: 'auth-strategy',
+        status: 'resolved',
+      },
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-4'],
+        blockerTaskRefs: ['P-4'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Clarify auth goal context',
+          description: 'Refresh durable Goal context and rollout notes after the auth answer.',
+          acceptanceCriteria: ['Goal context captures the auth direction.'],
+          blockedBy: [],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-4',
+          decisionRefs: ['auth-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+      ],
+    })
+  })
+
+  test('resolving a mixed planning and engineering decision without explicit follow-through preserves the current default behavior', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard(
+      'goal-1',
+      'test',
+      'seed planning and engineering tasks',
+      (board) => {
+        board.items.push({
+          ref: 'P-4',
+          kind: 'planning',
+          status: 'planned',
+          title: 'Plan auth integration',
+          description: 'Wait for the auth answer before planning continues.',
+          acceptanceCriteria: ['Planning continues after the auth answer.'],
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        })
+        board.items.push({
+          ref: 'T-9',
+          kind: 'engineering',
+          status: 'planned',
+          title: 'Implement auth integration',
+          description: 'Wait for planner follow-through before engineering continues.',
+          acceptanceCriteria: ['The auth path is implemented.'],
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        })
+      },
+    )
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-4',
+    })
+
+    const result = await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        answer: 'Use Bun-native auth.',
+      },
+    )
+
+    expect(result).toMatchObject({
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-5'],
+        blockerTaskRefs: ['P-5'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Plan auth integration',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-5',
+          title: 'Plan follow-through for auth-strategy',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-5' }],
+        }),
+      ]),
+    })
+  })
+
   test('resolving an engineering-linked decision can create grouped planner follow-through from explicit metadata', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)
@@ -434,6 +592,111 @@ describe('requestGoalDecision', () => {
           requestedUpdates: ['todo.yml'],
         }),
       ],
+    })
+  })
+
+  test('resolving a planning-linked decision with grouped follow-through reuses the current planning task and still rewires engineering blockers', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard(
+      'goal-1',
+      'test',
+      'seed planning and engineering tasks',
+      (board) => {
+        board.items.push({
+          ref: 'P-4',
+          kind: 'planning',
+          status: 'planned',
+          title: 'Plan auth integration',
+          description: 'Wait for the auth answer before planning continues.',
+          acceptanceCriteria: ['Planning continues after the auth answer.'],
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        })
+        board.items.push({
+          ref: 'T-9',
+          kind: 'engineering',
+          status: 'planned',
+          title: 'Implement auth integration',
+          description: 'Wait for planner follow-through before engineering continues.',
+          acceptanceCriteria: ['The auth path is implemented.'],
+          blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+        })
+      },
+    )
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-4',
+    })
+
+    const result = await resolveGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        answer: 'Use Bun-native auth.',
+        followThrough: {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context and rollout notes after the auth answer.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the auth context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decision: {
+        decisionKey: 'auth-strategy',
+        status: 'resolved',
+      },
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-4', 'P-5'],
+        blockerTaskRefs: ['P-5'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Clarify auth goal context',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-5',
+          title: 'Decompose auth task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-4' }],
+        }),
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-5' }],
+        }),
+      ]),
     })
   })
 

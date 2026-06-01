@@ -290,6 +290,7 @@ Rules:
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
 - When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
+- When resolving a planning-linked decision and the answer should reshape the current planning surface, prefer "followThrough" on "resolve_decision" so runtime can reuse that visible planning task instead of creating a wrapper.
 - Never include decisionRefs inside resolve_decision.followThrough; runtime injects the resolved decision lineage automatically.
 - Treat requestedUpdates as Goal-local relative paths under .hopi/docs/goals/<goalKey>/, such as goal.md, design.md, todo.yml, research.md, or notes/rollout.md.
 - Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.

@@ -213,6 +213,13 @@ async function createDecisionResolutionFollowThrough(
   }
 
   const board = await stores.boardStore.readBoard(goalKey)
+  const linkedPlanningTask =
+    decision.taskRef === undefined
+      ? undefined
+      : board.items.find(
+          (task) =>
+            task.ref === decision.taskRef && task.kind === 'planning' && task.status !== 'done',
+        )
   const affectedEngineeringTasks = board.items.filter(
     (task) =>
       task.kind === 'engineering' &&
@@ -220,7 +227,10 @@ async function createDecisionResolutionFollowThrough(
         (blocker) => blocker.kind === 'decision' && blocker.ref === decision.decisionKey,
       ),
   )
-  if (affectedEngineeringTasks.length === 0) {
+  if (!followThrough && affectedEngineeringTasks.length === 0) {
+    return undefined
+  }
+  if (!linkedPlanningTask && affectedEngineeringTasks.length === 0) {
     return undefined
   }
 
@@ -235,6 +245,11 @@ async function createDecisionResolutionFollowThrough(
         groupKey: followThrough.groupKey,
         decisionRefs: [decision.decisionKey],
         requests: followThrough.requests,
+        reuseTaskRefByTaskKey: linkedPlanningTask
+          ? {
+              [followThrough.requests[0]?.taskKey ?? '']: linkedPlanningTask.ref,
+            }
+          : undefined,
         writer: writer ?? 'decision',
         reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
       },
@@ -277,6 +292,7 @@ async function createDecisionResolutionFollowThrough(
       ],
       decisionRefs: [decision.decisionKey],
       requestedUpdates: explicitPlanning?.requestedUpdates ?? ['design.md', 'todo.yml'],
+      reuseTaskRef: explicitPlanning ? linkedPlanningTask?.ref : undefined,
       writer: writer ?? 'decision',
       reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
     },

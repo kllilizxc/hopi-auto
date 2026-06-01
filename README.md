@@ -144,6 +144,11 @@ The explicit decision-resolution planner workflow slice is documented in:
 - `docs/superpowers/specs/2026-06-01-decision-resolution-explicit-planner-workflows-design.md`
 - `docs/superpowers/plans/2026-06-01-decision-resolution-explicit-planner-workflows.md`
 
+The planning-linked decision follow-through slice is documented in:
+
+- `docs/superpowers/specs/2026-06-01-planning-linked-decision-follow-through-design.md`
+- `docs/superpowers/plans/2026-06-01-planning-linked-decision-follow-through.md`
+
 The grouped planning follow-through slice is documented in:
 
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`

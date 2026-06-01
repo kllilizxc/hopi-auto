@@ -17,6 +17,7 @@ export interface GoalPlanningRequestInput {
   decisionRefs?: string[]
   requestedUpdates?: GoalPlanningRequestUpdateTarget[]
   blockedBy?: BlockerRef[]
+  reuseTaskRef?: string
   writer?: string
   reason?: string
 }
@@ -69,8 +70,23 @@ async function requestGoalPlanningInternal(
 ): Promise<GoalPlanningRequestResult> {
   const currentRequests = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
   const currentBoard = await stores.boardStore.readBoard(input.goalKey)
+  const reusablePlanningTask = input.reuseTaskRef
+    ? currentBoard.items.find(
+        (task) =>
+          task.ref === input.reuseTaskRef && task.kind === 'planning' && task.status !== 'done',
+      )
+    : undefined
+  if (input.reuseTaskRef && !reusablePlanningTask) {
+    throw new Error(`Planning task not found for reuse: ${input.reuseTaskRef}`)
+  }
+
   const existingByKey = input.requestKey
     ? currentRequests.requests.find((request) => request.requestKey === input.requestKey)
+    : undefined
+  const existingByReuseTaskRef = reusablePlanningTask
+    ? currentRequests.requests.find(
+        (request) => request.status === 'open' && request.taskRef === reusablePlanningTask.ref,
+      )
     : undefined
   const existingByGroupTaskKey =
     input.groupKey && input.groupTaskKey
@@ -97,6 +113,19 @@ async function requestGoalPlanningInternal(
     )
     return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
+      created: false,
+      taskCreated: false,
+    })
+  }
+
+  if (existingByReuseTaskRef) {
+    const updated = await updateExistingPlanningRequest(
+      stores,
+      input,
+      existingByReuseTaskRef.requestKey,
+    )
+    return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
+      request: updated,
       created: false,
       taskCreated: false,
     })
@@ -150,33 +179,10 @@ async function requestGoalPlanningInternal(
     input,
   )
   if (upgradeableGeneric) {
-    await stores.boardStore.mutateBoard(
-      input.goalKey,
-      input.writer ?? 'planning_request',
-      input.reason ?? `upgrade planning ${input.title}`,
-      (board) => {
-        const task = board.items.find((item) => item.ref === upgradeableGeneric.taskRef)
-        if (!task) {
-          throw new Error(`Task not found: ${upgradeableGeneric.taskRef}`)
-        }
-        task.title = input.title
-        task.description = input.description
-        task.acceptanceCriteria = [...input.acceptanceCriteria]
-      },
-    )
-
-    const upgraded = await stores.planningRequests.updateRequest(
-      input.goalKey,
+    const upgraded = await updateExistingPlanningRequest(
+      stores,
+      input,
       upgradeableGeneric.requestKey,
-      {
-        groupKey: input.groupKey,
-        groupTaskKey: input.groupTaskKey,
-        title: input.title,
-        description: input.description,
-        acceptanceCriteria: input.acceptanceCriteria,
-        decisionRefs: input.decisionRefs,
-        requestedUpdates: input.requestedUpdates,
-      },
     )
 
     return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
@@ -193,6 +199,18 @@ async function requestGoalPlanningInternal(
     input.writer ?? 'planning_request',
     input.reason ?? `request planning ${input.title}`,
     (board) => {
+      if (reusablePlanningTask) {
+        const task = board.items.find((item) => item.ref === reusablePlanningTask.ref)
+        if (!task) {
+          throw new Error(`Task not found: ${reusablePlanningTask.ref}`)
+        }
+        taskRef = task.ref
+        task.title = input.title
+        task.description = input.description
+        task.acceptanceCriteria = [...input.acceptanceCriteria]
+        return
+      }
+
       const existingTask = board.items.find(
         (item) => item.kind === 'planning' && item.title === input.title && item.status !== 'done',
       )
@@ -234,6 +252,46 @@ async function requestGoalPlanningInternal(
   })
 }
 
+async function updateExistingPlanningRequest(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: GoalPlanningRequestInput,
+  requestKey: string,
+) {
+  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const request = requestSet.requests.find((entry) => entry.requestKey === requestKey)
+  if (!request) {
+    throw new Error(`Planning request not found: ${requestKey}`)
+  }
+
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'planning_request',
+    input.reason ?? `upgrade planning ${input.title}`,
+    (board) => {
+      const task = board.items.find((item) => item.ref === request.taskRef)
+      if (!task) {
+        throw new Error(`Task not found: ${request.taskRef}`)
+      }
+      task.title = input.title
+      task.description = input.description
+      task.acceptanceCriteria = [...input.acceptanceCriteria]
+    },
+  )
+
+  return stores.planningRequests.updateRequest(input.goalKey, request.requestKey, {
+    groupKey: input.groupKey,
+    groupTaskKey: input.groupTaskKey,
+    title: input.title,
+    description: input.description,
+    acceptanceCriteria: input.acceptanceCriteria,
+    decisionRefs: input.decisionRefs,
+    requestedUpdates: input.requestedUpdates,
+  })
+}
+
 export async function requestGoalPlanningBatch(
   stores: {
     boardStore: BoardStore
@@ -244,6 +302,7 @@ export async function requestGoalPlanningBatch(
     groupKey: string
     decisionRefs?: string[]
     requests: GoalPlanningBatchEntryInput[]
+    reuseTaskRefByTaskKey?: Record<string, string>
     writer?: string
     reason?: string
   },
@@ -265,6 +324,7 @@ export async function requestGoalPlanningBatch(
         acceptanceCriteria: request.acceptanceCriteria,
         decisionRefs: input.decisionRefs,
         requestedUpdates: request.requestedUpdates,
+        reuseTaskRef: input.reuseTaskRefByTaskKey?.[request.taskKey],
         writer: input.writer,
         reason: input.reason,
       },
