@@ -336,7 +336,7 @@ async function applyAssistantAction(
     return {
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
-      followThroughGroupKey: result.followThrough?.groupKey,
+      followThroughGroupKeys: collectFollowThroughGroupKeys(result.followThrough),
       followThroughRequestKeys: result.followThrough?.requestKeys,
       followThroughTaskRefs: result.followThrough?.taskRefs,
       summary: summarizeResolvedDecisionResult(action.decisionKey, result),
@@ -364,7 +364,7 @@ async function applyAssistantAction(
     return {
       kind: 'record_answer',
       decisionKey: result.decision.decisionKey,
-      followThroughGroupKey: result.followThrough?.groupKey,
+      followThroughGroupKeys: collectFollowThroughGroupKeys(result.followThrough),
       followThroughRequestKeys: result.followThrough?.requestKeys,
       followThroughTaskRefs: result.followThrough?.taskRefs,
       summary: summarizeRecordedAnswerResult(result.decision.decisionKey, result),
@@ -492,6 +492,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
     if (action.followThrough?.kind === 'planning_batch') {
       return `Record answer with grouped planning follow-through ${action.followThrough.groupKey}.`
     }
+    if (action.followThrough?.kind === 'workflow_batch') {
+      return `Record answer with ${action.followThrough.workflows.length} planner workflows.`
+    }
     if (action.followThrough?.kind === 'planning') {
       return 'Record answer with explicit planning follow-through.'
     }
@@ -500,6 +503,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
   if (action.kind === 'resolve_decision') {
     if (action.followThrough?.kind === 'planning_batch') {
       return `Resolve decision ${action.decisionKey} with grouped planning follow-through ${action.followThrough.groupKey}.`
+    }
+    if (action.followThrough?.kind === 'workflow_batch') {
+      return `Resolve decision ${action.decisionKey} with ${action.followThrough.workflows.length} planner workflows.`
     }
     if (action.followThrough?.kind === 'planning') {
       return `Resolve decision ${action.decisionKey} with explicit planning follow-through.`
@@ -516,6 +522,9 @@ function summarizeResolvedDecisionResult(
   decisionKey: string,
   result: Awaited<ReturnType<typeof resolveGoalDecision>>,
 ) {
+  if (result.followThrough?.kind === 'workflow_batch') {
+    return `Resolved decision ${decisionKey} and opened ${result.followThrough.workflows.length} planner workflows.`
+  }
   if (result.followThrough?.kind === 'planning_batch') {
     return `Resolved decision ${decisionKey} and routed engineering through grouped planning follow-through ${result.followThrough.groupKey}.`
   }
@@ -532,6 +541,9 @@ function summarizeRecordedAnswerResult(
   decisionKey: string,
   result: Awaited<ReturnType<typeof answerGoalDecision>>,
 ) {
+  if (result.followThrough?.kind === 'workflow_batch') {
+    return `Recorded answer in decision ${decisionKey} and opened ${result.followThrough.workflows.length} planner workflows.`
+  }
   if (result.followThrough?.kind === 'planning_batch') {
     return `Recorded answer in decision ${decisionKey} and opened grouped planning follow-through ${result.followThrough.groupKey}.`
   }
@@ -542,6 +554,21 @@ function summarizeRecordedAnswerResult(
     return `Recorded answer in decision ${decisionKey} and cleared linked blockers.`
   }
   return `Recorded answer in decision ${decisionKey}.`
+}
+
+function collectFollowThroughGroupKeys(
+  followThrough: Awaited<ReturnType<typeof answerGoalDecision>>['followThrough'],
+) {
+  if (!followThrough) {
+    return undefined
+  }
+  if (followThrough.kind === 'planning_batch') {
+    return [followThrough.groupKey]
+  }
+  if (followThrough.kind === 'workflow_batch') {
+    return followThrough.groupKeys.length > 0 ? followThrough.groupKeys : undefined
+  }
+  return undefined
 }
 
 function isLegalManualTransition(from: TaskStatus, to: TaskStatus) {

@@ -51,17 +51,50 @@ export interface GoalDecisionPlanningBatchFollowThroughInput {
   requests: GoalPlanningBatchEntryInput[]
 }
 
-export type GoalDecisionFollowThroughInput =
+export interface GoalDecisionWorkflowBatchFollowThroughInput {
+  kind: 'workflow_batch'
+  workflows: GoalDecisionLeafFollowThroughInput[]
+}
+
+export type GoalDecisionLeafFollowThroughInput =
   | GoalDecisionPlanningFollowThroughInput
   | GoalDecisionPlanningBatchFollowThroughInput
 
-export interface GoalDecisionFollowThroughResult {
-  kind: GoalDecisionFollowThroughInput['kind']
+export type GoalDecisionFollowThroughInput =
+  | GoalDecisionLeafFollowThroughInput
+  | GoalDecisionWorkflowBatchFollowThroughInput
+
+export interface GoalDecisionPlanningFollowThroughResult {
+  kind: 'planning'
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
-  groupKey?: string
 }
+
+export interface GoalDecisionPlanningBatchFollowThroughResult {
+  kind: 'planning_batch'
+  groupKey: string
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+}
+
+export type GoalDecisionLeafFollowThroughResult =
+  | GoalDecisionPlanningFollowThroughResult
+  | GoalDecisionPlanningBatchFollowThroughResult
+
+export interface GoalDecisionWorkflowBatchFollowThroughResult {
+  kind: 'workflow_batch'
+  workflows: GoalDecisionLeafFollowThroughResult[]
+  groupKeys: string[]
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+}
+
+export type GoalDecisionFollowThroughResult =
+  | GoalDecisionLeafFollowThroughResult
+  | GoalDecisionWorkflowBatchFollowThroughResult
 
 export async function requestGoalDecision(
   stores: {
@@ -277,11 +310,96 @@ async function createDecisionResolutionFollowThrough(
   if (!followThrough && affectedEngineeringTasks.length === 0) {
     return undefined
   }
-  if (!followThrough && !linkedPlanningTask && affectedEngineeringTasks.length === 0) {
-    return undefined
+  if (followThrough?.kind === 'workflow_batch') {
+    let reusablePlanningTaskRef = linkedPlanningTask?.ref
+    const workflows: GoalDecisionLeafFollowThroughResult[] = []
+    for (const workflow of followThrough.workflows) {
+      const result = await materializeExplicitDecisionFollowThrough(
+        stores,
+        goalKey,
+        decision,
+        workflow,
+        reusablePlanningTaskRef,
+        writer,
+        reason,
+      )
+      workflows.push(result)
+      reusablePlanningTaskRef = undefined
+    }
+
+    return {
+      kind: 'workflow_batch' as const,
+      workflows,
+      groupKeys: mergeOrderedStrings(
+        workflows.flatMap((workflow) =>
+          workflow.kind === 'planning_batch' ? [workflow.groupKey] : [],
+        ),
+      ),
+      requestKeys: mergeOrderedStrings(workflows.flatMap((workflow) => workflow.requestKeys)),
+      taskRefs: mergeOrderedStrings(workflows.flatMap((workflow) => workflow.taskRefs)),
+      blockerTaskRefs: mergeOrderedStrings(
+        workflows.flatMap((workflow) => workflow.blockerTaskRefs),
+      ),
+    }
   }
 
-  if (followThrough?.kind === 'planning_batch') {
+  if (followThrough) {
+    return materializeExplicitDecisionFollowThrough(
+      stores,
+      goalKey,
+      decision,
+      followThrough,
+      linkedPlanningTask?.ref,
+      writer,
+      reason,
+    )
+  }
+
+  const result = await requestGoalPlanning(
+    {
+      boardStore: stores.boardStore,
+      planningRequests: stores.planningRequests,
+    },
+    {
+      goalKey,
+      title: `Plan follow-through for ${decision.decisionKey}`,
+      description: `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
+      acceptanceCriteria: [
+        `design.md captures the follow-through for ${decision.decisionKey}.`,
+        `todo.yml reflects the follow-through for ${decision.decisionKey} before engineering resumes.`,
+      ],
+      decisionRefs: [decision.decisionKey],
+      requestedUpdates: ['design.md', 'todo.yml'],
+      writer: writer ?? 'decision',
+      reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
+    },
+  )
+
+  return {
+    kind: 'planning' as const,
+    requestKeys: [result.request.requestKey],
+    taskRefs: [result.request.taskRef],
+    blockerTaskRefs: [result.request.taskRef],
+  }
+}
+
+async function materializeExplicitDecisionFollowThrough(
+  stores: {
+    boardStore: BoardStore
+    planningRequests?: PlanningRequestStore
+  },
+  goalKey: string,
+  decision: GoalDecision,
+  followThrough: GoalDecisionLeafFollowThroughInput,
+  reusablePlanningTaskRef: string | undefined,
+  writer?: string,
+  reason?: string,
+): Promise<GoalDecisionLeafFollowThroughResult> {
+  if (!stores.planningRequests) {
+    throw new Error('Planning request store is required for explicit follow-through.')
+  }
+
+  if (followThrough.kind === 'planning_batch') {
     const result = await requestGoalPlanningBatch(
       {
         boardStore: stores.boardStore,
@@ -292,9 +410,9 @@ async function createDecisionResolutionFollowThrough(
         groupKey: followThrough.groupKey,
         decisionRefs: [decision.decisionKey],
         requests: followThrough.requests,
-        reuseTaskRefByTaskKey: linkedPlanningTask
+        reuseTaskRefByTaskKey: reusablePlanningTaskRef
           ? {
-              [followThrough.requests[0]?.taskKey ?? '']: linkedPlanningTask.ref,
+              [followThrough.requests[0]?.taskKey ?? '']: reusablePlanningTaskRef,
             }
           : undefined,
         writer: writer ?? 'decision',
@@ -313,7 +431,7 @@ async function createDecisionResolutionFollowThrough(
     )
 
     return {
-      kind: 'planning_batch' as const,
+      kind: 'planning_batch',
       groupKey: result.groupKey,
       requestKeys: result.entries.map((entry) => entry.requestKey),
       taskRefs: result.entries.map((entry) => entry.taskRef),
@@ -321,7 +439,6 @@ async function createDecisionResolutionFollowThrough(
     }
   }
 
-  const explicitPlanning = followThrough?.kind === 'planning' ? followThrough : undefined
   const result = await requestGoalPlanning(
     {
       boardStore: stores.boardStore,
@@ -329,26 +446,25 @@ async function createDecisionResolutionFollowThrough(
     },
     {
       goalKey,
-      title: explicitPlanning?.title ?? `Plan follow-through for ${decision.decisionKey}`,
-      description:
-        explicitPlanning?.description ??
-        `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
-      acceptanceCriteria: explicitPlanning?.acceptanceCriteria ?? [
-        `design.md captures the follow-through for ${decision.decisionKey}.`,
-        `todo.yml reflects the follow-through for ${decision.decisionKey} before engineering resumes.`,
-      ],
+      title: followThrough.title,
+      description: followThrough.description,
+      acceptanceCriteria: followThrough.acceptanceCriteria,
       decisionRefs: [decision.decisionKey],
-      requestedUpdates: explicitPlanning?.requestedUpdates ?? ['design.md', 'todo.yml'],
-      reuseTaskRef: explicitPlanning ? linkedPlanningTask?.ref : undefined,
+      requestedUpdates: followThrough.requestedUpdates,
+      reuseTaskRef: reusablePlanningTaskRef,
       writer: writer ?? 'decision',
       reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
     },
   )
 
   return {
-    kind: 'planning' as const,
+    kind: 'planning',
     requestKeys: [result.request.requestKey],
     taskRefs: [result.request.taskRef],
     blockerTaskRefs: [result.request.taskRef],
   }
+}
+
+function mergeOrderedStrings(values: string[]) {
+  return [...new Set(values)]
 }

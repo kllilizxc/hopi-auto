@@ -673,6 +673,101 @@ describe('createServer', () => {
     })
   })
 
+  test('records a durable answer through the API and fans one answer out into multiple planner workflows', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/decisions/answer', {
+      summary: 'Choose the auth strategy',
+      answer: 'Use Bun-native auth.',
+      followThrough: {
+        kind: 'workflow_batch',
+        workflows: [
+          {
+            kind: 'planning',
+            title: 'Capture auth answer',
+            description: 'Record the auth answer across Goal docs before execution resumes.',
+            acceptanceCriteria: ['The auth answer is durable in Goal docs.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            requests: [
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth task graph',
+                description: 'Reflect the auth answer in todo.yml.',
+                acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+              },
+              {
+                taskKey: 'rollout-notes',
+                title: 'Capture auth rollout notes',
+                description: 'Record rollout notes after the task graph is visible.',
+                acceptanceCriteria: ['The auth rollout notes are durable.'],
+                requestedUpdates: ['notes/rollout.md'],
+                blockedByTaskKeys: ['task-graph'],
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      decisionKey: 'D-1',
+      summary: 'Choose the auth strategy',
+      status: 'resolved',
+      answer: 'Use Bun-native auth.',
+    })
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture auth answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose auth task graph',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-3',
+          title: 'Capture auth rollout notes',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['todo.yml'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
+        }),
+      ],
+    })
+  })
+
   test('creates and links Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -1345,7 +1440,7 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'auth-strategy',
-          followThroughGroupKey: 'auth-follow-through',
+          followThroughGroupKeys: ['auth-follow-through'],
           followThroughTaskRefs: ['P-1', 'P-2'],
         }),
       ]),
@@ -1448,7 +1543,7 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'auth-strategy',
-          followThroughGroupKey: 'auth-follow-through',
+          followThroughGroupKeys: ['auth-follow-through'],
           followThroughTaskRefs: ['P-8', 'P-9'],
         }),
       ]),
@@ -1526,7 +1621,7 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'rollout-strategy',
-          followThroughGroupKey: 'rollout-follow-through',
+          followThroughGroupKeys: ['rollout-follow-through'],
           followThroughTaskRefs: ['P-1', 'P-2'],
         }),
       ]),
@@ -1611,7 +1706,7 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'record_answer',
           decisionKey: 'D-1',
-          followThroughGroupKey: 'rollout-follow-through',
+          followThroughGroupKeys: ['rollout-follow-through'],
           followThroughTaskRefs: ['P-1', 'P-2'],
         }),
       ]),
@@ -1642,6 +1737,95 @@ describe('createServer', () => {
           requestKey: 'PR-2',
           groupKey: 'rollout-follow-through',
           decisionRefs: ['D-1'],
+        }),
+      ],
+    })
+    await expect(
+      createAssistantThreadStore(workspaceRoot).readThread('test'),
+    ).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'record_answer',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'record_answer',
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and fans one answer out into multiple independent planner workflows', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use Bun-native auth and open more than one planner workflow.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded the auth answer and opened two independent planner workflows.', actions: [{ kind: 'record_answer', summary: 'Choose the auth strategy', answer: 'Use Bun-native auth.', followThrough: { kind: 'workflow_batch', workflows: [{ kind: 'planning', title: 'Capture auth answer', description: 'Record the auth answer across Goal docs before execution resumes.', acceptanceCriteria: ['The auth answer is durable in Goal docs.'], requestedUpdates: ['goal.md', 'design.md'] }, { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', requests: [{ taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reflect the auth answer in todo.yml.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'] }, { taskKey: 'rollout-notes', title: 'Capture auth rollout notes', description: 'Record rollout notes after the task graph is visible.', acceptanceCriteria: ['The auth rollout notes are durable.'], requestedUpdates: ['notes/rollout.md'], blockedByTaskKeys: ['task-graph'] }] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Use Bun-native auth and open more than one planner workflow.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I recorded the auth answer and opened two independent planner workflows.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answer',
+          decisionKey: 'D-1',
+          followThroughGroupKeys: ['auth-rollout-follow-through'],
+          followThroughTaskRefs: ['P-1', 'P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          status: 'resolved',
+          answer: 'Use Bun-native auth.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['todo.yml'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          groupKey: 'auth-rollout-follow-through',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
         }),
       ],
     })

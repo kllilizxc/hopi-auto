@@ -220,6 +220,7 @@ interface AssistantAction {
     requestedUpdates?: string[]
     blockedByTaskKeys?: string[]
   }>
+  followThrough?: unknown
   decisionKey?: string
   summary?: string
   answer?: string
@@ -241,6 +242,7 @@ interface AssistantActionResult {
   requestKey?: string
   taskRefs?: string[]
   requestKeys?: string[]
+  followThroughGroupKeys?: string[]
   groupKey?: string
   groupTaskKey?: string
   status?: TaskStatus

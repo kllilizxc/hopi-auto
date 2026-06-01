@@ -91,7 +91,7 @@ const planningBatchEntrySchema = z.object({
   blockedByTaskKeys: z.array(z.string().min(1)).default([]),
 })
 
-const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
+const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning'),
     title: z.string().min(1),
@@ -103,6 +103,14 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
     requests: z.array(planningBatchEntrySchema).min(1),
+  }),
+])
+
+const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
+  ...resolveDecisionLeafFollowThroughSchema.options,
+  z.object({
+    kind: z.literal('workflow_batch'),
+    workflows: z.array(resolveDecisionLeafFollowThroughSchema).min(1),
   }),
 ])
 
