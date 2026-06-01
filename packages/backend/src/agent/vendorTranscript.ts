@@ -63,7 +63,7 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
   if (itemType && isToolCallType(itemType)) {
     const toolName = extractToolName(item)
     return [
-      transcriptEvent('codex', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+      transcriptEvent('codex', 'tool_call', buildToolCallSummary(toolName, item), {
         toolName: toolName ?? undefined,
         toolInvocationKey: extractToolInvocationKey(item, 'tool_call') ?? undefined,
         vendorEventType: eventType ?? 'item/completed',
@@ -169,7 +169,7 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
   ) {
     const toolName = extractToolName(value)
     return [
-      transcriptEvent('opencode', 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+      transcriptEvent('opencode', 'tool_call', buildToolCallSummary(toolName, value), {
         toolName: toolName ?? undefined,
         toolInvocationKey: extractToolInvocationKey(value, 'tool_call') ?? undefined,
         vendorEventType: eventType,
@@ -242,7 +242,7 @@ function normalizeContentBlocks(
     if (blockType === 'tool_use') {
       const toolName = extractToolName(value)
       events.push(
-        transcriptEvent(transport, 'tool_call', toolName ? `Tool call: ${toolName}` : 'Tool call', {
+        transcriptEvent(transport, 'tool_call', buildToolCallSummary(toolName, value), {
           toolName: toolName ?? undefined,
           toolInvocationKey: extractToolInvocationKey(value, 'tool_call') ?? undefined,
           vendorEventType,
@@ -349,6 +349,110 @@ function extractToolInvocationKey(
   )
 }
 
+function buildToolCallSummary(
+  toolName: string | undefined,
+  value: Record<string, unknown> | undefined,
+) {
+  const detail = extractToolCallDetail(value)
+  const label = toolName ? `Tool call: ${toolName}` : 'Tool call'
+  return detail ? `${label} (${detail})` : label
+}
+
+function extractToolCallDetail(value: Record<string, unknown> | undefined) {
+  const scopes = [
+    value,
+    objectValue(value?.input),
+    objectValue(value?.arguments),
+    objectValue(value?.params),
+    objectValue(value?.invocation),
+  ].filter((scope): scope is Record<string, unknown> => Boolean(scope))
+
+  for (const scope of scopes) {
+    const command = extractCommandDetail(scope)
+    if (command) {
+      return command
+    }
+  }
+
+  for (const scope of scopes) {
+    const path = extractPathDetail(scope)
+    if (path) {
+      return path
+    }
+  }
+
+  for (const scope of scopes) {
+    const search = extractSearchDetail(scope)
+    if (search) {
+      return search
+    }
+  }
+
+  for (const scope of scopes) {
+    const scalar = extractSingleScalarDetail(scope)
+    if (scalar) {
+      return scalar
+    }
+  }
+
+  return undefined
+}
+
+function extractCommandDetail(value: Record<string, unknown>) {
+  return (
+    stringValue(value.command) ??
+    stringValue(value.cmd) ??
+    joinStringArray(value.argv) ??
+    joinStringArray(value.args)
+  )
+}
+
+function extractPathDetail(value: Record<string, unknown>) {
+  return (
+    stringValue(value.file_path) ??
+    stringValue(value.filePath) ??
+    stringValue(value.path) ??
+    stringValue(value.file) ??
+    stringValue(value.filename) ??
+    stringValue(value.target_file) ??
+    stringValue(value.targetFile)
+  )
+}
+
+function extractSearchDetail(value: Record<string, unknown>) {
+  const pattern =
+    stringValue(value.pattern) ??
+    stringValue(value.query) ??
+    stringValue(value.search) ??
+    stringValue(value.regex)
+  const path = extractPathDetail(value)
+
+  if (pattern && path) {
+    return `${path}; pattern=${pattern}`
+  }
+
+  return pattern
+}
+
+function extractSingleScalarDetail(value: Record<string, unknown>) {
+  const supportedEntries = Object.entries(value).filter(
+    ([, entry]) => typeof entry === 'string' || Array.isArray(entry),
+  )
+  if (supportedEntries.length !== 1) {
+    return undefined
+  }
+
+  const firstEntry = supportedEntries[0]
+  if (!firstEntry) {
+    return undefined
+  }
+
+  const [key, entry] = firstEntry
+  const normalized =
+    typeof entry === 'string' ? entry : Array.isArray(entry) ? joinStringArray(entry) : undefined
+  return normalized ? `${key}=${normalized}` : undefined
+}
+
 function extractText(value: unknown): string | undefined {
   if (typeof value === 'string') {
     return compactSummary(value)
@@ -402,4 +506,15 @@ function arrayValue(value: unknown) {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+function joinStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const items = value.filter(
+    (item): item is string => typeof item === 'string' && item.trim().length > 0,
+  )
+  return items.length > 0 ? items.join(' ') : undefined
 }

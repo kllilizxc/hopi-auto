@@ -1,6 +1,6 @@
 # HOPI Agent Handoff
 
-Status date: 2026-06-01
+Status date: 2026-06-02
 
 This document is the handoff entry point for an agent with no prior chat context.
 
@@ -58,6 +58,7 @@ Phase 1 backend is complete:
 - Decision `resolve`, `answer`, and `answers` Bun API routes now also return the full shared runtime result, so callers can observe `blockerRemoved`, creation metadata, full `followThrough`, and any runtime-generated `W-*` workflow key instead of losing that authority behind decision-only response bodies.
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
+- Normalized tool-call transcript summaries now also capture stable target detail such as shell commands and file paths when vendor payloads expose them, so run detail and reviewer/merger evidence can show what a tool invocation actually touched without introducing a second tool-log store.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -122,6 +123,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-decision-api-follow-through-result-design.md`: current authority note for surfacing full shared decision-runtime results, including generated workflow keys, on Bun decision answer/resolve APIs.
 - `docs/superpowers/specs/2026-06-01-assistant-decision-follow-through-result-design.md`: current authority note for surfacing the same shared decision-runtime follow-through structure on assistant action results, persisted run detail, and Bun UI run inspection.
 - `docs/superpowers/specs/2026-06-02-transcript-tool-correlation-design.md`: current authority note for persisting stable tool invocation keys on normalized transcript events and correlating tool call/result evidence across run detail and reviewer/merger context.
+- `docs/superpowers/specs/2026-06-02-transcript-tool-target-detail-design.md`: current authority note for extracting stable shell-command and file-target detail from normalized tool-call transcript events so review/merge evidence can show what a correlated invocation actually did.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -569,7 +571,7 @@ Current non-UI Goal assistant substrate:
 - durable workflow-root shared-context persistence that lets both direct and answer-driven workflow graphs extend one `workflowKey` later without restating the same shared decision lineage or captured answers
 - decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - assistant decision action-result surfacing that returns the same shared runtime follow-through structure, including generated workflow keys, instead of flattening decision follow-through into lossy summary arrays
-- transcript tool-correlation evidence that persists stable tool invocation keys and lets reviewer/merger context see real tool interactions instead of only flat transcript summaries
+- transcript tool-correlation evidence that persists stable tool invocation keys and stable tool target details, letting reviewer/merger context see real tool interactions instead of only flat transcript summaries
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -584,7 +586,6 @@ What is still missing:
 
 - deeper answer interpretation when assistant should infer how to split less-structured user replies between durable decision topics and non-decision planner inputs without manually explicit action payloads
 - deeper preference policy than the current deduplicated bullet recorder when that becomes product-relevant
-- deeper vendor transcript/tool-result correlation only where it improves deterministic review/merge behavior
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -595,7 +596,6 @@ Next high-leverage phase:
 1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, grouped-surface reuse for the first child in direct and decision-backed workflow graphs, generated durable `W-*` identity for workflow graphs that omit explicit `workflowKey`, cross-workflow blocker propagation when that reused surface was already blocking engineering, stable `workflowTaskKey`-backed reuse for standalone direct-workflow children, stable `blockedByWorkflowKeys`-backed child dependencies across direct workflow tails, workflow-root shared decision/answer context for direct workflow graphs, workflow-root shared non-decision answers for decision-backed workflow graphs, durable workflow-root shared-context persistence across later `workflowKey` extensions, and shared workflow-graph authority across both direct-planning and decision-backed multi-workflow follow-through.
 2. Explore deeper answer interpretation only if product needs assistant to infer how less-structured replies should split between durable decision topics and non-decision planner inputs without manually explicit action payloads.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
-4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.
 
 Keep this out of the next phase unless explicitly requested:
 

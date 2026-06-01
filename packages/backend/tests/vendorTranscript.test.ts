@@ -29,6 +29,7 @@ describe('normalizeProcessOutputLine', () => {
             type: 'local_shell_call',
             tool_name: 'Bash',
             call_id: 'shell-1',
+            command: 'bun test packages/backend/tests/server.test.ts',
           },
         },
       }),
@@ -66,7 +67,7 @@ describe('normalizeProcessOutputLine', () => {
         entryKind: 'tool_call',
         toolName: 'Bash',
         toolInvocationKey: 'shell-1',
-        summary: 'Tool call: Bash',
+        summary: 'Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
         vendorEventType: 'item/completed',
       },
     ])
@@ -132,7 +133,7 @@ describe('normalizeProcessOutputLine', () => {
         entryKind: 'tool_call',
         toolName: 'Read',
         toolInvocationKey: 'toolu_1',
-        summary: 'Tool call: Read',
+        summary: 'Tool call: Read (src/server.ts)',
         vendorEventType: 'assistant',
       },
     ])
@@ -167,6 +168,7 @@ describe('normalizeProcessOutputLine', () => {
         type: 'tool_use',
         name: 'edit',
         callId: 'edit-1',
+        input: { filePath: 'src/modal.tsx' },
       }),
     })
     const toolResult = normalizeProcessOutputLine({
@@ -197,7 +199,7 @@ describe('normalizeProcessOutputLine', () => {
         entryKind: 'tool_call',
         toolName: 'edit',
         toolInvocationKey: 'edit-1',
-        summary: 'Tool call: edit',
+        summary: 'Tool call: edit (src/modal.tsx)',
         vendorEventType: 'tool_use',
       },
     ])

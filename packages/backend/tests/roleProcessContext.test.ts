@@ -410,7 +410,7 @@ requests:
         kind: 'transcript',
         transport: 'codex',
         entryKind: 'tool_call',
-        summary: 'Tool call: Bash',
+        summary: 'Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
         toolName: 'Bash',
         toolInvocationKey: 'shell-1',
       },
@@ -477,7 +477,9 @@ requests:
     expect(context).toContain('generator | success')
     expect(context).toContain('patch:T-6')
     expect(context).toContain('Generated patch')
-    expect(context).toContain('Bash [shell-1] -> Command completed successfully.')
+    expect(context).toContain(
+      'Tool call: Bash (bun test packages/backend/tests/server.test.ts) [shell-1] -> Command completed successfully.',
+    )
     expect(prompt).toContain(
       'Correlate artifact refs and prior run history with the claimed work before accepting.',
     )

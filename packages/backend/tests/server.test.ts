@@ -5230,7 +5230,14 @@ console.log(JSON.stringify({
 }))
 console.log(JSON.stringify({
   method: 'item/completed',
-  params: { item: { type: 'local_shell_call', tool_name: 'Bash', call_id: 'shell-1' } },
+  params: {
+    item: {
+      type: 'local_shell_call',
+      tool_name: 'Bash',
+      call_id: 'shell-1',
+      command: 'bun test packages/backend/tests/server.test.ts',
+    },
+  },
 }))
 console.log(JSON.stringify({
   method: 'item/completed',
@@ -5307,7 +5314,7 @@ await Bun.write(
               kind: 'tool_call',
               toolName: 'Bash',
               toolInvocationKey: 'shell-1',
-              summary: 'Tool call: Bash',
+              summary: 'Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
               vendorEventType: 'item/completed',
             },
             {

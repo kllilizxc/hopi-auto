@@ -763,7 +763,7 @@ function summarizeTranscriptEvidence(
       continue
     }
 
-    const toolLabel = interaction.toolName ?? interaction.callSummary ?? 'Tool interaction'
+    const toolLabel = interaction.callSummary ?? interaction.toolName ?? 'Tool interaction'
     if (interaction.resultSummaries.length > 0) {
       summaries.push(`${toolLabel} [${key}] -> ${interaction.resultSummaries.join(' / ')}`)
       continue
