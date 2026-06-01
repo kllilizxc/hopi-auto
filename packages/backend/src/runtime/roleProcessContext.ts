@@ -51,6 +51,7 @@ interface PlannerContextInputs {
   planningRequestsContent: string
   relevantPlanningRequests: Array<{
     requestKey: string
+    workflowKey?: string
     groupKey?: string
     groupTaskKey?: string
     title: string
@@ -421,6 +422,7 @@ async function loadPlannerContextInputs(
     .filter((request) => request.status === 'open' && request.taskRef === taskRef)
     .map((request) => ({
       requestKey: request.requestKey,
+      workflowKey: request.workflowKey,
       groupKey: request.groupKey,
       groupTaskKey: request.groupTaskKey,
       title: request.title,
@@ -541,6 +543,7 @@ ${requests
   .map((request) =>
     [
       `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
+      request.workflowKey ? `  Workflow key: ${request.workflowKey}` : null,
       request.groupKey ? `  Planning group: ${request.groupKey}` : null,
       request.groupTaskKey ? `  Grouped task key: ${request.groupTaskKey}` : null,
       request.decisionRefs.length > 0

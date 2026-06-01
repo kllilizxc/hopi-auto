@@ -117,6 +117,7 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
 ])
 
 const createPlanningWorkflowBatchSchema = z.object({
+  workflowKey: z.string().min(1).optional(),
   reuseTaskRef: z.string().min(1).optional(),
   workflows: z.array(planningWorkflowLeafSchema).min(1),
 })
@@ -447,6 +448,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
+              workflowKey: body.workflowKey,
               reuseTaskRef: body.reuseTaskRef,
               workflows: body.workflows,
               writer: 'api',

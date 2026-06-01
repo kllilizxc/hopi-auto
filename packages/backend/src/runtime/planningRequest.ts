@@ -10,6 +10,7 @@ import type {
 export interface GoalPlanningRequestInput {
   goalKey: string
   requestKey?: string
+  workflowKey?: string
   groupKey?: string
   groupTaskKey?: string
   title: string
@@ -103,6 +104,7 @@ export type GoalPlanningWorkflowLeafResult =
 
 export interface GoalPlanningWorkflowsResult {
   kind: 'workflow_batch'
+  workflowKey?: string
   workflows: GoalPlanningWorkflowLeafResult[]
   groupKeys: string[]
   requestKeys: string[]
@@ -167,6 +169,7 @@ async function requestGoalPlanningInternal(
       input.goalKey,
       existingByKey.requestKey,
       {
+        workflowKey: input.workflowKey,
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
@@ -199,6 +202,7 @@ async function requestGoalPlanningInternal(
       input.goalKey,
       existingByGroupTaskKey.requestKey,
       {
+        workflowKey: input.workflowKey,
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
@@ -224,6 +228,7 @@ async function requestGoalPlanningInternal(
       input.goalKey,
       existingOpen.requestKey,
       {
+        workflowKey: input.workflowKey,
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
@@ -300,6 +305,7 @@ async function requestGoalPlanningInternal(
 
   const request = await stores.planningRequests.createRequest(input.goalKey, {
     requestKey: input.requestKey,
+    workflowKey: input.workflowKey,
     groupKey: input.groupKey,
     groupTaskKey: input.groupTaskKey,
     title: input.title,
@@ -348,6 +354,7 @@ async function updateExistingPlanningRequest(
   )
 
   return stores.planningRequests.updateRequest(input.goalKey, request.requestKey, {
+    workflowKey: input.workflowKey,
     groupKey: input.groupKey,
     groupTaskKey: input.groupTaskKey,
     title: input.title,
@@ -366,6 +373,7 @@ export async function requestGoalPlanningBatch(
   },
   input: {
     goalKey: string
+    workflowKey?: string
     groupKey: string
     decisionRefs?: string[]
     answers?: GoalPlanningRequestAnswer[]
@@ -384,6 +392,7 @@ export async function requestGoalPlanningBatch(
       stores,
       {
         goalKey: input.goalKey,
+        workflowKey: input.workflowKey,
         requestKey: request.requestKey,
         groupKey: input.groupKey,
         groupTaskKey: request.taskKey,
@@ -475,6 +484,7 @@ export async function requestGoalPlanningWorkflows(
   },
   input: {
     goalKey: string
+    workflowKey?: string
     reuseTaskRef?: string
     workflows: GoalPlanningWorkflowLeafInput[]
     writer?: string
@@ -488,6 +498,7 @@ export async function requestGoalPlanningWorkflows(
     if (workflow.kind === 'planning_batch') {
       const result = await requestGoalPlanningBatch(stores, {
         goalKey: input.goalKey,
+        workflowKey: input.workflowKey,
         groupKey: workflow.groupKey,
         decisionRefs: workflow.decisionRefs,
         answers: workflow.answers,
@@ -523,6 +534,7 @@ export async function requestGoalPlanningWorkflows(
 
     const result = await requestGoalPlanning(stores, {
       goalKey: input.goalKey,
+      workflowKey: input.workflowKey,
       requestKey: workflow.requestKey,
       groupKey: workflow.groupKey,
       title: workflow.title,
@@ -554,8 +566,35 @@ export async function requestGoalPlanningWorkflows(
     currentReusablePlanningTaskRef = undefined
   }
 
+  const createdRequestKeys = uniqueStringValues(
+    workflows.flatMap((workflow) => workflow.createdRequestKeys),
+  )
+  const createdTaskRefs = uniqueStringValues(
+    workflows.flatMap((workflow) => workflow.createdTaskRefs),
+  )
+
+  if (input.workflowKey) {
+    await syncWorkflowPlanningEngineeringBlockersForWorkflow(stores, {
+      goalKey: input.goalKey,
+      workflowKey: input.workflowKey,
+      writer: input.writer,
+      reason: input.reason,
+    })
+
+    const current = await describeOpenPlanningWorkflowState(stores, {
+      goalKey: input.goalKey,
+      workflowKey: input.workflowKey,
+    })
+    return {
+      ...current,
+      createdRequestKeys,
+      createdTaskRefs,
+    }
+  }
+
   const result: GoalPlanningWorkflowsResult = {
     kind: 'workflow_batch',
+    workflowKey: undefined,
     workflows,
     groupKeys: uniqueStringValues(
       workflows.flatMap((workflow) =>
@@ -569,10 +608,8 @@ export async function requestGoalPlanningWorkflows(
     requestKeys: uniqueStringValues(workflows.flatMap((workflow) => workflow.requestKeys)),
     taskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.taskRefs)),
     blockerTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.blockerTaskRefs)),
-    createdRequestKeys: uniqueStringValues(
-      workflows.flatMap((workflow) => workflow.createdRequestKeys),
-    ),
-    createdTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.createdTaskRefs)),
+    createdRequestKeys,
+    createdTaskRefs,
   }
 
   if (input.reuseTaskRef) {
@@ -1031,6 +1068,159 @@ async function syncPlanningWorkflowEngineeringBlockers(
   )
 
   return true
+}
+
+async function syncWorkflowPlanningEngineeringBlockersForWorkflow(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflowKey: string
+    writer?: string
+    reason?: string
+  },
+) {
+  const current = await describeOpenPlanningWorkflowState(stores, {
+    goalKey: input.goalKey,
+    workflowKey: input.workflowKey,
+  })
+  if (current.taskRefs.length === 0 || current.blockerTaskRefs.length === 0) {
+    return false
+  }
+
+  const workflowTaskRefSet = new Set(current.taskRefs)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  const nextBlockedByByTaskRef = new Map<string, BlockerRef[]>()
+
+  for (const task of board.items) {
+    if (
+      task.kind !== 'engineering' ||
+      !task.blockedBy.some(
+        (blocker) => blocker.kind === 'task' && workflowTaskRefSet.has(blocker.ref),
+      )
+    ) {
+      continue
+    }
+
+    const nextBlockedBy = task.blockedBy.filter(
+      (blocker) => !(blocker.kind === 'task' && workflowTaskRefSet.has(blocker.ref)),
+    )
+    for (const blockerTaskRef of current.blockerTaskRefs) {
+      if (
+        !nextBlockedBy.some(
+          (existing) => existing.kind === 'task' && existing.ref === blockerTaskRef,
+        )
+      ) {
+        nextBlockedBy.push({
+          kind: 'task',
+          ref: blockerTaskRef,
+        })
+      }
+    }
+
+    if (!sameBlockerList(task.blockedBy, nextBlockedBy)) {
+      nextBlockedByByTaskRef.set(task.ref, nextBlockedBy)
+    }
+  }
+
+  if (nextBlockedByByTaskRef.size === 0) {
+    return false
+  }
+
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'planning_request',
+    input.reason ?? `sync workflow planning blockers ${input.workflowKey}`,
+    (nextBoard) => {
+      for (const task of nextBoard.items) {
+        const nextBlockedBy = nextBlockedByByTaskRef.get(task.ref)
+        if (nextBlockedBy) {
+          task.blockedBy = [...nextBlockedBy]
+        }
+      }
+    },
+  )
+
+  return true
+}
+
+async function describeOpenPlanningWorkflowState(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflowKey: string
+  },
+): Promise<GoalPlanningWorkflowsResult> {
+  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  const taskByRef = new Map(board.items.map((task) => [task.ref, task]))
+  const openRequests = requestSet.requests.filter((request) => {
+    const task = taskByRef.get(request.taskRef)
+    return (
+      request.status === 'open' &&
+      request.workflowKey === input.workflowKey &&
+      task?.status !== 'done'
+    )
+  })
+  const workflows: GoalPlanningWorkflowLeafResult[] = []
+  const seenGroupedChildren = new Set<string>()
+
+  for (const request of openRequests) {
+    if (request.groupKey && request.groupTaskKey) {
+      if (seenGroupedChildren.has(request.groupKey)) {
+        continue
+      }
+      const groupedRequests = openRequests.filter(
+        (entry) => entry.groupKey === request.groupKey && entry.groupTaskKey,
+      )
+      workflows.push({
+        kind: 'planning_batch',
+        groupKey: request.groupKey,
+        requestKeys: groupedRequests.map((entry) => entry.requestKey),
+        taskRefs: groupedRequests.map((entry) => entry.taskRef),
+        blockerTaskRefs: findOpenGroupedPlanningSinkTaskRefs(groupedRequests, board.items),
+        createdRequestKeys: [],
+        createdTaskRefs: [],
+      })
+      seenGroupedChildren.add(request.groupKey)
+      continue
+    }
+
+    workflows.push({
+      kind: 'planning',
+      groupKey: request.groupKey,
+      requestKeys: [request.requestKey],
+      taskRefs: [request.taskRef],
+      blockerTaskRefs: [request.taskRef],
+      createdRequestKeys: [],
+      createdTaskRefs: [],
+    })
+  }
+
+  return {
+    kind: 'workflow_batch',
+    workflowKey: input.workflowKey,
+    workflows,
+    groupKeys: uniqueStringValues(
+      workflows.flatMap((workflow) =>
+        workflow.kind === 'planning_batch'
+          ? [workflow.groupKey]
+          : workflow.groupKey
+            ? [workflow.groupKey]
+            : [],
+      ),
+    ),
+    requestKeys: uniqueStringValues(workflows.flatMap((workflow) => workflow.requestKeys)),
+    taskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.taskRefs)),
+    blockerTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.blockerTaskRefs)),
+    createdRequestKeys: [],
+    createdTaskRefs: [],
+  }
 }
 
 function findOpenGroupedPlanningSinkTaskRefs(

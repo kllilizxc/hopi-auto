@@ -47,6 +47,7 @@ interface GoalDecision {
 
 interface GoalPlanningRequest {
   requestKey: string
+  workflowKey?: string
   groupKey?: string
   groupTaskKey?: string
   title: string
@@ -226,6 +227,7 @@ interface AssistantAction {
     requestedUpdates?: string[]
     blockedByTaskKeys?: string[]
   }>
+  workflowKey?: string
   followThrough?: unknown
   decisionKey?: string
   decisionKeys?: string[]
@@ -259,6 +261,7 @@ interface AssistantActionResult {
   taskRefs?: string[]
   requestKeys?: string[]
   groupKeys?: string[]
+  workflowKey?: string
   blockerTaskRefs?: string[]
   followThroughGroupKeys?: string[]
   groupKey?: string
@@ -1509,6 +1512,11 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       ${
         request.groupKey
           ? `<div class="assistant-summary">Planning group: ${escapeHtml(request.groupKey)}</div>`
+          : ''
+      }
+      ${
+        request.workflowKey
+          ? `<div class="assistant-summary">Workflow key: ${escapeHtml(request.workflowKey)}</div>`
           : ''
       }
       ${

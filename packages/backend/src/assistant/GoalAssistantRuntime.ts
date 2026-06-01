@@ -305,6 +305,7 @@ async function applyAssistantAction(
       },
       {
         goalKey,
+        workflowKey: action.workflowKey,
         reuseTaskRef: action.reuseTaskRef,
         workflows: action.workflows,
         writer: 'assistant',
@@ -314,11 +315,14 @@ async function applyAssistantAction(
 
     return {
       kind: 'request_planning_workflows',
+      workflowKey: result.workflowKey,
       groupKeys: result.groupKeys,
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
       blockerTaskRefs: result.blockerTaskRefs,
-      summary: `Requested ${result.workflows.length} independent planning workflows across ${result.taskRefs.join(', ')}.`,
+      summary: result.workflowKey
+        ? `Updated planning workflow ${result.workflowKey} across ${result.taskRefs.join(', ')}.`
+        : `Requested planning workflows across ${result.taskRefs.join(', ')}.`,
     }
   }
 
@@ -556,7 +560,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
     return `Request grouped planning: ${action.groupKey}`
   }
   if (action.kind === 'request_planning_workflows') {
-    return `Request ${action.workflows.length} independent planning workflows.`
+    return action.workflowKey
+      ? `Update planning workflow ${action.workflowKey}.`
+      : `Request ${action.workflows.length} independent planning workflows.`
   }
   if (action.kind === 'request_decision') {
     return `Request decision ${action.decisionKey}.`
