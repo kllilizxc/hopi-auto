@@ -10,6 +10,11 @@ import {
 } from './assistant/GoalAssistantRuntime'
 import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
+import {
+  AnswerInterpretationError,
+  materializeInterpretedDecisionAnswers,
+  materializeInterpretedDecisionFollowThrough,
+} from './runtime/answerInterpretation'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
 import {
@@ -124,12 +129,28 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
+const interpretablePlanningAnswerArraySchema = z
+  .array(
+    z.object({
+      summary: z.string().min(1),
+      answer: z.string().min(1).optional(),
+    }),
+  )
+  .default([])
+
 const createPlanningWorkflowBatchSchema = z.object({
   workflowKey: z.string().min(1).optional(),
   reuseTaskRef: z.string().min(1).optional(),
   reuseGroupKey: z.string().min(1).optional(),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  answers: goalPlanningRequestAnswerArraySchema,
+  answers: z
+    .array(
+      z.object({
+        summary: z.string().min(1),
+        answer: z.string().min(1),
+      }),
+    )
+    .default([]),
   workflows: z.array(planningWorkflowLeafSchema).min(1),
 })
 
@@ -139,13 +160,13 @@ const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   }),
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(planningBatchEntrySchema).min(1),
   }),
 ])
@@ -158,14 +179,14 @@ const resolveDecisionWorkflowLeafFollowThroughSchema = z.discriminatedUnion('kin
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   }),
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(planningBatchEntrySchema).default([]),
   }),
 ])
@@ -175,13 +196,14 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('workflow_batch'),
     workflowKey: z.string().min(1).optional(),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     workflows: z.array(resolveDecisionWorkflowLeafFollowThroughSchema).min(1),
   }),
 ])
 
 const resolveDecisionSchema = z.object({
-  answer: z.string().min(1),
+  answer: z.string().min(1).optional(),
+  sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
 
@@ -189,7 +211,8 @@ const answerDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
-  answer: z.string().min(1),
+  answer: z.string().min(1).optional(),
+  sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
 
@@ -197,10 +220,11 @@ const answerDecisionBatchEntrySchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
-  answer: z.string().min(1),
+  answer: z.string().min(1).optional(),
 })
 
 const answerDecisionBatchSchema = z.object({
+  sourceResponse: z.string().min(1).optional(),
   answers: z.array(answerDecisionBatchEntrySchema).min(1),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -388,6 +412,21 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionSchema)
+          const answers = materializeInterpretedDecisionAnswers(
+            [
+              {
+                summary: body.summary,
+                decisionKey: body.decisionKey,
+                taskRef: body.taskRef,
+                answer: body.answer,
+              },
+            ],
+            body.sourceResponse,
+          )
+          const firstAnswer = answers[0]
+          if (!firstAnswer) {
+            throw new HttpError(400, 'Expected one decision answer.')
+          }
           const result = await answerGoalDecision(
             {
               boardStore: store,
@@ -396,11 +435,14 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
-              decisionKey: body.decisionKey,
-              summary: body.summary,
-              taskRef: body.taskRef,
-              answer: body.answer,
-              followThrough: body.followThrough,
+              decisionKey: firstAnswer.decisionKey,
+              summary: firstAnswer.summary,
+              taskRef: firstAnswer.taskRef,
+              answer: firstAnswer.answer,
+              followThrough: materializeInterpretedDecisionFollowThrough(
+                body.followThrough,
+                body.sourceResponse,
+              ),
               writer: 'api',
               reason: `api record answer ${body.decisionKey ?? body.summary}`,
             },
@@ -431,8 +473,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
-              answers: body.answers,
-              followThrough: body.followThrough,
+              answers: materializeInterpretedDecisionAnswers(body.answers, body.sourceResponse),
+              followThrough: materializeInterpretedDecisionFollowThrough(
+                body.followThrough,
+                body.sourceResponse,
+              ),
               writer: 'api',
               reason: `api record answers ${body.answers
                 .map((answer) => answer.decisionKey ?? answer.summary)
@@ -471,8 +516,18 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               decisionKey,
-              answer: body.answer,
-              followThrough: body.followThrough,
+              answer:
+                body.answer?.trim() ||
+                body.sourceResponse?.trim() ||
+                (() => {
+                  throw new AnswerInterpretationError(
+                    `Missing answer text for decision ${decisionKey}. Provide answer or sourceResponse.`,
+                  )
+                })(),
+              followThrough: materializeInterpretedDecisionFollowThrough(
+                body.followThrough,
+                body.sourceResponse,
+              ),
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,
             },
@@ -757,6 +812,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         }
         if (error instanceof GoalAssistantNotConfiguredError) {
           return jsonResponse({ error: error.message }, 409)
+        }
+        if (error instanceof AnswerInterpretationError) {
+          return jsonResponse({ error: error.message }, 400)
         }
         if (error instanceof PreferenceStoreError) {
           return jsonResponse({ error: error.message }, 400)

@@ -7,6 +7,11 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
+  AnswerInterpretationError,
+  materializeInterpretedDecisionAnswers,
+  materializeInterpretedDecisionFollowThrough,
+} from '../runtime/answerInterpretation'
+import {
   type AssistantThreadStore,
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
@@ -367,6 +372,14 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'resolve_decision') {
+    const materializedAnswer =
+      action.answer?.trim() ||
+      action.sourceResponse?.trim() ||
+      (() => {
+        throw new AnswerInterpretationError(
+          `Missing answer text for decision ${action.decisionKey}. Provide answer or sourceResponse.`,
+        )
+      })()
     const result = await answerGoalDecision(
       {
         boardStore: stores.boardStore,
@@ -378,8 +391,11 @@ async function applyAssistantAction(
         summary: action.summary ?? `Decision: ${action.decisionKey}`,
         decisionKey: action.decisionKey,
         taskRef: action.taskRef,
-        answer: action.answer,
-        followThrough: action.followThrough,
+        answer: materializedAnswer,
+        followThrough: materializeInterpretedDecisionFollowThrough(
+          action.followThrough,
+          action.sourceResponse,
+        ),
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
       },
@@ -394,6 +410,21 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answer') {
+    const materializedAnswers = materializeInterpretedDecisionAnswers(
+      [
+        {
+          summary: action.summary,
+          decisionKey: action.decisionKey,
+          taskRef: action.taskRef,
+          answer: action.answer,
+        },
+      ],
+      action.sourceResponse,
+    )
+    const firstAnswer = materializedAnswers[0]
+    if (!firstAnswer) {
+      throw new Error('Expected one materialized answer.')
+    }
     const result = await answerGoalDecision(
       {
         boardStore: stores.boardStore,
@@ -402,11 +433,14 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        summary: action.summary,
-        decisionKey: action.decisionKey,
-        taskRef: action.taskRef,
-        answer: action.answer,
-        followThrough: action.followThrough,
+        summary: firstAnswer.summary,
+        decisionKey: firstAnswer.decisionKey,
+        taskRef: firstAnswer.taskRef,
+        answer: firstAnswer.answer,
+        followThrough: materializeInterpretedDecisionFollowThrough(
+          action.followThrough,
+          action.sourceResponse,
+        ),
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
       },
@@ -430,8 +464,11 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        answers: action.answers,
-        followThrough: action.followThrough,
+        answers: materializeInterpretedDecisionAnswers(action.answers, action.sourceResponse),
+        followThrough: materializeInterpretedDecisionFollowThrough(
+          action.followThrough,
+          action.sourceResponse,
+        ),
         writer: 'assistant',
         reason: `assistant record answers ${action.answers
           .map((answer) => answer.decisionKey ?? answer.summary)

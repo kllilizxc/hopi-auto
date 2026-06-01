@@ -251,8 +251,9 @@ interface AssistantAction {
     summary: string
     decisionKey?: string
     taskRef?: string
-    answer: string
+    answer?: string
   }>
+  sourceResponse?: string
   summary?: string
   answer?: string
   content?: string

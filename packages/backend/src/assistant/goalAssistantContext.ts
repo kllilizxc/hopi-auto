@@ -319,6 +319,7 @@ Required outcome shape:
       "decisionKey": "optional stable decision key to reuse",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
+      "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "workflow_batch",
         "workflowKey": "optional stable top-level workflow key for later extension",
@@ -378,6 +379,7 @@ Required outcome shape:
     },
     {
       "kind": "record_answers",
+      "sourceResponse": "optional less-structured raw user reply to reuse across more than one decision topic and any followThrough answers",
       "answers": [
         {
           "summary": "first durable decision topic",
@@ -426,6 +428,7 @@ Required outcome shape:
       "summary": "required if the decision topic does not already exist",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
+      "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "planning_batch",
         "groupKey": "stable-group-key",
@@ -498,6 +501,7 @@ Rules:
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
+- When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.

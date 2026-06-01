@@ -57,6 +57,7 @@ Phase 1 backend is complete:
 - Higher-order workflow graphs now also get a generated durable top-level `W-*` identity by default when callers omit `workflowKey`, so direct and decision-backed `workflow_batch` flows inherit extension authority, blocker tracking, and shared-context persistence without requiring hand-crafted workflow keys.
 - Decision `resolve`, `answer`, and `answers` Bun API routes now also return the full shared runtime result, so callers can observe `blockerRemoved`, creation metadata, full `followThrough`, and any runtime-generated `W-*` workflow key instead of losing that authority behind decision-only response bodies.
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
+- Answer-driven assistant and Bun API actions now also support one shared `sourceResponse`, so a less-structured raw user reply can be captured once and reused across multiple durable decision topics plus non-decision follow-through answers instead of repeating the same answer payload in every entry.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
 - Normalized tool-call transcript summaries now also capture stable target detail such as shell commands and file paths when vendor payloads expose them, so run detail and reviewer/merger evidence can show what a tool invocation actually touched without introducing a second tool-log store.
 - Durable repo preferences now also use one canonical structured `.hopi/preference.md` document with stable `preferenceKey`, active or retired lifecycle state, optional rationale, structured record/retire APIs, and assistant preference actions that no longer rely on append-only deduplicated bullet guidance.
@@ -92,6 +93,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`: current authority note for exact assistant bundle inspection on the Bun product path.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-02-structured-preference-lifecycle-design.md`: current authority note for canonical structured repo preferences with stable keys, active/retired lifecycle, and assistant/API preference mutations.
+- `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
@@ -588,7 +590,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer how to split less-structured user replies between durable decision topics and non-decision planner inputs without manually explicit action payloads
+- deeper answer interpretation when assistant should infer topic-specific extracted answers from one less-structured reply without even manually enumerating every durable decision topic or planner-answer summary in the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -597,7 +599,7 @@ What is still missing:
 Next high-leverage phase:
 
 1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, grouped-surface reuse for the first child in direct and decision-backed workflow graphs, generated durable `W-*` identity for workflow graphs that omit explicit `workflowKey`, cross-workflow blocker propagation when that reused surface was already blocking engineering, stable `workflowTaskKey`-backed reuse for standalone direct-workflow children, stable `blockedByWorkflowKeys`-backed child dependencies across direct workflow tails, workflow-root shared decision/answer context for direct workflow graphs, workflow-root shared non-decision answers for decision-backed workflow graphs, durable workflow-root shared-context persistence across later `workflowKey` extensions, and shared workflow-graph authority across both direct-planning and decision-backed multi-workflow follow-through.
-2. Explore deeper answer interpretation only if product needs assistant to infer how less-structured replies should split between durable decision topics and non-decision planner inputs without manually explicit action payloads.
+2. Explore deeper answer interpretation only if product needs assistant to infer topic-specific extracted answers from one less-structured reply without manually enumerating every durable decision topic or planner-answer summary in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 
