@@ -26,6 +26,8 @@ export interface GoalPlanningRequest {
   requestKey: string
   workflowKey?: string
   workflowTaskKey?: string
+  workflowSharedDecisionRefs: string[]
+  workflowSharedAnswers: GoalPlanningRequestAnswer[]
   blockedByWorkflowKeys: string[]
   groupKey?: string
   groupTaskKey?: string
@@ -57,6 +59,8 @@ export interface PlanningRequestStore {
       requestKey?: string
       workflowKey?: string
       workflowTaskKey?: string
+      workflowSharedDecisionRefs?: string[]
+      workflowSharedAnswers?: GoalPlanningRequestAnswer[]
       blockedByWorkflowKeys?: string[]
       groupKey?: string
       groupTaskKey?: string
@@ -75,6 +79,8 @@ export interface PlanningRequestStore {
     input: {
       workflowKey?: string
       workflowTaskKey?: string
+      workflowSharedDecisionRefs?: string[]
+      workflowSharedAnswers?: GoalPlanningRequestAnswer[]
       blockedByWorkflowKeys?: string[]
       groupKey?: string
       groupTaskKey?: string
@@ -89,6 +95,8 @@ export interface PlanningRequestStore {
     input: {
       workflowKey?: string
       workflowTaskKey?: string
+      workflowSharedDecisionRefs?: string[]
+      workflowSharedAnswers?: GoalPlanningRequestAnswer[]
       blockedByWorkflowKeys?: string[]
       groupKey?: string
       groupTaskKey?: string
@@ -105,6 +113,14 @@ export interface PlanningRequestStore {
     requestKey: string,
     input: { resolution: string },
   ): Promise<GoalPlanningRequest>
+  syncWorkflowSharedContext(
+    goalKey: string,
+    workflowKey: string,
+    input: {
+      workflowSharedDecisionRefs?: string[]
+      workflowSharedAnswers?: GoalPlanningRequestAnswer[]
+    },
+  ): Promise<GoalPlanningRequest[]>
 }
 
 export function normalizeGoalPlanningRequestUpdateTarget(
@@ -175,6 +191,8 @@ const GoalPlanningRequestSchema = z.object({
   requestKey: z.string().min(1),
   workflowKey: z.string().min(1).optional(),
   workflowTaskKey: z.string().min(1).optional(),
+  workflowSharedDecisionRefs: z.array(z.string().min(1)).default([]),
+  workflowSharedAnswers: goalPlanningRequestAnswerArraySchema,
   blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
   groupKey: z.string().min(1).optional(),
   groupTaskKey: z.string().min(1).optional(),
@@ -224,6 +242,11 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         }
         ensureGroupTaskKeyCoherence(input.groupKey, input.groupTaskKey)
         ensureWorkflowTaskKeyCoherence(input.workflowKey, input.workflowTaskKey)
+        ensureWorkflowSharedContextCoherence(
+          input.workflowKey,
+          input.workflowSharedDecisionRefs,
+          input.workflowSharedAnswers,
+        )
         ensureBlockedByWorkflowKeysCoherence(input.workflowKey, input.blockedByWorkflowKeys)
         ensureUniqueOpenGroupTaskKey(
           current.requests,
@@ -239,12 +262,20 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         )
         const requestedUpdates = normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates)
         const answers = normalizeGoalPlanningRequestAnswers(input.answers)
+        const workflowSharedDecisionRefs = normalizeWorkflowSharedDecisionRefs(
+          input.workflowSharedDecisionRefs,
+        )
+        const workflowSharedAnswers = normalizeGoalPlanningRequestAnswers(
+          input.workflowSharedAnswers,
+        )
         const blockedByWorkflowKeys = normalizeBlockedByWorkflowKeys(input.blockedByWorkflowKeys)
 
         const request: GoalPlanningRequest = {
           requestKey,
           workflowKey: input.workflowKey,
           workflowTaskKey: input.workflowTaskKey,
+          workflowSharedDecisionRefs,
+          workflowSharedAnswers,
           blockedByWorkflowKeys,
           groupKey: input.groupKey,
           groupTaskKey: input.groupTaskKey,
@@ -283,6 +314,14 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.blockedByWorkflowKeys,
           input.blockedByWorkflowKeys,
         )
+        const nextWorkflowSharedDecisionRefs = resolveWorkflowSharedDecisionRefs(
+          request.workflowSharedDecisionRefs,
+          input.workflowSharedDecisionRefs,
+        )
+        const nextWorkflowSharedAnswers = resolveWorkflowSharedAnswers(
+          request.workflowSharedAnswers,
+          input.workflowSharedAnswers,
+        )
         const nextWorkflowKey = resolveWorkflowKey(request.workflowKey, input.workflowKey)
         const nextWorkflowTaskKey = resolveWorkflowTaskKey(
           request.workflowTaskKey,
@@ -290,6 +329,11 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
+        ensureWorkflowSharedContextCoherence(
+          nextWorkflowKey,
+          nextWorkflowSharedDecisionRefs,
+          nextWorkflowSharedAnswers,
+        )
         ensureBlockedByWorkflowKeysCoherence(nextWorkflowKey, nextBlockedByWorkflowKeys)
         ensureWorkflowTaskKeyCoherence(nextWorkflowKey, nextWorkflowTaskKey)
         ensureGroupTaskKeyCoherence(nextGroupKey, nextGroupTaskKey)
@@ -308,6 +352,11 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const changed =
           nextWorkflowKey !== request.workflowKey ||
           nextWorkflowTaskKey !== request.workflowTaskKey ||
+          !sameStringArray(request.workflowSharedDecisionRefs, nextWorkflowSharedDecisionRefs) ||
+          !samePlanningRequestAnswerArray(
+            request.workflowSharedAnswers,
+            nextWorkflowSharedAnswers,
+          ) ||
           !sameStringArray(request.blockedByWorkflowKeys, nextBlockedByWorkflowKeys) ||
           nextGroupKey !== request.groupKey ||
           nextGroupTaskKey !== request.groupTaskKey ||
@@ -317,6 +366,8 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         if (changed) {
           request.workflowKey = nextWorkflowKey
           request.workflowTaskKey = nextWorkflowTaskKey
+          request.workflowSharedDecisionRefs = nextWorkflowSharedDecisionRefs
+          request.workflowSharedAnswers = nextWorkflowSharedAnswers
           request.blockedByWorkflowKeys = nextBlockedByWorkflowKeys
           request.groupKey = nextGroupKey
           request.groupTaskKey = nextGroupTaskKey
@@ -348,6 +399,14 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.blockedByWorkflowKeys,
           input.blockedByWorkflowKeys,
         )
+        const nextWorkflowSharedDecisionRefs = resolveWorkflowSharedDecisionRefs(
+          request.workflowSharedDecisionRefs,
+          input.workflowSharedDecisionRefs,
+        )
+        const nextWorkflowSharedAnswers = resolveWorkflowSharedAnswers(
+          request.workflowSharedAnswers,
+          input.workflowSharedAnswers,
+        )
         const nextWorkflowKey = resolveWorkflowKey(request.workflowKey, input.workflowKey)
         const nextWorkflowTaskKey = resolveWorkflowTaskKey(
           request.workflowTaskKey,
@@ -355,6 +414,11 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         )
         const nextGroupKey = resolveGroupKey(request.groupKey, input.groupKey)
         const nextGroupTaskKey = resolveGroupTaskKey(request.groupTaskKey, input.groupTaskKey)
+        ensureWorkflowSharedContextCoherence(
+          nextWorkflowKey,
+          nextWorkflowSharedDecisionRefs,
+          nextWorkflowSharedAnswers,
+        )
         ensureBlockedByWorkflowKeysCoherence(nextWorkflowKey, nextBlockedByWorkflowKeys)
         ensureWorkflowTaskKeyCoherence(nextWorkflowKey, nextWorkflowTaskKey)
         ensureGroupTaskKeyCoherence(nextGroupKey, nextGroupTaskKey)
@@ -373,6 +437,11 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const changed =
           nextWorkflowKey !== request.workflowKey ||
           nextWorkflowTaskKey !== request.workflowTaskKey ||
+          !sameStringArray(request.workflowSharedDecisionRefs, nextWorkflowSharedDecisionRefs) ||
+          !samePlanningRequestAnswerArray(
+            request.workflowSharedAnswers,
+            nextWorkflowSharedAnswers,
+          ) ||
           !sameStringArray(request.blockedByWorkflowKeys, nextBlockedByWorkflowKeys) ||
           nextGroupKey !== request.groupKey ||
           nextGroupTaskKey !== request.groupTaskKey ||
@@ -385,6 +454,8 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         if (changed) {
           request.workflowKey = nextWorkflowKey
           request.workflowTaskKey = nextWorkflowTaskKey
+          request.workflowSharedDecisionRefs = nextWorkflowSharedDecisionRefs
+          request.workflowSharedAnswers = nextWorkflowSharedAnswers
           request.blockedByWorkflowKeys = nextBlockedByWorkflowKeys
           request.groupKey = nextGroupKey
           request.groupTaskKey = nextGroupTaskKey
@@ -414,6 +485,64 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         request.resolvedAt = new Date().toISOString()
         await writePlanningRequestSet(planningRequestsPath, current)
         return request
+      })
+    },
+    async syncWorkflowSharedContext(goalKey, workflowKey, input) {
+      const planningRequestsPath = paths.planningRequestsPath(goalKey)
+      const lockPath = `${planningRequestsPath}.lock`
+      return withFileLock(lockPath, async () => {
+        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const nextWorkflowSharedDecisionRefs = normalizeWorkflowSharedDecisionRefs(
+          input.workflowSharedDecisionRefs,
+        )
+        const nextWorkflowSharedAnswers = normalizeGoalPlanningRequestAnswers(
+          input.workflowSharedAnswers,
+        )
+        let changed = false
+        const syncedRequests: GoalPlanningRequest[] = []
+
+        for (const request of current.requests) {
+          if (request.status !== 'open' || request.workflowKey !== workflowKey) {
+            continue
+          }
+
+          const localDecisionRefs = request.decisionRefs.filter(
+            (decisionRef) => !request.workflowSharedDecisionRefs.includes(decisionRef),
+          )
+          const localAnswers = removePlanningRequestAnswers(
+            request.answers,
+            request.workflowSharedAnswers,
+          )
+          const nextDecisionRefs = mergeUniqueValues(
+            nextWorkflowSharedDecisionRefs,
+            localDecisionRefs,
+          )
+          const nextAnswers = mergePlanningRequestAnswers(nextWorkflowSharedAnswers, localAnswers)
+
+          if (
+            !sameStringArray(request.workflowSharedDecisionRefs, nextWorkflowSharedDecisionRefs) ||
+            !samePlanningRequestAnswerArray(
+              request.workflowSharedAnswers,
+              nextWorkflowSharedAnswers,
+            ) ||
+            !sameStringArray(request.decisionRefs, nextDecisionRefs) ||
+            !samePlanningRequestAnswerArray(request.answers, nextAnswers)
+          ) {
+            request.workflowSharedDecisionRefs = nextWorkflowSharedDecisionRefs
+            request.workflowSharedAnswers = nextWorkflowSharedAnswers
+            request.decisionRefs = nextDecisionRefs
+            request.answers = nextAnswers
+            changed = true
+          }
+
+          syncedRequests.push(request)
+        }
+
+        if (changed) {
+          await writePlanningRequestSet(planningRequestsPath, current)
+        }
+
+        return syncedRequests
       })
     },
   }
@@ -492,6 +621,10 @@ function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[]
   return mergePlanningRequestAnswers([], values ?? [])
 }
 
+function normalizeWorkflowSharedDecisionRefs(values: string[] | undefined) {
+  return mergeUniqueValues([], values ?? [])
+}
+
 function normalizeBlockedByWorkflowKeys(values: string[] | undefined) {
   return mergeUniqueValues([], values ?? [])
 }
@@ -559,6 +692,23 @@ function resolveWorkflowTaskKey(existing: string | undefined, incoming: string |
   throw new Error(`Planning request workflow task mismatch: ${existing} != ${incoming}`)
 }
 
+function resolveWorkflowSharedDecisionRefs(existing: string[], incoming: string[] | undefined) {
+  if (incoming === undefined) {
+    return existing
+  }
+  return normalizeWorkflowSharedDecisionRefs(incoming)
+}
+
+function resolveWorkflowSharedAnswers(
+  existing: GoalPlanningRequestAnswer[],
+  incoming: GoalPlanningRequestAnswer[] | undefined,
+) {
+  if (incoming === undefined) {
+    return existing
+  }
+  return normalizeGoalPlanningRequestAnswers(incoming)
+}
+
 function resolveBlockedByWorkflowKeys(existing: string[], incoming: string[] | undefined) {
   if (incoming === undefined) {
     return existing
@@ -591,6 +741,19 @@ function ensureWorkflowTaskKeyCoherence(
 ) {
   if (workflowTaskKey && !workflowKey) {
     throw new Error('Planning request workflow task key requires a workflow key')
+  }
+}
+
+function ensureWorkflowSharedContextCoherence(
+  workflowKey: string | undefined,
+  workflowSharedDecisionRefs: string[] | undefined,
+  workflowSharedAnswers: GoalPlanningRequestAnswer[] | undefined,
+) {
+  if (
+    ((workflowSharedDecisionRefs?.length ?? 0) > 0 || (workflowSharedAnswers?.length ?? 0) > 0) &&
+    !workflowKey
+  ) {
+    throw new Error('Planning request workflow shared context requires a workflow key')
   }
 }
 
@@ -649,4 +812,12 @@ function ensureUniqueOpenGroupTaskKey(
       `Grouped planning request key conflict: ${groupKey}/${groupTaskKey} is already owned by ${conflict.requestKey}`,
     )
   }
+}
+
+function removePlanningRequestAnswers(
+  values: GoalPlanningRequestAnswer[],
+  removals: GoalPlanningRequestAnswer[],
+) {
+  const removalKeys = new Set(removals.map((value) => `${value.summary}\u0000${value.answer}`))
+  return values.filter((value) => !removalKeys.has(`${value.summary}\u0000${value.answer}`))
 }

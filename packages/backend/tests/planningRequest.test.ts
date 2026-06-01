@@ -566,6 +566,130 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('persists workflow-root shared context across later direct workflow extensions', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        decisionRefs: ['auth-strategy'],
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answer: 'Start with five enterprise customers before broader rollout.',
+          },
+        ],
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            answers: [{ summary: 'Rollback trigger', answer: 'Abort after two regressions.' }],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+                description: 'Record the shared auth rollout context across Goal docs.',
+                acceptanceCriteria: ['The auth rollout context is durable.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth rollout task graph',
+                description: 'Reflect the shared auth rollout context in todo.yml.',
+                acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+        ],
+      },
+    )
+
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        workflows: [
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the persisted auth rollout workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    )
+
+    expect(result).toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-2', 'P-3'],
+      createdRequestKeys: ['PR-3'],
+      createdTaskRefs: ['P-3'],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'auth-rollout-follow-through',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['auth-strategy'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader rollout.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('reuses an existing planning surface as the first workflow in a direct workflow batch', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

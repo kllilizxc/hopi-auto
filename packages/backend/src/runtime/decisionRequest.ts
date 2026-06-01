@@ -474,6 +474,7 @@ async function createDecisionResolutionFollowThrough(
       {
         goalKey,
         workflowKey: followThrough.workflowKey,
+        decisionRefs,
         answers: followThrough.answers,
         reuseTaskRef: reusablePlanningTaskRef,
         workflows: followThrough.workflows.map((workflow) => {
@@ -482,7 +483,6 @@ async function createDecisionResolutionFollowThrough(
               kind: 'planning_batch' as const,
               groupKey: workflow.groupKey,
               blockedByWorkflowKeys: workflow.blockedByWorkflowKeys,
-              decisionRefs,
               answers: workflow.answers,
               requests: workflow.requests,
             }
@@ -495,7 +495,6 @@ async function createDecisionResolutionFollowThrough(
             title: workflow.title,
             description: workflow.description,
             acceptanceCriteria: workflow.acceptanceCriteria,
-            decisionRefs,
             answers: workflow.answers,
             requestedUpdates: workflow.requestedUpdates,
           }
