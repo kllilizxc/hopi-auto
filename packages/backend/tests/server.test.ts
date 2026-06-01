@@ -408,6 +408,86 @@ describe('createServer', () => {
     })
   })
 
+  test('fans engineering blockers out to every current sink when direct workflow reuse happens through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const seedResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Draft auth goal context',
+      description: 'Capture the current auth context before decomposition.',
+      acceptanceCriteria: ['The current auth context is visible.'],
+      requestedUpdates: ['goal.md'],
+    })
+
+    expect(seedResponse.status).toBe(201)
+
+    const taskResponse = await postJson(server, '/api/goals/test/tasks', {
+      ref: 'T-1',
+      kind: 'engineering',
+      title: 'Implement auth integration',
+      description: 'Wait for every workflow sink before engineering resumes.',
+      acceptanceCriteria: ['The auth path is implemented.'],
+      blockedBy: [{ kind: 'task', ref: 'P-1' }],
+    })
+
+    expect(taskResponse.status).toBe(201)
+
+    const response = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      reuseTaskRef: 'P-1',
+      workflows: [
+        {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context before decomposition.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+        {
+          kind: 'planning',
+          title: 'Capture rollout notes',
+          description: 'Record rollout details in parallel with auth planning.',
+          acceptanceCriteria: ['Rollout notes are durable.'],
+          decisionRefs: ['rollout-strategy'],
+          requestedUpdates: ['notes/rollout.md'],
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      blockerTaskRefs: ['P-2', 'P-3'],
+    })
+
+    const boardResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
+    const board = await readJson<TodoBoard>(boardResponse)
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-1',
+          blockedBy: [
+            { kind: 'task', ref: 'P-2' },
+            { kind: 'task', ref: 'P-3' },
+          ],
+        }),
+      ]),
+    )
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 
@@ -1960,6 +2040,89 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning_workflows',
+        }),
+      ]),
+    )
+  })
+
+  test('runs the configured Goal assistant and fans engineering blockers out to every reused workflow sink', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    const planningRequests = createPlanningRequestStore(workspaceRoot)
+    const boardStore = createBoardStore(workspaceRoot)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'test',
+        title: 'Draft auth goal context',
+        description: 'Capture the current auth context before decomposition.',
+        acceptanceCriteria: ['The current auth context is visible.'],
+        requestedUpdates: ['goal.md'],
+      },
+    )
+
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'P-1',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Draft auth goal context',
+        description: 'Capture the current auth context before decomposition.',
+        acceptanceCriteria: ['The current auth context is visible.'],
+      }),
+      task({
+        ref: 'T-1',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for every workflow sink before engineering resumes.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'task', ref: 'P-1' }],
+      }),
+    ])
+
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Reuse the current planning blocker and split it into independent workflows.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the current planning blocker and opened two independent durable planning workflows.', actions: [{ kind: 'request_planning_workflows', reuseTaskRef: 'P-1', workflows: [{ kind: 'planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }, { kind: 'planning', title: 'Capture rollout notes', description: 'Record rollout details in parallel with auth planning.', acceptanceCriteria: ['Rollout notes are durable.'], decisionRefs: ['rollout-strategy'], requestedUpdates: ['notes/rollout.md'] }] }] })); console.log('assistant workflow batch blocker propagation requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Reuse the current planning blocker and split it into independent workflows.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_workflows',
+          blockerTaskRefs: ['P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    const board = await createBoardStore(workspaceRoot).readBoard('test')
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-1',
+          blockedBy: [
+            { kind: 'task', ref: 'P-2' },
+            { kind: 'task', ref: 'P-3' },
+          ],
         }),
       ]),
     )

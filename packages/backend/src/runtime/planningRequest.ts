@@ -554,7 +554,7 @@ export async function requestGoalPlanningWorkflows(
     currentReusablePlanningTaskRef = undefined
   }
 
-  return {
+  const result: GoalPlanningWorkflowsResult = {
     kind: 'workflow_batch',
     workflows,
     groupKeys: uniqueStringValues(
@@ -574,6 +574,18 @@ export async function requestGoalPlanningWorkflows(
     ),
     createdTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.createdTaskRefs)),
   }
+
+  if (input.reuseTaskRef) {
+    await syncPlanningWorkflowEngineeringBlockers(stores, {
+      goalKey: input.goalKey,
+      sourceBlockerTaskRefs: workflows[0]?.blockerTaskRefs ?? [input.reuseTaskRef],
+      blockerTaskRefs: result.blockerTaskRefs,
+      writer: input.writer,
+      reason: input.reason,
+    })
+  }
+
+  return result
 }
 
 export async function syncGroupedPlanningEngineeringBlockers(
@@ -934,6 +946,80 @@ async function syncGroupedPlanningEngineeringBlockersForGroup(
     goalKey,
     writer ?? 'planning_request',
     reason ?? `sync grouped planning blockers ${groupKey}`,
+    (nextBoard) => {
+      for (const task of nextBoard.items) {
+        const nextBlockedBy = nextBlockedByByTaskRef.get(task.ref)
+        if (nextBlockedBy) {
+          task.blockedBy = [...nextBlockedBy]
+        }
+      }
+    },
+  )
+
+  return true
+}
+
+async function syncPlanningWorkflowEngineeringBlockers(
+  stores: {
+    boardStore: BoardStore
+  },
+  input: {
+    goalKey: string
+    sourceBlockerTaskRefs: string[]
+    blockerTaskRefs: string[]
+    writer?: string
+    reason?: string
+  },
+) {
+  const sourceBlockerTaskRefs = uniqueStringValues(input.sourceBlockerTaskRefs)
+  const blockerTaskRefs = uniqueStringValues(input.blockerTaskRefs)
+  if (sourceBlockerTaskRefs.length === 0 || blockerTaskRefs.length === 0) {
+    return false
+  }
+
+  const sourceBlockerTaskRefSet = new Set(sourceBlockerTaskRefs)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  const nextBlockedByByTaskRef = new Map<string, BlockerRef[]>()
+
+  for (const task of board.items) {
+    if (
+      task.kind !== 'engineering' ||
+      !task.blockedBy.some(
+        (blocker) => blocker.kind === 'task' && sourceBlockerTaskRefSet.has(blocker.ref),
+      )
+    ) {
+      continue
+    }
+
+    const nextBlockedBy = task.blockedBy.filter(
+      (blocker) => !(blocker.kind === 'task' && sourceBlockerTaskRefSet.has(blocker.ref)),
+    )
+    for (const blockerTaskRef of blockerTaskRefs) {
+      if (
+        !nextBlockedBy.some(
+          (existing) => existing.kind === 'task' && existing.ref === blockerTaskRef,
+        )
+      ) {
+        nextBlockedBy.push({
+          kind: 'task',
+          ref: blockerTaskRef,
+        })
+      }
+    }
+
+    if (!sameBlockerList(task.blockedBy, nextBlockedBy)) {
+      nextBlockedByByTaskRef.set(task.ref, nextBlockedBy)
+    }
+  }
+
+  if (nextBlockedByByTaskRef.size === 0) {
+    return false
+  }
+
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'planning_request',
+    input.reason ?? 'sync workflow planning blockers',
     (nextBoard) => {
       for (const task of nextBoard.items) {
         const nextBlockedBy = nextBlockedByByTaskRef.get(task.ref)

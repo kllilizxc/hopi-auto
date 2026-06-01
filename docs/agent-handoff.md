@@ -45,6 +45,7 @@ Phase 1 backend is complete:
 - Decision-answer follow-through can now also carry explicit non-decision captured answers on `planning`, `planning_batch`, and `workflow_batch` leafs, so one action can atomically resolve real decision topics and write the remaining durable answer context straight onto planning requests.
 - Assistant and API can now also atomically open more than one independent durable planning workflow directly on the planning surface through shared higher-order `workflow_batch` planning requests, without routing that work through a decision-answer action first.
 - Direct higher-order planning workflows can now also reuse one current visible planning surface as their first child workflow, so expanding an existing planning task into a richer workflow batch does not require a wrapper task.
+- When direct higher-order planning workflows reuse a planning surface that is already blocking engineering, runtime now fans that engineering blocker out to every current workflow sink instead of only the first child workflow.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -96,6 +97,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-mixed-answer-follow-through-design.md`: current authority note for atomically combining decision-backed answers with non-decision captured answers on the same planner follow-through.
 - `docs/superpowers/specs/2026-06-01-direct-planning-workflow-batch-design.md`: current authority note for atomically opening more than one independent durable planning workflow directly on the planning surface.
 - `docs/superpowers/specs/2026-06-01-direct-planning-workflow-reuse-design.md`: current authority note for reusing one existing planning surface as the first child in a direct higher-order planning workflow batch.
+- `docs/superpowers/specs/2026-06-01-direct-planning-workflow-blocker-propagation-design.md`: current authority note for fanning engineering blockers out across every sink in a reused direct planning workflow batch.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -533,6 +535,7 @@ Current non-UI Goal assistant substrate:
 - mixed answer follow-through that lets one durable decision-answer action also carry non-decision captured answers directly onto the same planner follow-through
 - direct higher-order planning workflows that let assistant or API atomically open multiple independent durable planning workflows without routing through a decision-answer action first
 - direct higher-order planning reuse that lets assistant or API expand one current planning surface into the first child of a richer workflow batch instead of spawning a wrapper task
+- direct higher-order planning blocker propagation that keeps engineering blocked on every current sink when a reused planning blocker expands into a workflow batch
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -555,7 +558,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, and one-surface reuse for the first child in direct workflow batches.
+1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, and cross-workflow blocker propagation when that reused surface was already blocking engineering.
 2. Explore deeper answer interpretation only if product needs assistant to infer how less-structured replies should split between durable decision topics and non-decision planner inputs without manually explicit action payloads.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

@@ -588,6 +588,95 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('fans engineering blockers out to every current sink when a reused planning surface expands into direct workflow batch', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Draft auth goal context',
+        description: 'Capture the current auth context before decomposition.',
+        acceptanceCriteria: ['The current auth context is visible.'],
+        requestedUpdates: ['goal.md'],
+      },
+    )
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed engineering blocker', (board) => {
+      board.items.push({
+        ref: 'T-1',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth integration',
+        description: 'Wait for every workflow sink before engineering resumes.',
+        acceptanceCriteria: ['The auth path is implemented.'],
+        blockedBy: [{ kind: 'task', ref: 'P-1' }],
+      })
+    })
+
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        reuseTaskRef: 'P-1',
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            decisionRefs: ['auth-strategy'],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Clarify auth goal context',
+                description: 'Refresh durable Goal context before decomposition.',
+                acceptanceCriteria: ['Goal context captures the auth direction.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth task graph',
+                description: 'Reshape todo.yml after the goal context is stable.',
+                acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            title: 'Capture rollout notes',
+            description: 'Record rollout details in parallel with auth planning.',
+            acceptanceCriteria: ['Rollout notes are durable.'],
+            decisionRefs: ['rollout-strategy'],
+            requestedUpdates: ['notes/rollout.md'],
+          },
+        ],
+      },
+    )
+
+    expect(result.blockerTaskRefs).toEqual(['P-2', 'P-3'])
+    const board = await boardStore.readBoard('goal-1')
+    expect(board.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'T-1',
+          blockedBy: [
+            { kind: 'task', ref: 'P-2' },
+            { kind: 'task', ref: 'P-3' },
+          ],
+        }),
+      ]),
+    )
+  })
+
   test('reuses an existing planning task as the first grouped planning stage', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)
