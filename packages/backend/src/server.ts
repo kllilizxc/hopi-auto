@@ -381,7 +381,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result.decision, result.created ? 201 : 200)
+          return jsonResponse(result, result.created ? 201 : 200)
         }
 
         if (
@@ -415,13 +415,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(
-            {
-              goalKey: currentGoalKey,
-              decisions: result.decisions,
-            },
-            result.createdDecisionKeys.length > 0 ? 201 : 200,
-          )
+          return jsonResponse(result, result.createdDecisionKeys.length > 0 ? 201 : 200)
         }
 
         if (
@@ -459,7 +453,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result.decision)
+          return jsonResponse(result)
         }
 
         if (

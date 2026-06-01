@@ -55,6 +55,7 @@ Phase 1 backend is complete:
 - Workflow-root shared context is now durable across later `workflowKey` extensions by persisting shared decision lineage and shared answers on workflow-linked planning requests, so new children inherit the same workflow-root baseline even when later calls omit it.
 - Direct and decision-backed workflow graphs can now also reuse one already-open grouped planning surface as their first child through stable `groupKey` authority, so runtime adopts the whole open group instead of forcing callers to replay grouped siblings just to preserve workflow membership.
 - Higher-order workflow graphs now also get a generated durable top-level `W-*` identity by default when callers omit `workflowKey`, so direct and decision-backed `workflow_batch` flows inherit extension authority, blocker tracking, and shared-context persistence without requiring hand-crafted workflow keys.
+- Decision `resolve`, `answer`, and `answers` Bun API routes now also return the full shared runtime result, so callers can observe `blockerRemoved`, creation metadata, full `followThrough`, and any runtime-generated `W-*` workflow key instead of losing that authority behind decision-only response bodies.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -116,6 +117,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-workflow-shared-context-persistence-design.md`: current authority note for persisting workflow-root shared context across later `workflowKey` extensions without introducing a second workflow store.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-workflow-reuse-design.md`: current authority note for reusing one already-open grouped planning surface as the first child in direct or decision-backed workflow graphs.
 - `docs/superpowers/specs/2026-06-01-generated-workflow-key-design.md`: current authority note for making higher-order workflow graphs durable by default through runtime-generated `W-*` workflow keys.
+- `docs/superpowers/specs/2026-06-01-decision-api-follow-through-result-design.md`: current authority note for surfacing full shared decision-runtime results, including generated workflow keys, on Bun decision answer/resolve APIs.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -561,6 +563,7 @@ Current non-UI Goal assistant substrate:
 - decision-backed workflow-graph follow-through that lets resolve_decision, record_answer, and record_answers reuse that same durable direct-workflow graph authority instead of looping through weaker answer-local multi-workflow logic
 - decision-backed workflow shared-answer context that lets resolve_decision, record_answer, and record_answers carry one workflow-root set of shared non-decision captured answers across every child in an answer-driven workflow graph
 - durable workflow-root shared-context persistence that lets both direct and answer-driven workflow graphs extend one `workflowKey` later without restating the same shared decision lineage or captured answers
+- decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`

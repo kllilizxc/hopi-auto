@@ -1225,9 +1225,12 @@ describe('createServer', () => {
     )
     expect(resolveResponse.status).toBe(200)
     await expect(resolveResponse.json()).resolves.toMatchObject({
-      decisionKey: created.decisionKey,
-      status: 'resolved',
-      answer: 'Use Bun-native sessions.',
+      decision: expect.objectContaining({
+        decisionKey: created.decisionKey,
+        status: 'resolved',
+        answer: 'Use Bun-native sessions.',
+      }),
+      blockerRemoved: false,
     })
   })
 
@@ -1295,6 +1298,20 @@ describe('createServer', () => {
     )
 
     expect(resolveResponse.status).toBe(200)
+    await expect(resolveResponse.json()).resolves.toMatchObject({
+      decision: expect.objectContaining({
+        decisionKey: 'auth-strategy',
+        status: 'resolved',
+        answer: 'Use Bun-native auth.',
+      }),
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+        blockerTaskRefs: ['P-1'],
+      },
+    })
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
       items: [
         expect.objectContaining({
@@ -1358,6 +1375,20 @@ describe('createServer', () => {
     )
 
     expect(resolveResponse.status).toBe(200)
+    await expect(resolveResponse.json()).resolves.toMatchObject({
+      decision: expect.objectContaining({
+        decisionKey: 'auth-strategy',
+        status: 'resolved',
+        answer: 'Use Bun-native auth.',
+      }),
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+        blockerTaskRefs: ['P-1'],
+      },
+    })
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
       items: [
         expect.objectContaining({
@@ -1524,10 +1555,21 @@ describe('createServer', () => {
 
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
-      decisionKey: 'D-1',
-      summary: 'Choose the rollout strategy',
-      status: 'resolved',
-      answer: 'Use a staged Bun-first rollout.',
+      decision: expect.objectContaining({
+        decisionKey: 'D-1',
+        summary: 'Choose the rollout strategy',
+        status: 'resolved',
+        answer: 'Use a staged Bun-first rollout.',
+      }),
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'rollout-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+      },
     })
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
       items: expect.arrayContaining([
@@ -1628,7 +1670,6 @@ describe('createServer', () => {
 
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
-      goalKey: 'test',
       decisions: [
         expect.objectContaining({
           decisionKey: 'auth-strategy',
@@ -1641,6 +1682,15 @@ describe('createServer', () => {
           answer: 'Use a staged rollout.',
         }),
       ],
+      createdDecisionKeys: ['rollout-strategy'],
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+      },
     })
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
       items: expect.arrayContaining([
@@ -1827,10 +1877,22 @@ describe('createServer', () => {
 
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
-      decisionKey: 'D-1',
-      summary: 'Choose the auth strategy',
-      status: 'resolved',
-      answer: 'Use Bun-native auth.',
+      decision: expect.objectContaining({
+        decisionKey: 'D-1',
+        summary: 'Choose the auth strategy',
+        status: 'resolved',
+        answer: 'Use Bun-native auth.',
+      }),
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'W-1',
+        groupKeys: ['auth-rollout-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-1', 'P-3'],
+      },
     })
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
       items: expect.arrayContaining([
@@ -1946,7 +2008,6 @@ describe('createServer', () => {
 
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
-      goalKey: 'test',
       decisions: [
         expect.objectContaining({
           decisionKey: 'auth-strategy',
@@ -1957,6 +2018,16 @@ describe('createServer', () => {
           status: 'resolved',
         }),
       ],
+      createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        groupKeys: ['auth-rollout-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-2', 'P-3'],
+      },
     })
     await expect(
       createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
