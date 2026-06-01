@@ -16,7 +16,12 @@ import {
   requestGoalDecision,
   type resolveGoalDecision,
 } from '../runtime/decisionRequest'
-import { requestGoalPlanning, requestGoalPlanningBatch } from '../runtime/planningRequest'
+import {
+  listGroupedPlanningSinkTaskRefs,
+  requestGoalPlanning,
+  requestGoalPlanningBatch,
+  requestGoalPlanningWorkflows,
+} from '../runtime/planningRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
@@ -278,7 +283,41 @@ async function applyAssistantAction(
       groupKey: result.groupKey,
       requestKeys: result.entries.map((entry) => entry.requestKey),
       taskRefs: result.entries.map((entry) => entry.taskRef),
+      blockerTaskRefs: await listGroupedPlanningSinkTaskRefs(
+        {
+          boardStore: stores.boardStore,
+          planningRequests: stores.planningRequests,
+        },
+        {
+          goalKey,
+          groupKey: result.groupKey,
+        },
+      ),
       summary: `Requested grouped planning follow-through ${result.groupKey} across ${result.entries.map((entry) => entry.taskRef).join(', ')}.`,
+    }
+  }
+
+  if (action.kind === 'request_planning_workflows') {
+    const result = await requestGoalPlanningWorkflows(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        workflows: action.workflows,
+        writer: 'assistant',
+        reason: 'assistant request planning workflows',
+      },
+    )
+
+    return {
+      kind: 'request_planning_workflows',
+      groupKeys: result.groupKeys,
+      requestKeys: result.requestKeys,
+      taskRefs: result.taskRefs,
+      blockerTaskRefs: result.blockerTaskRefs,
+      summary: `Requested ${result.workflows.length} independent planning workflows across ${result.taskRefs.join(', ')}.`,
     }
   }
 
@@ -514,6 +553,9 @@ function summarizeAssistantAction(action: GoalAssistantAction) {
   }
   if (action.kind === 'request_planning_batch') {
     return `Request grouped planning: ${action.groupKey}`
+  }
+  if (action.kind === 'request_planning_workflows') {
+    return `Request ${action.workflows.length} independent planning workflows.`
   }
   if (action.kind === 'request_decision') {
     return `Request decision ${action.decisionKey}.`

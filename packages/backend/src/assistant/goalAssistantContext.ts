@@ -245,6 +245,48 @@ Required outcome shape:
       ]
     },
     {
+      "kind": "request_planning_workflows",
+      "workflows": [
+        {
+          "kind": "planning",
+          "title": "first independent planning workflow title",
+          "description": "what this visible planning workflow must accomplish",
+          "acceptanceCriteria": ["at least one acceptance criterion"],
+          "decisionRefs": ["optional linked decision key"],
+          "answers": [
+            {
+              "summary": "optional captured user answer summary",
+              "answer": "explicit user answer that should shape this workflow"
+            }
+          ],
+          "requestedUpdates": ["goal.md", "notes/rollout.md"]
+        },
+        {
+          "kind": "planning_batch",
+          "groupKey": "stable-group-key",
+          "decisionRefs": ["optional linked decision key"],
+          "requests": [
+            {
+              "taskKey": "goal-docs",
+              "title": "first grouped planning task title",
+              "description": "what this grouped workflow stage must accomplish",
+              "acceptanceCriteria": ["at least one acceptance criterion"],
+              "requestedUpdates": ["goal.md", "design.md"],
+              "blockedByTaskKeys": []
+            },
+            {
+              "taskKey": "task-graph",
+              "title": "later grouped planning task title",
+              "description": "what this later grouped stage must accomplish",
+              "acceptanceCriteria": ["at least one acceptance criterion"],
+              "requestedUpdates": ["todo.yml"],
+              "blockedByTaskKeys": ["goal-docs"]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "kind": "request_decision",
       "decisionKey": "stable-decision-key",
       "summary": "highest-leverage missing answer",
@@ -401,10 +443,11 @@ Rules:
 - Only create planning tasks, never engineering tasks.
 - Prefer "request_planning" when the user asks for new visible planning work; it can reuse an existing open planning request with the same title.
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
+- Prefer "request_planning_workflows" when one user reply should atomically open more than one independent durable planning workflow without routing through a decision-answer action first.
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through requestedUpdates plus answers and use decisionRefs only for real durable decision topics.
-- Prefer captured answers on "request_planning" or "request_planning_batch" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
+- Prefer captured answers on "request_planning", "request_planning_batch", or "request_planning_workflows" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.

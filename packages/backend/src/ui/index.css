@@ -704,6 +704,8 @@ textarea {
 .assistant-kind.kind-resolve_decision,
 .assistant-kind.kind-create_planning_task,
 .assistant-kind.kind-request_planning,
+.assistant-kind.kind-request_planning_batch,
+.assistant-kind.kind-request_planning_workflows,
 .assistant-kind.kind-move_task {
   background: rgba(29, 78, 216, 0.1);
   color: #1d4ed8;

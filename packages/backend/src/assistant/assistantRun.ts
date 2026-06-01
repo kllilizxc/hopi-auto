@@ -51,6 +51,35 @@ const assistantPlanningBatchEntrySchema = z.object({
   blockedByTaskKeys: z.array(z.string().min(1)).default([]),
 })
 
+const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    requestKey: z.string().min(1).optional(),
+    groupKey: z.string().min(1).optional(),
+    title: z.string().min(1),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    answers: goalPlanningRequestAnswerArraySchema,
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+    blockedBy: z
+      .array(
+        z.object({
+          kind: z.enum(BLOCKER_KINDS),
+          ref: z.string().min(1),
+        }),
+      )
+      .default([]),
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    answers: goalPlanningRequestAnswerArraySchema,
+    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+  }),
+])
+
 const assistantDecisionAnswerSchema = z.object({
   summary: z.string().min(1),
   decisionKey: z.string().min(1).optional(),
@@ -130,6 +159,10 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),
   }),
   z.object({
+    kind: z.literal('request_planning_workflows'),
+    workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
+  }),
+  z.object({
     kind: z.literal('request_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1),
@@ -189,6 +222,15 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     groupKey: z.string().min(1),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
+    summary: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('request_planning_workflows'),
+    groupKeys: z.array(z.string().min(1)),
+    requestKeys: z.array(z.string().min(1)).min(1),
+    taskRefs: z.array(z.string().min(1)).min(1),
+    blockerTaskRefs: z.array(z.string().min(1)).min(1),
     summary: z.string().min(1),
   }),
   z.object({

@@ -52,6 +52,66 @@ export interface GoalPlanningBatchResult {
   }>
 }
 
+export interface GoalPlanningWorkflowInput {
+  kind: 'planning'
+  requestKey?: string
+  groupKey?: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  decisionRefs?: string[]
+  answers?: GoalPlanningRequestAnswer[]
+  requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+  blockedBy?: BlockerRef[]
+}
+
+export interface GoalPlanningWorkflowBatchInput {
+  kind: 'planning_batch'
+  groupKey: string
+  decisionRefs?: string[]
+  answers?: GoalPlanningRequestAnswer[]
+  requests: GoalPlanningBatchEntryInput[]
+}
+
+export type GoalPlanningWorkflowLeafInput =
+  | GoalPlanningWorkflowInput
+  | GoalPlanningWorkflowBatchInput
+
+export interface GoalPlanningWorkflowResult {
+  kind: 'planning'
+  groupKey?: string
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+  createdRequestKeys: string[]
+  createdTaskRefs: string[]
+}
+
+export interface GoalPlanningWorkflowBatchResult {
+  kind: 'planning_batch'
+  groupKey: string
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+  createdRequestKeys: string[]
+  createdTaskRefs: string[]
+}
+
+export type GoalPlanningWorkflowLeafResult =
+  | GoalPlanningWorkflowResult
+  | GoalPlanningWorkflowBatchResult
+
+export interface GoalPlanningWorkflowsResult {
+  kind: 'workflow_batch'
+  workflows: GoalPlanningWorkflowLeafResult[]
+  groupKeys: string[]
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
+  createdRequestKeys: string[]
+  createdTaskRefs: string[]
+}
+
 export async function requestGoalPlanning(
   stores: {
     boardStore: BoardStore
@@ -405,6 +465,104 @@ export async function requestGoalPlanningBatch(
   return {
     groupKey: input.groupKey,
     entries,
+  }
+}
+
+export async function requestGoalPlanningWorkflows(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflows: GoalPlanningWorkflowLeafInput[]
+    writer?: string
+    reason?: string
+  },
+): Promise<GoalPlanningWorkflowsResult> {
+  const workflows: GoalPlanningWorkflowLeafResult[] = []
+
+  for (const workflow of input.workflows) {
+    if (workflow.kind === 'planning_batch') {
+      const result = await requestGoalPlanningBatch(stores, {
+        goalKey: input.goalKey,
+        groupKey: workflow.groupKey,
+        decisionRefs: workflow.decisionRefs,
+        answers: workflow.answers,
+        requests: workflow.requests,
+        writer: input.writer,
+        reason: input.reason,
+      })
+      const blockerTaskRefs = await listGroupedPlanningSinkTaskRefs(stores, {
+        goalKey: input.goalKey,
+        groupKey: result.groupKey,
+      })
+      workflows.push({
+        kind: 'planning_batch',
+        groupKey: result.groupKey,
+        requestKeys: result.entries.map((entry) => entry.requestKey),
+        taskRefs: result.entries.map((entry) => entry.taskRef),
+        blockerTaskRefs,
+        createdRequestKeys: result.entries
+          .filter((entry) => entry.created)
+          .map((entry) => entry.requestKey),
+        createdTaskRefs: result.entries
+          .filter((entry) => entry.taskCreated)
+          .map((entry) => entry.taskRef),
+      })
+      continue
+    }
+
+    const result = await requestGoalPlanning(stores, {
+      goalKey: input.goalKey,
+      requestKey: workflow.requestKey,
+      groupKey: workflow.groupKey,
+      title: workflow.title,
+      description: workflow.description,
+      acceptanceCriteria: workflow.acceptanceCriteria,
+      decisionRefs: workflow.decisionRefs,
+      answers: workflow.answers,
+      requestedUpdates: workflow.requestedUpdates,
+      blockedBy: workflow.blockedBy,
+      writer: input.writer,
+      reason: input.reason,
+    })
+    const blockerTaskRefs = workflow.groupKey
+      ? await listGroupedPlanningSinkTaskRefs(stores, {
+          goalKey: input.goalKey,
+          groupKey: workflow.groupKey,
+        })
+      : [result.request.taskRef]
+    workflows.push({
+      kind: 'planning',
+      groupKey: workflow.groupKey,
+      requestKeys: [result.request.requestKey],
+      taskRefs: [result.request.taskRef],
+      blockerTaskRefs,
+      createdRequestKeys: result.created ? [result.request.requestKey] : [],
+      createdTaskRefs: result.taskCreated ? [result.request.taskRef] : [],
+    })
+  }
+
+  return {
+    kind: 'workflow_batch',
+    workflows,
+    groupKeys: uniqueStringValues(
+      workflows.flatMap((workflow) =>
+        workflow.kind === 'planning_batch'
+          ? [workflow.groupKey]
+          : workflow.groupKey
+            ? [workflow.groupKey]
+            : [],
+      ),
+    ),
+    requestKeys: uniqueStringValues(workflows.flatMap((workflow) => workflow.requestKeys)),
+    taskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.taskRefs)),
+    blockerTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.blockerTaskRefs)),
+    createdRequestKeys: uniqueStringValues(
+      workflows.flatMap((workflow) => workflow.createdRequestKeys),
+    ),
+    createdTaskRefs: uniqueStringValues(workflows.flatMap((workflow) => workflow.createdTaskRefs)),
   }
 }
 

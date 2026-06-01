@@ -43,6 +43,7 @@ Phase 1 backend is complete:
 - One user answer can now also resolve multiple durable decision topics at once and route those resolved topics through one shared visible planner follow-through, still using only `decisions.yml` plus `planning-requests.yml` as durable truth.
 - Planning requests can now also carry explicit captured user answers when planning should react to durable answer context that does not map cleanly to decision topics first, and planner context now surfaces those captured answers alongside decision lineage and requested updates.
 - Decision-answer follow-through can now also carry explicit non-decision captured answers on `planning`, `planning_batch`, and `workflow_batch` leafs, so one action can atomically resolve real decision topics and write the remaining durable answer context straight onto planning requests.
+- Assistant and API can now also atomically open more than one independent durable planning workflow directly on the planning surface through shared higher-order `workflow_batch` planning requests, without routing that work through a decision-answer action first.
 - Planning follow-through now computes requested-update coverage from open requests plus durable write traces, surfaces that coverage in planning contexts, and deterministically sends planning review/merge work back to `planned` when explicit requested updates still lack durable evidence.
 - Opening a visible decision blocker for a planning task now also enriches any existing open planning request on that task with the decision key, and defaults missing requested-update targets to `design.md` plus `todo.yml`.
 - Planning requests now support optional stable `groupKey`, and Goal assistant can request grouped multi-task planning follow-through in one constrained action with deterministic intra-batch task dependencies.
@@ -92,6 +93,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-multi-decision-answer-follow-through-design.md`: current authority note for resolving multiple durable decision topics from one answer bundle and routing them through shared planner follow-through.
 - `docs/superpowers/specs/2026-06-01-answer-backed-planning-requests-design.md`: current authority note for capturing non-decision user answers directly on durable planning requests.
 - `docs/superpowers/specs/2026-06-01-mixed-answer-follow-through-design.md`: current authority note for atomically combining decision-backed answers with non-decision captured answers on the same planner follow-through.
+- `docs/superpowers/specs/2026-06-01-direct-planning-workflow-batch-design.md`: current authority note for atomically opening more than one independent durable planning workflow directly on the planning surface.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`: current authority note for grouped planning follow-through across more than one visible planning task.
 - `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`: current authority note for propagating decision lineage across grouped planning follow-through.
 - `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`: current authority note for durable grouped task keys and later grouped planning extension.
@@ -527,6 +529,7 @@ Current non-UI Goal assistant substrate:
 - multi-decision answer capture that lets one user answer resolve several durable decision topics and attach one shared planner follow-through with combined decision lineage
 - answer-backed planning requests that let assistant or API capture non-decision user answers directly on durable planning follow-through without inventing synthetic decision topics
 - mixed answer follow-through that lets one durable decision-answer action also carry non-decision captured answers directly onto the same planner follow-through
+- direct higher-order planning workflows that let assistant or API atomically open multiple independent durable planning workflows without routing through a decision-answer action first
 - durable repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
@@ -549,7 +552,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, and mixed answer follow-through on decision-backed actions.
+1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, and direct multi-workflow planning on the pure planning surface.
 2. Explore deeper answer interpretation only if product needs assistant to infer how less-structured replies should split between durable decision topics and non-decision planner inputs without manually explicit action payloads.
 3. Deepen preference policy and assistant execution evidence policy where it improves deterministic operator visibility without introducing new workflow truth.
 4. Refine vendor transcript normalization with deeper tool-result correlation only where it improves deterministic review/merge behavior.

@@ -19,7 +19,7 @@ import {
   resolveGoalDecision,
 } from './runtime/decisionRequest'
 import { createGoalDocsStore } from './runtime/goalDocsStore'
-import { requestGoalPlanning } from './runtime/planningRequest'
+import { requestGoalPlanning, requestGoalPlanningWorkflows } from './runtime/planningRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
@@ -92,6 +92,32 @@ const planningBatchEntrySchema = z.object({
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   blockedBy: z.array(blockerSchema).default([]),
   blockedByTaskKeys: z.array(z.string().min(1)).default([]),
+})
+
+const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('planning'),
+    requestKey: z.string().min(1).optional(),
+    groupKey: z.string().min(1).optional(),
+    title: z.string().min(1),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    answers: goalPlanningRequestAnswerArraySchema,
+    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+    blockedBy: z.array(blockerSchema).default([]),
+  }),
+  z.object({
+    kind: z.literal('planning_batch'),
+    groupKey: z.string().min(1),
+    decisionRefs: z.array(z.string().min(1)).default([]),
+    answers: goalPlanningRequestAnswerArraySchema,
+    requests: z.array(planningBatchEntrySchema).min(1),
+  }),
+])
+
+const createPlanningWorkflowBatchSchema = z.object({
+  workflows: z.array(planningWorkflowLeafSchema).min(1),
 })
 
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
@@ -408,6 +434,31 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         if (
           request.method === 'POST' &&
           isGoalRoute(parts, 'planning-requests') &&
+          parts.length === 5 &&
+          parts[4] === 'workflows'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const body = await parseJsonBody(request, createPlanningWorkflowBatchSchema)
+          const result = await requestGoalPlanningWorkflows(
+            {
+              boardStore: store,
+              planningRequests,
+            },
+            {
+              goalKey: currentGoalKey,
+              workflows: body.workflows,
+              writer: 'api',
+              reason: 'api request planning workflows',
+            },
+          )
+          broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
+          broadcast({ type: 'board_changed', goalKey: currentGoalKey })
+          return jsonResponse(result, result.createdRequestKeys.length > 0 ? 201 : 200)
+        }
+
+        if (
+          request.method === 'POST' &&
+          isGoalRoute(parts, 'planning-requests') &&
           parts.length === 4
         ) {
           const currentGoalKey = requireGoalKey(parts)
@@ -559,6 +610,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               (actionResult) =>
                 actionResult.kind === 'request_planning' ||
                 actionResult.kind === 'request_planning_batch' ||
+                actionResult.kind === 'request_planning_workflows' ||
                 ((actionResult.kind === 'resolve_decision' ||
                   actionResult.kind === 'record_answer' ||
                   actionResult.kind === 'record_answers') &&

@@ -234,6 +234,90 @@ describe('createServer', () => {
     })
   })
 
+  test('creates more than one independent planning workflow through the API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      workflows: [
+        {
+          kind: 'planning',
+          title: 'Capture rollout notes',
+          description: 'Record rollout details before more planning work continues.',
+          acceptanceCriteria: ['Rollout notes are durable.'],
+          decisionRefs: ['rollout-strategy'],
+          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+          requestedUpdates: ['goal.md', 'notes/rollout.md'],
+        },
+        {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context before decomposition.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      kind: 'workflow_batch',
+      groupKeys: ['auth-follow-through'],
+      requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      taskRefs: ['P-1', 'P-2', 'P-3'],
+      blockerTaskRefs: ['P-1', 'P-3'],
+      createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
+      createdTaskRefs: ['P-1', 'P-2', 'P-3'],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['rollout-strategy'],
+          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+          requestedUpdates: ['goal.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
   test('creates tasks through the API', async () => {
     const server = startServer()
 
@@ -1614,6 +1698,83 @@ describe('createServer', () => {
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning_batch',
+        }),
+      ]),
+    )
+  })
+
+  test('runs the configured Goal assistant and creates more than one independent planning workflow', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Open independent rollout and auth planning workflows.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I opened two independent durable planning workflows.', actions: [{ kind: 'request_planning_workflows', workflows: [{ kind: 'planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], decisionRefs: ['rollout-strategy'], answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }], requestedUpdates: ['goal.md', 'notes/rollout.md'] }, { kind: 'planning_batch', groupKey: 'auth-follow-through', decisionRefs: ['auth-strategy'], answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }], requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the goal context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }] }] })); console.log('assistant workflow batch requested')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Open independent rollout and auth planning workflows.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I opened two independent durable planning workflows.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning_workflows',
+          groupKeys: ['auth-follow-through'],
+          requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+          taskRefs: ['P-1', 'P-2', 'P-3'],
+        }),
+      ]),
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          decisionRefs: ['rollout-strategy'],
+          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          taskRef: 'P-3',
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+        }),
+      ],
+    })
+
+    const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
+    expect(thread.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          actionType: 'request_planning_workflows',
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_planning_workflows',
         }),
       ]),
     )

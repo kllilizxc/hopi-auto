@@ -200,6 +200,7 @@ interface AssistantAction {
     | 'create_planning_task'
     | 'request_planning'
     | 'request_planning_batch'
+    | 'request_planning_workflows'
     | 'request_decision'
     | 'record_answer'
     | 'record_answers'
@@ -245,6 +246,7 @@ interface AssistantActionResult {
     | 'create_planning_task'
     | 'request_planning'
     | 'request_planning_batch'
+    | 'request_planning_workflows'
     | 'request_decision'
     | 'record_answer'
     | 'record_answers'
@@ -255,6 +257,8 @@ interface AssistantActionResult {
   requestKey?: string
   taskRefs?: string[]
   requestKeys?: string[]
+  groupKeys?: string[]
+  blockerTaskRefs?: string[]
   followThroughGroupKeys?: string[]
   groupKey?: string
   groupTaskKey?: string
