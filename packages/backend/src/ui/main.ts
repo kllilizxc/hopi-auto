@@ -54,6 +54,10 @@ interface GoalPlanningRequest {
   acceptanceCriteria: string[]
   taskRef: string
   decisionRefs: string[]
+  answers: Array<{
+    summary: string
+    answer: string
+  }>
   requestedUpdates: string[]
   status: 'open' | 'resolved'
   createdAt: string
@@ -1510,6 +1514,11 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       ${
         request.decisionRefs.length > 0
           ? `<div class="assistant-summary">Linked decisions: ${escapeHtml(request.decisionRefs.join(', '))}</div>`
+          : ''
+      }
+      ${
+        request.answers.length > 0
+          ? `<div class="assistant-summary">Captured answers: ${escapeHtml(request.answers.map((entry) => `${entry.summary}: ${entry.answer}`).join(' | '))}</div>`
           : ''
       }
       ${

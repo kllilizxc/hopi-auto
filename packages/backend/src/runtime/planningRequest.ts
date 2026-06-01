@@ -2,6 +2,7 @@ import type { BlockerRef } from '../domain/board'
 import type { BoardStore } from '../storage/boardStore'
 import type {
   GoalPlanningRequest,
+  GoalPlanningRequestAnswer,
   GoalPlanningRequestUpdateTarget,
   PlanningRequestStore,
 } from '../storage/planningRequestStore'
@@ -15,6 +16,7 @@ export interface GoalPlanningRequestInput {
   description: string
   acceptanceCriteria: string[]
   decisionRefs?: string[]
+  answers?: GoalPlanningRequestAnswer[]
   requestedUpdates?: GoalPlanningRequestUpdateTarget[]
   blockedBy?: BlockerRef[]
   reuseTaskRef?: string
@@ -108,6 +110,7 @@ async function requestGoalPlanningInternal(
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
+        answers: input.answers,
         requestedUpdates: input.requestedUpdates,
       },
     )
@@ -139,6 +142,7 @@ async function requestGoalPlanningInternal(
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
+        answers: input.answers,
         requestedUpdates: input.requestedUpdates,
       },
     )
@@ -163,6 +167,7 @@ async function requestGoalPlanningInternal(
         groupKey: input.groupKey,
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
+        answers: input.answers,
         requestedUpdates: input.requestedUpdates,
       },
     )
@@ -242,6 +247,7 @@ async function requestGoalPlanningInternal(
     acceptanceCriteria: input.acceptanceCriteria,
     taskRef,
     decisionRefs: input.decisionRefs,
+    answers: input.answers,
     requestedUpdates: input.requestedUpdates,
   })
 
@@ -288,6 +294,7 @@ async function updateExistingPlanningRequest(
     description: input.description,
     acceptanceCriteria: input.acceptanceCriteria,
     decisionRefs: input.decisionRefs,
+    answers: input.answers,
     requestedUpdates: input.requestedUpdates,
   })
 }
@@ -301,6 +308,7 @@ export async function requestGoalPlanningBatch(
     goalKey: string
     groupKey: string
     decisionRefs?: string[]
+    answers?: GoalPlanningRequestAnswer[]
     requests: GoalPlanningBatchEntryInput[]
     reuseTaskRefByTaskKey?: Record<string, string>
     writer?: string
@@ -323,6 +331,7 @@ export async function requestGoalPlanningBatch(
         description: request.description,
         acceptanceCriteria: request.acceptanceCriteria,
         decisionRefs: input.decisionRefs,
+        answers: input.answers,
         requestedUpdates: request.requestedUpdates,
         reuseTaskRef: input.reuseTaskRefByTaskKey?.[request.taskKey],
         writer: input.writer,

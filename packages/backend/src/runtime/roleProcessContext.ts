@@ -8,6 +8,7 @@ import { type DecisionStore, createDecisionStore } from '../storage/decisionStor
 import { createProjectPaths } from '../storage/paths'
 import {
   type GoalPlanningRequest,
+  type GoalPlanningRequestAnswer,
   type GoalPlanningRequestUpdateTarget,
   type PlanningRequestStore,
   createPlanningRequestStore,
@@ -55,6 +56,7 @@ interface PlannerContextInputs {
     title: string
     taskRef: string
     decisionRefs: string[]
+    answers: GoalPlanningRequestAnswer[]
     requestedUpdates: GoalPlanningRequestUpdateTarget[]
   }>
   relatedPlanningGroups: Array<{
@@ -65,6 +67,7 @@ interface PlannerContextInputs {
       taskRef: string
       title: string
       decisionRefs: string[]
+      answers: GoalPlanningRequestAnswer[]
       requestedUpdates: GoalPlanningRequestUpdateTarget[]
     }>
   }>
@@ -423,6 +426,7 @@ async function loadPlannerContextInputs(
       title: request.title,
       taskRef: request.taskRef,
       decisionRefs: request.decisionRefs,
+      answers: request.answers,
       requestedUpdates: request.requestedUpdates,
     }))
   const relatedPlanningGroups = summarizeRelatedPlanningGroups(planningRequestSet.requests, taskRef)
@@ -542,6 +546,7 @@ ${requests
       request.decisionRefs.length > 0
         ? `  Linked decisions: ${request.decisionRefs.join(', ')}`
         : null,
+      renderPlanningRequestAnswers(request.answers, '  '),
       request.requestedUpdates.length > 0
         ? `  Requested durable updates: ${request.requestedUpdates.join(', ')}`
         : null,
@@ -571,6 +576,7 @@ ${groups
           request.decisionRefs.length > 0
             ? `    Linked decisions: ${request.decisionRefs.join(', ')}`
             : null,
+          renderPlanningRequestAnswers(request.answers, '    '),
           request.requestedUpdates.length > 0
             ? `    Requested durable updates: ${request.requestedUpdates.join(', ')}`
             : null,
@@ -599,6 +605,18 @@ function renderPlanningUpdateCoverage(
 `
 }
 
+function renderPlanningRequestAnswers(answers: GoalPlanningRequestAnswer[], indent: string) {
+  if (answers.length === 0) {
+    return null
+  }
+
+  const bulletIndent = indent.length > 2 ? `${indent}  - ` : `${indent}- `
+  return [
+    `${indent}Captured answers:`,
+    ...answers.map((entry) => `${bulletIndent}${entry.summary}: ${entry.answer}`),
+  ].join('\n')
+}
+
 function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef: string) {
   const currentGroupKeys = mergeUniqueStrings(
     requests
@@ -623,6 +641,7 @@ function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef
           taskRef: request.taskRef,
           title: request.title,
           decisionRefs: request.decisionRefs,
+          answers: request.answers,
           requestedUpdates: request.requestedUpdates,
         })),
     }))

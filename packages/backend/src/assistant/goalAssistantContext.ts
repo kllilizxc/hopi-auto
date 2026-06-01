@@ -206,6 +206,12 @@ Required outcome shape:
       "description": "why visible planning work is needed",
       "acceptanceCriteria": ["what the planner-visible request must accomplish"],
       "decisionRefs": ["optional linked decision key"],
+      "answers": [
+        {
+          "summary": "optional captured user answer summary",
+          "answer": "explicit user answer that should shape planning even without a decision topic"
+        }
+      ],
       "requestedUpdates": ["goal.md", "design.md", "notes/rollout.md", "todo.yml"],
       "blockedBy": []
     },
@@ -213,6 +219,12 @@ Required outcome shape:
       "kind": "request_planning_batch",
       "groupKey": "stable-group-key",
       "decisionRefs": ["optional linked decision key"],
+      "answers": [
+        {
+          "summary": "optional shared user answer summary",
+          "answer": "explicit user answer that should shape every request in the grouped follow-through"
+        }
+      ],
       "requests": [
         {
           "taskKey": "goal-docs",
@@ -367,7 +379,8 @@ Rules:
 - Prefer "request_planning_batch" when one durable follow-through must span more than one visible planning task.
 - Treat "taskKey" inside "request_planning_batch" as a stable grouped task key you can reuse in later grouped batches.
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
-- When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
+- When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through requestedUpdates plus answers and use decisionRefs only for real durable decision topics.
+- Prefer captured answers on "request_planning" or "request_planning_batch" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.

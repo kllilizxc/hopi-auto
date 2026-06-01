@@ -76,6 +76,7 @@ describe('createServer', () => {
       description: 'Turn the auth answer into durable planning work.',
       acceptanceCriteria: ['The auth follow-through is visible in todo.yml.'],
       decisionRefs: ['auth-strategy'],
+      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
 
@@ -86,6 +87,7 @@ describe('createServer', () => {
       taskRef: 'P-1',
       status: 'open',
       decisionRefs: ['auth-strategy'],
+      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
 
@@ -100,6 +102,7 @@ describe('createServer', () => {
           taskRef: 'P-1',
           status: 'open',
           decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
           requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
@@ -126,6 +129,11 @@ describe('createServer', () => {
         join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
       ).text(),
     ).resolves.toContain('decisionRefs:')
+    await expect(
+      Bun.file(
+        join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
+      ).text(),
+    ).resolves.toContain('answers:')
     await expect(
       Bun.file(
         join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
@@ -2291,7 +2299,7 @@ describe('createServer', () => {
         cmd: [
           'bun',
           '-e',
-          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Capture rollout notes before planning continues.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I created one planning follow-through request with durable rollout notes.', actions: [{ kind: 'request_planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], requestedUpdates: ['goal.md', 'notes/rollout.md'] }] })); console.log('assistant finished')",
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Capture rollout notes before planning continues.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I created one planning follow-through request with durable rollout notes.', actions: [{ kind: 'request_planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], answers: [{ summary: 'Rollout note', answer: 'Gate the first rollout behind pilot feedback.' }], requestedUpdates: ['goal.md', 'notes/rollout.md'] }] })); console.log('assistant finished')",
           '${PROMPT_FILE}',
           '${OUTCOME_FILE}',
         ],
@@ -2325,6 +2333,9 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
+          answers: [
+            { summary: 'Rollout note', answer: 'Gate the first rollout behind pilot feedback.' },
+          ],
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
         }),
       ],

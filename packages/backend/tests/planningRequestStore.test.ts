@@ -30,6 +30,7 @@ describe('createPlanningRequestStore', () => {
       acceptanceCriteria: ['The auth plan is durable.'],
       taskRef: 'P-1',
       decisionRefs: ['auth-strategy'],
+      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
     expect(created).toMatchObject({
@@ -38,6 +39,7 @@ describe('createPlanningRequestStore', () => {
       taskRef: 'P-1',
       status: 'open',
       decisionRefs: ['auth-strategy'],
+      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
 
@@ -60,6 +62,7 @@ describe('createPlanningRequestStore', () => {
           status: 'resolved',
           resolution: 'Planning task P-1 completed.',
           decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
           requestedUpdates: ['design.md', 'todo.yml'],
         },
       ],
@@ -182,6 +185,44 @@ describe('createPlanningRequestStore', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           groupKey: 'auth-follow-through',
+        }),
+      ],
+    })
+  })
+
+  test('merges captured user answers while preserving stable order', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout guidance',
+      description: 'Turn the rollout answer bundle into durable planning work.',
+      acceptanceCriteria: ['The rollout guidance is durable.'],
+      taskRef: 'P-5',
+      answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+    })
+
+    const merged = await store.mergeRequestMetadata(goalKey, created.requestKey, {
+      answers: [
+        { summary: 'Pilot scope', answer: 'Start with five enterprise customers.' },
+        { summary: 'Release notes', answer: 'Document rollback triggers in notes/rollout.md.' },
+      ],
+    })
+
+    expect(merged.answers).toEqual([
+      { summary: 'Pilot scope', answer: 'Start with five enterprise customers.' },
+      { summary: 'Release notes', answer: 'Document rollback triggers in notes/rollout.md.' },
+    ])
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: created.requestKey,
+          answers: [
+            { summary: 'Pilot scope', answer: 'Start with five enterprise customers.' },
+            {
+              summary: 'Release notes',
+              answer: 'Document rollback triggers in notes/rollout.md.',
+            },
+          ],
         }),
       ],
     })

@@ -17,6 +17,11 @@ const RESERVED_GOAL_UPDATE_TARGETS = new Set([
 export type GoalPlanningRequestStatus = (typeof PLANNING_REQUEST_STATUSES)[number]
 export type GoalPlanningRequestUpdateTarget = string
 
+export interface GoalPlanningRequestAnswer {
+  summary: string
+  answer: string
+}
+
 export interface GoalPlanningRequest {
   requestKey: string
   groupKey?: string
@@ -26,6 +31,7 @@ export interface GoalPlanningRequest {
   acceptanceCriteria: string[]
   taskRef: string
   decisionRefs: string[]
+  answers: GoalPlanningRequestAnswer[]
   requestedUpdates: GoalPlanningRequestUpdateTarget[]
   status: GoalPlanningRequestStatus
   createdAt: string
@@ -53,6 +59,7 @@ export interface PlanningRequestStore {
       acceptanceCriteria: string[]
       taskRef: string
       decisionRefs?: string[]
+      answers?: GoalPlanningRequestAnswer[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -63,6 +70,7 @@ export interface PlanningRequestStore {
       groupKey?: string
       groupTaskKey?: string
       decisionRefs?: string[]
+      answers?: GoalPlanningRequestAnswer[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -76,6 +84,7 @@ export interface PlanningRequestStore {
       description: string
       acceptanceCriteria: string[]
       decisionRefs?: string[]
+      answers?: GoalPlanningRequestAnswer[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -135,6 +144,16 @@ export const goalPlanningRequestUpdateTargetArraySchema = z
   .default([])
   .transform((values) => mergeUniqueValues([], values))
 
+export const goalPlanningRequestAnswerSchema = z.object({
+  summary: z.string().min(1),
+  answer: z.string().min(1),
+})
+
+export const goalPlanningRequestAnswerArraySchema = z
+  .array(goalPlanningRequestAnswerSchema)
+  .default([])
+  .transform((values) => mergePlanningRequestAnswers([], values))
+
 const GoalPlanningRequestSchema = z.object({
   requestKey: z.string().min(1),
   groupKey: z.string().min(1).optional(),
@@ -144,6 +163,7 @@ const GoalPlanningRequestSchema = z.object({
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   taskRef: z.string().min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
+  answers: goalPlanningRequestAnswerArraySchema,
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   status: z.enum(PLANNING_REQUEST_STATUSES),
   createdAt: z.string().datetime(),
@@ -190,6 +210,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           input.groupTaskKey,
         )
         const requestedUpdates = normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates)
+        const answers = normalizeGoalPlanningRequestAnswers(input.answers)
 
         const request: GoalPlanningRequest = {
           requestKey,
@@ -200,6 +221,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           acceptanceCriteria: input.acceptanceCriteria,
           taskRef: input.taskRef,
           decisionRefs: mergeUniqueValues([], input.decisionRefs ?? []),
+          answers,
           requestedUpdates,
           status: 'open',
           createdAt: new Date().toISOString(),
@@ -220,6 +242,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         }
 
         const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
+        const nextAnswers = mergePlanningRequestAnswers(request.answers, input.answers ?? [])
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
           normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
@@ -237,11 +260,13 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           nextGroupKey !== request.groupKey ||
           nextGroupTaskKey !== request.groupTaskKey ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
+          !samePlanningRequestAnswerArray(request.answers, nextAnswers) ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.groupKey = nextGroupKey
           request.groupTaskKey = nextGroupTaskKey
           request.decisionRefs = nextDecisionRefs
+          request.answers = nextAnswers
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
         }
@@ -259,6 +284,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         }
 
         const nextDecisionRefs = mergeUniqueValues(request.decisionRefs, input.decisionRefs ?? [])
+        const nextAnswers = mergePlanningRequestAnswers(request.answers, input.answers ?? [])
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
           normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
@@ -279,6 +305,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.description !== input.description ||
           !sameStringArray(request.acceptanceCriteria, input.acceptanceCriteria) ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
+          !samePlanningRequestAnswerArray(request.answers, nextAnswers) ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.groupKey = nextGroupKey
@@ -287,6 +314,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.description = input.description
           request.acceptanceCriteria = [...input.acceptanceCriteria]
           request.decisionRefs = nextDecisionRefs
+          request.answers = nextAnswers
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
         }
@@ -382,8 +410,41 @@ function normalizeGoalPlanningRequestUpdateTargets(
   return mergeUniqueValues([], (values ?? []).map(normalizeGoalPlanningRequestUpdateTarget))
 }
 
+function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[] | undefined) {
+  return mergePlanningRequestAnswers([], values ?? [])
+}
+
 function sameStringArray(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => right[index] === value)
+}
+
+function mergePlanningRequestAnswers(
+  existing: GoalPlanningRequestAnswer[],
+  incoming: GoalPlanningRequestAnswer[],
+) {
+  const merged = [...existing]
+  const seen = new Set(existing.map((value) => `${value.summary}\u0000${value.answer}`))
+  for (const value of incoming) {
+    const key = `${value.summary}\u0000${value.answer}`
+    if (!seen.has(key)) {
+      merged.push(value)
+      seen.add(key)
+    }
+  }
+  return merged
+}
+
+function samePlanningRequestAnswerArray(
+  left: GoalPlanningRequestAnswer[],
+  right: GoalPlanningRequestAnswer[],
+) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (value, index) =>
+        right[index]?.summary === value.summary && right[index]?.answer === value.answer,
+    )
+  )
 }
 
 function resolveGroupKey(existing: string | undefined, incoming: string | undefined) {

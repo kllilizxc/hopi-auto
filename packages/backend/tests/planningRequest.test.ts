@@ -28,6 +28,7 @@ describe('requestGoalPlanning', () => {
         description: 'Turn the database answer into durable planning work.',
         acceptanceCriteria: ['Database planning follow-through is visible.'],
         decisionRefs: ['db-provider'],
+        answers: [{ summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' }],
         requestedUpdates: ['design.md'],
       },
     )
@@ -39,6 +40,7 @@ describe('requestGoalPlanning', () => {
         requestKey: 'PR-1',
         taskRef: 'P-1',
         decisionRefs: ['db-provider'],
+        answers: [{ summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' }],
         requestedUpdates: ['design.md'],
       },
     })
@@ -54,6 +56,7 @@ describe('requestGoalPlanning', () => {
         description: 'Capture the schema and migration impact.',
         acceptanceCriteria: ['Database planning follow-through is visible.'],
         decisionRefs: ['migration-strategy'],
+        answers: [{ summary: 'Migration policy', answer: 'Avoid compatibility shims.' }],
         requestedUpdates: ['todo.yml'],
       },
     )
@@ -65,6 +68,10 @@ describe('requestGoalPlanning', () => {
         requestKey: 'PR-1',
         taskRef: 'P-1',
         decisionRefs: ['db-provider', 'migration-strategy'],
+        answers: [
+          { summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' },
+          { summary: 'Migration policy', answer: 'Avoid compatibility shims.' },
+        ],
         requestedUpdates: ['design.md', 'todo.yml'],
       },
     })
@@ -83,6 +90,10 @@ describe('requestGoalPlanning', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           decisionRefs: ['db-provider', 'migration-strategy'],
+          answers: [
+            { summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' },
+            { summary: 'Migration policy', answer: 'Avoid compatibility shims.' },
+          ],
           requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
@@ -233,6 +244,9 @@ describe('requestGoalPlanning', () => {
         goalKey: 'goal-1',
         groupKey: 'auth-follow-through',
         decisionRefs: ['auth-strategy'],
+        answers: [
+          { summary: 'Auth direction', answer: 'Use Bun-native auth with SSO-first scope.' },
+        ],
         requests: [
           {
             taskKey: 'goal-docs',
@@ -290,6 +304,9 @@ describe('requestGoalPlanning', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
+          answers: [
+            { summary: 'Auth direction', answer: 'Use Bun-native auth with SSO-first scope.' },
+          ],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
@@ -298,6 +315,9 @@ describe('requestGoalPlanning', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
+          answers: [
+            { summary: 'Auth direction', answer: 'Use Bun-native auth with SSO-first scope.' },
+          ],
           requestedUpdates: ['todo.yml'],
         }),
       ],

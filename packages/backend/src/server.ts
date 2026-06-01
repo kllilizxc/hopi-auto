@@ -28,6 +28,7 @@ import { createDecisionStore } from './storage/decisionStore'
 import { createProjectPaths } from './storage/paths'
 import {
   createPlanningRequestStore,
+  goalPlanningRequestAnswerArraySchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from './storage/planningRequestStore'
 import { createPreferenceStore } from './storage/preferenceStore'
@@ -77,6 +78,7 @@ const createPlanningRequestSchema = z.object({
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
+  answers: goalPlanningRequestAnswerArraySchema,
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   blockedBy: z.array(blockerSchema).default([]),
 })
@@ -422,6 +424,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               description: body.description,
               acceptanceCriteria: body.acceptanceCriteria,
               decisionRefs: body.decisionRefs,
+              answers: body.answers,
               requestedUpdates: body.requestedUpdates,
               blockedBy: body.blockedBy,
               writer: 'api',

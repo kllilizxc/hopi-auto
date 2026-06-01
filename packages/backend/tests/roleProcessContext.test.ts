@@ -83,6 +83,9 @@ requests:
     taskRef: P-1
     decisionRefs:
       - rollout-strategy
+    answers:
+      - summary: Rollout guardrail
+        answer: Start with five enterprise pilots before broad rollout.
     requestedUpdates:
       - goal.md
       - design.md
@@ -128,6 +131,10 @@ requests:
     expect(context).toContain('Choose the rollout strategy')
     expect(context).toContain('Plan rollout follow-through')
     expect(context).toContain('Linked decisions: rollout-strategy')
+    expect(context).toContain('Captured answers:')
+    expect(context).toContain(
+      'Rollout guardrail: Start with five enterprise pilots before broad rollout.',
+    )
     expect(context).toContain('Requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
