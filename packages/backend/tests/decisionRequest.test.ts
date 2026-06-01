@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   answerGoalDecision,
+  answerGoalDecisions,
   requestGoalDecision,
   resolveGoalDecision,
 } from '../src/runtime/decisionRequest'
@@ -653,6 +654,233 @@ describe('requestGoalDecision', () => {
           groupTaskKey: 'task-graph',
           decisionRefs: ['D-1'],
           requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('answering multiple durable topics can create shared grouped planner follow-through', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed engineering task', (board) => {
+      board.items.push({
+        ref: 'T-9',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-9',
+    })
+
+    const result = await answerGoalDecisions(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        answers: [
+          {
+            decisionKey: 'auth-strategy',
+            summary: 'Choose the auth strategy',
+            answer: 'Use Bun-native auth.',
+          },
+          {
+            decisionKey: 'rollout-strategy',
+            summary: 'Choose the rollout strategy',
+            answer: 'Use a staged rollout.',
+          },
+        ],
+        followThrough: {
+          kind: 'planning_batch',
+          groupKey: 'auth-rollout-follow-through',
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Capture auth rollout goal context',
+              description: 'Record the auth and rollout answers across Goal docs.',
+              acceptanceCriteria: ['The auth and rollout answers are durable.'],
+              requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth rollout task graph',
+              description: 'Reflect the auth and rollout answers in todo.yml.',
+              acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          status: 'resolved',
+          answer: 'Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          status: 'resolved',
+          answer: 'Use a staged rollout.',
+        }),
+      ],
+      createdDecisionKeys: ['rollout-strategy'],
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'T-9',
+          blockedBy: [{ kind: 'task', ref: 'P-2' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture auth rollout goal context',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Decompose auth rollout task graph',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          groupKey: 'auth-rollout-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('answering multiple durable topics can reuse one linked planning surface for explicit follow-through', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await boardStore.mutateBoard('goal-1', 'test', 'seed planning task', (board) => {
+      board.items.push({
+        ref: 'P-4',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan auth integration',
+        description: 'Wait for the auth answer before planning continues.',
+        acceptanceCriteria: ['Planning continues after the auth answer.'],
+        blockedBy: [{ kind: 'decision', ref: 'auth-strategy' }],
+      })
+    })
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-4',
+    })
+
+    const result = await answerGoalDecisions(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        answers: [
+          {
+            decisionKey: 'auth-strategy',
+            summary: 'Choose the auth strategy',
+            answer: 'Use Bun-native auth.',
+          },
+          {
+            decisionKey: 'rollout-strategy',
+            summary: 'Choose the rollout strategy',
+            answer: 'Use a staged rollout.',
+          },
+        ],
+        followThrough: {
+          kind: 'planning',
+          title: 'Capture auth rollout goal context',
+          description: 'Refresh Goal docs after the auth and rollout answers.',
+          acceptanceCriteria: ['Goal docs capture the auth and rollout direction.'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          status: 'resolved',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          status: 'resolved',
+        }),
+      ],
+      createdDecisionKeys: ['rollout-strategy'],
+      blockerRemoved: true,
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-4'],
+        blockerTaskRefs: ['P-4'],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-4',
+          title: 'Capture auth rollout goal context',
+          blockedBy: [],
+        }),
+      ],
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-4',
+          decisionRefs: ['auth-strategy', 'rollout-strategy'],
+          requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
         }),
       ],
     })

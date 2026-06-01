@@ -198,6 +198,7 @@ interface AssistantAction {
     | 'request_planning_batch'
     | 'request_decision'
     | 'record_answer'
+    | 'record_answers'
     | 'resolve_decision'
     | 'record_preference'
     | 'update_preference'
@@ -222,6 +223,13 @@ interface AssistantAction {
   }>
   followThrough?: unknown
   decisionKey?: string
+  decisionKeys?: string[]
+  answers?: Array<{
+    summary: string
+    decisionKey?: string
+    taskRef?: string
+    answer: string
+  }>
   summary?: string
   answer?: string
   content?: string
@@ -235,6 +243,7 @@ interface AssistantActionResult {
     | 'request_planning_batch'
     | 'request_decision'
     | 'record_answer'
+    | 'record_answers'
     | 'resolve_decision'
     | 'record_preference'
     | 'update_preference'
@@ -247,6 +256,7 @@ interface AssistantActionResult {
   groupTaskKey?: string
   status?: TaskStatus
   decisionKey?: string
+  decisionKeys?: string[]
   summary: string
 }
 

@@ -280,6 +280,44 @@ Required outcome shape:
       }
     },
     {
+      "kind": "record_answers",
+      "answers": [
+        {
+          "summary": "first durable decision topic",
+          "decisionKey": "optional first stable decision key",
+          "taskRef": "optional linked task ref",
+          "answer": "first explicit user answer"
+        },
+        {
+          "summary": "second durable decision topic",
+          "decisionKey": "optional second stable decision key",
+          "answer": "second explicit user answer"
+        }
+      ],
+      "followThrough": {
+        "kind": "planning_batch",
+        "groupKey": "shared-group-key",
+        "requests": [
+          {
+            "taskKey": "goal-docs",
+            "title": "shared visible planning task title",
+            "description": "what this shared follow-through must accomplish after the answers",
+            "acceptanceCriteria": ["at least one acceptance criterion"],
+            "requestedUpdates": ["goal.md", "design.md", "notes/rollout.md"],
+            "blockedByTaskKeys": []
+          },
+          {
+            "taskKey": "task-graph",
+            "title": "later shared planning task title",
+            "description": "what this later shared planning stage must accomplish",
+            "acceptanceCriteria": ["at least one acceptance criterion"],
+            "requestedUpdates": ["todo.yml"],
+            "blockedByTaskKeys": ["goal-docs"]
+          }
+        ]
+      }
+    },
+    {
       "kind": "resolve_decision",
       "decisionKey": "stable-decision-key",
       "summary": "required if the decision topic does not already exist",
@@ -332,13 +370,15 @@ Rules:
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through decisionRefs and requestedUpdates.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
+- Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
+- When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
 - When resolving a planning-linked decision and the answer should reshape the current planning surface, prefer "followThrough" on "resolve_decision" so runtime can reuse that visible planning task instead of creating a wrapper.
 - When a decision answer should immediately open durable planner work even before there is a visible blocker or reusable planning surface, prefer "followThrough" on "resolve_decision" so runtime can create that visible planning workflow in one action.
 - Prefer "resolve_decision" when there is already a specific visible durable decision topic you intend to resolve directly.
 - Inside "workflow_batch" follow-through, use only "planning" or "planning_batch" child workflows.
-- Never include decisionRefs inside resolve_decision.followThrough or record_answer.followThrough; runtime injects the resolved decision lineage automatically.
+- Never include decisionRefs inside resolve_decision.followThrough, record_answer.followThrough, or record_answers.followThrough; runtime injects the resolved decision lineage automatically.
 - Treat requestedUpdates as Goal-local relative paths under .hopi/docs/goals/<goalKey>/, such as goal.md, design.md, todo.yml, research.md, or notes/rollout.md.
 - Do not use absolute paths, parent traversal, or reserved Goal state files inside requestedUpdates.
 - Use "request_decision" when one explicit missing answer should block visible planning follow-through.

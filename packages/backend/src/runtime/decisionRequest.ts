@@ -37,6 +37,20 @@ export interface GoalDecisionAnswerResult extends GoalDecisionResolveResult {
   created: boolean
 }
 
+export interface GoalDecisionAnswerEntryInput {
+  summary: string
+  decisionKey?: string
+  taskRef?: string
+  answer: string
+}
+
+export interface GoalDecisionAnswerBatchResult {
+  decisions: GoalDecision[]
+  createdDecisionKeys: string[]
+  blockerRemoved: boolean
+  followThrough?: GoalDecisionFollowThroughResult
+}
+
 export interface GoalDecisionPlanningFollowThroughInput {
   kind: 'planning'
   title: string
@@ -189,12 +203,13 @@ export async function resolveGoalDecision(
   const followThrough = await createDecisionResolutionFollowThrough(
     stores,
     input.goalKey,
-    decision,
+    [decision],
     input.followThrough,
     input.writer,
     input.reason,
   )
   let blockerRemoved = false
+  const resolvedDecisionKeys = new Set([input.decisionKey])
 
   await stores.boardStore.mutateBoard(
     input.goalKey,
@@ -203,7 +218,7 @@ export async function resolveGoalDecision(
     (board) => {
       for (const task of board.items) {
         const nextBlockedBy = task.blockedBy.filter(
-          (blocker) => !(blocker.kind === 'decision' && blocker.ref === input.decisionKey),
+          (blocker) => !(blocker.kind === 'decision' && resolvedDecisionKeys.has(blocker.ref)),
         )
         if (nextBlockedBy.length !== task.blockedBy.length) {
           if (followThrough && task.kind === 'engineering') {
@@ -251,29 +266,124 @@ export async function answerGoalDecision(
     reason?: string
   },
 ): Promise<GoalDecisionAnswerResult> {
-  const current = await stores.decisions.readGoalDecisions(input.goalKey)
-  const existing = input.decisionKey
-    ? current.decisions.find((decision) => decision.decisionKey === input.decisionKey)
-    : undefined
-  const decision =
-    existing ??
-    (await stores.decisions.createDecision(input.goalKey, {
-      decisionKey: input.decisionKey,
-      summary: input.summary,
-      taskRef: input.taskRef,
-    }))
-  const result = await resolveGoalDecision(stores, {
+  const result = await answerGoalDecisions(stores, {
     goalKey: input.goalKey,
-    decisionKey: decision.decisionKey,
-    answer: input.answer,
+    answers: [
+      {
+        summary: input.summary,
+        decisionKey: input.decisionKey,
+        taskRef: input.taskRef,
+        answer: input.answer,
+      },
+    ],
     followThrough: input.followThrough,
     writer: input.writer,
-    reason: input.reason ?? `record answer ${decision.decisionKey}`,
+    reason: input.reason,
   })
+  const decision = result.decisions[0]
+  if (!decision) {
+    throw new Error('Expected one resolved decision.')
+  }
 
   return {
-    created: !existing,
-    ...result,
+    decision,
+    created: result.createdDecisionKeys.includes(decision.decisionKey),
+    blockerRemoved: result.blockerRemoved,
+    followThrough: result.followThrough,
+  }
+}
+
+export async function answerGoalDecisions(
+  stores: {
+    boardStore: BoardStore
+    decisions: DecisionStore
+    planningRequests?: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    answers: GoalDecisionAnswerEntryInput[]
+    followThrough?: GoalDecisionFollowThroughInput
+    writer?: string
+    reason?: string
+  },
+): Promise<GoalDecisionAnswerBatchResult> {
+  validateDecisionAnswerBatch(input.answers)
+
+  const current = await stores.decisions.readGoalDecisions(input.goalKey)
+  const existingByKey = new Map(
+    current.decisions.map((decision) => [decision.decisionKey, decision] as const),
+  )
+  const decisions: GoalDecision[] = []
+  const createdDecisionKeys: string[] = []
+
+  for (const answer of input.answers) {
+    const existing = answer.decisionKey ? existingByKey.get(answer.decisionKey) : undefined
+    const decision =
+      existing ??
+      (await stores.decisions.createDecision(input.goalKey, {
+        decisionKey: answer.decisionKey,
+        summary: answer.summary,
+        taskRef: answer.taskRef,
+      }))
+    const resolved = await stores.decisions.resolveDecision(input.goalKey, decision.decisionKey, {
+      answer: answer.answer,
+    })
+    if (!existing) {
+      createdDecisionKeys.push(resolved.decisionKey)
+      existingByKey.set(resolved.decisionKey, resolved)
+    }
+    decisions.push(resolved)
+  }
+
+  const followThrough = await createDecisionResolutionFollowThrough(
+    stores,
+    input.goalKey,
+    decisions,
+    input.followThrough,
+    input.writer,
+    input.reason ??
+      `record answers ${decisions.map((decision) => decision.decisionKey).join(', ')}`,
+  )
+  let blockerRemoved = false
+  const resolvedDecisionKeys = new Set(decisions.map((decision) => decision.decisionKey))
+
+  await stores.boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'decision',
+    input.reason ??
+      `record answers ${decisions.map((decision) => decision.decisionKey).join(', ')}`,
+    (board) => {
+      for (const task of board.items) {
+        const nextBlockedBy = task.blockedBy.filter(
+          (blocker) => !(blocker.kind === 'decision' && resolvedDecisionKeys.has(blocker.ref)),
+        )
+        if (nextBlockedBy.length !== task.blockedBy.length) {
+          if (followThrough && task.kind === 'engineering') {
+            for (const blockerTaskRef of followThrough.blockerTaskRefs) {
+              if (
+                !nextBlockedBy.some(
+                  (blocker) => blocker.kind === 'task' && blocker.ref === blockerTaskRef,
+                )
+              ) {
+                nextBlockedBy.push({
+                  kind: 'task',
+                  ref: blockerTaskRef,
+                })
+              }
+            }
+          }
+          task.blockedBy = nextBlockedBy
+          blockerRemoved = true
+        }
+      }
+    },
+  )
+
+  return {
+    decisions,
+    createdDecisionKeys,
+    blockerRemoved,
+    followThrough,
   }
 }
 
@@ -283,7 +393,7 @@ async function createDecisionResolutionFollowThrough(
     planningRequests?: PlanningRequestStore
   },
   goalKey: string,
-  decision: GoalDecision,
+  decisions: GoalDecision[],
   followThrough: GoalDecisionFollowThroughInput | undefined,
   writer?: string,
   reason?: string,
@@ -292,39 +402,54 @@ async function createDecisionResolutionFollowThrough(
     return undefined
   }
 
+  const primaryDecision = decisions[0]
+  if (!primaryDecision) {
+    return undefined
+  }
+
   const board = await stores.boardStore.readBoard(goalKey)
-  const linkedPlanningTask =
-    decision.taskRef === undefined
-      ? undefined
-      : board.items.find(
-          (task) =>
-            task.ref === decision.taskRef && task.kind === 'planning' && task.status !== 'done',
-        )
+  const decisionRefs = mergeOrderedStrings(decisions.map((decision) => decision.decisionKey))
+  const linkedPlanningTaskRefs = mergeOrderedStrings(
+    decisions.flatMap((decision) => {
+      if (!decision.taskRef) {
+        return []
+      }
+      const task = board.items.find(
+        (item) =>
+          item.ref === decision.taskRef && item.kind === 'planning' && item.status !== 'done',
+      )
+      return task ? [task.ref] : []
+    }),
+  )
+  const reusablePlanningTaskRef =
+    linkedPlanningTaskRefs.length === 1 ? linkedPlanningTaskRefs[0] : undefined
+  const resolvedDecisionKeySet = new Set(decisionRefs)
   const affectedEngineeringTasks = board.items.filter(
     (task) =>
       task.kind === 'engineering' &&
       task.blockedBy.some(
-        (blocker) => blocker.kind === 'decision' && blocker.ref === decision.decisionKey,
+        (blocker) => blocker.kind === 'decision' && resolvedDecisionKeySet.has(blocker.ref),
       ),
   )
   if (!followThrough && affectedEngineeringTasks.length === 0) {
     return undefined
   }
   if (followThrough?.kind === 'workflow_batch') {
-    let reusablePlanningTaskRef = linkedPlanningTask?.ref
+    let currentReusablePlanningTaskRef = reusablePlanningTaskRef
     const workflows: GoalDecisionLeafFollowThroughResult[] = []
     for (const workflow of followThrough.workflows) {
       const result = await materializeExplicitDecisionFollowThrough(
         stores,
         goalKey,
-        decision,
+        decisionRefs,
+        primaryDecision,
         workflow,
-        reusablePlanningTaskRef,
+        currentReusablePlanningTaskRef,
         writer,
         reason,
       )
       workflows.push(result)
-      reusablePlanningTaskRef = undefined
+      currentReusablePlanningTaskRef = undefined
     }
 
     return {
@@ -347,9 +472,10 @@ async function createDecisionResolutionFollowThrough(
     return materializeExplicitDecisionFollowThrough(
       stores,
       goalKey,
-      decision,
+      decisionRefs,
+      primaryDecision,
       followThrough,
-      linkedPlanningTask?.ref,
+      reusablePlanningTaskRef,
       writer,
       reason,
     )
@@ -362,16 +488,16 @@ async function createDecisionResolutionFollowThrough(
     },
     {
       goalKey,
-      title: `Plan follow-through for ${decision.decisionKey}`,
-      description: `Update design.md and todo.yml to reflect the resolved decision "${decision.summary}" before engineering continues.`,
+      title: defaultDecisionFollowThroughTitle(decisions),
+      description: defaultDecisionFollowThroughDescription(decisions),
       acceptanceCriteria: [
-        `design.md captures the follow-through for ${decision.decisionKey}.`,
-        `todo.yml reflects the follow-through for ${decision.decisionKey} before engineering resumes.`,
+        `design.md captures the follow-through for ${describeDecisionKeys(decisions)}.`,
+        `todo.yml reflects the follow-through for ${describeDecisionKeys(decisions)} before engineering resumes.`,
       ],
-      decisionRefs: [decision.decisionKey],
+      decisionRefs,
       requestedUpdates: ['design.md', 'todo.yml'],
       writer: writer ?? 'decision',
-      reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
+      reason: reason ?? `decision resolution follow-through ${describeDecisionKeys(decisions)}`,
     },
   )
 
@@ -389,7 +515,8 @@ async function materializeExplicitDecisionFollowThrough(
     planningRequests?: PlanningRequestStore
   },
   goalKey: string,
-  decision: GoalDecision,
+  decisionRefs: string[],
+  primaryDecision: GoalDecision,
   followThrough: GoalDecisionLeafFollowThroughInput,
   reusablePlanningTaskRef: string | undefined,
   writer?: string,
@@ -408,7 +535,7 @@ async function materializeExplicitDecisionFollowThrough(
       {
         goalKey,
         groupKey: followThrough.groupKey,
-        decisionRefs: [decision.decisionKey],
+        decisionRefs,
         requests: followThrough.requests,
         reuseTaskRefByTaskKey: reusablePlanningTaskRef
           ? {
@@ -416,7 +543,7 @@ async function materializeExplicitDecisionFollowThrough(
             }
           : undefined,
         writer: writer ?? 'decision',
-        reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
+        reason: reason ?? `decision resolution follow-through ${primaryDecision.decisionKey}`,
       },
     )
     const blockerTaskRefs = await listGroupedPlanningSinkTaskRefs(
@@ -449,11 +576,11 @@ async function materializeExplicitDecisionFollowThrough(
       title: followThrough.title,
       description: followThrough.description,
       acceptanceCriteria: followThrough.acceptanceCriteria,
-      decisionRefs: [decision.decisionKey],
+      decisionRefs,
       requestedUpdates: followThrough.requestedUpdates,
       reuseTaskRef: reusablePlanningTaskRef,
       writer: writer ?? 'decision',
-      reason: reason ?? `decision resolution follow-through ${decision.decisionKey}`,
+      reason: reason ?? `decision resolution follow-through ${primaryDecision.decisionKey}`,
     },
   )
 
@@ -467,4 +594,36 @@ async function materializeExplicitDecisionFollowThrough(
 
 function mergeOrderedStrings(values: string[]) {
   return [...new Set(values)]
+}
+
+function validateDecisionAnswerBatch(answers: GoalDecisionAnswerEntryInput[]) {
+  const seen = new Set<string>()
+  for (const answer of answers) {
+    if (!answer.decisionKey) {
+      continue
+    }
+    if (seen.has(answer.decisionKey)) {
+      throw new Error(`Duplicate decision key in answer batch: ${answer.decisionKey}`)
+    }
+    seen.add(answer.decisionKey)
+  }
+}
+
+function describeDecisionKeys(decisions: GoalDecision[]) {
+  return decisions.map((decision) => decision.decisionKey).join(', ')
+}
+
+function defaultDecisionFollowThroughTitle(decisions: GoalDecision[]) {
+  return decisions.length === 1
+    ? `Plan follow-through for ${decisions[0]?.decisionKey}`
+    : `Plan follow-through for ${decisions.length} resolved decisions`
+}
+
+function defaultDecisionFollowThroughDescription(decisions: GoalDecision[]) {
+  if (decisions.length === 1) {
+    const decision = decisions[0]
+    return `Update design.md and todo.yml to reflect the resolved decision "${decision?.summary}" before engineering continues.`
+  }
+
+  return `Update design.md and todo.yml to reflect the resolved decisions ${describeDecisionKeys(decisions)} before engineering continues.`
 }
