@@ -27,7 +27,7 @@ That still left one narrower manual gap:
 - keep `decisions.yml` and `planning-requests.yml` as the only durable truth
 - stay deterministic
 - do not infer summaries from raw snippet text, source keys, or fuzzy semantic matching
-- require explicit `summary` authority or one stable prompt authority on any leftover source entry that should materialize directly
+- require explicit `summary` authority, one stable prompt authority, or exactly one stable match-hint authority on any leftover source entry that should materialize directly
 - reuse the existing shared answer-interpretation runtime across assistant, Bun API, and direct planning surfaces
 
 ## Implemented Scope
@@ -56,10 +56,11 @@ Only the leftover reusable source entries after that existing consumption step b
 
 ### Required Source Metadata
 
-Any leftover reusable source entry that should materialize directly must already carry either:
+Any leftover reusable source entry that should materialize directly must already carry one of:
 
 - `summary`
 - or one stable `prompt`
+- or exactly one stable `matchHint`
 
 and may also carry:
 
@@ -70,6 +71,8 @@ If only `prompt` is present, runtime deterministically derives the summary from 
 
 - invert one canonical noun-phrase prompt like `What should the pilot scope be?` back into `Pilot scope`
 - or, when the prompt itself is already a stable question authority like `How should rollout happen?`, preserve that question-shaped prompt as the durable summary too
+
+If `matchHints` are the only remaining authority, runtime deterministically derives the summary only when there is exactly one stable hint. It normalizes that single hint into the durable summary, such as `launch shape` -> `Launch shape`. More than one hint still fails closed so runtime never has to choose between them.
 
 If `prompt` is omitted, runtime synthesizes one canonical prompt from the explicit `summary`.
 
@@ -87,14 +90,15 @@ This remaining-source inference now works for:
 ## Non-Goals
 
 - inferring summaries from raw `answer` text or `sourceExcerpt`
-- allowing leftover reusable source entries without explicit `summary` or stable prompt
+- allowing leftover reusable source entries without explicit `summary`, stable prompt, or exactly one stable match hint
 - fuzzy matching between leftover source entries and brand-new topics
 - replacing the earlier structured `question_*`, `topic_*`, `ordered_*`, or labeled reply surfaces
 
 ## Acceptance Criteria
 
 - remaining `matching_answer_sources` entries can create new durable decision topics without repeating those summaries in explicit `answers[]`
-- remaining `pending_answer_sources` or `matching_answer_sources` entries can create new durable decision topics or planner answers from stable prompt authority even when explicit `summary` is omitted
+- remaining `pending_answer_sources` or `matching_answer_sources` entries can create new durable decision topics or planner answers from stable prompt authority or one stable match-hint authority even when explicit `summary` is omitted
 - remaining `pending_answer_sources` or `matching_answer_sources` entries can create inferred planner answers without repeating those summaries in explicit `followThrough.answers[]`
 - assistant and Bun API both accept richer reusable source metadata on `answerSources`
-- runtime rejects leftover reusable source entries that omit both explicit `summary` and stable prompt when they are asked to materialize directly
+- runtime rejects leftover reusable source entries that omit explicit `summary`, stable prompt, and one stable match hint when they are asked to materialize directly
+- runtime also rejects leftover reusable source entries that offer more than one `matchHint` without stronger summary/prompt authority

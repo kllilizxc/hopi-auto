@@ -1993,8 +1993,13 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     return summaryFromPrompt
   }
 
+  const summaryFromMatchHint = inferSummaryFromStableMatchHints(entry.matchHints)
+  if (summaryFromMatchHint) {
+    return summaryFromMatchHint
+  }
+
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires summary or stable prompt for ${label}.`,
+    `Remaining answerSource "${entry.key}" requires summary, stable prompt, or exactly one stable match hint for ${label}.`,
   )
 }
 
@@ -6679,6 +6684,23 @@ function inferSummaryFromStablePrompt(prompt: string | undefined) {
   }
 
   return normalizeExtractedTopicSummary(subject, true)
+}
+
+function inferSummaryFromStableMatchHints(matchHints: string[] | undefined) {
+  const hints = dedupeNonEmptyStrings(matchHints ?? [])
+  if (hints.length !== 1) {
+    return undefined
+  }
+
+  const onlyHint = hints[0]
+  if (!onlyHint) {
+    return undefined
+  }
+
+  return (
+    normalizeExtractedTopicSummary(onlyHint, true) ||
+    (synthesizeCanonicalPromptFromSummary(onlyHint) === onlyHint ? onlyHint : undefined)
+  )
 }
 
 function extractPrefixedTopicSummary(text: string) {

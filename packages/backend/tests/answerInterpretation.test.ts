@@ -4554,6 +4554,54 @@ test('materializes new decision topics from remaining matching answer sources by
   ])
 })
 
+test('materializes new decision topics from remaining matching answer sources by one stable match hint without explicit summary or prompt', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-strategy-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'rollout-answer',
+      matchHints: ['launch shape'],
+      answer: 'Use a staged rollout.',
+    },
+  ]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Launch shape',
+      prompt: 'What should the launch shape be?',
+      matchHints: ['launch shape'],
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes inferred planner answers from remaining pending answer sources without explicit follow-through summaries', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -4684,7 +4732,49 @@ test('materializes inferred planner answers from remaining pending answer source
   })
 })
 
-test('rejects remaining matching answer sources without explicit summary or stable prompt when inferDecisionTopics is enabled', () => {
+test('materializes inferred planner answers from remaining pending answer sources by one stable match hint without explicit summary or prompt', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope' }],
+      inferRemainingAnswers: true,
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        matchHints: ['early customer set'],
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+    'pending_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Early customer set',
+        prompt: 'What should the early customer set be?',
+        matchHints: ['early customer set'],
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+  })
+})
+
+test('rejects remaining matching answer sources without explicit summary, stable prompt, or one stable match hint when inferDecisionTopics is enabled', () => {
   expect(() =>
     materializeInterpretedDecisionAnswerBatch(
       [],
@@ -4712,7 +4802,40 @@ test('rejects remaining matching answer sources without explicit summary or stab
       true,
     ),
   ).toThrow(
-    'Remaining answerSource "pilot-scope-answer" requires summary or stable prompt for inferDecisionTopics.',
+    'Remaining answerSource "pilot-scope-answer" requires summary, stable prompt, or exactly one stable match hint for inferDecisionTopics.',
+  )
+})
+
+test('rejects remaining matching answer sources with more than one match hint and no summary or prompt when inferDecisionTopics is enabled', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'rollout-answer',
+          matchHints: ['launch shape', 'rollout path'],
+          answer: 'Use a staged rollout.',
+        },
+      ],
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toThrow(
+    'Remaining answerSource "rollout-answer" requires summary, stable prompt, or exactly one stable match hint for inferDecisionTopics.',
   )
 })
 
