@@ -217,6 +217,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional captured user answer summary",
+          "answerKey": "optional stable planner-answer row key like pilot-scope when later writes should update this same durable planner answer even if the answer text changes",
           "summaryKey": "optional stable reusable summary key like pilot-scope when later reusable answer sources should match this planner answer without relying on summary wording",
           "prompt": "optional exact user-facing question that this captured planner answer should preserve",
           "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
@@ -233,6 +234,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional shared user answer summary",
+          "answerKey": "optional stable planner-answer row key like pilot-scope when later writes should update this same durable planner answer even if the answer text changes",
           "summaryKey": "optional stable reusable summary key like pilot-scope when later reusable answer sources should match this planner answer without relying on summary wording",
           "prompt": "optional exact user-facing question that this shared planner answer should preserve",
           "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
@@ -340,6 +342,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
           "summaryKey": "optional explicit reusable summary key like launch-shape when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
@@ -355,6 +358,7 @@ Required outcome shape:
         "answers": [
           {
             "summary": "optional shared user answer summary",
+            "answerKey": "optional stable planner-answer row key like pilot-scope when later writes should update this same shared planner answer even if the answer text changes",
             "prompt": "optional exact user-facing question that this shared planner answer should preserve for later answer interpretation",
             "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should shape every child in this decision-backed workflow graph",
@@ -373,6 +377,7 @@ Required outcome shape:
             "answers": [
               {
                 "summary": "optional extra user answer summary",
+                "answerKey": "optional stable planner-answer row key like pilot-scope when later writes should update this same planner answer even if the answer text changes",
                 "prompt": "optional exact user-facing question that this child planner answer should preserve",
                 "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
                 "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic",
@@ -423,6 +428,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
           "summaryKey": "optional explicit reusable summary key like auth-strategy when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "first exact substring to lift from sourceResponse"
         },
@@ -466,6 +472,7 @@ Required outcome shape:
         "answers": [
           {
             "summary": "optional non-decision answer summary",
+            "answerKey": "optional stable planner-answer row key like pilot-scope when later writes should update this same planner answer even if the answer text changes",
             "prompt": "optional exact user-facing question that this planner answer should preserve for later interpretation",
             "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic",
@@ -589,6 +596,7 @@ Rules:
 - When the exact user-facing question matters for later planner-side authority or answer interpretation, include "prompt" on captured planning answers as well as decision answers, so durable planning requests preserve that canonical question text alongside the shorter summary.
 - When a decision summary or planner-answer summary is already a stable noun phrase or simple command like "Choose the auth strategy", runtime now synthesizes a canonical "prompt" automatically if you omit one; only set explicit "prompt" when the exact wording itself matters as durable authority.
 - When later reusable answer sources should target a durable decision or planner answer by one stable noun-phrase key even if the visible summary or prompt wording is longer, set explicit "summaryKey" on that durable consumer instead of relying on summary text drift or extra parser heuristics.
+- When later writes should update the same durable planner-answer row even if the answer text itself changes, set explicit "answerKey" on that planner answer and reuse the same key on later writes instead of relying on array position or matching the old answer text.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.
@@ -604,6 +612,7 @@ Rules:
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
 - When those reusable answer sources should later match already-known durable decisions or planner answers without per-topic mapping, give both sides the same explicit "summaryKey" whenever summary/prompt wording is not the stable matching authority.
+- When those reusable answer sources should later match an already-known durable planner answer by row identity instead of summary wording, give both the source and the planner answer the same explicit "answerKey".
 - When one root "answerSources" bundle already contains extra reusable snippets that do not need per-item mapping onto known pending consumers, give those remaining source entries either explicit "summary" authority, one explicit "summaryKey" authority, one stable "prompt" authority, exactly one stable "matchHint" authority, or one stable suffixed "answerSourceKey" authority like "launch-shape-answer". Canonical noun-phrase prompts like "What should the pilot scope be?", explicit question-shaped prompts like "How should rollout happen?", one explicit "summaryKey" like "launch-shape", one stable phrase hint like "launch shape", and one noun-phrase key with an explicit "-answer" or "-source" suffix now all work. Runtime still accepts the "matchHints" path only when there is exactly one stable hint, and the "answerSourceKey" path only when the key carries that explicit suffix and humanizes to one stable noun phrase, so it never has to guess between multiple hints or generic keys. Then prefer "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources" plus "inferDecisionTopics": true or "followThrough.inferRemainingAnswers": true over repeating those same summaries again inside "answers" or "followThrough.answers".
 - When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
 - When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.

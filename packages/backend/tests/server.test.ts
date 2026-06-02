@@ -460,6 +460,41 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes planner answers through the direct planning-request API from matching answer sources by durable answerKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      answers: [{ summary: 'Early access cohort plan', answerKey: 'pilot-scope' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Early access cohort plan',
+          answerKey: 'pilot-scope',
+          prompt: 'What should the early access cohort plan be?',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+    })
+  })
+
   test('infers remaining planner answers through the direct planning-request API from remaining pending answer sources without explicit summaries', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -16493,6 +16528,64 @@ preferences:
             }),
           ]),
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and materializes planner answers from matching answer sources by durable answerKey', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Capture rollout notes from matching reusable answer sources by durable answerKey.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I captured rollout notes from matching reusable answer sources by durable answerKey.', actions: [{ kind: 'request_planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], answerSources: [{ answerSourceKey: 'source-1', answerKey: 'pilot-scope', answer: 'Start with five enterprise customers before broader launch.' }], sourceResponseFormat: 'matching_answer_sources', answers: [{ summary: 'Early access cohort plan', answerKey: 'pilot-scope' }], requestedUpdates: ['goal.md', 'notes/rollout.md'] }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Capture rollout notes from matching reusable answer sources by durable answerKey.',
+    })
+
+    expect(response.status).toBe(200)
+    const result = await readJson<{
+      message: string
+      actionResults: Array<{ kind: string; requestKey?: string; taskRef?: string }>
+    }>(response)
+    expect(result.message).toBe(
+      'I captured rollout notes from matching reusable answer sources by durable answerKey.',
+    )
+    expect(result.actionResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning',
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+        }),
+      ]),
+    )
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Early access cohort plan',
+              answerKey: 'pilot-scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+            }),
+          ]),
         }),
       ],
     })

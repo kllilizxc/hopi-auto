@@ -173,6 +173,7 @@ interface ResolvedAnswerContent {
 interface ResolvedAnswerSourceEntry {
   key: string
   answer: string
+  answerKey?: string
   summaryKey?: string
   summary?: string
   prompt?: string
@@ -192,6 +193,7 @@ const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 type InterpretableAnswerSourceMetadata = {
   answerSourceKey: string
+  answerKey?: string
   summaryKey?: string
   summary?: string
   prompt?: string
@@ -208,6 +210,7 @@ export type InterpretableAnswerSource =
 
 export interface InterpretablePlanningAnswer {
   summary: string
+  answerKey?: string
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
@@ -857,6 +860,7 @@ function materializeInterpretedPlanningAnswers(
   ])
   const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
     summary: answer.summary,
+    ...(answer.answerKey?.trim() ? { answerKey: answer.answerKey.trim() } : {}),
     ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
     ...(() => {
       const resolved = resolveAnswerContent(
@@ -1730,6 +1734,7 @@ function buildDecisionAnswerSourceResponseCandidates(
 
 function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanningAnswer) {
   return dedupeNonEmptyStrings([
+    humanizePlanningAnswerKey(answer.answerKey),
     humanizeSummaryKey(answer.summaryKey),
     answer.summary,
     answer.prompt,
@@ -1739,6 +1744,7 @@ function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanni
 
 function buildAnswerSourceResponseCandidates(source: InterpretableAnswerSource) {
   return dedupeNonEmptyStrings([
+    humanizePlanningAnswerKey(source.answerKey),
     humanizeSummaryKey(source.summaryKey),
     humanizeAnswerSourceKey(source.answerSourceKey),
     source.summary,
@@ -1965,6 +1971,7 @@ function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
     : undefined
   return {
     summary,
+    ...(entry.answerKey?.trim() ? { answerKey: entry.answerKey.trim() } : {}),
     ...(entry.summaryKey?.trim()
       ? { summaryKey: entry.summaryKey.trim() }
       : inferredSummaryKey
@@ -6942,6 +6949,11 @@ function humanizeSummaryKey(value: string | undefined) {
   return trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
 }
 
+function humanizePlanningAnswerKey(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
+}
+
 function humanizeAnswerSourceKey(value: string | undefined) {
   const trimmed = value?.trim()
   const humanized = trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
@@ -7033,6 +7045,7 @@ function createResolvedAnswerSources(
       resolved = sourceExcerpt
     }
     const summaryKey = source.summaryKey?.trim() || undefined
+    const answerKey = source.answerKey?.trim() || undefined
     const summary = source.summary?.trim() || undefined
     const prompt = source.prompt?.trim() || undefined
     const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
@@ -7041,6 +7054,7 @@ function createResolvedAnswerSources(
     entries.push({
       key,
       answer: resolved,
+      answerKey,
       summaryKey,
       summary,
       prompt,

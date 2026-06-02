@@ -339,6 +339,76 @@ describe('createPlanningRequestStore', () => {
       }),
     ).rejects.toThrow('Planning request answer summaryKey conflict')
   })
+
+  test('uses durable answer keys as planner-answer row identity when later writes update the answer text', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout guidance',
+      description: 'Turn the rollout answer bundle into durable planning work.',
+      acceptanceCriteria: ['The rollout guidance is durable.'],
+      taskRef: 'P-8',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers.',
+        },
+      ],
+    })
+
+    const merged = await store.mergeRequestMetadata(goalKey, created.requestKey, {
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          prompt: 'Which customers should pilot first before broader launch?',
+          matchHints: ['enterprise cohort'],
+          answer: 'Start with ten enterprise customers.',
+        },
+      ],
+    })
+
+    expect(merged.answers).toEqual([
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        prompt: 'Which customers should pilot first before broader launch?',
+        matchHints: ['enterprise cohort'],
+        answer: 'Start with ten enterprise customers.',
+      },
+    ])
+  })
+
+  test('rejects conflicting captured user answer keys on the same durable planner answer row', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout guidance',
+      description: 'Turn the rollout answer bundle into durable planning work.',
+      acceptanceCriteria: ['The rollout guidance is durable.'],
+      taskRef: 'P-9',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers.',
+        },
+      ],
+    })
+
+    await expect(
+      store.mergeRequestMetadata(goalKey, created.requestKey, {
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answerKey: 'early-customer-set',
+            answer: 'Start with five enterprise customers.',
+          },
+        ],
+      }),
+    ).rejects.toThrow('Planning request answer answerKey conflict')
+  })
 })
 
 function testRoot() {

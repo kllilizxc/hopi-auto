@@ -20,6 +20,7 @@ export type GoalPlanningRequestUpdateTarget = string
 
 export interface GoalPlanningRequestAnswer {
   summary: string
+  answerKey?: string
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
@@ -178,6 +179,11 @@ export const goalPlanningRequestUpdateTargetArraySchema = z
 
 export const goalPlanningRequestAnswerSchema = z.object({
   summary: z.string().min(1),
+  answerKey: z
+    .string()
+    .min(1)
+    .optional()
+    .transform((value) => normalizeGoalPlanningRequestAnswerKey(value)),
   summaryKey: z
     .string()
     .min(1)
@@ -635,6 +641,11 @@ function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[]
   return mergePlanningRequestAnswers([], values ?? [])
 }
 
+function normalizeGoalPlanningRequestAnswerKey(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
 function normalizeGoalPlanningRequestSummaryKey(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
@@ -680,12 +691,36 @@ function mergePlanningRequestAnswers(
   incoming: GoalPlanningRequestAnswer[],
 ) {
   const merged = [...existing]
-  const seen = new Map<string, number>(
-    existing.map((value, index) => [`${value.summary}\u0000${value.answer}`, index]),
-  )
+  const seenByValue = new Map<string, number>()
+  const seenByAnswerKey = new Map<string, number>()
+  for (const [index, value] of existing.entries()) {
+    seenByValue.set(getPlanningRequestAnswerValueKey(value.summary, value.answer), index)
+    const answerKey = normalizeGoalPlanningRequestAnswerKey(value.answerKey)
+    if (!answerKey) {
+      continue
+    }
+    const existingIndex = seenByAnswerKey.get(answerKey)
+    if (existingIndex !== undefined && existingIndex !== index) {
+      throw new Error(`Duplicate planning request answerKey "${answerKey}" in existing answers`)
+    }
+    seenByAnswerKey.set(answerKey, index)
+  }
   for (const value of incoming) {
-    const key = `${value.summary}\u0000${value.answer}`
-    const existingIndex = seen.get(key)
+    const nextAnswerKey = normalizeGoalPlanningRequestAnswerKey(value.answerKey)
+    const valueKey = getPlanningRequestAnswerValueKey(value.summary, value.answer)
+    const existingIndexByAnswerKey =
+      nextAnswerKey === undefined ? undefined : seenByAnswerKey.get(nextAnswerKey)
+    const existingIndexByValue = seenByValue.get(valueKey)
+    if (
+      existingIndexByAnswerKey !== undefined &&
+      existingIndexByValue !== undefined &&
+      existingIndexByAnswerKey !== existingIndexByValue
+    ) {
+      throw new Error(
+        `Planning request answer "${value.summary}" matched different rows by answerKey and value identity`,
+      )
+    }
+    const existingIndex = existingIndexByAnswerKey ?? existingIndexByValue
     if (existingIndex === undefined) {
       const nextPrompt = resolveCanonicalPromptFromSummary({
         summary: value.summary,
@@ -696,11 +731,15 @@ function mergePlanningRequestAnswers(
       merged.push({
         summary: value.summary,
         answer: value.answer,
+        ...(nextAnswerKey ? { answerKey: nextAnswerKey } : {}),
         ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
       })
-      seen.set(key, merged.length - 1)
+      seenByValue.set(valueKey, merged.length - 1)
+      if (nextAnswerKey) {
+        seenByAnswerKey.set(nextAnswerKey, merged.length - 1)
+      }
       continue
     }
 
@@ -708,6 +747,16 @@ function mergePlanningRequestAnswers(
     if (!current) {
       continue
     }
+    if (existingIndexByAnswerKey !== undefined && current.summary !== value.summary) {
+      throw new Error(
+        `Planning request answer summary conflict for answerKey "${current.answerKey}": "${current.summary}" != "${value.summary}"`,
+      )
+    }
+    const resolvedAnswerKey = resolvePlanningRequestAnswerAnswerKey(
+      current.answerKey,
+      value.answerKey,
+      current.summary,
+    )
     const nextPrompt = resolveCanonicalPromptFromSummary({
       summary: current.summary,
       currentPrompt: current.prompt,
@@ -723,15 +772,27 @@ function mergePlanningRequestAnswers(
       value.matchHints,
     )
     if (
+      resolvedAnswerKey !== current.answerKey ||
       nextSummaryKey !== current.summaryKey ||
       nextPrompt !== current.prompt ||
-      !sameOptionalStringArray(current.matchHints, nextMatchHints)
+      !sameOptionalStringArray(current.matchHints, nextMatchHints) ||
+      current.answer !== value.answer
     ) {
+      seenByValue.delete(getPlanningRequestAnswerValueKey(current.summary, current.answer))
       merged[existingIndex] = {
         ...current,
+        answer: value.answer,
+        ...(resolvedAnswerKey ? { answerKey: resolvedAnswerKey } : {}),
         ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
+      }
+      seenByValue.set(
+        getPlanningRequestAnswerValueKey(current.summary, value.answer),
+        existingIndex,
+      )
+      if (resolvedAnswerKey) {
+        seenByAnswerKey.set(resolvedAnswerKey, existingIndex)
       }
     }
   }
@@ -747,6 +808,7 @@ function samePlanningRequestAnswerArray(
     left.every(
       (value, index) =>
         right[index]?.summary === value.summary &&
+        right[index]?.answerKey === value.answerKey &&
         right[index]?.summaryKey === value.summaryKey &&
         right[index]?.prompt === value.prompt &&
         sameOptionalStringArray(right[index]?.matchHints, value.matchHints) &&
@@ -796,6 +858,27 @@ function resolvePlanningRequestAnswerSummaryKey(
   throw new Error(
     `Planning request answer summaryKey conflict for "${summary}": ${existing} != ${nextSummaryKey}`,
   )
+}
+
+function resolvePlanningRequestAnswerAnswerKey(
+  existing: string | undefined,
+  incoming: string | undefined,
+  summary: string,
+) {
+  const nextAnswerKey = normalizeGoalPlanningRequestAnswerKey(incoming)
+  if (!existing) {
+    return nextAnswerKey
+  }
+  if (!nextAnswerKey || nextAnswerKey === existing) {
+    return existing
+  }
+  throw new Error(
+    `Planning request answer answerKey conflict for "${summary}": ${existing} != ${nextAnswerKey}`,
+  )
+}
+
+function getPlanningRequestAnswerValueKey(summary: string, answer: string) {
+  return `${summary}\u0000${answer}`
 }
 
 function sameOptionalStringArray(left: string[] | undefined, right: string[] | undefined) {

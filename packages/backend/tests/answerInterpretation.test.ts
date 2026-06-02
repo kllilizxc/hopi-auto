@@ -4442,6 +4442,38 @@ test('materializes matching open decisions from matching answer sources by durab
   ])
 })
 
+test('materializes planner answers from matching answer sources by durable answerKey', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Early access cohort plan', answerKey: 'pilot-scope' }],
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+    'matching_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Early access cohort plan',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+  })
+})
+
 test('materializes new decision topics from remaining matching answer sources without explicit answer mapping', () => {
   const answerSources = [
     {

@@ -71,6 +71,7 @@ const interpretablePlanningAnswerArraySchema = z
   .array(
     z.object({
       summary: z.string().min(1),
+      answerKey: z.string().min(1).optional(),
       summaryKey: z.string().min(1).optional(),
       prompt: z.string().min(1).optional(),
       matchHints: matchHintArraySchema,
@@ -83,6 +84,7 @@ const interpretablePlanningAnswerArraySchema = z
 
 const interpretableAnswerSourceMetadataSchema = {
   answerSourceKey: z.string().min(1),
+  answerKey: z.string().min(1).optional(),
   summaryKey: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),

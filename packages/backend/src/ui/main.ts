@@ -53,6 +53,7 @@ interface GoalPlanningRequest {
   workflowSharedDecisionRefs?: string[]
   workflowSharedAnswers?: Array<{
     summary: string
+    answerKey?: string
     summaryKey?: string
     answer: string
   }>
@@ -67,6 +68,7 @@ interface GoalPlanningRequest {
   decisionRefs: string[]
   answers: Array<{
     summary: string
+    answerKey?: string
     summaryKey?: string
     answer: string
   }>
