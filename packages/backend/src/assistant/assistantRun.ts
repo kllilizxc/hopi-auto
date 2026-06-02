@@ -134,6 +134,7 @@ const assistantDecisionAnswerSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  answerSourceKey: z.string().min(1).optional(),
 })
 
 const interpretablePlanningAnswerArraySchema = z
@@ -141,6 +142,16 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       answer: z.string().min(1).optional(),
+      answerSourceKey: z.string().min(1).optional(),
+    }),
+  )
+  .default([])
+
+const interpretableAnswerSourceArraySchema = z
+  .array(
+    z.object({
+      answerSourceKey: z.string().min(1),
+      answer: z.string().min(1),
     }),
   )
   .default([])
@@ -261,11 +272,14 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     decisionKey: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
+    answerSourceKey: z.string().min(1).optional(),
+    answerSources: interpretableAnswerSourceArraySchema,
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),
   z.object({
     kind: z.literal('record_answers'),
+    answerSources: interpretableAnswerSourceArraySchema,
     sourceResponse: z.string().min(1).optional(),
     answers: z.array(assistantDecisionAnswerSchema).min(1),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -276,6 +290,8 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     summary: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
+    answerSourceKey: z.string().min(1).optional(),
+    answerSources: interpretableAnswerSourceArraySchema,
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),

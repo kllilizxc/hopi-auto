@@ -139,6 +139,16 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       answer: z.string().min(1).optional(),
+      answerSourceKey: z.string().min(1).optional(),
+    }),
+  )
+  .default([])
+
+const interpretableAnswerSourceArraySchema = z
+  .array(
+    z.object({
+      answerSourceKey: z.string().min(1),
+      answer: z.string().min(1),
     }),
   )
   .default([])
@@ -209,7 +219,11 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
 ])
 
 const resolveDecisionSchema = z.object({
+  summary: z.string().min(1).optional(),
+  taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  answerSourceKey: z.string().min(1).optional(),
+  answerSources: interpretableAnswerSourceArraySchema,
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -219,6 +233,8 @@ const answerDecisionSchema = z.object({
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  answerSourceKey: z.string().min(1).optional(),
+  answerSources: interpretableAnswerSourceArraySchema,
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -228,9 +244,11 @@ const answerDecisionBatchEntrySchema = z.object({
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  answerSourceKey: z.string().min(1).optional(),
 })
 
 const answerDecisionBatchSchema = z.object({
+  answerSources: interpretableAnswerSourceArraySchema,
   sourceResponse: z.string().min(1).optional(),
   answers: z.array(answerDecisionBatchEntrySchema).min(1),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -471,9 +489,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 decisionKey: body.decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
+                answerSourceKey: body.answerSourceKey,
               },
             ],
             body.sourceResponse,
+            body.answerSources,
           )
           const firstAnswer = answers[0]
           if (!firstAnswer) {
@@ -494,6 +514,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,
                 body.sourceResponse,
+                body.answerSources,
               ),
               writer: 'api',
               reason: `api record answer ${body.decisionKey ?? body.summary}`,
@@ -525,10 +546,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
-              answers: materializeInterpretedDecisionAnswers(body.answers, body.sourceResponse),
+              answers: materializeInterpretedDecisionAnswers(
+                body.answers,
+                body.sourceResponse,
+                body.answerSources,
+              ),
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,
                 body.sourceResponse,
+                body.answerSources,
               ),
               writer: 'api',
               reason: `api record answers ${body.answers
@@ -559,6 +585,23 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
             throw new HttpError(404, `Decision not found: ${decisionKey}`)
           }
+          const materializedAnswers = materializeInterpretedDecisionAnswers(
+            [
+              {
+                summary: body.summary ?? `Decision: ${decisionKey}`,
+                decisionKey,
+                taskRef: body.taskRef,
+                answer: body.answer,
+                answerSourceKey: body.answerSourceKey,
+              },
+            ],
+            body.sourceResponse,
+            body.answerSources,
+          )
+          const firstAnswer = materializedAnswers[0]
+          if (!firstAnswer) {
+            throw new HttpError(400, `Expected one decision answer for ${decisionKey}.`)
+          }
           const result = await resolveGoalDecision(
             {
               boardStore: store,
@@ -568,17 +611,11 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               decisionKey,
-              answer:
-                body.answer?.trim() ||
-                body.sourceResponse?.trim() ||
-                (() => {
-                  throw new AnswerInterpretationError(
-                    `Missing answer text for decision ${decisionKey}. Provide answer or sourceResponse.`,
-                  )
-                })(),
+              answer: firstAnswer.answer,
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,
                 body.sourceResponse,
+                body.answerSources,
               ),
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,

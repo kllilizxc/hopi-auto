@@ -7,7 +7,6 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
-  AnswerInterpretationError,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
 } from '../runtime/answerInterpretation'
@@ -372,14 +371,23 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'resolve_decision') {
-    const materializedAnswer =
-      action.answer?.trim() ||
-      action.sourceResponse?.trim() ||
-      (() => {
-        throw new AnswerInterpretationError(
-          `Missing answer text for decision ${action.decisionKey}. Provide answer or sourceResponse.`,
-        )
-      })()
+    const materializedAnswers = materializeInterpretedDecisionAnswers(
+      [
+        {
+          summary: action.summary ?? `Decision: ${action.decisionKey}`,
+          decisionKey: action.decisionKey,
+          taskRef: action.taskRef,
+          answer: action.answer,
+          answerSourceKey: action.answerSourceKey,
+        },
+      ],
+      action.sourceResponse,
+      action.answerSources,
+    )
+    const firstAnswer = materializedAnswers[0]
+    if (!firstAnswer) {
+      throw new Error(`Expected one materialized answer for ${action.decisionKey}.`)
+    }
     const result = await answerGoalDecision(
       {
         boardStore: stores.boardStore,
@@ -388,13 +396,14 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        summary: action.summary ?? `Decision: ${action.decisionKey}`,
+        summary: firstAnswer.summary,
         decisionKey: action.decisionKey,
-        taskRef: action.taskRef,
-        answer: materializedAnswer,
+        taskRef: firstAnswer.taskRef,
+        answer: firstAnswer.answer,
         followThrough: materializeInterpretedDecisionFollowThrough(
           action.followThrough,
           action.sourceResponse,
+          action.answerSources,
         ),
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
@@ -417,9 +426,11 @@ async function applyAssistantAction(
           decisionKey: action.decisionKey,
           taskRef: action.taskRef,
           answer: action.answer,
+          answerSourceKey: action.answerSourceKey,
         },
       ],
       action.sourceResponse,
+      action.answerSources,
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -440,6 +451,7 @@ async function applyAssistantAction(
         followThrough: materializeInterpretedDecisionFollowThrough(
           action.followThrough,
           action.sourceResponse,
+          action.answerSources,
         ),
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
@@ -464,10 +476,15 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        answers: materializeInterpretedDecisionAnswers(action.answers, action.sourceResponse),
+        answers: materializeInterpretedDecisionAnswers(
+          action.answers,
+          action.sourceResponse,
+          action.answerSources,
+        ),
         followThrough: materializeInterpretedDecisionFollowThrough(
           action.followThrough,
           action.sourceResponse,
+          action.answerSources,
         ),
         writer: 'assistant',
         reason: `assistant record answers ${action.answers

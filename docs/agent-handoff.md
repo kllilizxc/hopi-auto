@@ -58,6 +58,7 @@ Phase 1 backend is complete:
 - Decision `resolve`, `answer`, and `answers` Bun API routes now also return the full shared runtime result, so callers can observe `blockerRemoved`, creation metadata, full `followThrough`, and any runtime-generated `W-*` workflow key instead of losing that authority behind decision-only response bodies.
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
 - Answer-driven assistant and Bun API actions now also support one shared `sourceResponse`, so a less-structured raw user reply can be captured once and reused across multiple durable decision topics plus non-decision follow-through answers instead of repeating the same answer payload in every entry.
+- Answer-driven assistant and Bun API actions now also support root `answerSources` plus per-item `answerSourceKey`, so one less-structured raw reply can first be explicitly extracted into reusable topic-specific snippets and then mapped across multiple durable decision topics plus non-decision follow-through answers without repeating snippet text or collapsing everything to one shared raw response.
 - Decision-backed and answer-backed `workflow_batch` follow-through now also supports explicit `reuseTaskRef` and `reuseGroupKey`, so one answered decision can adopt an arbitrary current planning surface or grouped planning surface through the same shared workflow-graph runtime instead of relying only on narrow implicit planning-linked reuse.
 - Durable planning workflow graphs are now independently inspectable through Bun API list/detail endpoints plus a dedicated Bun UI workflow section, including workflow-root shared context and child request detail reconstructed directly from `planning-requests.yml` plus current open tasks.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
@@ -96,6 +97,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-02-structured-preference-lifecycle-design.md`: current authority note for canonical structured repo preferences with stable keys, active/retired lifecycle, and assistant/API preference mutations.
 - `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
+- `docs/superpowers/specs/2026-06-02-named-answer-source-interpretation-design.md`: current authority note for reusing explicitly extracted topic-specific answer snippets across durable decision topics and non-decision follow-through answers without introducing a second durable store.
 - `docs/superpowers/specs/2026-06-02-decision-workflow-explicit-surface-reuse-design.md`: current authority note for explicit `reuseTaskRef` / `reuseGroupKey` parity on decision-backed and answer-backed `workflow_batch` follow-through.
 - `docs/superpowers/specs/2026-06-02-planning-workflow-inspection-design.md`: current authority note for independent workflow-graph read surfaces on Bun API and UI, including workflow-root shared context and child request detail.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
@@ -284,6 +286,7 @@ Current backend source:
 - `packages/backend/src/storage/planningRequestStore.ts`: durable Goal planning-request storage in `planning-requests.yml`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
 - `packages/backend/src/runtime/decisionRequest.ts`: shared control-path helper for decision requests plus resolution-side visible blocker cleanup.
+- `packages/backend/src/runtime/answerInterpretation.ts`: explicit answer materialization and validation for shared raw replies plus reusable named extracted answer sources.
 - `packages/backend/src/runtime/planningRequest.ts`: shared control-path helper for durable planning requests plus planning-task follow-through resolution.
 - `packages/backend/src/assistant/goalAssistantContext.ts`: Goal-scoped assistant context and prompt bundle generation.
 - `packages/backend/src/assistant/assistantRun.ts`: assistant run record types and validation.
@@ -313,6 +316,7 @@ Current backend tests:
 - `packages/backend/tests/validation.test.ts`
 - `packages/backend/tests/boardStore.test.ts`
 - `packages/backend/tests/decisionStore.test.ts`
+- `packages/backend/tests/answerInterpretation.test.ts`
 - `packages/backend/tests/attemptStore.test.ts`
 - `packages/backend/tests/preferenceStore.test.ts`
 - `packages/backend/tests/assistantThreadStore.test.ts`
@@ -596,7 +600,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer topic-specific extracted answers from one less-structured reply without even manually enumerating every durable decision topic or planner-answer summary in the action payload
+- deeper answer interpretation when assistant should infer durable decision topics or planner-answer summaries directly from one less-structured reply without first explicitly defining the named extracted answer sources and per-topic mapping inside the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -605,7 +609,7 @@ What is still missing:
 Next high-leverage phase:
 
 1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, grouped-surface reuse for the first child in direct and decision-backed workflow graphs, generated durable `W-*` identity for workflow graphs that omit explicit `workflowKey`, cross-workflow blocker propagation when that reused surface was already blocking engineering, stable `workflowTaskKey`-backed reuse for standalone direct-workflow children, stable `blockedByWorkflowKeys`-backed child dependencies across direct workflow tails, workflow-root shared decision/answer context for direct workflow graphs, workflow-root shared non-decision answers for decision-backed workflow graphs, durable workflow-root shared-context persistence across later `workflowKey` extensions, and shared workflow-graph authority across both direct-planning and decision-backed multi-workflow follow-through.
-2. Explore deeper answer interpretation only if product needs assistant to infer topic-specific extracted answers from one less-structured reply without manually enumerating every durable decision topic or planner-answer summary in the action payload.
+2. Explore deeper answer interpretation only if product needs assistant to infer durable decision topics or planner-answer summaries directly from one less-structured reply without first explicitly defining named answer sources and per-topic mapping in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 
