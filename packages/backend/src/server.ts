@@ -14,7 +14,7 @@ import {
   AnswerInterpretationError,
   createInterpretedSourceResponseState,
   followThroughInfersRemainingAnswers,
-  listInterpretableFollowThroughAnswerSummaries,
+  listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -143,6 +143,7 @@ const interpretablePlanningAnswerArraySchema = z
   .array(
     z.object({
       summary: z.string().min(1),
+      prompt: z.string().min(1).optional(),
       answer: z.string().min(1).optional(),
       sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),
@@ -174,6 +175,7 @@ const createPlanningWorkflowBatchSchema = z.object({
     .array(
       z.object({
         summary: z.string().min(1),
+        prompt: z.string().min(1).optional(),
         answer: z.string().min(1),
       }),
     )
@@ -564,9 +566,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.answerSources,
             body.sourceResponseFormat,
             sourceResponseState,
-            listInterpretableFollowThroughAnswerSummaries(body.followThrough).map((summary) => [
-              summary,
-            ]),
+            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
           )
           const firstAnswer = answers[0]
           if (!firstAnswer) {
@@ -647,7 +647,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               prompt: decision.prompt,
               taskRef: decision.taskRef,
             })),
-            listInterpretableFollowThroughAnswerSummaries(body.followThrough),
+            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
           )
           const result = await answerGoalDecisions(
             {
@@ -713,9 +713,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.answerSources,
             body.sourceResponseFormat,
             sourceResponseState,
-            listInterpretableFollowThroughAnswerSummaries(body.followThrough).map((summary) => [
-              summary,
-            ]),
+            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
           )
           const firstAnswer = materializedAnswers[0]
           if (!firstAnswer) {

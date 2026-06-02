@@ -2462,6 +2462,103 @@ test('materializes matching open decisions from question spans by durable prompt
   ])
 })
 
+test('materializes planner answers from question spans by durable prompt text', () => {
+  const sourceResponse = [
+    'Auth strategy?',
+    'Use Bun-native auth.',
+    'That keeps the runtime simple.',
+    'Rollout strategy?',
+    'Use a staged rollout.',
+    'That keeps the launch reversible.',
+    'Which customers should pilot first before broader launch?',
+    'Start with five enterprise customers.',
+    'That keeps early support manageable.',
+  ].join(' ')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_spans')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_spans',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout. That keeps the launch reversible.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which customers should pilot first before broader launch?',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_spans',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    inferRemainingAnswers: undefined,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Which customers should pilot first before broader launch?',
+        answer: 'Start with five enterprise customers. That keeps early support manageable.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
 test('materializes new decision topics from remaining question spans while reserving planner summaries', () => {
   const sourceResponse = [
     'Auth strategy?',

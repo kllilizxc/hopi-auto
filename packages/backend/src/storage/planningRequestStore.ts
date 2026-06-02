@@ -19,6 +19,7 @@ export type GoalPlanningRequestUpdateTarget = string
 
 export interface GoalPlanningRequestAnswer {
   summary: string
+  prompt?: string
   answer: string
 }
 
@@ -174,6 +175,7 @@ export const goalPlanningRequestUpdateTargetArraySchema = z
 
 export const goalPlanningRequestAnswerSchema = z.object({
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   answer: z.string().min(1),
 })
 
@@ -638,12 +640,28 @@ function mergePlanningRequestAnswers(
   incoming: GoalPlanningRequestAnswer[],
 ) {
   const merged = [...existing]
-  const seen = new Set(existing.map((value) => `${value.summary}\u0000${value.answer}`))
+  const seen = new Map<string, number>(
+    existing.map((value, index) => [`${value.summary}\u0000${value.answer}`, index]),
+  )
   for (const value of incoming) {
     const key = `${value.summary}\u0000${value.answer}`
-    if (!seen.has(key)) {
+    const existingIndex = seen.get(key)
+    if (existingIndex === undefined) {
       merged.push(value)
-      seen.add(key)
+      seen.set(key, merged.length - 1)
+      continue
+    }
+
+    const current = merged[existingIndex]
+    if (!current) {
+      continue
+    }
+    const nextPrompt = current.prompt?.trim() || value.prompt?.trim() || undefined
+    if (nextPrompt !== current.prompt) {
+      merged[existingIndex] = {
+        ...current,
+        prompt: nextPrompt,
+      }
     }
   }
   return merged
@@ -657,7 +675,9 @@ function samePlanningRequestAnswerArray(
     left.length === right.length &&
     left.every(
       (value, index) =>
-        right[index]?.summary === value.summary && right[index]?.answer === value.answer,
+        right[index]?.summary === value.summary &&
+        right[index]?.prompt === value.prompt &&
+        right[index]?.answer === value.answer,
     )
   )
 }

@@ -143,6 +143,7 @@ const interpretablePlanningAnswerArraySchema = z
   .array(
     z.object({
       summary: z.string().min(1),
+      prompt: z.string().min(1).optional(),
       answer: z.string().min(1).optional(),
       sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),

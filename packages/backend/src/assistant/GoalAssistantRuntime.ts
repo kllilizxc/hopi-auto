@@ -9,7 +9,7 @@ import type { TaskStatus } from '../domain/board'
 import {
   createInterpretedSourceResponseState,
   followThroughInfersRemainingAnswers,
-  listInterpretableFollowThroughAnswerSummaries,
+  listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -395,9 +395,7 @@ async function applyAssistantAction(
       action.answerSources,
       action.sourceResponseFormat,
       sourceResponseState,
-      listInterpretableFollowThroughAnswerSummaries(action.followThrough).map((summary) => [
-        summary,
-      ]),
+      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -456,9 +454,7 @@ async function applyAssistantAction(
       action.answerSources,
       action.sourceResponseFormat,
       sourceResponseState,
-      listInterpretableFollowThroughAnswerSummaries(action.followThrough).map((summary) => [
-        summary,
-      ]),
+      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -531,7 +527,7 @@ async function applyAssistantAction(
         prompt: decision.prompt,
         taskRef: decision.taskRef,
       })),
-      listInterpretableFollowThroughAnswerSummaries(action.followThrough),
+      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
     )
     const result = await answerGoalDecisions(
       {

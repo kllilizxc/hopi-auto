@@ -86,6 +86,7 @@ export type InterpretableAnswerSource =
 
 export interface InterpretablePlanningAnswer {
   summary: string
+  prompt?: string
   answer?: string
   sourceExcerpt?: string
   answerSourceKey?: string
@@ -201,6 +202,32 @@ export function listInterpretableFollowThroughAnswerSummaries(
   return followThrough.answers?.map((answer) => answer.summary) ?? []
 }
 
+export function listInterpretableFollowThroughAnswerCandidateGroups(
+  followThrough: InterpretableDecisionFollowThroughInput | undefined,
+) {
+  if (!followThrough) {
+    return []
+  }
+
+  if (followThrough.kind === 'workflow_batch') {
+    return [
+      ...(followThrough.answers?.map((answer) =>
+        buildPlanningAnswerSourceResponseCandidates(answer),
+      ) ?? []),
+      ...followThrough.workflows.flatMap(
+        (workflow) =>
+          workflow.answers?.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)) ??
+          [],
+      ),
+    ]
+  }
+
+  return (
+    followThrough.answers?.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)) ??
+    []
+  )
+}
+
 export function followThroughInfersRemainingAnswers(
   followThrough: InterpretableDecisionFollowThroughInput | undefined,
 ) {
@@ -277,7 +304,7 @@ export function materializeInterpretedDecisionAnswerBatch(
   sourceResponseState?: InterpretedSourceResponseState,
   inferDecisionTopics = false,
   knownDecisions: InterpretableKnownDecision[] = [],
-  reservedAnswerSummaries: string[] = [],
+  reservedAnswerCandidates: string[] | string[][] = [],
 ): MaterializedInterpretedDecisionAnswer[] {
   const explicitAnswers = answers ?? []
   if (inferOpenDecisions && explicitAnswers.some((answer) => !answer.decisionKey?.trim())) {
@@ -289,11 +316,13 @@ export function materializeInterpretedDecisionAnswerBatch(
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+  const reservedAnswerCandidateGroups =
+    normalizeReservedAnswerCandidateGroups(reservedAnswerCandidates)
   registerTopicBlockCandidates(interpretationState, [
     ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
     ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
     ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
-    ...reservedAnswerSummaries.map((summary) => [summary]),
+    ...reservedAnswerCandidateGroups,
   ])
   const materializedExplicitAnswers = materializeInterpretedDecisionAnswers(
     explicitAnswers,
@@ -328,7 +357,7 @@ export function materializeInterpretedDecisionAnswerBatch(
       sourceResponseFormat,
       interpretationState,
       knownDecisions,
-      reservedAnswerSummaries,
+      reservedAnswerCandidateGroups,
     ),
   ]
 
@@ -339,6 +368,19 @@ export function materializeInterpretedDecisionAnswerBatch(
   }
 
   return materializedAnswers
+}
+
+function normalizeReservedAnswerCandidateGroups(reservedAnswerCandidates: string[] | string[][]) {
+  if (reservedAnswerCandidates.length === 0) {
+    return []
+  }
+
+  const firstCandidate = reservedAnswerCandidates[0]
+  if (Array.isArray(firstCandidate)) {
+    return reservedAnswerCandidates as string[][]
+  }
+
+  return (reservedAnswerCandidates as string[]).map((summary) => [summary])
 }
 
 export function materializeInterpretedDecisionFollowThrough(
@@ -356,7 +398,7 @@ export function materializeInterpretedDecisionFollowThrough(
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   registerTopicBlockCandidates(interpretationState, [
-    ...listInterpretableFollowThroughAnswerSummaries(followThrough).map((summary) => [summary]),
+    ...listInterpretableFollowThroughAnswerCandidateGroups(followThrough),
   ])
 
   if (followThrough.kind === 'planning') {
@@ -469,6 +511,7 @@ function materializeInterpretedPlanningAnswers(
   ])
   const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
     summary: answer.summary,
+    ...(answer.prompt?.trim() ? { prompt: answer.prompt.trim() } : {}),
     answer: resolveAnswerText(
       answer.answer,
       answer.sourceExcerpt,
@@ -477,7 +520,7 @@ function materializeInterpretedPlanningAnswers(
       `planner answer ${answer.summary}`,
       answerSourcesByKey,
       sourceResponseFormat,
-      [answer.summary],
+      buildPlanningAnswerSourceResponseCandidates(answer),
       interpretationState,
     ),
   }))
@@ -764,6 +807,10 @@ function buildDecisionAnswerSourceResponseCandidates(
   ])
 }
 
+function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanningAnswer) {
+  return dedupeNonEmptyStrings([answer.summary, answer.prompt])
+}
+
 function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDecision) {
   return dedupeNonEmptyStrings([
     humanizeDecisionKey(decision.decisionKey),
@@ -962,7 +1009,7 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   knownDecisions: InterpretableKnownDecision[],
-  reservedAnswerSummaries: string[],
+  reservedAnswerCandidateGroups: string[][],
 ) {
   if (!inferDecisionTopics) {
     return []
@@ -1151,33 +1198,33 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     }
   }
 
-  for (const summary of reservedAnswerSummaries) {
+  for (const candidates of reservedAnswerCandidateGroups) {
     if (questionBlocks) {
-      reserveMatchedQuestionBlock(questionBlocks, [summary], reservedQuestionBlockIndexes)
+      reserveMatchedQuestionBlock(questionBlocks, candidates, reservedQuestionBlockIndexes)
       continue
     }
 
     if (questionSpans) {
-      reserveMatchedQuestionSpan(questionSpans, [summary], reservedQuestionSpanIndexes)
+      reserveMatchedQuestionSpan(questionSpans, candidates, reservedQuestionSpanIndexes)
       continue
     }
 
     if (topicSentences) {
-      reserveMatchedTopicSentence(topicSentences, [summary], reservedTopicSentenceIndexes)
+      reserveMatchedTopicSentence(topicSentences, candidates, reservedTopicSentenceIndexes)
       continue
     }
 
     if (topicParagraphs) {
-      reserveMatchedTopicParagraph(topicParagraphs, [summary], reservedTopicParagraphIndexes)
+      reserveMatchedTopicParagraph(topicParagraphs, candidates, reservedTopicParagraphIndexes)
       continue
     }
 
     if (topicBlocks) {
-      reserveMatchedTopicBlock(topicBlocks, [summary], reservedTopicBlockIndexes)
+      reserveMatchedTopicBlock(topicBlocks, candidates, reservedTopicBlockIndexes)
       continue
     }
 
-    reserveMatchedLabeledSection(sectionsByLabel, [summary], reservedLabels)
+    reserveMatchedLabeledSection(sectionsByLabel, candidates, reservedLabels)
   }
 
   const materializedAnswers: Array<{

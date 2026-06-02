@@ -227,6 +227,50 @@ describe('createPlanningRequestStore', () => {
       ],
     })
   })
+
+  test('upgrades captured user answers with richer prompt metadata', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout guidance',
+      description: 'Turn the rollout answer bundle into durable planning work.',
+      acceptanceCriteria: ['The rollout guidance is durable.'],
+      taskRef: 'P-6',
+      answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+    })
+
+    const merged = await store.mergeRequestMetadata(goalKey, created.requestKey, {
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answer: 'Start with five enterprise customers.',
+          prompt: 'Which customers should pilot first before broader launch?',
+        },
+      ],
+    })
+
+    expect(merged.answers).toEqual([
+      {
+        summary: 'Pilot scope',
+        answer: 'Start with five enterprise customers.',
+        prompt: 'Which customers should pilot first before broader launch?',
+      },
+    ])
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: created.requestKey,
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers.',
+              prompt: 'Which customers should pilot first before broader launch?',
+            },
+          ],
+        }),
+      ],
+    })
+  })
 })
 
 function testRoot() {

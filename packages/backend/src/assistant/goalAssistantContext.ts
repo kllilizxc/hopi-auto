@@ -217,6 +217,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional captured user answer summary",
+          "prompt": "optional exact user-facing question that this captured planner answer should preserve",
           "answer": "explicit user answer that should shape planning even without a decision topic"
         }
       ],
@@ -230,6 +231,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional shared user answer summary",
+          "prompt": "optional exact user-facing question that this shared planner answer should preserve",
           "answer": "explicit user answer that should shape every request in the grouped follow-through"
         }
       ],
@@ -261,6 +263,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional shared user answer summary",
+          "prompt": "optional exact user-facing question that this shared planner answer should preserve",
           "answer": "explicit user answer that should shape every child in this workflow graph"
         }
       ],
@@ -276,6 +279,7 @@ Required outcome shape:
           "answers": [
             {
               "summary": "optional captured user answer summary",
+              "prompt": "optional exact user-facing question that this child planner answer should preserve",
               "answer": "explicit user answer that should shape this workflow"
             }
           ],
@@ -340,6 +344,7 @@ Required outcome shape:
         "answers": [
           {
             "summary": "optional shared user answer summary",
+            "prompt": "optional exact user-facing question that this shared planner answer should preserve for later answer interpretation",
             "answer": "explicit user answer that should shape every child in this decision-backed workflow graph",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -356,6 +361,7 @@ Required outcome shape:
             "answers": [
               {
                 "summary": "optional extra user answer summary",
+                "prompt": "optional exact user-facing question that this child planner answer should preserve",
                 "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
@@ -370,6 +376,7 @@ Required outcome shape:
             "answers": [
               {
                 "summary": "optional shared extra answer summary",
+                "prompt": "optional exact user-facing question that this grouped planner answer should preserve",
                 "answer": "explicit user answer that should shape every task in this grouped workflow",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
@@ -439,6 +446,7 @@ Required outcome shape:
         "answers": [
           {
             "summary": "optional non-decision answer summary",
+            "prompt": "optional exact user-facing question that this planner answer should preserve for later interpretation",
             "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -487,6 +495,7 @@ Required outcome shape:
         "answers": [
           {
             "summary": "optional non-decision answer summary",
+            "prompt": "optional exact user-facing question that this planner answer should preserve for later interpretation",
             "answer": "explicit user answer that should shape this planner follow-through without becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -551,6 +560,7 @@ Rules:
 - Treat open planning requests as durable planner follow-through requests, not disposable notes.
 - When a planning request exists because one or more answers reshape durable goal context, design rationale, or task decomposition, record that through requestedUpdates plus answers and use decisionRefs only for real durable decision topics.
 - Prefer captured answers on "request_planning", "request_planning_batch", or "request_planning_workflows" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
+- When the exact user-facing question matters for later planner-side authority or answer interpretation, include "prompt" on captured planning answers as well as decision answers, so durable planning requests preserve that canonical question text alongside the shorter summary.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.

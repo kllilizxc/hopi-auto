@@ -6092,6 +6092,89 @@ preferences:
     })
   })
 
+  test('records planner answers through the API from question spans by durable planner prompt text', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy?',
+        'Use Bun-native auth.',
+        'That keeps the runtime simple.',
+        'Rollout strategy?',
+        'Use a staged rollout.',
+        'That keeps the launch reversible.',
+        'Which customers should pilot first before broader launch?',
+        'Start with five enterprise customers.',
+        'That keeps early support manageable.',
+      ].join(' '),
+      sourceResponseFormat: 'question_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which customers should pilot first before broader launch?',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which customers should pilot first before broader launch?',
+              answer: 'Start with five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which customers should pilot first before broader launch?',
+              answer: 'Start with five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('returns HTTP 400 for invalid structured preference mutations', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -9573,6 +9656,65 @@ preferences:
           createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
         }),
       ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and reuses planner prompts across question spans', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one question-span reply where pilot scope is grounded by planner prompt text.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the planner prompt across the question spans.', actions: [{ kind: 'record_answers', sourceResponse: ['Auth strategy?', 'Use Bun-native auth.', 'That keeps the runtime simple.', 'Rollout strategy?', 'Use a staged rollout.', 'That keeps the launch reversible.', 'Which customers should pilot first before broader launch?', 'Start with five enterprise customers.', 'That keeps early support manageable.'].join(' '), sourceResponseFormat: 'question_spans', answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy' }], followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope', prompt: 'Which customers should pilot first before broader launch?' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Use one question-span reply where pilot scope is grounded by planner prompt text.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I reused the planner prompt across the question spans.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which customers should pilot first before broader launch?',
+              answer: 'Start with five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which customers should pilot first before broader launch?',
+              answer: 'Start with five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+      ],
     })
   })
 
