@@ -77,6 +77,7 @@ Phase 1 backend is complete:
 - Answer-driven assistant and Bun API actions now also support `sourceResponseFormat: "topic_paragraphs"`, so one less-structured natural-language reply can deterministically feed explicit decision answers, inferred current open decisions, and planner follow-through answers when each answer already lives in its own multi-sentence paragraph and that paragraph mentions the relevant known topic at least once, without requiring the topic name in every sentence.
 - Answer-driven `topic_sentences` and `topic_paragraphs` now also match current durable decisions by deterministic stored `prompt` keyword anchors, so known decision answers no longer need to repeat the explicit topic label inside each mapped sentence or paragraph when the durable question wording already supplies enough authority.
 - Answer-driven assistant and Bun API actions now also support `sourceResponseFormat: "topic_blocks"`, so one less-structured natural-language reply can deterministically feed explicit decision answers, inferred current open decisions, and planner follow-through answers when each answer starts with one anchor paragraph that names the topic and then continues through later unlabeled paragraphs until the next anchor paragraph appears.
+- Answer-driven `topic_blocks` now also match current durable decisions by deterministic stored `prompt` keyword anchors, so known decision blocks no longer need their anchor paragraph to repeat the explicit topic label when the durable question wording already supplies enough authority.
 - Decision-backed and answer-backed `workflow_batch` follow-through now also supports explicit `reuseTaskRef` and `reuseGroupKey`, so one answered decision can adopt an arbitrary current planning surface or grouped planning surface through the same shared workflow-graph runtime instead of relying only on narrow implicit planning-linked reuse.
 - Durable planning workflow graphs are now independently inspectable through Bun API list/detail endpoints plus a dedicated Bun UI workflow section, including workflow-root shared context and child request detail reconstructed directly from `planning-requests.yml` plus current open tasks.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
@@ -119,6 +120,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-02-prompt-core-question-interpretation-design.md`: current authority note for deterministic prompt-core reuse on question-block and question-span answer interpretation when the shared reply question is shorter than the stored durable prompt.
 - `docs/superpowers/specs/2026-06-02-prompt-keyword-question-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on question-block and question-span answer interpretation when the shared reply question keeps the same meaningful prompt words but changes their order.
 - `docs/superpowers/specs/2026-06-02-prompt-keyword-topic-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on `topic_sentences` and `topic_paragraphs` when the answer prose keeps the durable prompt’s meaningful words but omits the explicit topic label.
+- `docs/superpowers/specs/2026-06-02-prompt-keyword-topic-block-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on `topic_blocks` when the block anchor paragraph keeps the durable prompt’s meaningful words but omits the explicit topic label.
 - `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
 - `docs/superpowers/specs/2026-06-02-named-answer-source-interpretation-design.md`: current authority note for reusing explicitly extracted topic-specific answer snippets across durable decision topics and non-decision follow-through answers without introducing a second durable store.
 - `docs/superpowers/specs/2026-06-02-answer-source-excerpt-grounding-design.md`: current authority note for grounding reusable named answer sources directly in one shared raw reply through exact source excerpts.
@@ -636,7 +638,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit topic mentions inside each mapped block anchor paragraph, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
+- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -644,7 +646,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit topic mentions inside each mapped block anchor paragraph, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
+1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 

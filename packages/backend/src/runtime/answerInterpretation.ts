@@ -1891,7 +1891,7 @@ function findMatchingTopicBlockIndexes(
   candidates: string[],
   consumedIndexes: Set<number>,
 ) {
-  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseLabel)
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
   const matchingIndexes = new Set<number>()
 
   for (const normalizedCandidate of normalizedCandidates) {
@@ -1918,8 +1918,13 @@ function findMatchingNormalizedTopicLabels(
 ) {
   const matches: string[] = []
   for (const normalizedCandidate of normalizedCandidateLabels) {
-    const needle = ` ${normalizedCandidate} `
-    if (` ${normalizedText} `.includes(needle)) {
+    if (
+      topicTextMatchesCandidate(
+        normalizedText,
+        normalizedCandidate,
+        normalizeQuestionPromptCore(normalizedCandidate),
+      )
+    ) {
       matches.push(normalizedCandidate)
     }
   }
@@ -1938,7 +1943,7 @@ function registerTopicBlockCandidates(
   let changed = false
   for (const candidateGroup of candidateGroups) {
     for (const candidate of dedupeNonEmptyStrings(candidateGroup)) {
-      const normalizedCandidate = normalizeSourceResponseLabel(candidate)
+      const normalizedCandidate = normalizeSourceResponseText(candidate)
       if (candidateLabels.has(normalizedCandidate)) {
         continue
       }

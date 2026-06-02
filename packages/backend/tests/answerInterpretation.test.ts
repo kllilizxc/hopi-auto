@@ -1164,6 +1164,63 @@ test('materializes matching open decisions from topic blocks without per-topic m
   ])
 })
 
+test('materializes matching open decisions from topic blocks by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Adopt the Bun-native auth provider for the Bun-first product path.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Rollout should happen in stages, not once.',
+    '',
+    'That keeps the launch reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'topic_blocks',
+      undefined,
+      false,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: [
+        'Adopt the Bun-native auth provider for the Bun-first product path.',
+        'That keeps the runtime simple.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: [
+        'Rollout should happen in stages, not once.',
+        'That keeps the launch reversible.',
+      ].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes ordered blocks across decision and planner answers without labels', () => {
   const sourceResponse = [
     'Use Bun-native auth.',
