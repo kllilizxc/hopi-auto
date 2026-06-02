@@ -1988,8 +1988,13 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     return summary
   }
 
+  const summaryFromPrompt = inferSummaryFromCanonicalPrompt(entry.prompt)
+  if (summaryFromPrompt) {
+    return summaryFromPrompt
+  }
+
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires summary for ${label}.`,
+    `Remaining answerSource "${entry.key}" requires summary or canonical prompt for ${label}.`,
   )
 }
 
@@ -6660,6 +6665,20 @@ function extractTrailingTopicSummary(text: string) {
   }
 
   return normalizeExtractedTopicSummary(match)
+}
+
+function inferSummaryFromCanonicalPrompt(prompt: string | undefined) {
+  const trimmed = prompt?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const subject = /^what should\s+(?<subject>.+?)\s+be\s*[?？]\s*$/i.exec(trimmed)?.groups?.subject
+  if (!subject) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(subject, true)
 }
 
 function extractPrefixedTopicSummary(text: string) {
