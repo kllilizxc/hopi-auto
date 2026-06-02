@@ -79,6 +79,9 @@ interface ResolvedAnswerContent {
   prompt?: string
 }
 
+const TOPIC_SUMMARY_VERB_PATTERN =
+  '(?:should|will|must|can|could|would|is|are|was|were|uses|use|means|requires|starts)'
+
 export type InterpretableAnswerSource =
   | {
       answerSourceKey: string
@@ -2186,10 +2189,10 @@ function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | 
     }
   }
 
-  const verbal =
-    /^(?<label>.+?)\s+(?<answer>(?:should|will|must|can|could|would|is|are|was|were|uses|use|means|requires|starts)\b.+)$/i.exec(
-      trimmed,
-    )?.groups
+  const verbal = new RegExp(
+    `^(?<label>.+?)\\s+(?<answer>${TOPIC_SUMMARY_VERB_PATTERN}\\b.+)$`,
+    'i',
+  ).exec(trimmed)?.groups
   if (verbal?.label && verbal.answer) {
     return {
       label: verbal.label.trim(),
@@ -2754,7 +2757,7 @@ function topicTextMatchesCandidate(
 }
 
 function inferTopicBlockAnchorLabelFromParagraph(paragraph: string) {
-  const summary = extractTrailingTopicSummary(paragraph)
+  const summary = extractInferredTopicSummaries(paragraph)[0]
   if (!summary) {
     return undefined
   }
@@ -2762,20 +2765,25 @@ function inferTopicBlockAnchorLabelFromParagraph(paragraph: string) {
 }
 
 function inferTopicSummaryFromTopicSentence(sentence: string) {
-  const summary = extractTrailingTopicSummary(sentence)
-  if (!summary) {
+  const summaries = extractInferredTopicSummaries(sentence)
+  if (summaries.length === 0) {
     throw new AnswerInterpretationError(
       `Could not infer a decision summary from topic sentence "${sentence}".`,
     )
   }
-  return summary
+  if (summaries.length > 1) {
+    throw new AnswerInterpretationError(
+      `Multiple decision summaries were inferred from topic sentence "${sentence}".`,
+    )
+  }
+  return summaries[0] as string
 }
 
 function inferTopicSummaryFromTopicParagraph(paragraph: string) {
   const summaries = dedupeNonEmptyStrings(
-    parseTopicSourceResponseSentences(paragraph).flatMap((sentence) => [
-      extractTrailingTopicSummary(sentence.text),
-    ]),
+    parseTopicSourceResponseSentences(paragraph).flatMap((sentence) =>
+      extractInferredTopicSummaries(sentence.text),
+    ),
   )
   if (summaries.length === 0) {
     throw new AnswerInterpretationError(
@@ -2807,6 +2815,75 @@ function extractTrailingTopicSummary(text: string) {
     return undefined
   }
   return `${summary.slice(0, 1).toUpperCase()}${summary.slice(1)}`
+}
+
+const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
+  ...QUESTION_CORE_LEADING_TOKENS,
+  'he',
+  'her',
+  'here',
+  'him',
+  'i',
+  'it',
+  'me',
+  'my',
+  'she',
+  'that',
+  'their',
+  'them',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'us',
+  'you',
+  'your',
+])
+
+function extractLeadingTopicSummary(text: string) {
+  const trimmed = text.trim().replace(/^(?:and|but)\s+/i, '')
+  if (!trimmed) {
+    return undefined
+  }
+
+  const label = new RegExp(`^(?<label>.+?)\\s+${TOPIC_SUMMARY_VERB_PATTERN}\\b.+$`, 'i').exec(
+    trimmed,
+  )?.groups?.label
+  if (!label) {
+    return undefined
+  }
+
+  const summary = label
+    .trim()
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(/\s+/g, ' ')
+  if (!summary) {
+    return undefined
+  }
+
+  const normalized = normalizeSourceResponseLabel(summary)
+  if (!normalized) {
+    return undefined
+  }
+
+  const tokens = normalized.split(' ').filter(Boolean)
+  if (tokens.length === 0 || tokens.length > 6) {
+    return undefined
+  }
+  const firstToken = tokens[0]
+  if (firstToken && LEADING_TOPIC_SUMMARY_REJECT_TOKENS.has(firstToken)) {
+    return undefined
+  }
+
+  return `${summary.slice(0, 1).toUpperCase()}${summary.slice(1)}`
+}
+
+function extractInferredTopicSummaries(text: string) {
+  return dedupeNonEmptyStrings([
+    extractLeadingTopicSummary(text),
+    extractTrailingTopicSummary(text),
+  ])
 }
 
 function humanizeDecisionKey(value: string | undefined) {
