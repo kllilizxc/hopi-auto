@@ -843,6 +843,7 @@ describe('createServer', () => {
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -852,6 +853,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -859,6 +861,7 @@ describe('createServer', () => {
             },
             {
               summary: 'Rollback trigger',
+              prompt: 'Rollback trigger?',
               answer: 'Abort after two regressions.',
             },
           ],
@@ -867,6 +870,7 @@ describe('createServer', () => {
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -876,6 +880,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -883,6 +888,7 @@ describe('createServer', () => {
             },
             {
               summary: 'Rollback trigger',
+              prompt: 'Rollback trigger?',
               answer: 'Abort after two regressions.',
             },
           ],
@@ -891,6 +897,7 @@ describe('createServer', () => {
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -900,6 +907,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -2929,10 +2937,12 @@ describe('createServer', () => {
       decisions: [
         expect.objectContaining({
           decisionKey: 'auth-strategy',
+          prompt: 'Should we use Bun-native auth or an external auth provider?',
           answer: 'Use Bun-native auth. That keeps the runtime simple.',
         }),
         expect.objectContaining({
           decisionKey: 'rollout-strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
           answer: 'Use a staged rollout. That keeps the launch reversible.',
         }),
       ],
@@ -3308,6 +3318,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -3320,6 +3331,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -3418,6 +3430,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },
@@ -3428,6 +3441,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },
@@ -4400,6 +4414,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -4411,6 +4426,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -4521,6 +4537,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -4532,6 +4549,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -4621,6 +4639,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },
@@ -4630,6 +4649,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },
@@ -8309,6 +8329,7 @@ preferences:
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -8318,6 +8339,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -8325,6 +8347,7 @@ preferences:
             },
             {
               summary: 'Rollback trigger',
+              prompt: 'Rollback trigger?',
               answer: 'Abort after two regressions.',
             },
           ],
@@ -8333,6 +8356,7 @@ preferences:
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -8342,6 +8366,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -8349,6 +8374,7 @@ preferences:
             },
             {
               summary: 'Rollback trigger',
+              prompt: 'Rollback trigger?',
               answer: 'Abort after two regressions.',
             },
           ],
@@ -8357,6 +8383,7 @@ preferences:
           workflowSharedAnswers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -8366,6 +8393,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -9498,11 +9526,13 @@ preferences:
         expect.objectContaining({
           decisionKey: 'D-1',
           summary: 'Auth strategy',
+          prompt: 'Auth strategy?',
           answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
         }),
         expect.objectContaining({
           decisionKey: 'D-2',
           summary: 'Rollout strategy',
+          prompt: 'Rollout strategy?',
           answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
         }),
       ],
@@ -9516,6 +9546,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -9528,6 +9559,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -9605,6 +9637,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },
@@ -9614,6 +9647,7 @@ preferences:
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'Pilot scope?',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable.',
             },

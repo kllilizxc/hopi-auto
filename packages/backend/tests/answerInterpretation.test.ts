@@ -1636,12 +1636,14 @@ test('materializes question blocks across decision and planner answers without r
     {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
       taskRef: undefined,
       answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
     },
     {
       decisionKey: 'rollout-strategy',
       summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
       taskRef: undefined,
       answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
     },
@@ -1678,6 +1680,7 @@ test('materializes question blocks across decision and planner answers without r
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
         answer: [
           'Start with five enterprise customers before broader launch.',
           'That keeps early support manageable.',
@@ -1745,12 +1748,14 @@ test('materializes inferred shared workflow answers after child workflow answers
     {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
       taskRef: undefined,
       answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
     },
     {
       decisionKey: 'rollout-strategy',
       summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
       taskRef: undefined,
       answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
     },
@@ -1804,6 +1809,7 @@ test('materializes inferred shared workflow answers after child workflow answers
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
         answer: [
           'Start with five enterprise customers before broader launch.',
           'That keeps early support manageable.',
@@ -1817,6 +1823,7 @@ test('materializes inferred shared workflow answers after child workflow answers
         answers: [
           {
             summary: 'Rollback trigger',
+            prompt: 'Rollback trigger?',
             answer: 'Abort after two regressions.',
           },
         ],
@@ -2082,12 +2089,14 @@ test('materializes new decision topics from remaining question blocks while rese
   ).toEqual([
     {
       summary: 'Auth strategy',
+      prompt: 'Auth strategy?',
       decisionKey: undefined,
       taskRef: undefined,
       answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
     },
     {
       summary: 'Rollout strategy',
+      prompt: 'Rollout strategy?',
       decisionKey: undefined,
       taskRef: undefined,
       answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
@@ -2130,12 +2139,14 @@ test('materializes question spans across decision and planner answers without qu
     {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
       taskRef: undefined,
       answer: 'Use Bun-native auth. That keeps the runtime simple.',
     },
     {
       decisionKey: 'rollout-strategy',
       summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
       taskRef: undefined,
       answer: 'Use a staged rollout. That keeps the launch reversible.',
     },
@@ -2172,6 +2183,7 @@ test('materializes question spans across decision and planner answers without qu
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
         answer:
           'Start with five enterprise customers before broader launch. That keeps early support manageable.',
       },
@@ -2225,12 +2237,14 @@ test('materializes inferred planner answers from remaining question spans withou
     {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
       taskRef: undefined,
       answer: 'Use Bun-native auth. That keeps the runtime simple.',
     },
     {
       decisionKey: 'rollout-strategy',
       summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
       taskRef: undefined,
       answer: 'Use a staged rollout. That keeps the launch reversible.',
     },
@@ -2264,6 +2278,7 @@ test('materializes inferred planner answers from remaining question spans withou
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
         answer:
           'Start with five enterprise customers before broader launch. That keeps early support manageable.',
       },
@@ -2499,12 +2514,14 @@ test('materializes planner answers from question spans by durable prompt text', 
     {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
       taskRef: undefined,
       answer: 'Use Bun-native auth. That keeps the runtime simple.',
     },
     {
       decisionKey: 'rollout-strategy',
       summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
       taskRef: undefined,
       answer: 'Use a staged rollout. That keeps the launch reversible.',
     },
@@ -2588,12 +2605,14 @@ test('materializes new decision topics from remaining question spans while reser
   ).toEqual([
     {
       summary: 'Auth strategy',
+      prompt: 'Auth strategy?',
       decisionKey: undefined,
       taskRef: undefined,
       answer: 'Use Bun-native auth. That keeps the runtime simple.',
     },
     {
       summary: 'Rollout strategy',
+      prompt: 'Rollout strategy?',
       decisionKey: undefined,
       taskRef: undefined,
       answer: 'Use a staged rollout. That keeps the launch reversible.',

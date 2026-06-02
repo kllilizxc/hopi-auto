@@ -1668,6 +1668,15 @@ function renderDecision(decision: GoalDecision) {
   `
 }
 
+function formatPlanningAnswerSummary(entry: {
+  summary: string
+  prompt?: string
+  answer: string
+}) {
+  const prefix = entry.prompt ? `${entry.summary} [${entry.prompt}]` : entry.summary
+  return `${prefix}: ${entry.answer}`
+}
+
 function renderPlanningRequest(request: GoalPlanningRequest) {
   return `
     <article class="assistant-entry">
@@ -1710,7 +1719,7 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       }
       ${
         request.answers.length > 0
-          ? `<div class="assistant-summary">Captured answers: ${escapeHtml(request.answers.map((entry) => `${entry.summary}: ${entry.answer}`).join(' | '))}</div>`
+          ? `<div class="assistant-summary">Captured answers: ${escapeHtml(request.answers.map((entry) => formatPlanningAnswerSummary(entry)).join(' | '))}</div>`
           : ''
       }
       ${
@@ -1749,7 +1758,7 @@ function renderPlanningWorkflow(workflow: GoalPlanningWorkflowState) {
       }
       ${
         workflow.workflowSharedAnswers.length > 0
-          ? `<div class="assistant-summary">Workflow-shared answers: ${escapeHtml(workflow.workflowSharedAnswers.map((entry) => `${entry.summary}: ${entry.answer}`).join(' | '))}</div>`
+          ? `<div class="assistant-summary">Workflow-shared answers: ${escapeHtml(workflow.workflowSharedAnswers.map((entry) => formatPlanningAnswerSummary(entry)).join(' | '))}</div>`
           : ''
       }
       ${

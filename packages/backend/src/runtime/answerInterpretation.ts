@@ -74,6 +74,11 @@ interface TopicSourceResponseBlock {
   normalizedAnchorLabel: string
 }
 
+interface ResolvedAnswerContent {
+  answer: string
+  prompt?: string
+}
+
 export type InterpretableAnswerSource =
   | {
       answerSourceKey: string
@@ -275,12 +280,8 @@ export function materializeInterpretedDecisionAnswers(
     ...additionalSourceResponseCandidates,
   ])
 
-  return answers.map((answer) => ({
-    summary: answer.summary,
-    prompt: answer.prompt?.trim() || undefined,
-    decisionKey: answer.decisionKey,
-    taskRef: answer.taskRef,
-    answer: resolveAnswerText(
+  return answers.map((answer) => {
+    const resolved = resolveAnswerContent(
       answer.answer,
       answer.sourceExcerpt,
       answer.answerSourceKey,
@@ -290,8 +291,15 @@ export function materializeInterpretedDecisionAnswers(
       sourceResponseFormat,
       buildDecisionAnswerSourceResponseCandidates(answer),
       interpretationState,
-    ),
-  }))
+    )
+    return {
+      summary: answer.summary,
+      prompt: answer.prompt?.trim() || resolved.prompt,
+      decisionKey: answer.decisionKey,
+      taskRef: answer.taskRef,
+      answer: resolved.answer,
+    }
+  })
 }
 
 export function materializeInterpretedDecisionAnswerBatch(
@@ -511,18 +519,27 @@ function materializeInterpretedPlanningAnswers(
   ])
   const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
     summary: answer.summary,
-    ...(answer.prompt?.trim() ? { prompt: answer.prompt.trim() } : {}),
-    answer: resolveAnswerText(
-      answer.answer,
-      answer.sourceExcerpt,
-      answer.answerSourceKey,
-      sourceResponse,
-      `planner answer ${answer.summary}`,
-      answerSourcesByKey,
-      sourceResponseFormat,
-      buildPlanningAnswerSourceResponseCandidates(answer),
-      interpretationState,
-    ),
+    ...(() => {
+      const resolved = resolveAnswerContent(
+        answer.answer,
+        answer.sourceExcerpt,
+        answer.answerSourceKey,
+        sourceResponse,
+        `planner answer ${answer.summary}`,
+        answerSourcesByKey,
+        sourceResponseFormat,
+        buildPlanningAnswerSourceResponseCandidates(answer),
+        interpretationState,
+      )
+      return {
+        ...(answer.prompt?.trim()
+          ? { prompt: answer.prompt.trim() }
+          : resolved.prompt
+            ? { prompt: resolved.prompt }
+            : {}),
+        answer: resolved.answer,
+      }
+    })(),
   }))
   const inferredAnswers = inferRemainingAnswers
     ? materializeRemainingInterpretedPlanningAnswers(
@@ -574,6 +591,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       interpretationState?.consumedQuestionBlockIndexes.add(index)
       answers.push({
         summary: stripQuestionBlockLabel(block.question),
+        prompt: block.question,
         answer: block.answer,
       })
     }
@@ -594,6 +612,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       interpretationState?.consumedQuestionSpanIndexes.add(index)
       answers.push({
         summary: stripQuestionBlockLabel(span.question),
+        prompt: span.question,
         answer: span.answer,
       })
     }
@@ -659,7 +678,7 @@ function materializeRemainingInterpretedPlanningAnswers(
   return answers
 }
 
-function resolveAnswerText(
+function resolveAnswerContent(
   answer: string | undefined,
   sourceExcerpt: string | undefined,
   answerSourceKey: string | undefined,
@@ -669,15 +688,15 @@ function resolveAnswerText(
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseCandidates: string[] = [],
   sourceResponseState?: InterpretedSourceResponseState,
-): string {
+): ResolvedAnswerContent {
   const explicit = answer?.trim()
   if (explicit) {
-    return explicit
+    return { answer: explicit }
   }
 
   const directExcerpt = resolveSourceExcerpt(sourceExcerpt, sourceResponse, label)
   if (directExcerpt) {
-    return directExcerpt
+    return { answer: directExcerpt }
   }
 
   const referencedSourceKey = answerSourceKey?.trim()
@@ -688,28 +707,34 @@ function resolveAnswerText(
         `Unknown answerSourceKey "${referencedSourceKey}" for ${label}.`,
       )
     }
-    return sourced
+    return { answer: sourced }
   }
 
   if (sourceResponseFormat === 'labeled_sections') {
-    return resolveLabeledSourceResponseSection(
-      sourceResponse,
-      sourceResponseCandidates,
-      label,
-      sourceResponseState,
-    )
+    return {
+      answer: resolveLabeledSourceResponseSection(
+        sourceResponse,
+        sourceResponseCandidates,
+        label,
+        sourceResponseState,
+      ),
+    }
   }
 
   if (sourceResponseFormat === 'ordered_items') {
-    return resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState)
+    return {
+      answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
+    }
   }
 
   if (sourceResponseFormat === 'ordered_blocks') {
-    return resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState)
+    return {
+      answer: resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState),
+    }
   }
 
   if (sourceResponseFormat === 'question_blocks') {
-    const questionBlock = consumeQuestionBlockSourceResponseSection(
+    const questionBlock = consumeQuestionBlockSourceResponseMatch(
       sourceResponse,
       sourceResponseCandidates,
       label,
@@ -719,11 +744,14 @@ function resolveAnswerText(
     if (!questionBlock) {
       throw new AnswerInterpretationError(`No question block matched ${label} in sourceResponse.`)
     }
-    return questionBlock
+    return {
+      answer: questionBlock.answer,
+      prompt: questionBlock.question,
+    }
   }
 
   if (sourceResponseFormat === 'question_spans') {
-    const questionSpan = consumeQuestionSpanSourceResponseSection(
+    const questionSpan = consumeQuestionSpanSourceResponseMatch(
       sourceResponse,
       sourceResponseCandidates,
       label,
@@ -733,16 +761,21 @@ function resolveAnswerText(
     if (!questionSpan) {
       throw new AnswerInterpretationError(`No question span matched ${label} in sourceResponse.`)
     }
-    return questionSpan
+    return {
+      answer: questionSpan.answer,
+      prompt: questionSpan.question,
+    }
   }
 
   if (sourceResponseFormat === 'inline_topics') {
-    return resolveInlineTopicSourceResponseSection(
-      sourceResponse,
-      sourceResponseCandidates,
-      label,
-      sourceResponseState,
-    )
+    return {
+      answer: resolveInlineTopicSourceResponseSection(
+        sourceResponse,
+        sourceResponseCandidates,
+        label,
+        sourceResponseState,
+      ),
+    }
   }
 
   if (sourceResponseFormat === 'topic_sentences') {
@@ -756,7 +789,7 @@ function resolveAnswerText(
     if (!topicSentence) {
       throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
     }
-    return topicSentence
+    return { answer: topicSentence }
   }
 
   if (sourceResponseFormat === 'topic_paragraphs') {
@@ -770,7 +803,7 @@ function resolveAnswerText(
     if (!topicParagraph) {
       throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
     }
-    return topicParagraph
+    return { answer: topicParagraph }
   }
 
   if (sourceResponseFormat === 'topic_blocks') {
@@ -784,12 +817,12 @@ function resolveAnswerText(
     if (!topicBlock) {
       throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
     }
-    return topicBlock
+    return { answer: topicBlock }
   }
 
   const shared = sourceResponse?.trim()
   if (shared) {
-    return shared
+    return { answer: shared }
   }
 
   throw new AnswerInterpretationError(
@@ -1227,12 +1260,7 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     reserveMatchedLabeledSection(sectionsByLabel, candidates, reservedLabels)
   }
 
-  const materializedAnswers: Array<{
-    summary: string
-    decisionKey?: string
-    taskRef?: string
-    answer: string
-  }> = []
+  const materializedAnswers: MaterializedInterpretedDecisionAnswer[] = []
 
   if (questionBlocks) {
     for (const [index, block] of questionBlocks.entries()) {
@@ -1253,6 +1281,7 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
         summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(block.question),
+        prompt: matchingKnownDecision?.prompt ?? block.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: block.answer,
@@ -1278,6 +1307,7 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
         summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(span.question),
+        prompt: matchingKnownDecision?.prompt ?? span.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: span.answer,
@@ -1571,7 +1601,7 @@ function findLabeledSourceResponseSection(
   return undefined
 }
 
-function consumeQuestionBlockSourceResponseSection(
+function consumeQuestionBlockSourceResponseMatch(
   sourceResponse: string | undefined,
   candidates: string[],
   label: string,
@@ -1605,10 +1635,10 @@ function consumeQuestionBlockSourceResponseSection(
   if (sourceResponseState) {
     sourceResponseState.consumedQuestionBlockIndexes.add(blockIndex)
   }
-  return blocks[blockIndex]?.answer
+  return blocks[blockIndex]
 }
 
-function consumeQuestionSpanSourceResponseSection(
+function consumeQuestionSpanSourceResponseMatch(
   sourceResponse: string | undefined,
   candidates: string[],
   label: string,
@@ -1638,7 +1668,41 @@ function consumeQuestionSpanSourceResponseSection(
   if (sourceResponseState) {
     sourceResponseState.consumedQuestionSpanIndexes.add(spanIndex)
   }
-  return spans[spanIndex]?.answer
+  return spans[spanIndex]
+}
+
+function consumeQuestionBlockSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  const match = consumeQuestionBlockSourceResponseMatch(
+    sourceResponse,
+    candidates,
+    label,
+    sourceResponseState,
+    required,
+  )
+  return match?.answer
+}
+
+function consumeQuestionSpanSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  const match = consumeQuestionSpanSourceResponseMatch(
+    sourceResponse,
+    candidates,
+    label,
+    sourceResponseState,
+    required,
+  )
+  return match?.answer
 }
 
 function consumeTopicSentenceSourceResponseSection(
