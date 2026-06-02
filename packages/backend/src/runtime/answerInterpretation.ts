@@ -6,6 +6,7 @@ import type {
 import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
+class AutoSourceResponseTerminalError extends AnswerInterpretationError {}
 
 export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'auto',
@@ -88,6 +89,8 @@ export interface InterpretedSourceResponseState {
   nextPendingAnswerSourceIndex: number
   consumedMatchingRunIndexes: Set<number>
   consumedMatchingAnswerSourceIndexes: Set<number>
+  consumedLabeledSectionLabels: Set<string>
+  consumedInlineTopicLabels: Set<string>
   consumedQuestionBlockIndexes: Set<number>
   consumedQuestionClauseIndexes: Set<number>
   consumedQuestionSpanIndexes: Set<number>
@@ -538,6 +541,11 @@ export function resolveAutoSourceResponseFormat(
       attempt(candidateFormat)
       return candidateFormat
     } catch (error) {
+      if (error instanceof AutoSourceResponseTerminalError) {
+        throw new AnswerInterpretationError(
+          `sourceResponseFormat auto could not deterministically match ${label}. Provide an explicit sourceResponseFormat. Last probe error: ${error.message}`,
+        )
+      }
       lastError = error instanceof Error ? error.message : String(error)
     }
   }
@@ -627,6 +635,8 @@ export function createInterpretedSourceResponseState(
     nextOrderedBlockIndex: 0,
     consumedMatchingRunIndexes: new Set<number>(),
     consumedMatchingAnswerSourceIndexes: new Set<number>(),
+    consumedLabeledSectionLabels: new Set<string>(),
+    consumedInlineTopicLabels: new Set<string>(),
     consumedQuestionBlockIndexes: new Set<number>(),
     consumedQuestionClauseIndexes: new Set<number>(),
     consumedQuestionSpanIndexes: new Set<number>(),
@@ -1023,7 +1033,25 @@ function assertAutoSourceResponseFormatCompleteness(input: {
       )
       return
     case 'labeled_sections':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'labeled sections',
+        state.consumedLabeledSectionLabels.size,
+        parseRequiredLabeledSourceResponseSections(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).size,
+      )
+      return
     case 'inline_topics':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'inline topic clauses',
+        state.consumedInlineTopicLabels.size,
+        parseRequiredInlineTopicSections(input.sourceResponse, 'sourceResponseFormat auto', state)
+          .size,
+      )
       return
   }
 }
@@ -1042,6 +1070,19 @@ function assertAutoSourceResponseUnitCompleteness(
   throw new AnswerInterpretationError(
     `sourceResponseFormat auto rejected ${sourceResponseFormat} because it left ${remainingCount} unconsumed ${unitLabel}.`,
   )
+}
+
+function shouldAutoSourceResponseProbeFailClosed(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (sourceResponseFormat === 'labeled_sections') {
+    return (sourceResponseState?.labeledSections?.size ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'inline_topics') {
+    return (sourceResponseState?.inlineTopics?.size ?? 0) > 1
+  }
+  return false
 }
 
 export function materializeInterpretedDecisionAnswers(
@@ -1209,32 +1250,41 @@ export function materializeInterpretedDecisionBundle(input: {
     }),
     (candidateFormat) => {
       const state = createInterpretedSourceResponseState(input.sourceResponse, candidateFormat)
-      materializeInterpretedDecisionAnswerBatch(
-        input.answers,
-        input.openDecisions,
-        input.inferOpenDecisions,
-        input.sourceResponse,
-        input.answerSources,
-        candidateFormat,
-        state,
-        input.inferDecisionTopics ?? false,
-        input.knownDecisions ?? [],
-        input.reservedAnswerCandidates ?? [],
-      )
-      materializeInterpretedDecisionFollowThrough(
-        input.followThrough,
-        input.sourceResponse,
-        input.answerSources,
-        candidateFormat,
-        state,
-      )
-      assertAutoSourceResponseFormatCompleteness({
-        sourceResponse: input.sourceResponse,
-        answerSources: input.answerSources,
-        sourceResponseFormat: candidateFormat,
-        sourceResponseState: state,
-        inferDecisionTopics: input.inferDecisionTopics ?? false,
-      })
+      try {
+        materializeInterpretedDecisionAnswerBatch(
+          input.answers,
+          input.openDecisions,
+          input.inferOpenDecisions,
+          input.sourceResponse,
+          input.answerSources,
+          candidateFormat,
+          state,
+          input.inferDecisionTopics ?? false,
+          input.knownDecisions ?? [],
+          input.reservedAnswerCandidates ?? [],
+        )
+        materializeInterpretedDecisionFollowThrough(
+          input.followThrough,
+          input.sourceResponse,
+          input.answerSources,
+          candidateFormat,
+          state,
+        )
+        assertAutoSourceResponseFormatCompleteness({
+          sourceResponse: input.sourceResponse,
+          answerSources: input.answerSources,
+          sourceResponseFormat: candidateFormat,
+          sourceResponseState: state,
+          inferDecisionTopics: input.inferDecisionTopics ?? false,
+        })
+      } catch (error) {
+        if (shouldAutoSourceResponseProbeFailClosed(candidateFormat, state)) {
+          throw new AutoSourceResponseTerminalError(
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        throw error
+      }
     },
     'decision answer bundle',
   )
@@ -1418,19 +1468,28 @@ function resolveAutoPlanningSourceResponseFormat(
     }),
     (candidateFormat) => {
       const state = createInterpretedSourceResponseState(sourceResponse, candidateFormat)
-      materializeInterpretedDecisionFollowThrough(
-        followThrough,
-        sourceResponse,
-        answerSources,
-        candidateFormat,
-        state,
-      )
-      assertAutoSourceResponseFormatCompleteness({
-        sourceResponse,
-        answerSources,
-        sourceResponseFormat: candidateFormat,
-        sourceResponseState: state,
-      })
+      try {
+        materializeInterpretedDecisionFollowThrough(
+          followThrough,
+          sourceResponse,
+          answerSources,
+          candidateFormat,
+          state,
+        )
+        assertAutoSourceResponseFormatCompleteness({
+          sourceResponse,
+          answerSources,
+          sourceResponseFormat: candidateFormat,
+          sourceResponseState: state,
+        })
+      } catch (error) {
+        if (shouldAutoSourceResponseProbeFailClosed(candidateFormat, state)) {
+          throw new AutoSourceResponseTerminalError(
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        throw error
+      }
     },
     followThrough.kind,
   )
@@ -2572,7 +2631,11 @@ function resolveLabeledSourceResponseSection(
     label,
     sourceResponseState,
   )
-  const match = findLabeledSourceResponseSection(sectionsByLabel, candidates)
+  const match = findLabeledSourceResponseSection(
+    sectionsByLabel,
+    candidates,
+    sourceResponseState?.consumedLabeledSectionLabels,
+  )
   if (match) {
     return match
   }
@@ -2591,7 +2654,11 @@ function resolveInlineTopicSourceResponseSection(
     label,
     sourceResponseState,
   )
-  const match = findLabeledSourceResponseSection(sectionsByLabel, candidates)
+  const match = findLabeledSourceResponseSection(
+    sectionsByLabel,
+    candidates,
+    sourceResponseState?.consumedInlineTopicLabels,
+  )
   if (match) {
     return match
   }
@@ -3087,6 +3154,9 @@ function materializeMatchingOpenDecisionAnswers(
       match = findLabeledSourceResponseSection(
         sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
         buildOpenDecisionSourceResponseCandidates(decision),
+        sourceResponseFormat === 'labeled_sections'
+          ? sourceResponseState?.consumedLabeledSectionLabels
+          : sourceResponseState?.consumedInlineTopicLabels,
       )
     } else if (sourceResponseFormat === 'single_pending') {
       match = consumeSinglePendingSourceResponse(
@@ -3513,6 +3583,12 @@ function materializeNewDecisionTopicAnswers(
         )
       : undefined
   const reservedLabels = new Set<string>()
+  const consumedLabels =
+    sourceResponseFormat === 'labeled_sections'
+      ? sourceResponseState?.consumedLabeledSectionLabels
+      : sourceResponseFormat === 'inline_topics'
+        ? sourceResponseState?.consumedInlineTopicLabels
+        : undefined
   const reservedQuestionBlockIndexes = new Set<number>()
   const reservedQuestionClauseIndexes = new Set<number>()
   const reservedQuestionSpanIndexes = new Set<number>()
@@ -4409,6 +4485,7 @@ function materializeNewDecisionTopicAnswers(
       continue
     }
 
+    consumedLabels?.add(normalizedLabel)
     const matchingKnownDecisions = knownDecisionsBySummary.get(normalizedLabel) ?? []
     if (matchingKnownDecisions.length > 1) {
       throw new AnswerInterpretationError(
@@ -4864,10 +4941,13 @@ function parseRequiredTopicSourceResponseBlocks(
 function findLabeledSourceResponseSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
+  consumedLabels?: Set<string>,
 ) {
   for (const candidate of candidates) {
-    const match = sectionsByLabel.get(normalizeSourceResponseLabel(candidate))
+    const normalizedLabel = normalizeSourceResponseLabel(candidate)
+    const match = sectionsByLabel.get(normalizedLabel)
     if (match) {
+      consumedLabels?.add(normalizedLabel)
       return match.value
     }
   }

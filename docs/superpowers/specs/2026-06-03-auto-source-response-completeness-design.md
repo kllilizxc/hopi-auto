@@ -36,6 +36,8 @@ The long-term authority route should prefer the strongest existing surface that 
 
 When `auto` probes an existing candidate surface, shared runtime now rejects that candidate if it leaves unconsumed units behind for these families:
 
+- `labeled_sections`
+- `inline_topics`
 - `matching_runs`
 - `ordered_items`
 - `ordered_blocks`
@@ -63,9 +65,7 @@ This slice intentionally stays narrow around unit-based completeness.
 
 It does **not** yet add the same completeness guard to every other family. In particular:
 
-- `labeled_sections`
-- `inline_topics`
-- `inferDecisionTopics` surfaces that materialize brand-new decisions from leftover units
+- unit-based `inferDecisionTopics` surfaces beyond label-based reply families
 
 still keep their prior `auto` behavior for now.
 
@@ -83,6 +83,8 @@ After this slice:
 - `auto` continues probing
 - `matching_runs` is allowed to win because it fully captures both repeated-consumer runs
 
+For explicit label surfaces, later slices now additionally treat established label authority as fail-closed instead of letting weaker later surfaces reinterpret the same reply after a label-surface completeness failure.
+
 ## Non-Goals
 
 - inventing new deeper-reply parser shapes
@@ -94,4 +96,5 @@ After this slice:
 - decision-backed auto interpretation can fall through from a partially successful earlier unit-based candidate to a later fully consuming existing candidate
 - direct planning auto interpretation can do the same
 - unit-based `auto` no longer stops on a candidate that silently leaves its own reply units behind
+- label-based `auto` no longer accepts replies that leave explicit labels unconsumed
 - existing explicit `sourceResponseFormat` still bypasses `auto`

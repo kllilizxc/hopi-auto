@@ -2571,6 +2571,77 @@ test('auto sourceResponseFormat falls through to matching runs when earlier topi
   ])
 })
 
+test('auto sourceResponseFormat rejects labeled sections that leave unmatched labels unconsumed', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+    'Pilot scope: Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse,
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+    }),
+  ).toThrow(
+    'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+  )
+})
+
+test('auto sourceResponseFormat keeps labeled sections when inferDecisionTopics consumes the remaining labels', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+  ].join('\n')
+
+  const materialized = materializeInterpretedDecisionBundle({
+    sourceResponse,
+    sourceResponseFormat: 'auto',
+    answers: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+      },
+    ],
+    openDecisions: [],
+    inferOpenDecisions: false,
+    inferDecisionTopics: true,
+    knownDecisions: [],
+  })
+
+  expect(materialized.sourceResponseFormat).toBe('labeled_sections')
+  expect(materialized.answers).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      prompt: undefined,
+      matchHints: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
+      taskRef: undefined,
+      answer: 'Use a staged rollout',
+    },
+  ])
+  expect(materialized.followThrough).toBeUndefined()
+})
+
 test('materializes matching open decisions from topic paragraphs by durable prompt keyword anchors', () => {
   const sourceResponse = [
     'Adopt the Bun-native auth provider for the Bun-first product path. That keeps the runtime simple.',

@@ -319,6 +319,37 @@ describe('createServer', () => {
     })
   })
 
+  test('rejects direct decision answers through the API when auto-detected labeled sections would leave unmatched labels unconsumed', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy: Use Bun-native auth',
+        'Rollout strategy: Use a staged rollout',
+        'Pilot scope: Start with five enterprise customers before broader launch.',
+      ].join('\n'),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+      ),
+    })
+  })
+
   test('materializes multiple pending planner answers through the direct planning-request API from one pending-clause reply', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
