@@ -319,6 +319,7 @@ Required outcome shape:
       "decisionKey": "optional stable decision key to reuse",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
+      "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
       "answerSourceKey": "optional reusable extracted answer source key for this decision",
       "answerSources": [
         {
@@ -336,6 +337,7 @@ Required outcome shape:
           {
             "summary": "optional shared user answer summary",
             "answer": "explicit user answer that should shape every child in this decision-backed workflow graph",
+            "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
           }
         ],
@@ -351,6 +353,7 @@ Required outcome shape:
               {
                 "summary": "optional extra user answer summary",
                 "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic",
+                "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
               }
             ],
@@ -364,6 +367,7 @@ Required outcome shape:
               {
                 "summary": "optional shared extra answer summary",
                 "answer": "explicit user answer that should shape every task in this grouped workflow",
+                "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
               }
             ],
@@ -408,12 +412,14 @@ Required outcome shape:
           "decisionKey": "optional first stable decision key",
           "taskRef": "optional linked task ref",
           "answer": "first explicit user answer",
+          "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
           "answerSourceKey": "optional reusable extracted answer source key"
         },
         {
           "summary": "second durable decision topic",
           "decisionKey": "optional second stable decision key",
           "answer": "second explicit user answer",
+          "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
           "answerSourceKey": "optional reusable extracted answer source key"
         }
       ],
@@ -424,6 +430,7 @@ Required outcome shape:
           {
             "summary": "optional non-decision answer summary",
             "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic",
+            "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
           }
         ],
@@ -453,6 +460,7 @@ Required outcome shape:
       "summary": "required if the decision topic does not already exist",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
+      "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
       "answerSourceKey": "optional reusable extracted answer source key for this decision",
       "answerSources": [
         {
@@ -468,6 +476,7 @@ Required outcome shape:
           {
             "summary": "optional non-decision answer summary",
             "answer": "explicit user answer that should shape this planner follow-through without becoming a decision topic",
+            "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
           }
         ],
@@ -537,6 +546,7 @@ Rules:
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
 - When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
+- When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.
 - Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.

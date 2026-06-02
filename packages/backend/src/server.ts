@@ -139,6 +139,7 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       answer: z.string().min(1).optional(),
+      sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),
     }),
   )
@@ -228,6 +229,7 @@ const resolveDecisionSchema = z.object({
   summary: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponse: z.string().min(1).optional(),
@@ -239,6 +241,7 @@ const answerDecisionSchema = z.object({
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponse: z.string().min(1).optional(),
@@ -250,6 +253,7 @@ const answerDecisionBatchEntrySchema = z.object({
   summary: z.string().min(1),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
 })
 
@@ -495,6 +499,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 decisionKey: body.decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
+                sourceExcerpt: body.sourceExcerpt,
                 answerSourceKey: body.answerSourceKey,
               },
             ],
@@ -598,6 +603,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
+                sourceExcerpt: body.sourceExcerpt,
                 answerSourceKey: body.answerSourceKey,
               },
             ],

@@ -134,6 +134,7 @@ const assistantDecisionAnswerSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
 })
 
@@ -142,6 +143,7 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       answer: z.string().min(1).optional(),
+      sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),
     }),
   )
@@ -278,6 +280,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     decisionKey: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
+    sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponse: z.string().min(1).optional(),
@@ -296,6 +299,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     summary: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
+    sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponse: z.string().min(1).optional(),

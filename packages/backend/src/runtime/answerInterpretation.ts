@@ -19,6 +19,7 @@ export type InterpretableAnswerSource =
 export interface InterpretablePlanningAnswer {
   summary: string
   answer?: string
+  sourceExcerpt?: string
   answerSourceKey?: string
 }
 
@@ -27,6 +28,7 @@ export interface InterpretableDecisionAnswerEntryInput {
   decisionKey?: string
   taskRef?: string
   answer?: string
+  sourceExcerpt?: string
   answerSourceKey?: string
 }
 
@@ -98,6 +100,7 @@ export function materializeInterpretedDecisionAnswers(
     taskRef: answer.taskRef,
     answer: resolveAnswerText(
       answer.answer,
+      answer.sourceExcerpt,
       answer.answerSourceKey,
       sourceResponse,
       `decision answer ${answer.decisionKey ?? answer.summary}`,
@@ -185,6 +188,7 @@ function materializeInterpretedPlanningAnswers(
     summary: answer.summary,
     answer: resolveAnswerText(
       answer.answer,
+      answer.sourceExcerpt,
       answer.answerSourceKey,
       sourceResponse,
       `planner answer ${answer.summary}`,
@@ -195,6 +199,7 @@ function materializeInterpretedPlanningAnswers(
 
 function resolveAnswerText(
   answer: string | undefined,
+  sourceExcerpt: string | undefined,
   answerSourceKey: string | undefined,
   sourceResponse: string | undefined,
   label: string,
@@ -203,6 +208,11 @@ function resolveAnswerText(
   const explicit = answer?.trim()
   if (explicit) {
     return explicit
+  }
+
+  const directExcerpt = resolveSourceExcerpt(sourceExcerpt, sourceResponse, label)
+  if (directExcerpt) {
+    return directExcerpt
   }
 
   const referencedSourceKey = answerSourceKey?.trim()
@@ -224,6 +234,28 @@ function resolveAnswerText(
   throw new AnswerInterpretationError(
     `Missing answer text for ${label}. Provide item.answer, answerSourceKey, or sourceResponse.`,
   )
+}
+
+function resolveSourceExcerpt(
+  sourceExcerpt: string | undefined,
+  sourceResponse: string | undefined,
+  label: string,
+) {
+  const excerpt = sourceExcerpt?.trim()
+  if (!excerpt) {
+    return undefined
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(`sourceExcerpt for ${label} requires sourceResponse.`)
+  }
+  if (!shared.includes(excerpt)) {
+    throw new AnswerInterpretationError(
+      `sourceExcerpt for ${label} was not found in sourceResponse.`,
+    )
+  }
+  return excerpt
 }
 
 function createAnswerSourceLookup(
