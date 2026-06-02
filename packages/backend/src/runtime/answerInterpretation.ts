@@ -81,6 +81,7 @@ interface ResolvedAnswerContent {
 
 const TOPIC_SUMMARY_VERB_PATTERN =
   '(?:should|will|must|can|could|would|is|are|was|were|uses|use|means|requires|starts)'
+const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 export type InterpretableAnswerSource =
   | {
@@ -2817,7 +2818,47 @@ function extractTrailingTopicSummary(text: string) {
   return `${summary.slice(0, 1).toUpperCase()}${summary.slice(1)}`
 }
 
+function extractPrefixedTopicSummary(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const summary = new RegExp(
+    `^(?:${TOPIC_SUMMARY_PREFIX_PATTERN})\\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\\s*(?:,|:|-)\\s+.+$`,
+    'i',
+  ).exec(trimmed)?.groups?.summary
+  if (!summary) {
+    return undefined
+  }
+
+  const normalizedSummary = summary
+    .trim()
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(/\s+/g, ' ')
+  if (!normalizedSummary) {
+    return undefined
+  }
+
+  const normalized = normalizeSourceResponseLabel(normalizedSummary)
+  if (!normalized) {
+    return undefined
+  }
+
+  const tokens = normalized.split(' ').filter(Boolean)
+  if (tokens.length === 0 || tokens.length > 6) {
+    return undefined
+  }
+  const firstToken = tokens[0]
+  if (firstToken && LEADING_TOPIC_SUMMARY_REJECT_TOKENS.has(firstToken)) {
+    return undefined
+  }
+
+  return `${normalizedSummary.slice(0, 1).toUpperCase()}${normalizedSummary.slice(1)}`
+}
+
 const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
+  'about',
   ...QUESTION_CORE_LEADING_TOKENS,
   'he',
   'her',
@@ -2839,6 +2880,7 @@ const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
   'us',
   'you',
   'your',
+  'regarding',
 ])
 
 function extractLeadingTopicSummary(text: string) {
@@ -2881,6 +2923,7 @@ function extractLeadingTopicSummary(text: string) {
 
 function extractInferredTopicSummaries(text: string) {
   return dedupeNonEmptyStrings([
+    extractPrefixedTopicSummary(text),
     extractLeadingTopicSummary(text),
     extractTrailingTopicSummary(text),
   ])

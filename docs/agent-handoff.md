@@ -639,6 +639,7 @@ Current non-UI Goal assistant substrate:
 - decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - assistant decision action-result surfacing that returns the same shared runtime follow-through structure, including generated workflow keys, instead of flattening decision follow-through into lossy summary arrays
 - leading topic-summary interpretation that lets `topic_sentences`, `topic_paragraphs`, and `topic_blocks` infer durable decision-topic summaries and planner-answer summaries from leading phrases like `Pilot scope should ...`, instead of only from narrower trailing `... for pilot scope` forms
+- prefixed topic-summary interpretation that lets those same topic surfaces infer durable summaries from phrases like `For auth strategy, ...` or `About pilot scope, ...`, instead of only from subject-leading or trailing-topic forms
 - transcript tool-correlation evidence that persists stable tool invocation keys and stable tool target details, letting reviewer/merger context see real tool interactions instead of only flat transcript summaries
 - durable structured repo preferences in `.hopi/preference.md`
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
