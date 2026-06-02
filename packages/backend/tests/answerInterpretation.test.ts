@@ -1425,6 +1425,57 @@ test('materializes matching open decisions from question blocks by exact durable
   ])
 })
 
+test('materializes matching open decisions from question blocks by durable prompt core text', () => {
+  const sourceResponse = [
+    'What auth provider should we adopt?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'How should rollout happen?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_blocks',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes new decision topics from remaining question blocks while reserving planner summaries', () => {
   const sourceResponse = [
     'Auth strategy?',
@@ -1630,6 +1681,52 @@ test('materializes matching open decisions from question spans by exact durable 
           decisionKey: 'auth-strategy',
           summary: 'Choose the auth strategy',
           prompt: 'Should we use Bun-native auth or an external auth provider?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_spans',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout. That keeps the launch reversible.',
+    },
+  ])
+})
+
+test('materializes matching open decisions from question spans by durable prompt core text', () => {
+  const sourceResponse = [
+    'What auth provider should we adopt?',
+    'Use Bun-native auth.',
+    'That keeps the runtime simple.',
+    'How should rollout happen?',
+    'Use a staged rollout.',
+    'That keeps the launch reversible.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
         },
         {
           decisionKey: 'rollout-strategy',

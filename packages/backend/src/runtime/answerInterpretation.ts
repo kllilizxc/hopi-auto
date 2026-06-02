@@ -57,12 +57,14 @@ interface TopicSourceResponseParagraph {
 interface QuestionSourceResponseBlock {
   question: string
   normalizedQuestionText: string
+  normalizedQuestionCoreText: string
   answer: string
 }
 
 interface QuestionSourceResponseSpan {
   question: string
   normalizedQuestionText: string
+  normalizedQuestionCoreText: string
   answer: string
 }
 
@@ -1470,6 +1472,7 @@ function parseQuestionSourceResponseBlocks(sourceResponse: string) {
         blocks.push({
           question: currentQuestion,
           normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
+          normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
           answer: answerParagraphs.join('\n\n'),
         })
       } else if (answerParagraphs.length > 0) {
@@ -1501,6 +1504,7 @@ function parseQuestionSourceResponseBlocks(sourceResponse: string) {
   blocks.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
+    normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
     answer: answerParagraphs.join('\n\n'),
   })
   return blocks
@@ -1523,6 +1527,7 @@ function parseQuestionSourceResponseSpans(sourceResponse: string) {
         spans.push({
           question: currentQuestion,
           normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
+          normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
           answer: answerSentences.join(' '),
         })
       } else if (answerSentences.length > 0) {
@@ -1554,6 +1559,7 @@ function parseQuestionSourceResponseSpans(sourceResponse: string) {
   spans.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
+    normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
     answer: answerSentences.join(' '),
   })
   return spans
@@ -1770,20 +1776,29 @@ function findMatchingQuestionBlockIndexes(
   candidates: string[],
   consumedIndexes: Set<number>,
 ) {
-  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map((candidate) => ({
+    normalizedCandidate: normalizeSourceResponseText(candidate),
+    normalizedCandidateCore: normalizeQuestionPromptCore(candidate),
+  }))
   const matchingIndexes = new Set<number>()
 
-  for (const normalizedCandidate of normalizedCandidates) {
+  for (const { normalizedCandidate, normalizedCandidateCore } of normalizedCandidates) {
     if (!normalizedCandidate) {
       continue
     }
-    const needle = ` ${normalizedCandidate} `
 
     blocks.forEach((block, index) => {
       if (consumedIndexes.has(index)) {
         return
       }
-      if (` ${block.normalizedQuestionText} `.includes(needle)) {
+      if (
+        questionTextMatchesCandidate(
+          block.normalizedQuestionText,
+          block.normalizedQuestionCoreText,
+          normalizedCandidate,
+          normalizedCandidateCore,
+        )
+      ) {
         matchingIndexes.add(index)
       }
     })
@@ -1797,20 +1812,29 @@ function findMatchingQuestionSpanIndexes(
   candidates: string[],
   consumedIndexes: Set<number>,
 ) {
-  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map((candidate) => ({
+    normalizedCandidate: normalizeSourceResponseText(candidate),
+    normalizedCandidateCore: normalizeQuestionPromptCore(candidate),
+  }))
   const matchingIndexes = new Set<number>()
 
-  for (const normalizedCandidate of normalizedCandidates) {
+  for (const { normalizedCandidate, normalizedCandidateCore } of normalizedCandidates) {
     if (!normalizedCandidate) {
       continue
     }
-    const needle = ` ${normalizedCandidate} `
 
     spans.forEach((span, index) => {
       if (consumedIndexes.has(index)) {
         return
       }
-      if (` ${span.normalizedQuestionText} `.includes(needle)) {
+      if (
+        questionTextMatchesCandidate(
+          span.normalizedQuestionText,
+          span.normalizedQuestionCoreText,
+          normalizedCandidate,
+          normalizedCandidateCore,
+        )
+      ) {
         matchingIndexes.add(index)
       }
     })
@@ -2023,6 +2047,80 @@ function normalizeSourceResponseText(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/gi, ' ')
     .replace(/\s+/g, ' ')
+}
+
+const QUESTION_CORE_LEADING_TOKENS = new Set([
+  'a',
+  'an',
+  'are',
+  'be',
+  'can',
+  'could',
+  'did',
+  'do',
+  'does',
+  'for',
+  'had',
+  'has',
+  'have',
+  'how',
+  'is',
+  'need',
+  'needed',
+  'needs',
+  'our',
+  'should',
+  'the',
+  'to',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'whom',
+  'whose',
+  'why',
+  'will',
+  'would',
+])
+
+function normalizeQuestionPromptCore(value: string) {
+  const normalized = normalizeSourceResponseText(value)
+  if (!normalized) {
+    return ''
+  }
+
+  const tokens = normalized.split(' ').filter(Boolean)
+  let startIndex = 0
+  while (startIndex < tokens.length && QUESTION_CORE_LEADING_TOKENS.has(tokens[startIndex] ?? '')) {
+    startIndex += 1
+  }
+
+  return tokens.slice(startIndex).join(' ')
+}
+
+function questionTextMatchesCandidate(
+  normalizedQuestionText: string,
+  normalizedQuestionCoreText: string,
+  normalizedCandidate: string,
+  normalizedCandidateCore: string,
+) {
+  if (` ${normalizedQuestionText} `.includes(` ${normalizedCandidate} `)) {
+    return true
+  }
+  if (!normalizedQuestionCoreText || !normalizedCandidateCore) {
+    return false
+  }
+  if (normalizedQuestionCoreText === normalizedCandidateCore) {
+    return true
+  }
+  return (
+    ` ${normalizedQuestionCoreText} `.includes(` ${normalizedCandidateCore} `) ||
+    ` ${normalizedCandidateCore} `.includes(` ${normalizedQuestionCoreText} `)
+  )
 }
 
 function humanizeDecisionKey(value: string | undefined) {
