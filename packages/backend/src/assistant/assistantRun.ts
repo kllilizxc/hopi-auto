@@ -284,7 +284,13 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: z
-      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .enum([
+        'labeled_sections',
+        'ordered_items',
+        'inline_topics',
+        'topic_sentences',
+        'topic_paragraphs',
+      ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -293,7 +299,13 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('record_answers'),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: z
-      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .enum([
+        'labeled_sections',
+        'ordered_items',
+        'inline_topics',
+        'topic_sentences',
+        'topic_paragraphs',
+      ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),
     inferOpenDecisions: z.boolean().default(false),
@@ -311,7 +323,13 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: z
-      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .enum([
+        'labeled_sections',
+        'ordered_items',
+        'inline_topics',
+        'topic_sentences',
+        'topic_paragraphs',
+      ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),

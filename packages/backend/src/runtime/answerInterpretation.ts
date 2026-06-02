@@ -11,6 +11,7 @@ export type InterpretableSourceResponseFormat =
   | 'ordered_items'
   | 'inline_topics'
   | 'topic_sentences'
+  | 'topic_paragraphs'
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
@@ -18,9 +19,11 @@ export interface InterpretedSourceResponseState {
   labeledSections?: Map<string, LabeledSourceResponseSection>
   inlineTopics?: Map<string, LabeledSourceResponseSection>
   topicSentences?: TopicSourceResponseSentence[]
+  topicParagraphs?: TopicSourceResponseParagraph[]
   orderedItems?: string[]
   nextOrderedItemIndex: number
   consumedTopicSentenceIndexes: Set<number>
+  consumedTopicParagraphIndexes: Set<number>
 }
 
 interface LabeledSourceResponseSection {
@@ -29,6 +32,11 @@ interface LabeledSourceResponseSection {
 }
 
 interface TopicSourceResponseSentence {
+  text: string
+  normalizedText: string
+}
+
+interface TopicSourceResponseParagraph {
   text: string
   normalizedText: string
 }
@@ -159,6 +167,7 @@ export function createInterpretedSourceResponseState(
     sourceResponseFormat,
     nextOrderedItemIndex: 0,
     consumedTopicSentenceIndexes: new Set<number>(),
+    consumedTopicParagraphIndexes: new Set<number>(),
   }
 }
 
@@ -440,6 +449,20 @@ function resolveAnswerText(
     return topicSentence
   }
 
+  if (sourceResponseFormat === 'topic_paragraphs') {
+    const topicParagraph = consumeTopicParagraphSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    if (!topicParagraph) {
+      throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
+    }
+    return topicParagraph
+  }
+
   const shared = sourceResponse?.trim()
   if (shared) {
     return shared
@@ -531,10 +554,11 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'labeled_sections' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'inline_topics' &&
-    sourceResponseFormat !== 'topic_sentences'
+    sourceResponseFormat !== 'topic_sentences' &&
+    sourceResponseFormat !== 'topic_paragraphs'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", or "topic_sentences".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", "topic_sentences", or "topic_paragraphs".',
     )
   }
 
@@ -577,11 +601,19 @@ function materializeMatchingOpenDecisionAnswers(
               sourceResponseState,
               false,
             )
-          : resolveOrderedSourceResponseItem(
-              sourceResponse,
-              `decision answer ${decision.decisionKey}`,
-              sourceResponseState,
-            )
+          : sourceResponseFormat === 'topic_paragraphs'
+            ? consumeTopicParagraphSourceResponseSection(
+                sourceResponse,
+                buildOpenDecisionSourceResponseCandidates(decision),
+                `decision answer ${decision.decisionKey}`,
+                sourceResponseState,
+                false,
+              )
+            : resolveOrderedSourceResponseItem(
+                sourceResponse,
+                `decision answer ${decision.decisionKey}`,
+                sourceResponseState,
+              )
     if (!match) {
       continue
     }
@@ -754,6 +786,29 @@ function parseRequiredTopicSourceResponseSentences(
   return sentences
 }
 
+function parseRequiredTopicSourceResponseParagraphs(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.topicParagraphs) {
+    return sourceResponseState.topicParagraphs
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat topic_paragraphs requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const paragraphs = parseTopicSourceResponseParagraphs(shared)
+  if (sourceResponseState) {
+    sourceResponseState.topicParagraphs = paragraphs
+  }
+  return paragraphs
+}
+
 function findLabeledSourceResponseSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
@@ -802,6 +857,43 @@ function consumeTopicSentenceSourceResponseSection(
     sourceResponseState.consumedTopicSentenceIndexes.add(sentenceIndex)
   }
   return sentences[sentenceIndex]?.text
+}
+
+function consumeTopicParagraphSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  const paragraphs = parseRequiredTopicSourceResponseParagraphs(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes = sourceResponseState?.consumedTopicParagraphIndexes ?? new Set<number>()
+  const matchingIndexes = findMatchingTopicParagraphIndexes(paragraphs, candidates, consumedIndexes)
+
+  if (matchingIndexes.length === 0) {
+    if (!required) {
+      return undefined
+    }
+    throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
+  }
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(
+      `Multiple topic paragraphs matched ${label} in sourceResponse.`,
+    )
+  }
+
+  const paragraphIndex = matchingIndexes[0]
+  if (paragraphIndex === undefined) {
+    return undefined
+  }
+  if (sourceResponseState) {
+    sourceResponseState.consumedTopicParagraphIndexes.add(paragraphIndex)
+  }
+  return paragraphs[paragraphIndex]?.text
 }
 
 function resolveOrderedSourceResponseItem(
@@ -869,6 +961,17 @@ function parseTopicSourceResponseSentences(sourceResponse: string) {
     .map((sentence) => ({
       text: sentence,
       normalizedText: normalizeSourceResponseText(sentence),
+    }))
+}
+
+function parseTopicSourceResponseParagraphs(sourceResponse: string) {
+  return sourceResponse
+    .split(/\r?\n\s*\r?\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .map((paragraph) => ({
+      text: paragraph,
+      normalizedText: normalizeSourceResponseText(paragraph),
     }))
 }
 
@@ -994,6 +1097,33 @@ function findMatchingTopicSentenceIndexes(
         return
       }
       if (` ${sentence.normalizedText} `.includes(needle)) {
+        matchingIndexes.add(index)
+      }
+    })
+  }
+
+  return [...matchingIndexes].sort((left, right) => left - right)
+}
+
+function findMatchingTopicParagraphIndexes(
+  paragraphs: TopicSourceResponseParagraph[],
+  candidates: string[],
+  consumedIndexes: Set<number>,
+) {
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const matchingIndexes = new Set<number>()
+
+  for (const normalizedCandidate of normalizedCandidates) {
+    if (!normalizedCandidate) {
+      continue
+    }
+    const needle = ` ${normalizedCandidate} `
+
+    paragraphs.forEach((paragraph, index) => {
+      if (consumedIndexes.has(index)) {
+        return
+      }
+      if (` ${paragraph.normalizedText} `.includes(needle)) {
         matchingIndexes.add(index)
       }
     })

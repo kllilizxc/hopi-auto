@@ -236,7 +236,13 @@ const resolveDecisionSchema = z.object({
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: z
-    .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+    .enum([
+      'labeled_sections',
+      'ordered_items',
+      'inline_topics',
+      'topic_sentences',
+      'topic_paragraphs',
+    ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -251,7 +257,13 @@ const answerDecisionSchema = z.object({
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: z
-    .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+    .enum([
+      'labeled_sections',
+      'ordered_items',
+      'inline_topics',
+      'topic_sentences',
+      'topic_paragraphs',
+    ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -269,7 +281,13 @@ const answerDecisionBatchEntrySchema = z.object({
 const answerDecisionBatchSchema = z.object({
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: z
-    .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+    .enum([
+      'labeled_sections',
+      'ordered_items',
+      'inline_topics',
+      'topic_sentences',
+      'topic_paragraphs',
+    ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
   inferOpenDecisions: z.boolean().default(false),
