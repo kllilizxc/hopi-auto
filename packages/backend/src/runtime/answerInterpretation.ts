@@ -13,6 +13,7 @@ export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'pending_clauses',
   'pending_paragraphs',
   'pending_sentences',
+  'pending_conjunctions',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -65,11 +66,13 @@ export interface InterpretedSourceResponseState {
   pendingClauses?: string[]
   pendingParagraphs?: string[]
   pendingSentences?: string[]
+  pendingConjunctions?: string[]
   nextOrderedItemIndex: number
   nextOrderedBlockIndex: number
   nextPendingClauseIndex: number
   nextPendingParagraphIndex: number
   nextPendingSentenceIndex: number
+  nextPendingConjunctionIndex: number
   consumedQuestionBlockIndexes: Set<number>
   consumedQuestionClauseIndexes: Set<number>
   consumedQuestionSpanIndexes: Set<number>
@@ -382,6 +385,7 @@ export function createInterpretedSourceResponseState(
     nextPendingClauseIndex: 0,
     nextPendingParagraphIndex: 0,
     nextPendingSentenceIndex: 0,
+    nextPendingConjunctionIndex: 0,
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
     consumedQuestionBlockIndexes: new Set<number>(),
@@ -1266,6 +1270,12 @@ function resolveAnswerContent(
     }
   }
 
+  if (sourceResponseFormat === 'pending_conjunctions') {
+    return {
+      answer: resolvePendingSourceResponseConjunction(sourceResponse, label, sourceResponseState),
+    }
+  }
+
   if (sourceResponseFormat === 'ordered_items') {
     return {
       answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
@@ -1738,6 +1748,29 @@ function resolvePendingSourceResponseSentence(
   return nextSentence
 }
 
+function resolvePendingSourceResponseConjunction(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const conjunctions = parseRequiredPendingSourceResponseConjunctions(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const nextIndex = sourceResponseState?.nextPendingConjunctionIndex ?? 0
+  const nextConjunction = conjunctions[nextIndex]
+  if (!nextConjunction) {
+    throw new AnswerInterpretationError(
+      `No pending conjunction segment remained for ${label} in sourceResponse.`,
+    )
+  }
+  if (sourceResponseState) {
+    sourceResponseState.nextPendingConjunctionIndex = nextIndex + 1
+  }
+  return nextConjunction
+}
+
 function materializeMatchingOpenDecisionAnswers(
   openDecisions: InterpretableOpenDecision[],
   explicitDecisionKeys: Set<string>,
@@ -1751,6 +1784,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'pending_clauses' &&
     sourceResponseFormat !== 'pending_paragraphs' &&
     sourceResponseFormat !== 'pending_sentences' &&
+    sourceResponseFormat !== 'pending_conjunctions' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'question_blocks' &&
@@ -1772,7 +1806,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
 
@@ -1827,6 +1861,12 @@ function materializeMatchingOpenDecisionAnswers(
       )
     } else if (sourceResponseFormat === 'pending_sentences') {
       match = resolvePendingSourceResponseSentence(
+        sourceResponse,
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+      )
+    } else if (sourceResponseFormat === 'pending_conjunctions') {
+      match = resolvePendingSourceResponseConjunction(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
@@ -4379,6 +4419,29 @@ function parseRequiredPendingSourceResponseSentences(
   return sentences
 }
 
+function parseRequiredPendingSourceResponseConjunctions(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.pendingConjunctions) {
+    return sourceResponseState.pendingConjunctions
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_conjunctions requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const conjunctions = parsePendingSourceResponseConjunctions(shared)
+  if (sourceResponseState) {
+    sourceResponseState.pendingConjunctions = conjunctions
+  }
+  return conjunctions
+}
+
 function parseRequiredOrderedSourceResponseBlocks(
   sourceResponse: string | undefined,
   label: string,
@@ -4806,6 +4869,13 @@ function parseTopicSourceResponseParagraphs(sourceResponse: string) {
       text: paragraph,
       normalizedText: normalizeSourceResponseText(paragraph),
     }))
+}
+
+function parsePendingSourceResponseConjunctions(sourceResponse: string) {
+  return sourceResponse
+    .split(/\s+(?:and then|then|and)\s+/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
 }
 
 function parseTopicSourceResponseSpans(
