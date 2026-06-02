@@ -1,13 +1,41 @@
 import { z } from 'zod'
 import { BLOCKER_KINDS, TASK_STATUSES } from '../domain/board'
+import { INTERPRETABLE_SOURCE_RESPONSE_FORMATS } from '../runtime/answerInterpretation'
 import {
-  goalPlanningRequestAnswerArraySchema,
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from '../storage/planningRequestStore'
 import { PREFERENCE_KEY_PATTERN } from '../storage/preferenceStore'
 
 const matchHintArraySchema = z.array(z.string().min(1)).default([])
+const interpretableSourceResponseFormatSchema = z.enum(INTERPRETABLE_SOURCE_RESPONSE_FORMATS)
+const interpretablePlanningAnswerArraySchema = z
+  .array(
+    z.object({
+      summary: z.string().min(1),
+      prompt: z.string().min(1).optional(),
+      matchHints: matchHintArraySchema,
+      answer: z.string().min(1).optional(),
+      sourceExcerpt: z.string().min(1).optional(),
+      answerSourceKey: z.string().min(1).optional(),
+    }),
+  )
+  .default([])
+
+const interpretableAnswerSourceArraySchema = z
+  .array(
+    z.union([
+      z.object({
+        answerSourceKey: z.string().min(1),
+        answer: z.string().min(1),
+      }),
+      z.object({
+        answerSourceKey: z.string().min(1),
+        sourceExcerpt: z.string().min(1),
+      }),
+    ]),
+  )
+  .default([])
 
 const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -66,7 +94,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
     blockedBy: z
       .array(
@@ -82,7 +110,7 @@ const assistantPlanningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     groupKey: z.string().min(1),
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).default([]),
   }),
 ])
@@ -141,34 +169,6 @@ const assistantDecisionAnswerSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
 })
-
-const interpretablePlanningAnswerArraySchema = z
-  .array(
-    z.object({
-      summary: z.string().min(1),
-      prompt: z.string().min(1).optional(),
-      matchHints: matchHintArraySchema,
-      answer: z.string().min(1).optional(),
-      sourceExcerpt: z.string().min(1).optional(),
-      answerSourceKey: z.string().min(1).optional(),
-    }),
-  )
-  .default([])
-
-const interpretableAnswerSourceArraySchema = z
-  .array(
-    z.union([
-      z.object({
-        answerSourceKey: z.string().min(1),
-        answer: z.string().min(1),
-      }),
-      z.object({
-        answerSourceKey: z.string().min(1),
-        sourceExcerpt: z.string().min(1),
-      }),
-    ]),
-  )
-  .default([])
 
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -250,7 +250,11 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answerSources: interpretableAnswerSourceArraySchema,
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+    sourceResponse: z.string().min(1).optional(),
+    inferRemainingAnswers: z.boolean().optional(),
+    answers: interpretablePlanningAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
     blockedBy: z
       .array(
@@ -265,7 +269,11 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning_batch'),
     groupKey: z.string().min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answerSources: interpretableAnswerSourceArraySchema,
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+    sourceResponse: z.string().min(1).optional(),
+    inferRemainingAnswers: z.boolean().optional(),
+    answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),
   }),
   z.object({
@@ -274,7 +282,11 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     reuseTaskRef: z.string().min(1).optional(),
     reuseGroupKey: z.string().min(1).optional(),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answerSources: interpretableAnswerSourceArraySchema,
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+    sourceResponse: z.string().min(1).optional(),
+    inferRemainingAnswers: z.boolean().optional(),
+    answers: interpretablePlanningAnswerArraySchema,
     workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
   }),
   z.object({
@@ -296,62 +308,14 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z
-      .enum([
-        'labeled_sections',
-        'single_pending',
-        'ordered_items',
-        'ordered_blocks',
-        'question_blocks',
-        'question_clauses',
-        'question_spans',
-        'question_middle_spans',
-        'question_closing_spans',
-        'question_closing_blocks',
-        'question_middle_blocks',
-        'inline_topics',
-        'topic_clauses',
-        'topic_sentences',
-        'topic_spans',
-        'topic_middle_spans',
-        'topic_closing_spans',
-        'topic_closing_blocks',
-        'topic_paragraphs',
-        'topic_middle_blocks',
-        'topic_blocks',
-      ])
-      .optional(),
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),
   z.object({
     kind: z.literal('record_answers'),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z
-      .enum([
-        'labeled_sections',
-        'single_pending',
-        'ordered_items',
-        'ordered_blocks',
-        'question_blocks',
-        'question_clauses',
-        'question_spans',
-        'question_middle_spans',
-        'question_closing_spans',
-        'question_closing_blocks',
-        'question_middle_blocks',
-        'inline_topics',
-        'topic_clauses',
-        'topic_sentences',
-        'topic_spans',
-        'topic_middle_spans',
-        'topic_closing_spans',
-        'topic_closing_blocks',
-        'topic_paragraphs',
-        'topic_middle_blocks',
-        'topic_blocks',
-      ])
-      .optional(),
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),
     inferOpenDecisions: z.boolean().default(false),
     inferDecisionTopics: z.boolean().default(false),
@@ -369,31 +333,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z
-      .enum([
-        'labeled_sections',
-        'single_pending',
-        'ordered_items',
-        'ordered_blocks',
-        'question_blocks',
-        'question_clauses',
-        'question_spans',
-        'question_middle_spans',
-        'question_closing_spans',
-        'question_closing_blocks',
-        'question_middle_blocks',
-        'inline_topics',
-        'topic_clauses',
-        'topic_sentences',
-        'topic_spans',
-        'topic_middle_spans',
-        'topic_closing_spans',
-        'topic_closing_blocks',
-        'topic_paragraphs',
-        'topic_middle_blocks',
-        'topic_blocks',
-      ])
-      .optional(),
+    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),

@@ -13,6 +13,9 @@ import {
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
+  materializeInterpretedPlanningBatchInput,
+  materializeInterpretedPlanningInput,
+  materializeInterpretedPlanningWorkflowBatchInput,
 } from '../runtime/answerInterpretation'
 import {
   type AssistantThreadStore,
@@ -239,13 +242,12 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning') {
-    const result = await requestGoalPlanning(
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
+    const materialized = materializeInterpretedPlanningInput(
       {
-        boardStore: stores.boardStore,
-        planningRequests: stores.planningRequests,
-      },
-      {
-        goalKey,
         groupKey: action.groupKey,
         title: action.title,
         description: action.description,
@@ -254,8 +256,30 @@ async function applyAssistantAction(
         answers: action.answers,
         requestedUpdates: action.requestedUpdates,
         blockedBy: action.blockedBy,
+        inferRemainingAnswers: action.inferRemainingAnswers,
+      },
+      action.sourceResponse,
+      action.answerSources,
+      action.sourceResponseFormat,
+      sourceResponseState,
+    )
+    const result = await requestGoalPlanning(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        groupKey: materialized.groupKey,
+        title: materialized.title,
+        description: materialized.description,
+        acceptanceCriteria: materialized.acceptanceCriteria,
+        decisionRefs: materialized.decisionRefs,
+        answers: materialized.answers,
+        requestedUpdates: materialized.requestedUpdates,
+        blockedBy: materialized.blockedBy,
         writer: 'assistant',
-        reason: `assistant request planning ${action.title}`,
+        reason: `assistant request planning ${materialized.title}`,
       },
     )
 
@@ -270,6 +294,23 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning_batch') {
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
+    const materialized = materializeInterpretedPlanningBatchInput(
+      {
+        groupKey: action.groupKey,
+        decisionRefs: action.decisionRefs,
+        answers: action.answers,
+        requests: action.requests,
+        inferRemainingAnswers: action.inferRemainingAnswers,
+      },
+      action.sourceResponse,
+      action.answerSources,
+      action.sourceResponseFormat,
+      sourceResponseState,
+    )
     const result = await requestGoalPlanningBatch(
       {
         boardStore: stores.boardStore,
@@ -277,12 +318,12 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        groupKey: action.groupKey,
-        decisionRefs: action.decisionRefs,
-        answers: action.answers,
-        requests: action.requests,
+        groupKey: materialized.groupKey,
+        decisionRefs: materialized.decisionRefs,
+        answers: materialized.answers,
+        requests: materialized.requests,
         writer: 'assistant',
-        reason: `assistant request planning batch ${action.groupKey}`,
+        reason: `assistant request planning batch ${materialized.groupKey}`,
       },
     )
 
@@ -306,6 +347,25 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning_workflows') {
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
+    const materialized = materializeInterpretedPlanningWorkflowBatchInput(
+      {
+        workflowKey: action.workflowKey,
+        reuseTaskRef: action.reuseTaskRef,
+        reuseGroupKey: action.reuseGroupKey,
+        decisionRefs: action.decisionRefs,
+        answers: action.answers,
+        workflows: action.workflows,
+        inferRemainingAnswers: action.inferRemainingAnswers,
+      },
+      action.sourceResponse,
+      action.answerSources,
+      action.sourceResponseFormat,
+      sourceResponseState,
+    )
     const result = await requestGoalPlanningWorkflows(
       {
         boardStore: stores.boardStore,
@@ -313,12 +373,14 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        workflowKey: action.workflowKey,
-        reuseTaskRef: action.reuseTaskRef,
-        reuseGroupKey: action.reuseGroupKey,
-        decisionRefs: action.decisionRefs,
-        answers: action.answers,
-        workflows: action.workflows,
+        workflowKey: materialized.workflowKey,
+        reuseTaskRef: materialized.reuseTaskRef,
+        reuseGroupKey: materialized.reuseGroupKey,
+        decisionRefs: materialized.decisionRefs,
+        answers: materialized.answers,
+        workflows: [...materialized.workflows] as Parameters<
+          typeof requestGoalPlanningWorkflows
+        >[1]['workflows'],
         writer: 'assistant',
         reason: 'assistant request planning workflows',
       },

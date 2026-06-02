@@ -7,28 +7,32 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
 
+export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
+  'labeled_sections',
+  'single_pending',
+  'ordered_items',
+  'ordered_blocks',
+  'question_blocks',
+  'question_clauses',
+  'question_spans',
+  'question_middle_spans',
+  'question_closing_spans',
+  'question_closing_blocks',
+  'question_middle_blocks',
+  'inline_topics',
+  'topic_clauses',
+  'topic_sentences',
+  'topic_spans',
+  'topic_middle_spans',
+  'topic_closing_spans',
+  'topic_closing_blocks',
+  'topic_paragraphs',
+  'topic_middle_blocks',
+  'topic_blocks',
+] as const
+
 export type InterpretableSourceResponseFormat =
-  | 'labeled_sections'
-  | 'single_pending'
-  | 'ordered_items'
-  | 'ordered_blocks'
-  | 'question_blocks'
-  | 'question_clauses'
-  | 'question_spans'
-  | 'question_middle_spans'
-  | 'question_closing_spans'
-  | 'question_closing_blocks'
-  | 'question_middle_blocks'
-  | 'inline_topics'
-  | 'topic_clauses'
-  | 'topic_sentences'
-  | 'topic_spans'
-  | 'topic_middle_spans'
-  | 'topic_closing_spans'
-  | 'topic_closing_blocks'
-  | 'topic_paragraphs'
-  | 'topic_middle_blocks'
-  | 'topic_blocks'
+  (typeof INTERPRETABLE_SOURCE_RESPONSE_FORMATS)[number]
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
@@ -264,6 +268,41 @@ export type InterpretableDecisionLeafFollowThroughInput =
 export type InterpretableDecisionFollowThroughInput =
   | InterpretableDecisionLeafFollowThroughInput
   | InterpretableDecisionWorkflowBatchFollowThroughInput
+
+type InterpretablePlanningAnswerCarrier = {
+  answers?: InterpretablePlanningAnswer[]
+}
+
+type MaterializedPlanningAnswerCarrier<T extends InterpretablePlanningAnswerCarrier> = Omit<
+  T,
+  'answers'
+> & {
+  answers: GoalPlanningRequestAnswer[] | undefined
+}
+
+type InterpretablePlanningWorkflowLeafCarrier = {
+  kind: 'planning' | 'planning_batch'
+  answers?: InterpretablePlanningAnswer[]
+}
+
+type MaterializedPlanningWorkflowLeafCarrier<T extends InterpretablePlanningWorkflowLeafCarrier> =
+  Omit<T, 'answers'> & {
+    answers: GoalPlanningRequestAnswer[] | undefined
+  }
+
+type MaterializedPlanningWorkflowBatchCarrier<
+  T extends {
+    answers?: InterpretablePlanningAnswer[]
+    workflows: readonly InterpretablePlanningWorkflowLeafCarrier[]
+  },
+> = Omit<T, 'answers' | 'workflows'> & {
+  answers: GoalPlanningRequestAnswer[] | undefined
+  workflows: {
+    [K in keyof T['workflows']]: T['workflows'][K] extends InterpretablePlanningWorkflowLeafCarrier
+      ? MaterializedPlanningWorkflowLeafCarrier<T['workflows'][K]>
+      : never
+  }
+}
 
 export function listInterpretableFollowThroughAnswerSummaries(
   followThrough: InterpretableDecisionFollowThroughInput | undefined,
@@ -578,6 +617,131 @@ export function materializeInterpretedDecisionFollowThrough(
         : [],
     ),
     workflows,
+  }
+}
+
+export function materializeInterpretedPlanningInput<
+  T extends {
+    title: string
+    description: string
+    acceptanceCriteria: string[]
+    requestedUpdates?: GoalPlanningRequestUpdateTarget[]
+    inferRemainingAnswers?: boolean
+    answers?: InterpretablePlanningAnswer[]
+  },
+>(
+  input: T,
+  sourceResponse?: string,
+  answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
+): MaterializedPlanningAnswerCarrier<T> {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: input.title,
+      description: input.description,
+      acceptanceCriteria: input.acceptanceCriteria,
+      answers: input.answers,
+      requestedUpdates: input.requestedUpdates,
+      inferRemainingAnswers: input.inferRemainingAnswers,
+    },
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat,
+    sourceResponseState,
+  )
+  if (!materialized || materialized.kind !== 'planning') {
+    throw new Error(`Expected materialized planning input for ${input.title}.`)
+  }
+
+  return {
+    ...input,
+    answers: materialized.answers,
+  }
+}
+
+export function materializeInterpretedPlanningBatchInput<
+  T extends {
+    groupKey: string
+    requests: GoalPlanningBatchEntryInput[]
+    inferRemainingAnswers?: boolean
+    answers?: InterpretablePlanningAnswer[]
+  },
+>(
+  input: T,
+  sourceResponse?: string,
+  answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
+): MaterializedPlanningAnswerCarrier<T> {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning_batch',
+      groupKey: input.groupKey,
+      requests: input.requests,
+      answers: input.answers,
+      inferRemainingAnswers: input.inferRemainingAnswers,
+    },
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat,
+    sourceResponseState,
+  )
+  if (!materialized || materialized.kind !== 'planning_batch') {
+    throw new Error(`Expected materialized planning batch input for ${input.groupKey}.`)
+  }
+
+  return {
+    ...input,
+    answers: materialized.answers,
+  }
+}
+
+export function materializeInterpretedPlanningWorkflowBatchInput<
+  T extends {
+    workflowKey?: string
+    reuseTaskRef?: string
+    reuseGroupKey?: string
+    inferRemainingAnswers?: boolean
+    answers?: InterpretablePlanningAnswer[]
+    workflows: readonly InterpretablePlanningWorkflowLeafCarrier[]
+  },
+>(
+  input: T,
+  sourceResponse?: string,
+  answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
+): MaterializedPlanningWorkflowBatchCarrier<T> {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'workflow_batch',
+      workflowKey: input.workflowKey,
+      reuseTaskRef: input.reuseTaskRef,
+      reuseGroupKey: input.reuseGroupKey,
+      inferRemainingAnswers: input.inferRemainingAnswers,
+      answers: input.answers,
+      workflows: [...input.workflows] as InterpretableDecisionWorkflowLeafFollowThroughInput[],
+    },
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat,
+    sourceResponseState,
+  )
+  if (!materialized || materialized.kind !== 'workflow_batch') {
+    throw new Error(
+      `Expected materialized planning workflow batch for ${input.workflowKey ?? 'workflow_batch'}.`,
+    )
+  }
+
+  return {
+    ...input,
+    answers: materialized.answers,
+    workflows: input.workflows.map((workflow, index) => ({
+      ...workflow,
+      answers: materialized.workflows[index]?.answers,
+    })) as MaterializedPlanningWorkflowBatchCarrier<T>['workflows'],
   }
 }
 

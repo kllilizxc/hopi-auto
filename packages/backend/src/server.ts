@@ -12,12 +12,15 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
+  INTERPRETABLE_SOURCE_RESPONSE_FORMATS,
   createInterpretedSourceResponseState,
   followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
+  materializeInterpretedPlanningInput,
+  materializeInterpretedPlanningWorkflowBatchInput,
 } from './runtime/answerInterpretation'
 import { createAssistantThreadStore } from './runtime/assistantThreadStore'
 import { createAttemptStore } from './runtime/attemptStore'
@@ -42,7 +45,6 @@ import { createDecisionStore } from './storage/decisionStore'
 import { createProjectPaths } from './storage/paths'
 import {
   createPlanningRequestStore,
-  goalPlanningRequestAnswerArraySchema,
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from './storage/planningRequestStore'
@@ -64,6 +66,34 @@ type EventClient = ReadableStreamDefaultController<Uint8Array>
 const jsonHeaders = { 'content-type': 'application/json' }
 const encoder = new TextEncoder()
 const matchHintArraySchema = z.array(z.string().min(1)).default([])
+const interpretableSourceResponseFormatSchema = z.enum(INTERPRETABLE_SOURCE_RESPONSE_FORMATS)
+const interpretablePlanningAnswerArraySchema = z
+  .array(
+    z.object({
+      summary: z.string().min(1),
+      prompt: z.string().min(1).optional(),
+      matchHints: matchHintArraySchema,
+      answer: z.string().min(1).optional(),
+      sourceExcerpt: z.string().min(1).optional(),
+      answerSourceKey: z.string().min(1).optional(),
+    }),
+  )
+  .default([])
+
+const interpretableAnswerSourceArraySchema = z
+  .array(
+    z.union([
+      z.object({
+        answerSourceKey: z.string().min(1),
+        answer: z.string().min(1),
+      }),
+      z.object({
+        answerSourceKey: z.string().min(1),
+        sourceExcerpt: z.string().min(1),
+      }),
+    ]),
+  )
+  .default([])
 
 const blockerSchema = z.object({
   kind: z.enum(BLOCKER_KINDS),
@@ -100,7 +130,11 @@ const createPlanningRequestSchema = z.object({
   description: z.string(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  answers: goalPlanningRequestAnswerArraySchema,
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   blockedBy: z.array(blockerSchema).default([]),
 })
@@ -127,7 +161,7 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
     blockedBy: z.array(blockerSchema).default([]),
   }),
@@ -136,45 +170,21 @@ const planningWorkflowLeafSchema = z.discriminatedUnion('kind', [
     groupKey: z.string().min(1),
     blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
     decisionRefs: z.array(z.string().min(1)).default([]),
-    answers: goalPlanningRequestAnswerArraySchema,
+    answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(planningBatchEntrySchema).default([]),
   }),
 ])
-
-const interpretablePlanningAnswerArraySchema = z
-  .array(
-    z.object({
-      summary: z.string().min(1),
-      prompt: z.string().min(1).optional(),
-      matchHints: matchHintArraySchema,
-      answer: z.string().min(1).optional(),
-      sourceExcerpt: z.string().min(1).optional(),
-      answerSourceKey: z.string().min(1).optional(),
-    }),
-  )
-  .default([])
-
-const interpretableAnswerSourceArraySchema = z
-  .array(
-    z.union([
-      z.object({
-        answerSourceKey: z.string().min(1),
-        answer: z.string().min(1),
-      }),
-      z.object({
-        answerSourceKey: z.string().min(1),
-        sourceExcerpt: z.string().min(1),
-      }),
-    ]),
-  )
-  .default([])
 
 const createPlanningWorkflowBatchSchema = z.object({
   workflowKey: z.string().min(1).optional(),
   reuseTaskRef: z.string().min(1).optional(),
   reuseGroupKey: z.string().min(1).optional(),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  answers: goalPlanningRequestAnswerArraySchema,
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
   workflows: z.array(planningWorkflowLeafSchema).min(1),
 })
 
@@ -802,6 +812,24 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, createPlanningWorkflowBatchSchema)
+          const sourceResponseState = createInterpretedSourceResponseState(
+            body.sourceResponse,
+            body.sourceResponseFormat,
+          )
+          const materialized = materializeInterpretedPlanningWorkflowBatchInput(
+            {
+              workflowKey: body.workflowKey,
+              reuseTaskRef: body.reuseTaskRef,
+              reuseGroupKey: body.reuseGroupKey,
+              inferRemainingAnswers: body.inferRemainingAnswers,
+              answers: body.answers,
+              workflows: body.workflows,
+            },
+            body.sourceResponse,
+            body.answerSources,
+            body.sourceResponseFormat,
+            sourceResponseState,
+          )
           const result = await requestGoalPlanningWorkflows(
             {
               boardStore: store,
@@ -809,12 +837,14 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
-              workflowKey: body.workflowKey,
-              reuseTaskRef: body.reuseTaskRef,
-              reuseGroupKey: body.reuseGroupKey,
+              workflowKey: materialized.workflowKey,
+              reuseTaskRef: materialized.reuseTaskRef,
+              reuseGroupKey: materialized.reuseGroupKey,
               decisionRefs: body.decisionRefs,
-              answers: body.answers,
-              workflows: body.workflows,
+              answers: materialized.answers,
+              workflows: materialized.workflows as Parameters<
+                typeof requestGoalPlanningWorkflows
+              >[1]['workflows'],
               writer: 'api',
               reason: 'api request planning workflows',
             },
@@ -831,13 +861,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, createPlanningRequestSchema)
-          const result = await requestGoalPlanning(
+          const sourceResponseState = createInterpretedSourceResponseState(
+            body.sourceResponse,
+            body.sourceResponseFormat,
+          )
+          const materialized = materializeInterpretedPlanningInput(
             {
-              boardStore: store,
-              planningRequests,
-            },
-            {
-              goalKey: currentGoalKey,
               requestKey: body.requestKey,
               groupKey: body.groupKey,
               groupTaskKey: body.groupTaskKey,
@@ -848,8 +877,32 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               answers: body.answers,
               requestedUpdates: body.requestedUpdates,
               blockedBy: body.blockedBy,
+              inferRemainingAnswers: body.inferRemainingAnswers,
+            },
+            body.sourceResponse,
+            body.answerSources,
+            body.sourceResponseFormat,
+            sourceResponseState,
+          )
+          const result = await requestGoalPlanning(
+            {
+              boardStore: store,
+              planningRequests,
+            },
+            {
+              goalKey: currentGoalKey,
+              requestKey: materialized.requestKey,
+              groupKey: materialized.groupKey,
+              groupTaskKey: materialized.groupTaskKey,
+              title: materialized.title,
+              description: materialized.description,
+              acceptanceCriteria: materialized.acceptanceCriteria,
+              decisionRefs: materialized.decisionRefs,
+              answers: materialized.answers,
+              requestedUpdates: materialized.requestedUpdates,
+              blockedBy: materialized.blockedBy,
               writer: 'api',
-              reason: `api request planning ${body.requestKey ?? body.title}`,
+              reason: `api request planning ${materialized.requestKey ?? materialized.title}`,
             },
           )
           broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
