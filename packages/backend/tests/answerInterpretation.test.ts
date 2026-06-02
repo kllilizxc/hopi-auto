@@ -4505,6 +4505,55 @@ test('materializes new decision topics from remaining matching answer sources by
   ])
 })
 
+test('materializes new decision topics from remaining matching answer sources by question-shaped prompt without explicit summary', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-strategy-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'rollout-answer',
+      prompt: 'How should rollout happen?',
+      matchHints: ['launch shape'],
+      answer: 'Use a staged rollout.',
+    },
+  ]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'How should rollout happen?',
+      prompt: 'How should rollout happen?',
+      matchHints: ['launch shape'],
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes inferred planner answers from remaining pending answer sources without explicit follow-through summaries', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -4592,7 +4641,50 @@ test('materializes inferred planner answers from remaining pending answer source
   })
 })
 
-test('rejects remaining matching answer sources without explicit summary or canonical prompt when inferDecisionTopics is enabled', () => {
+test('materializes inferred planner answers from remaining pending answer sources by question-shaped prompt without explicit summary', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope' }],
+      inferRemainingAnswers: true,
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        prompt: 'Which customers should pilot first before broader launch?',
+        matchHints: ['early customer set'],
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+    'pending_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Which customers should pilot first before broader launch?',
+        prompt: 'Which customers should pilot first before broader launch?',
+        matchHints: ['early customer set'],
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+  })
+})
+
+test('rejects remaining matching answer sources without explicit summary or stable prompt when inferDecisionTopics is enabled', () => {
   expect(() =>
     materializeInterpretedDecisionAnswerBatch(
       [],
@@ -4620,7 +4712,7 @@ test('rejects remaining matching answer sources without explicit summary or cano
       true,
     ),
   ).toThrow(
-    'Remaining answerSource "pilot-scope-answer" requires summary or canonical prompt for inferDecisionTopics.',
+    'Remaining answerSource "pilot-scope-answer" requires summary or stable prompt for inferDecisionTopics.',
   )
 })
 
