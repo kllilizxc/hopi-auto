@@ -120,6 +120,49 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('reuses an existing decision and backfills a missing prompt', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+
+    const result = await requestGoalDecision(
+      {
+        boardStore,
+        decisions,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      },
+    )
+
+    expect(result).toMatchObject({
+      created: false,
+      decision: {
+        decisionKey: 'auth-strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+        status: 'open',
+      },
+    })
+    await expect(decisions.readGoalDecisions('goal-1')).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          status: 'open',
+        }),
+      ],
+    })
+  })
+
   test('enriches grouped sibling planning requests with the same decision lineage', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)
@@ -661,6 +704,79 @@ describe('requestGoalDecision', () => {
           groupTaskKey: 'task-graph',
           decisionRefs: ['D-1'],
           requestedUpdates: ['todo.yml'],
+        }),
+      ],
+    })
+  })
+
+  test('answering an existing durable topic backfills a missing prompt without overriding it later', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await decisions.createDecision('goal-1', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+
+    const firstResult = await answerGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+        answer: 'Use Bun-native auth.',
+      },
+    )
+
+    expect(firstResult).toMatchObject({
+      created: false,
+      decision: {
+        decisionKey: 'auth-strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+        status: 'resolved',
+        answer: 'Use Bun-native auth.',
+      },
+    })
+
+    const secondResult = await answerGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Should we switch to an external auth provider?',
+        answer: 'Keep Bun-native auth.',
+      },
+    )
+
+    expect(secondResult).toMatchObject({
+      created: false,
+      decision: {
+        decisionKey: 'auth-strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+        status: 'resolved',
+        answer: 'Keep Bun-native auth.',
+      },
+    })
+    await expect(decisions.readGoalDecisions('goal-1')).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          status: 'resolved',
+          answer: 'Keep Bun-native auth.',
         }),
       ],
     })

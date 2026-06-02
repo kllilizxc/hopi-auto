@@ -33,10 +33,15 @@ export interface DecisionStore {
     goalKey: string,
     input: { decisionKey?: string; summary: string; prompt?: string; taskRef?: string },
   ): Promise<GoalDecision>
+  enrichDecision(
+    goalKey: string,
+    decisionKey: string,
+    input: { prompt?: string },
+  ): Promise<GoalDecision>
   resolveDecision(
     goalKey: string,
     decisionKey: string,
-    input: { answer: string },
+    input: { answer: string; prompt?: string },
   ): Promise<GoalDecision>
 }
 
@@ -96,6 +101,22 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         return decision
       })
     },
+    async enrichDecision(goalKey, decisionKey, input) {
+      const decisionPath = paths.decisionsPath(goalKey)
+      const lockPath = `${decisionPath}.lock`
+      return withFileLock(lockPath, async () => {
+        const current = await readDecisionSet(decisionPath, goalKey)
+        const decision = current.decisions.find((item) => item.decisionKey === decisionKey)
+        if (!decision) {
+          throw new Error(`Decision not found: ${decisionKey}`)
+        }
+        const changed = backfillDecisionPrompt(decision, input.prompt)
+        if (changed) {
+          await writeDecisionSet(decisionPath, current)
+        }
+        return decision
+      })
+    },
     async resolveDecision(goalKey, decisionKey, input) {
       const decisionPath = paths.decisionsPath(goalKey)
       const lockPath = `${decisionPath}.lock`
@@ -105,6 +126,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         if (!decision) {
           throw new Error(`Decision not found: ${decisionKey}`)
         }
+        backfillDecisionPrompt(decision, input.prompt)
         decision.status = 'resolved'
         decision.answer = input.answer
         decision.resolvedAt = new Date().toISOString()
@@ -163,4 +185,12 @@ function nextDecisionKey(decisions: GoalDecision[]) {
     }, 0) + 1
 
   return `D-${nextNumber}`
+}
+
+function backfillDecisionPrompt(decision: GoalDecision, prompt: string | undefined) {
+  if (decision.prompt || !prompt) {
+    return false
+  }
+  decision.prompt = prompt
+  return true
 }

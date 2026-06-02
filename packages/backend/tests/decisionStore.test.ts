@@ -116,6 +116,61 @@ describe('createDecisionStore', () => {
       ],
     })
   })
+
+  test('backfills a missing decision prompt when resolving', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+
+    const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware.',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+    } as never)
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      status: 'resolved',
+      answer: 'Use Bun-native auth middleware.',
+    })
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use Bun-native auth middleware.',
+        },
+      ],
+    })
+  })
+
+  test('preserves an existing decision prompt when resolving again', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      taskRef: 'T-7',
+    })
+
+    const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware.',
+      prompt: 'Should we switch to an external auth provider?',
+    } as never)
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      status: 'resolved',
+      answer: 'Use Bun-native auth middleware.',
+    })
+  })
 })
 
 function testRoot() {

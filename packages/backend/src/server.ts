@@ -237,6 +237,7 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
 
 const resolveDecisionSchema = z.object({
   summary: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -702,6 +703,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             [
               {
                 summary: body.summary ?? `Decision: ${decisionKey}`,
+                prompt: body.prompt,
                 decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
@@ -728,6 +730,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               decisionKey,
+              prompt: firstAnswer.prompt,
               answer: firstAnswer.answer,
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,

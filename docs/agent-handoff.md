@@ -613,6 +613,7 @@ Current UI capabilities:
 Current non-UI Goal assistant substrate:
 
 - durable Goal decisions in `decisions.yml`
+- durable decision-prompt backfill that lets stronger later request/answer/resolve surfaces persist a missing canonical question onto an existing decision without overwriting an already-recorded prompt
 - durable Goal planning requests in `planning-requests.yml`
 - decision-linked planning request metadata for explicit `design.md` / `todo.yml` reshape intent
 - shared decision-request flows that backfill planning request lineage and default requested updates when a planning task becomes visibly blocked by one decision

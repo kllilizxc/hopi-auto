@@ -332,6 +332,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
     sourceExcerpt: z.string().min(1).optional(),

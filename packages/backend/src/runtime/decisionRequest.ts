@@ -158,14 +158,16 @@ export async function requestGoalDecision(
     ? current.decisions.find((decision) => decision.decisionKey === input.decisionKey)
     : undefined
 
-  const decision =
-    existing ??
-    (await stores.decisions.createDecision(input.goalKey, {
-      decisionKey: input.decisionKey,
-      summary: input.summary,
-      prompt: input.prompt,
-      taskRef: input.taskRef,
-    }))
+  const decision = existing
+    ? await stores.decisions.enrichDecision(input.goalKey, existing.decisionKey, {
+        prompt: input.prompt,
+      })
+    : await stores.decisions.createDecision(input.goalKey, {
+        decisionKey: input.decisionKey,
+        summary: input.summary,
+        prompt: input.prompt,
+        taskRef: input.taskRef,
+      })
   let blockerAdded = false
 
   if (input.taskRef && decision.status === 'open') {
@@ -228,6 +230,7 @@ export async function resolveGoalDecision(
     goalKey: string
     decisionKey: string
     answer: string
+    prompt?: string
     followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
@@ -235,6 +238,7 @@ export async function resolveGoalDecision(
 ): Promise<GoalDecisionResolveResult> {
   const decision = await stores.decisions.resolveDecision(input.goalKey, input.decisionKey, {
     answer: input.answer,
+    prompt: input.prompt,
   })
   const followThrough = await createDecisionResolutionFollowThrough(
     stores,
@@ -366,6 +370,7 @@ export async function answerGoalDecisions(
       }))
     const resolved = await stores.decisions.resolveDecision(input.goalKey, decision.decisionKey, {
       answer: answer.answer,
+      prompt: answer.prompt,
     })
     if (!existing) {
       createdDecisionKeys.push(resolved.decisionKey)

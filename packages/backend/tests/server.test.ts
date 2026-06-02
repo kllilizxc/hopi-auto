@@ -1793,6 +1793,7 @@ describe('createServer', () => {
       server,
       '/api/goals/test/decisions/auth-strategy/resolve',
       {
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
         answer: 'Use Bun-native auth.',
         followThrough: {
           kind: 'planning',
@@ -1808,6 +1809,7 @@ describe('createServer', () => {
     await expect(resolveResponse.json()).resolves.toMatchObject({
       decision: expect.objectContaining({
         decisionKey: 'auth-strategy',
+        prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
         status: 'resolved',
         answer: 'Use Bun-native auth.',
       }),
@@ -1842,6 +1844,18 @@ describe('createServer', () => {
           taskRef: 'P-1',
           decisionRefs: ['auth-strategy'],
           requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+        }),
+      ],
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          status: 'resolved',
+          answer: 'Use Bun-native auth.',
         }),
       ],
     })
@@ -7517,7 +7531,7 @@ preferences:
         cmd: [
           'bun',
           '-e',
-          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use Bun-native auth and split the follow-through.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the auth decision and split the durable planning follow-through into two visible stages.', actions: [{ kind: 'resolve_decision', decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', taskRef: 'T-7', answer: 'Use Bun-native auth.', followThrough: { kind: 'planning_batch', groupKey: 'auth-follow-through', requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context and rollout notes before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the auth context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use Bun-native auth and split the follow-through.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the auth decision and split the durable planning follow-through into two visible stages.', actions: [{ kind: 'resolve_decision', decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', prompt: 'Which auth strategy should we adopt for the Bun-first runtime?', taskRef: 'T-7', answer: 'Use Bun-native auth.', followThrough: { kind: 'planning_batch', groupKey: 'auth-follow-through', requests: [{ taskKey: 'goal-docs', title: 'Clarify auth goal context', description: 'Refresh durable Goal context and rollout notes before decomposition.', acceptanceCriteria: ['Goal context captures the auth direction.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth task graph', description: 'Reshape todo.yml after the auth context is stable.', acceptanceCriteria: ['The auth task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
           '${PROMPT_FILE}',
           '${OUTCOME_FILE}',
         ],
@@ -7549,6 +7563,18 @@ preferences:
           },
         }),
       ]),
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          status: 'resolved',
+          answer: 'Use Bun-native auth.',
+        }),
+      ],
     })
 
     await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
