@@ -70,6 +70,7 @@ export interface InterpretedSourceResponseState {
   pendingSentences?: string[]
   pendingConjunctions?: string[]
   pendingAnswerSourceValues?: string[]
+  pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[]
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[]
   nextOrderedItemIndex: number
   nextOrderedBlockIndex: number
@@ -172,6 +173,9 @@ interface ResolvedAnswerContent {
 interface ResolvedAnswerSourceEntry {
   key: string
   answer: string
+  summary?: string
+  prompt?: string
+  matchHints?: string[]
   candidates: string[]
 }
 
@@ -532,12 +536,13 @@ export function materializeInterpretedDecisionAnswerBatch(
   const materializedAnswers = [
     ...materializedExplicitAnswers,
     ...matchedOpenDecisionAnswers,
-    ...materializeNewDecisionTopicAnswersFromLabeledSections(
+    ...materializeNewDecisionTopicAnswers(
       explicitAnswers,
       openDecisions,
       inferOpenDecisions,
       inferDecisionTopics,
       sourceResponse,
+      answerSources,
       sourceResponseFormat,
       interpretationState,
       knownDecisions,
@@ -580,6 +585,7 @@ export function materializeInterpretedDecisionFollowThrough(
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
   const orderedAnswerSourceValues = resolvedAnswerSources?.orderedValues
+  const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   const interpretationState =
     sourceResponseState ??
@@ -596,6 +602,7 @@ export function materializeInterpretedDecisionFollowThrough(
         sourceResponse,
         answerSourcesByKey,
         orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
         interpretationState,
@@ -612,6 +619,7 @@ export function materializeInterpretedDecisionFollowThrough(
         sourceResponse,
         answerSourcesByKey,
         orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
         interpretationState,
@@ -625,6 +633,7 @@ export function materializeInterpretedDecisionFollowThrough(
     sourceResponse,
     answerSourcesByKey,
     orderedAnswerSourceValues,
+    pendingAnswerSourceEntries,
     matchingAnswerSourceEntries,
     sourceResponseFormat,
     interpretationState,
@@ -639,6 +648,7 @@ export function materializeInterpretedDecisionFollowThrough(
           sourceResponse,
           answerSourcesByKey,
           orderedAnswerSourceValues,
+          pendingAnswerSourceEntries,
           matchingAnswerSourceEntries,
           sourceResponseFormat,
           interpretationState,
@@ -653,6 +663,7 @@ export function materializeInterpretedDecisionFollowThrough(
         sourceResponse,
         answerSourcesByKey,
         orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
         interpretationState,
@@ -673,6 +684,8 @@ export function materializeInterpretedDecisionFollowThrough(
             sourceResponse,
             sourceResponseFormat,
             interpretationState,
+            pendingAnswerSourceEntries,
+            matchingAnswerSourceEntries,
           )
         : [],
     ),
@@ -821,6 +834,7 @@ function materializeInterpretedPlanningAnswers(
   sourceResponse?: string,
   answerSourcesByKey?: Map<string, string>,
   orderedAnswerSourceValues?: string[],
+  pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
@@ -865,6 +879,8 @@ function materializeInterpretedPlanningAnswers(
         sourceResponse,
         sourceResponseFormat,
         interpretationState,
+        pendingAnswerSourceEntries,
+        matchingAnswerSourceEntries,
       )
     : []
 
@@ -879,8 +895,12 @@ function materializeRemainingInterpretedPlanningAnswers(
   sourceResponse: string | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
   sourceResponseState: InterpretedSourceResponseState | undefined,
+  pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
+  matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
 ) {
   if (
+    sourceResponseFormat !== 'pending_answer_sources' &&
+    sourceResponseFormat !== 'matching_answer_sources' &&
     sourceResponseFormat !== 'question_blocks' &&
     sourceResponseFormat !== 'question_clauses' &&
     sourceResponseFormat !== 'question_spans' &&
@@ -899,13 +919,59 @@ function materializeRemainingInterpretedPlanningAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'followThrough.inferRemainingAnswers requires sourceResponseFormat "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'followThrough.inferRemainingAnswers requires sourceResponseFormat "pending_answer_sources", "matching_answer_sources", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
 
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+
+  if (sourceResponseFormat === 'pending_answer_sources') {
+    const entries = parseRequiredPendingAnswerSourceEntries(
+      pendingAnswerSourceEntries,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const nextIndex = interpretationState?.nextPendingAnswerSourceIndex ?? 0
+    const answers = entries
+      .slice(nextIndex)
+      .map((entry) =>
+        materializeRemainingPlanningAnswerFromAnswerSourceEntry(
+          entry,
+          'followThrough.inferRemainingAnswers',
+        ),
+      )
+    if (interpretationState) {
+      interpretationState.nextPendingAnswerSourceIndex = entries.length
+    }
+    return answers
+  }
+
+  if (sourceResponseFormat === 'matching_answer_sources') {
+    const entries = parseRequiredMatchingAnswerSourceEntries(
+      matchingAnswerSourceEntries,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const consumedIndexes = interpretationState?.consumedMatchingAnswerSourceIndexes ?? new Set()
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, entry] of entries.entries()) {
+      if (consumedIndexes.has(index)) {
+        continue
+      }
+      if (interpretationState) {
+        interpretationState.consumedMatchingAnswerSourceIndexes.add(index)
+      }
+      answers.push(
+        materializeRemainingPlanningAnswerFromAnswerSourceEntry(
+          entry,
+          'followThrough.inferRemainingAnswers',
+        ),
+      )
+    }
+    return answers
+  }
 
   if (sourceResponseFormat === 'question_blocks') {
     const blocks = parseRequiredQuestionSourceResponseBlocks(
@@ -1872,6 +1938,19 @@ function resolvePendingAnswerSourceValue(
   return nextValue
 }
 
+function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
+  entry: ResolvedAnswerSourceEntry,
+  label: string,
+): GoalPlanningRequestAnswer {
+  const summary = resolveRequiredAnswerSourceSummary(entry, label)
+  return {
+    summary,
+    prompt: entry.prompt?.trim() || synthesizeCanonicalPromptFromSummary(summary),
+    ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
+    answer: entry.answer,
+  }
+}
+
 function resolveMatchingAnswerSourceValue(
   matchingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   candidates: string[],
@@ -1901,6 +1980,17 @@ function resolveMatchingAnswerSourceValue(
     throw new AnswerInterpretationError(`No answerSource matched ${label}.`)
   }
   return matchingEntry.answer
+}
+
+function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, label: string) {
+  const summary = entry.summary?.trim()
+  if (summary) {
+    return summary
+  }
+
+  throw new AnswerInterpretationError(
+    `Remaining answerSource "${entry.key}" requires summary for ${label}.`,
+  )
 }
 
 function materializeMatchingOpenDecisionAnswers(
@@ -2177,12 +2267,13 @@ function materializeMatchingOpenDecisionAnswers(
   return materializedAnswers
 }
 
-function materializeNewDecisionTopicAnswersFromLabeledSections(
+function materializeNewDecisionTopicAnswers(
   explicitAnswers: InterpretableDecisionAnswerEntryInput[],
   openDecisions: InterpretableOpenDecision[],
   inferOpenDecisions: boolean,
   inferDecisionTopics: boolean,
   sourceResponse: string | undefined,
+  answerSources: InterpretableAnswerSource[] | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   knownDecisions: InterpretableKnownDecision[],
@@ -2193,6 +2284,8 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
   }
 
   if (
+    sourceResponseFormat !== 'pending_answer_sources' &&
+    sourceResponseFormat !== 'matching_answer_sources' &&
     sourceResponseFormat !== 'labeled_sections' &&
     sourceResponseFormat !== 'inline_topics' &&
     sourceResponseFormat !== 'question_clauses' &&
@@ -2213,7 +2306,40 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "topic_clauses", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferDecisionTopics requires sourceResponseFormat "pending_answer_sources", "matching_answer_sources", "labeled_sections", "inline_topics", "topic_clauses", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+    )
+  }
+
+  const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
+  const pendingAnswerSourceEntries =
+    sourceResponseFormat === 'pending_answer_sources' ? resolvedAnswerSources?.entries : undefined
+  const matchingAnswerSourceEntries =
+    sourceResponseFormat === 'matching_answer_sources' ? resolvedAnswerSources?.entries : undefined
+
+  if (sourceResponseFormat === 'pending_answer_sources') {
+    const entries = parseRequiredPendingAnswerSourceEntries(
+      pendingAnswerSourceEntries,
+      'inferDecisionTopics',
+      sourceResponseState,
+    )
+    return materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
+      entries.slice(sourceResponseState?.nextPendingAnswerSourceIndex ?? 0),
+      knownDecisions,
+      'inferDecisionTopics',
+    )
+  }
+
+  if (sourceResponseFormat === 'matching_answer_sources') {
+    const entries = parseRequiredMatchingAnswerSourceEntries(
+      matchingAnswerSourceEntries,
+      'inferDecisionTopics',
+      sourceResponseState,
+    )
+    const consumedIndexes = sourceResponseState?.consumedMatchingAnswerSourceIndexes ?? new Set()
+    return materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
+      entries.filter((_, index) => !consumedIndexes.has(index)),
+      knownDecisions,
+      'inferDecisionTopics',
     )
   }
 
@@ -4614,6 +4740,27 @@ function parseRequiredPendingAnswerSourceValues(
   return orderedAnswerSourceValues
 }
 
+function parseRequiredPendingAnswerSourceEntries(
+  pendingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.pendingAnswerSourceEntries) {
+    return sourceResponseState.pendingAnswerSourceEntries
+  }
+
+  if (!pendingAnswerSourceEntries || pendingAnswerSourceEntries.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_answer_sources requires answerSources for ${label}.`,
+    )
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.pendingAnswerSourceEntries = pendingAnswerSourceEntries
+  }
+  return pendingAnswerSourceEntries
+}
+
 function parseRequiredMatchingAnswerSourceEntries(
   matchingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   label: string,
@@ -6051,6 +6198,38 @@ function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownD
   return lookup
 }
 
+function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
+  entries: ResolvedAnswerSourceEntry[],
+  knownDecisions: InterpretableKnownDecision[],
+  label: string,
+): MaterializedInterpretedDecisionAnswer[] {
+  const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
+  return entries.map((entry) => {
+    const summary = resolveRequiredAnswerSourceSummary(entry, label)
+    const matchingKnownDecisions =
+      knownDecisionsBySummary.get(normalizeSourceResponseLabel(summary)) ?? []
+    if (matchingKnownDecisions.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple existing decisions match inferred answerSource summary "${summary}".`,
+      )
+    }
+
+    const matchingKnownDecision = matchingKnownDecisions[0]
+    return {
+      summary: matchingKnownDecision?.summary ?? summary,
+      ...(entry.prompt?.trim()
+        ? { prompt: entry.prompt.trim() }
+        : matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromSummary(summary) }),
+      ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
+      decisionKey: matchingKnownDecision?.decisionKey,
+      taskRef: matchingKnownDecision?.taskRef,
+      answer: entry.answer,
+    }
+  })
+}
+
 function findMatchingKnownDecisionsForQuestionBlock(
   block: QuestionSourceResponseBlock,
   knownDecisions: InterpretableKnownDecision[],
@@ -6677,11 +6856,17 @@ function createResolvedAnswerSources(
       }
       resolved = sourceExcerpt
     }
+    const summary = source.summary?.trim() || undefined
+    const prompt = source.prompt?.trim() || undefined
+    const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
     answerSourcesByKey.set(key, resolved)
     orderedValues.push(resolved)
     entries.push({
       key,
       answer: resolved,
+      summary,
+      prompt,
+      ...(matchHints.length ? { matchHints } : {}),
       candidates: buildAnswerSourceResponseCandidates(source),
     })
   }

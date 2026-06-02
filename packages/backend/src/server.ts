@@ -80,15 +80,22 @@ const interpretablePlanningAnswerArraySchema = z
   )
   .default([])
 
+const interpretableAnswerSourceMetadataSchema = {
+  answerSourceKey: z.string().min(1),
+  summary: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
+}
+
 const interpretableAnswerSourceArraySchema = z
   .array(
     z.union([
       z.object({
-        answerSourceKey: z.string().min(1),
+        ...interpretableAnswerSourceMetadataSchema,
         answer: z.string().min(1),
       }),
       z.object({
-        answerSourceKey: z.string().min(1),
+        ...interpretableAnswerSourceMetadataSchema,
         sourceExcerpt: z.string().min(1),
       }),
     ]),

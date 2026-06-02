@@ -4406,6 +4406,130 @@ test('materializes multiple pending open decisions from matching answer sources 
   ])
 })
 
+test('materializes new decision topics from remaining matching answer sources without explicit answer mapping', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-strategy-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'pilot-scope-answer',
+      summary: 'Pilot scope',
+      prompt: 'What should the pilot scope be?',
+      matchHints: ['launch cohort'],
+      answer: 'Start with five enterprise customers before broader launch.',
+    },
+  ]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Pilot scope',
+      prompt: 'What should the pilot scope be?',
+      matchHints: ['launch cohort'],
+      taskRef: undefined,
+      answer: 'Start with five enterprise customers before broader launch.',
+    },
+  ])
+})
+
+test('materializes inferred planner answers from remaining pending answer sources without explicit follow-through summaries', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope' }],
+      inferRemainingAnswers: true,
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        summary: 'Rollback trigger',
+        prompt: 'What should the rollback trigger be?',
+        matchHints: ['revert point'],
+        answer: 'Abort after two regressions.',
+      },
+    ],
+    'pending_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Rollback trigger',
+        prompt: 'What should the rollback trigger be?',
+        matchHints: ['revert point'],
+        answer: 'Abort after two regressions.',
+      },
+    ],
+  })
+})
+
+test('rejects remaining matching answer sources without explicit summary when inferDecisionTopics is enabled', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toThrow('Remaining answerSource "pilot-scope-answer" requires summary for inferDecisionTopics.')
+})
+
 test('rejects single-pending interpretation when more than one explicit answer would consume the shared reply', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
@@ -6760,7 +6884,7 @@ test('rejects inferDecisionTopics when labeled-section interpretation is not ena
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "topic_clauses", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferDecisionTopics requires sourceResponseFormat "pending_answer_sources", "matching_answer_sources", "labeled_sections", "inline_topics", "topic_clauses", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     ),
   )
 })
