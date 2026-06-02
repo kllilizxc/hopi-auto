@@ -1749,20 +1749,28 @@ function findMatchingTopicSentenceIndexes(
   candidates: string[],
   consumedIndexes: Set<number>,
 ) {
-  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map((candidate) => ({
+    normalizedCandidate: normalizeSourceResponseText(candidate),
+    normalizedCandidateCore: normalizeQuestionPromptCore(candidate),
+  }))
   const matchingIndexes = new Set<number>()
 
-  for (const normalizedCandidate of normalizedCandidates) {
+  for (const { normalizedCandidate, normalizedCandidateCore } of normalizedCandidates) {
     if (!normalizedCandidate) {
       continue
     }
-    const needle = ` ${normalizedCandidate} `
 
     sentences.forEach((sentence, index) => {
       if (consumedIndexes.has(index)) {
         return
       }
-      if (` ${sentence.normalizedText} `.includes(needle)) {
+      if (
+        topicTextMatchesCandidate(
+          sentence.normalizedText,
+          normalizedCandidate,
+          normalizedCandidateCore,
+        )
+      ) {
         matchingIndexes.add(index)
       }
     })
@@ -1848,20 +1856,28 @@ function findMatchingTopicParagraphIndexes(
   candidates: string[],
   consumedIndexes: Set<number>,
 ) {
-  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map((candidate) => ({
+    normalizedCandidate: normalizeSourceResponseText(candidate),
+    normalizedCandidateCore: normalizeQuestionPromptCore(candidate),
+  }))
   const matchingIndexes = new Set<number>()
 
-  for (const normalizedCandidate of normalizedCandidates) {
+  for (const { normalizedCandidate, normalizedCandidateCore } of normalizedCandidates) {
     if (!normalizedCandidate) {
       continue
     }
-    const needle = ` ${normalizedCandidate} `
 
     paragraphs.forEach((paragraph, index) => {
       if (consumedIndexes.has(index)) {
         return
       }
-      if (` ${paragraph.normalizedText} `.includes(needle)) {
+      if (
+        topicTextMatchesCandidate(
+          paragraph.normalizedText,
+          normalizedCandidate,
+          normalizedCandidateCore,
+        )
+      ) {
         matchingIndexes.add(index)
       }
     })
@@ -2170,6 +2186,20 @@ function questionTextMatchesCandidate(
     ` ${normalizedCandidateCore} `.includes(` ${normalizedQuestionCoreText} `) ||
     keywordAnchorSetsMatch(normalizedQuestionText, normalizedCandidate)
   )
+}
+
+function topicTextMatchesCandidate(
+  normalizedText: string,
+  normalizedCandidate: string,
+  normalizedCandidateCore: string,
+) {
+  if (` ${normalizedText} `.includes(` ${normalizedCandidate} `)) {
+    return true
+  }
+  if (normalizedCandidateCore && ` ${normalizedText} `.includes(` ${normalizedCandidateCore} `)) {
+    return true
+  }
+  return keywordAnchorSetsMatch(normalizedText, normalizedCandidate)
 }
 
 function humanizeDecisionKey(value: string | undefined) {

@@ -788,6 +788,49 @@ test('materializes matching open decisions from topic sentences without per-topi
   })
 })
 
+test('materializes matching open decisions from topic sentences by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Adopt the Bun-native auth provider for the Bun-first product path.',
+    'Rollout should happen in stages, not once.',
+    'Start with five enterprise customers before broader launch for pilot scope.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'topic_sentences',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Adopt the Bun-native auth provider for the Bun-first product path.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Rollout should happen in stages, not once.',
+    },
+  ])
+})
+
 test('materializes topic paragraphs across decision and planner answers without per-sentence topic labels', () => {
   const sourceResponse = [
     'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
@@ -875,6 +918,50 @@ test('materializes topic paragraphs across decision and planner answers without 
       },
     ],
   })
+})
+
+test('materializes matching open decisions from topic paragraphs by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Adopt the Bun-native auth provider for the Bun-first product path. That keeps the runtime simple.',
+    '',
+    'Rollout should happen in stages, not once. That keeps the launch reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'topic_paragraphs',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer:
+        'Adopt the Bun-native auth provider for the Bun-first product path. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Rollout should happen in stages, not once. That keeps the launch reversible.',
+    },
+  ])
 })
 
 test('materializes matching open decisions from topic paragraphs without per-topic mapping', () => {
