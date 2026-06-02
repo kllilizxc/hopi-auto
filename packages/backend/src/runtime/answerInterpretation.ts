@@ -646,6 +646,404 @@ export function createInterpretedSourceResponseState(
   }
 }
 
+function assertAutoSourceResponseFormatCompleteness(input: {
+  sourceResponse?: string
+  answerSources?: InterpretableAnswerSource[]
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat
+  sourceResponseState: InterpretedSourceResponseState | undefined
+  inferDecisionTopics?: boolean
+}) {
+  const state = input.sourceResponseState
+  if (!state) {
+    return
+  }
+
+  switch (input.sourceResponseFormat) {
+    case 'single_pending': {
+      if (!state.singlePendingConsumed) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat auto rejected single_pending because it did not consume the pending reply.',
+        )
+      }
+      return
+    }
+    case 'pending_clauses':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'pending clauses',
+        state.nextPendingClauseIndex,
+        parseRequiredPendingSourceResponseClauses(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'pending_paragraphs':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'pending paragraphs',
+        state.nextPendingParagraphIndex,
+        parseRequiredPendingSourceResponseParagraphs(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'pending_sentences':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'pending sentences',
+        state.nextPendingSentenceIndex,
+        parseRequiredPendingSourceResponseSentences(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'pending_conjunctions':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'pending conjunction segments',
+        state.nextPendingConjunctionIndex,
+        parseRequiredPendingSourceResponseConjunctions(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'pending_answer_sources': {
+      if (input.inferDecisionTopics) {
+        return
+      }
+      const entries = parseRequiredPendingAnswerSourceEntries(
+        createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+        'sourceResponseFormat auto',
+        state,
+      )
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'pending answer sources',
+        state.nextPendingAnswerSourceIndex,
+        entries.length,
+      )
+      return
+    }
+    case 'matching_answer_sources': {
+      if (input.inferDecisionTopics) {
+        return
+      }
+      const entries = parseRequiredMatchingAnswerSourceEntries(
+        createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+        'sourceResponseFormat auto',
+        state,
+      )
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'matching answer sources',
+        state.consumedMatchingAnswerSourceIndexes.size,
+        entries.length,
+      )
+      return
+    }
+    case 'matching_runs':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'matching runs',
+        state.consumedMatchingRunIndexes.size,
+        parseMatchingSourceResponseRuns(input.sourceResponse, 'sourceResponseFormat auto', state)
+          .length,
+      )
+      return
+    case 'ordered_items':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'ordered items',
+        state.nextOrderedItemIndex,
+        parseRequiredOrderedSourceResponseItems(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'ordered_blocks':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'ordered blocks',
+        state.nextOrderedBlockIndex,
+        parseRequiredOrderedSourceResponseBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question blocks',
+        state.consumedQuestionBlockIndexes.size,
+        parseRequiredQuestionSourceResponseBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_clauses':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question clauses',
+        state.consumedQuestionClauseIndexes.size,
+        parseRequiredQuestionSourceResponseClauses(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question spans',
+        state.consumedQuestionSpanIndexes.size,
+        parseRequiredQuestionSourceResponseSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_middle_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question middle spans',
+        state.consumedQuestionMiddleSpanIndexes.size,
+        parseRequiredQuestionSourceResponseMiddleSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_closing_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question closing spans',
+        state.consumedQuestionClosingSpanIndexes.size,
+        parseRequiredQuestionSourceResponseClosingSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_closing_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question closing blocks',
+        state.consumedQuestionClosingBlockIndexes.size,
+        parseRequiredQuestionSourceResponseClosingBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'question_middle_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'question middle blocks',
+        state.consumedQuestionMiddleBlockIndexes.size,
+        parseRequiredQuestionSourceResponseMiddleBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_clauses':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic clauses',
+        state.consumedTopicClauseIndexes.size,
+        parseRequiredTopicSourceResponseClauses(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_sentences':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic sentences',
+        state.consumedTopicSentenceIndexes.size,
+        parseRequiredTopicSourceResponseSentences(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic spans',
+        state.consumedTopicSpanIndexes.size,
+        parseRequiredTopicSourceResponseSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_middle_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic middle spans',
+        state.consumedTopicMiddleSpanIndexes.size,
+        parseRequiredTopicSourceResponseMiddleSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_closing_spans':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic closing spans',
+        state.consumedTopicClosingSpanIndexes.size,
+        parseRequiredTopicSourceResponseClosingSpans(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_closing_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic closing blocks',
+        state.consumedTopicClosingBlockIndexes.size,
+        parseRequiredTopicSourceResponseClosingBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_paragraphs':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic paragraphs',
+        state.consumedTopicParagraphIndexes.size,
+        parseRequiredTopicSourceResponseParagraphs(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_middle_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic middle blocks',
+        state.consumedTopicMiddleBlockIndexes.size,
+        parseRequiredTopicSourceResponseMiddleBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'topic_blocks':
+      if (input.inferDecisionTopics) {
+        return
+      }
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'topic blocks',
+        state.consumedTopicBlockIndexes.size,
+        parseRequiredTopicSourceResponseBlocks(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'labeled_sections':
+    case 'inline_topics':
+      return
+  }
+}
+
+function assertAutoSourceResponseUnitCompleteness(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  unitLabel: string,
+  consumedCount: number,
+  totalCount: number,
+) {
+  if (consumedCount >= totalCount) {
+    return
+  }
+
+  const remainingCount = totalCount - consumedCount
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat auto rejected ${sourceResponseFormat} because it left ${remainingCount} unconsumed ${unitLabel}.`,
+  )
+}
+
 export function materializeInterpretedDecisionAnswers(
   answers: InterpretableDecisionAnswerEntryInput[],
   sourceResponse?: string,
@@ -830,6 +1228,13 @@ export function materializeInterpretedDecisionBundle(input: {
         candidateFormat,
         state,
       )
+      assertAutoSourceResponseFormatCompleteness({
+        sourceResponse: input.sourceResponse,
+        answerSources: input.answerSources,
+        sourceResponseFormat: candidateFormat,
+        sourceResponseState: state,
+        inferDecisionTopics: input.inferDecisionTopics ?? false,
+      })
     },
     'decision answer bundle',
   )
@@ -1020,6 +1425,12 @@ function resolveAutoPlanningSourceResponseFormat(
         candidateFormat,
         state,
       )
+      assertAutoSourceResponseFormatCompleteness({
+        sourceResponse,
+        answerSources,
+        sourceResponseFormat: candidateFormat,
+        sourceResponseState: state,
+      })
     },
     followThrough.kind,
   )

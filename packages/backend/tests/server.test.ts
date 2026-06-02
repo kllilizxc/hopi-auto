@@ -258,6 +258,67 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes planner answers through the direct planning-request API from auto-detected matching runs', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      sourceResponse: [
+        'Pilot scope should start with five enterprise customers, that keeps support manageable, rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
+      ].join(' '),
+      sourceResponseFormat: 'auto',
+      answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'What should the pilot scope be?',
+          answer:
+            'Pilot scope should start with five enterprise customers, that keeps support manageable',
+        },
+        {
+          summary: 'Rollback trigger',
+          prompt: 'What should the rollback trigger be?',
+          answer:
+            'rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
+        },
+      ],
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
+              answer:
+                'Pilot scope should start with five enterprise customers, that keeps support manageable',
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer:
+                'rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
   test('materializes multiple pending planner answers through the direct planning-request API from one pending-clause reply', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)

@@ -62,10 +62,10 @@ It does this by:
 - listing the currently eligible deterministic candidate surfaces
 - filtering candidates by available authority inputs like `sourceResponse`, `answerSources`, `inferOpenDecisions`, `inferDecisionTopics`, and `inferRemainingAnswers`
 - trying candidates in one fixed authority order
-- selecting the first candidate that materializes successfully
+- selecting the first candidate that materializes successfully and fully consumes its own structured units when that candidate has unit-level completeness checks
 - failing closed if no candidate succeeds
 
-`auto` therefore remains a meta-surface over existing deterministic interpreters, not a new parser family.
+`auto` therefore remains a meta-surface over existing deterministic interpreters, not a new parser family. Later authority slices may strengthen the completeness checks for more existing surfaces, but `auto` still never invents a new parser family of its own.
 
 ### Fixed Authority Priority
 
@@ -122,6 +122,7 @@ That means:
 
 - assistant and Bun API can set `sourceResponseFormat: "auto"` on decision-backed and direct planning answer flows
 - runtime deterministically chooses the strongest successful existing interpretation surface by fixed priority
+- `auto` rejects partially successful existing surfaces once they leave their own structured units unconsumed and a later existing surface can fully capture the reply
 - richer context-preserving surfaces outrank weaker clause-only or pending-order fallbacks
 - runtime fails closed when no existing deterministic surface fits
 - explicit concrete `sourceResponseFormat` still bypasses `auto` selection
