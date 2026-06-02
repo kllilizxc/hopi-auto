@@ -7,12 +7,9 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
-  createInterpretedSourceResponseState,
   followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerCandidateGroups,
-  materializeInterpretedDecisionAnswerBatch,
-  materializeInterpretedDecisionAnswers,
-  materializeInterpretedDecisionFollowThrough,
+  materializeInterpretedDecisionBundle,
   materializeInterpretedPlanningBatchInput,
   materializeInterpretedPlanningInput,
   materializeInterpretedPlanningWorkflowBatchInput,
@@ -242,10 +239,6 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning') {
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
     const materialized = materializeInterpretedPlanningInput(
       {
         groupKey: action.groupKey,
@@ -261,7 +254,6 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
-      sourceResponseState,
     )
     const result = await requestGoalPlanning(
       {
@@ -294,10 +286,6 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning_batch') {
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
     const materialized = materializeInterpretedPlanningBatchInput(
       {
         groupKey: action.groupKey,
@@ -309,7 +297,6 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
-      sourceResponseState,
     )
     const result = await requestGoalPlanningBatch(
       {
@@ -347,10 +334,6 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning_workflows') {
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
     const materialized = materializeInterpretedPlanningWorkflowBatchInput(
       {
         workflowKey: action.workflowKey,
@@ -364,7 +347,6 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
-      sourceResponseState,
     )
     const result = await requestGoalPlanningWorkflows(
       {
@@ -440,12 +422,8 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'resolve_decision') {
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
-    const materializedAnswers = materializeInterpretedDecisionAnswers(
-      [
+    const materialized = materializeInterpretedDecisionBundle({
+      answers: [
         {
           summary: action.summary ?? `Decision: ${action.decisionKey}`,
           summaryKey: action.summaryKey,
@@ -458,12 +436,17 @@ async function applyAssistantAction(
           answerSourceKey: action.answerSourceKey,
         },
       ],
-      action.sourceResponse,
-      action.answerSources,
-      action.sourceResponseFormat,
-      sourceResponseState,
-      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
-    )
+      openDecisions: [],
+      inferOpenDecisions: false,
+      sourceResponse: action.sourceResponse,
+      answerSources: action.answerSources,
+      sourceResponseFormat: action.sourceResponseFormat,
+      followThrough: action.followThrough,
+      reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+        action.followThrough,
+      ),
+    })
+    const materializedAnswers = materialized.answers
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
       throw new Error(`Expected one materialized answer for ${action.decisionKey}.`)
@@ -483,13 +466,7 @@ async function applyAssistantAction(
         decisionKey: action.decisionKey,
         taskRef: firstAnswer.taskRef,
         answer: firstAnswer.answer,
-        followThrough: materializeInterpretedDecisionFollowThrough(
-          action.followThrough,
-          action.sourceResponse,
-          action.answerSources,
-          action.sourceResponseFormat,
-          sourceResponseState,
-        ),
+        followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
       },
@@ -504,12 +481,8 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answer') {
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
-    const materializedAnswers = materializeInterpretedDecisionAnswers(
-      [
+    const materialized = materializeInterpretedDecisionBundle({
+      answers: [
         {
           summary: action.summary,
           summaryKey: action.summaryKey,
@@ -522,12 +495,17 @@ async function applyAssistantAction(
           answerSourceKey: action.answerSourceKey,
         },
       ],
-      action.sourceResponse,
-      action.answerSources,
-      action.sourceResponseFormat,
-      sourceResponseState,
-      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
-    )
+      openDecisions: [],
+      inferOpenDecisions: false,
+      sourceResponse: action.sourceResponse,
+      answerSources: action.answerSources,
+      sourceResponseFormat: action.sourceResponseFormat,
+      followThrough: action.followThrough,
+      reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+        action.followThrough,
+      ),
+    })
+    const materializedAnswers = materialized.answers
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
       throw new Error('Expected one materialized answer.')
@@ -547,13 +525,7 @@ async function applyAssistantAction(
         decisionKey: firstAnswer.decisionKey,
         taskRef: firstAnswer.taskRef,
         answer: firstAnswer.answer,
-        followThrough: materializeInterpretedDecisionFollowThrough(
-          action.followThrough,
-          action.sourceResponse,
-          action.answerSources,
-          action.sourceResponseFormat,
-          sourceResponseState,
-        ),
+        followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
       },
@@ -575,13 +547,9 @@ async function applyAssistantAction(
       )
     }
     const current = await stores.decisions.readGoalDecisions(goalKey)
-    const sourceResponseState = createInterpretedSourceResponseState(
-      action.sourceResponse,
-      action.sourceResponseFormat,
-    )
-    const answers = materializeInterpretedDecisionAnswerBatch(
-      action.answers,
-      current.decisions
+    const materialized = materializeInterpretedDecisionBundle({
+      answers: action.answers,
+      openDecisions: current.decisions
         .filter((decision) => decision.status === 'open')
         .map((decision) => ({
           decisionKey: decision.decisionKey,
@@ -591,13 +559,12 @@ async function applyAssistantAction(
           matchHints: decision.matchHints,
           taskRef: decision.taskRef,
         })),
-      action.inferOpenDecisions ?? false,
-      action.sourceResponse,
-      action.answerSources,
-      action.sourceResponseFormat,
-      sourceResponseState,
-      action.inferDecisionTopics ?? false,
-      current.decisions.map((decision) => ({
+      inferOpenDecisions: action.inferOpenDecisions ?? false,
+      sourceResponse: action.sourceResponse,
+      answerSources: action.answerSources,
+      sourceResponseFormat: action.sourceResponseFormat,
+      inferDecisionTopics: action.inferDecisionTopics ?? false,
+      knownDecisions: current.decisions.map((decision) => ({
         decisionKey: decision.decisionKey,
         summary: decision.summary,
         summaryKey: decision.summaryKey,
@@ -605,8 +572,12 @@ async function applyAssistantAction(
         matchHints: decision.matchHints,
         taskRef: decision.taskRef,
       })),
-      listInterpretableFollowThroughAnswerCandidateGroups(action.followThrough),
-    )
+      followThrough: action.followThrough,
+      reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+        action.followThrough,
+      ),
+    })
+    const answers = materialized.answers
     const result = await answerGoalDecisions(
       {
         boardStore: stores.boardStore,
@@ -616,13 +587,7 @@ async function applyAssistantAction(
       {
         goalKey,
         answers,
-        followThrough: materializeInterpretedDecisionFollowThrough(
-          action.followThrough,
-          action.sourceResponse,
-          action.answerSources,
-          action.sourceResponseFormat,
-          sourceResponseState,
-        ),
+        followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant record answers ${answers
           .map((answer) => answer.decisionKey ?? answer.summary)

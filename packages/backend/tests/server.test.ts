@@ -202,6 +202,62 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes planner answers through the direct planning-request API from auto-detected question spans', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      sourceResponse: [
+        'Which customers should pilot first before broader launch?',
+        'Start with five enterprise customers before broader launch.',
+        'That keeps early support manageable.',
+      ].join(' '),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'Which customers should pilot first before broader launch?',
+        },
+      ],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'Which customers should pilot first before broader launch?',
+          answer:
+            'Start with five enterprise customers before broader launch. That keeps early support manageable.',
+        },
+      ],
+    })
+
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              prompt: 'Which customers should pilot first before broader launch?',
+              answer:
+                'Start with five enterprise customers before broader launch. That keeps early support manageable.',
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
   test('materializes multiple pending planner answers through the direct planning-request API from one pending-clause reply', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -15658,6 +15714,43 @@ preferences:
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       message: 'I reused the topic paragraphs across auth rollout follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and auto-detects topic paragraphs across decisions and planner answers', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one shared reply and let runtime auto-detect the deterministic surface for auth, rollout, and pilot scope.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I let runtime auto-detect the shared reply surface across auth rollout follow-through.', actions: [{ kind: 'record_answers', sourceResponse: ['We should use Bun-native auth for auth strategy. That keeps the runtime simple.', '', 'Use a staged rollout for rollout strategy. That keeps the launch reversible.', '', 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.'].join('\\n'), sourceResponseFormat: 'auto', answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy' }], followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one shared reply and let runtime auto-detect the deterministic surface for auth, rollout, and pilot scope.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I let runtime auto-detect the shared reply surface across auth rollout follow-through.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',

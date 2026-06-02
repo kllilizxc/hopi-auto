@@ -8,6 +8,7 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 export class AnswerInterpretationError extends Error {}
 
 export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
+  'auto',
   'labeled_sections',
   'single_pending',
   'pending_clauses',
@@ -39,6 +40,8 @@ export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
 
 export type InterpretableSourceResponseFormat =
   (typeof INTERPRETABLE_SOURCE_RESPONSE_FORMATS)[number]
+
+type ConcreteInterpretableSourceResponseFormat = Exclude<InterpretableSourceResponseFormat, 'auto'>
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
@@ -353,6 +356,185 @@ type MaterializedPlanningWorkflowBatchCarrier<
   }
 }
 
+const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseFormat[] = [
+  'matching_answer_sources',
+  'pending_answer_sources',
+  'labeled_sections',
+  'inline_topics',
+  'question_blocks',
+  'question_closing_blocks',
+  'question_middle_blocks',
+  'question_spans',
+  'question_middle_spans',
+  'question_closing_spans',
+  'question_clauses',
+  'topic_closing_blocks',
+  'topic_middle_blocks',
+  'topic_blocks',
+  'topic_paragraphs',
+  'topic_spans',
+  'topic_middle_spans',
+  'topic_closing_spans',
+  'topic_sentences',
+  'topic_clauses',
+  'ordered_blocks',
+  'ordered_items',
+  'single_pending',
+  'pending_paragraphs',
+  'pending_sentences',
+  'pending_conjunctions',
+  'pending_clauses',
+]
+
+const ANSWER_SOURCE_ONLY_FORMATS = new Set<ConcreteInterpretableSourceResponseFormat>([
+  'pending_answer_sources',
+  'matching_answer_sources',
+])
+
+const INFER_OPEN_DECISION_FORMATS = new Set<ConcreteInterpretableSourceResponseFormat>([
+  'labeled_sections',
+  'single_pending',
+  'pending_clauses',
+  'pending_paragraphs',
+  'pending_sentences',
+  'pending_conjunctions',
+  'pending_answer_sources',
+  'matching_answer_sources',
+  'ordered_items',
+  'ordered_blocks',
+  'question_blocks',
+  'question_clauses',
+  'question_spans',
+  'question_middle_spans',
+  'question_closing_spans',
+  'question_closing_blocks',
+  'question_middle_blocks',
+  'inline_topics',
+  'topic_clauses',
+  'topic_sentences',
+  'topic_spans',
+  'topic_middle_spans',
+  'topic_closing_spans',
+  'topic_closing_blocks',
+  'topic_paragraphs',
+  'topic_middle_blocks',
+  'topic_blocks',
+])
+
+const INFER_DECISION_TOPIC_FORMATS = new Set<ConcreteInterpretableSourceResponseFormat>([
+  'pending_answer_sources',
+  'matching_answer_sources',
+  'labeled_sections',
+  'inline_topics',
+  'topic_clauses',
+  'question_blocks',
+  'question_clauses',
+  'question_spans',
+  'question_middle_spans',
+  'question_closing_spans',
+  'question_closing_blocks',
+  'question_middle_blocks',
+  'topic_sentences',
+  'topic_spans',
+  'topic_middle_spans',
+  'topic_closing_spans',
+  'topic_closing_blocks',
+  'topic_paragraphs',
+  'topic_middle_blocks',
+  'topic_blocks',
+])
+
+const INFER_REMAINING_PLANNING_ANSWER_FORMATS = new Set<ConcreteInterpretableSourceResponseFormat>([
+  'pending_answer_sources',
+  'matching_answer_sources',
+  'question_blocks',
+  'question_clauses',
+  'question_spans',
+  'question_middle_spans',
+  'question_closing_spans',
+  'question_closing_blocks',
+  'question_middle_blocks',
+  'topic_clauses',
+  'topic_sentences',
+  'topic_spans',
+  'topic_middle_spans',
+  'topic_closing_spans',
+  'topic_closing_blocks',
+  'topic_paragraphs',
+  'topic_middle_blocks',
+  'topic_blocks',
+])
+
+export function listAutoSourceResponseFormatCandidates(input: {
+  hasSourceResponse: boolean
+  hasAnswerSources: boolean
+  needsExplicitAnswerInterpretation: boolean
+  inferOpenDecisions?: boolean
+  inferDecisionTopics?: boolean
+  inferRemainingAnswers?: boolean
+}) {
+  if (!input.hasSourceResponse && !input.hasAnswerSources) {
+    return []
+  }
+
+  if (
+    !input.needsExplicitAnswerInterpretation &&
+    !input.inferOpenDecisions &&
+    !input.inferDecisionTopics &&
+    !input.inferRemainingAnswers
+  ) {
+    return []
+  }
+
+  return AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY.filter((format) => {
+    if (!input.hasAnswerSources && ANSWER_SOURCE_ONLY_FORMATS.has(format)) {
+      return false
+    }
+    if (!input.hasSourceResponse && !ANSWER_SOURCE_ONLY_FORMATS.has(format)) {
+      return false
+    }
+    if (input.inferOpenDecisions && !INFER_OPEN_DECISION_FORMATS.has(format)) {
+      return false
+    }
+    if (input.inferDecisionTopics && !INFER_DECISION_TOPIC_FORMATS.has(format)) {
+      return false
+    }
+    if (input.inferRemainingAnswers && !INFER_REMAINING_PLANNING_ANSWER_FORMATS.has(format)) {
+      return false
+    }
+    return true
+  })
+}
+
+export function resolveAutoSourceResponseFormat(
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  candidates: readonly ConcreteInterpretableSourceResponseFormat[],
+  attempt: (candidateFormat: ConcreteInterpretableSourceResponseFormat) => void,
+  label: string,
+): ConcreteInterpretableSourceResponseFormat | undefined {
+  if (sourceResponseFormat !== 'auto') {
+    return sourceResponseFormat
+  }
+
+  if (candidates.length === 0) {
+    return undefined
+  }
+
+  let lastError: string | undefined
+  for (const candidateFormat of candidates) {
+    try {
+      attempt(candidateFormat)
+      return candidateFormat
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat auto could not deterministically match ${label}. Provide an explicit sourceResponseFormat.${lastError ? ` Last probe error: ${lastError}` : ''}`,
+  )
+}
+
 export function listInterpretableFollowThroughAnswerSummaries(
   followThrough: InterpretableDecisionFollowThroughInput | undefined,
 ) {
@@ -413,6 +595,11 @@ export function createInterpretedSourceResponseState(
 ): InterpretedSourceResponseState | undefined {
   if (!sourceResponseFormat) {
     return undefined
+  }
+  if (sourceResponseFormat === 'auto') {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat auto must be resolved before creating interpretation state.',
+    )
   }
 
   return {
@@ -570,6 +757,83 @@ export function materializeInterpretedDecisionAnswerBatch(
   return materializedAnswers
 }
 
+export function materializeInterpretedDecisionBundle(input: {
+  answers: InterpretableDecisionAnswerEntryInput[] | undefined
+  openDecisions: InterpretableOpenDecision[]
+  inferOpenDecisions: boolean
+  sourceResponse?: string
+  answerSources?: InterpretableAnswerSource[]
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  inferDecisionTopics?: boolean
+  knownDecisions?: InterpretableKnownDecision[]
+  followThrough?: InterpretableDecisionFollowThroughInput
+  reservedAnswerCandidates?: string[] | string[][]
+}) {
+  const resolvedSourceResponseFormat = resolveAutoSourceResponseFormat(
+    input.sourceResponseFormat,
+    listAutoSourceResponseFormatCandidates({
+      hasSourceResponse: Boolean(input.sourceResponse?.trim()),
+      hasAnswerSources: Boolean(input.answerSources?.length),
+      needsExplicitAnswerInterpretation:
+        (input.answers?.length ?? 0) > 0 ||
+        listInterpretableFollowThroughAnswerSummaries(input.followThrough).length > 0,
+      inferOpenDecisions: input.inferOpenDecisions,
+      inferDecisionTopics: input.inferDecisionTopics ?? false,
+      inferRemainingAnswers: followThroughInfersRemainingAnswers(input.followThrough),
+    }),
+    (candidateFormat) => {
+      const state = createInterpretedSourceResponseState(input.sourceResponse, candidateFormat)
+      materializeInterpretedDecisionAnswerBatch(
+        input.answers,
+        input.openDecisions,
+        input.inferOpenDecisions,
+        input.sourceResponse,
+        input.answerSources,
+        candidateFormat,
+        state,
+        input.inferDecisionTopics ?? false,
+        input.knownDecisions ?? [],
+        input.reservedAnswerCandidates ?? [],
+      )
+      materializeInterpretedDecisionFollowThrough(
+        input.followThrough,
+        input.sourceResponse,
+        input.answerSources,
+        candidateFormat,
+        state,
+      )
+    },
+    'decision answer bundle',
+  )
+  const state = createInterpretedSourceResponseState(
+    input.sourceResponse,
+    resolvedSourceResponseFormat,
+  )
+  return {
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    answers: materializeInterpretedDecisionAnswerBatch(
+      input.answers,
+      input.openDecisions,
+      input.inferOpenDecisions,
+      input.sourceResponse,
+      input.answerSources,
+      resolvedSourceResponseFormat,
+      state,
+      input.inferDecisionTopics ?? false,
+      input.knownDecisions ?? [],
+      input.reservedAnswerCandidates ?? [],
+    ),
+    followThrough: materializeInterpretedDecisionFollowThrough(
+      input.followThrough,
+      input.sourceResponse,
+      input.answerSources,
+      resolvedSourceResponseFormat,
+      state,
+    ),
+  }
+}
+
 function normalizeReservedAnswerCandidateGroups(reservedAnswerCandidates: string[] | string[][]) {
   if (reservedAnswerCandidates.length === 0) {
     return []
@@ -704,6 +968,35 @@ export function materializeInterpretedDecisionFollowThrough(
   }
 }
 
+function resolveAutoPlanningSourceResponseFormat(
+  followThrough: InterpretableDecisionFollowThroughInput,
+  sourceResponse?: string,
+  answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+) {
+  return resolveAutoSourceResponseFormat(
+    sourceResponseFormat,
+    listAutoSourceResponseFormatCandidates({
+      hasSourceResponse: Boolean(sourceResponse?.trim()),
+      hasAnswerSources: Boolean(answerSources?.length),
+      needsExplicitAnswerInterpretation:
+        listInterpretableFollowThroughAnswerSummaries(followThrough).length > 0,
+      inferRemainingAnswers: followThroughInfersRemainingAnswers(followThrough),
+    }),
+    (candidateFormat) => {
+      const state = createInterpretedSourceResponseState(sourceResponse, candidateFormat)
+      materializeInterpretedDecisionFollowThrough(
+        followThrough,
+        sourceResponse,
+        answerSources,
+        candidateFormat,
+        state,
+      )
+    },
+    followThrough.kind,
+  )
+}
+
 export function materializeInterpretedPlanningInput<
   T extends {
     title: string
@@ -720,20 +1013,30 @@ export function materializeInterpretedPlanningInput<
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
 ): MaterializedPlanningAnswerCarrier<T> {
-  const materialized = materializeInterpretedDecisionFollowThrough(
-    {
-      kind: 'planning',
-      title: input.title,
-      description: input.description,
-      acceptanceCriteria: input.acceptanceCriteria,
-      answers: input.answers,
-      requestedUpdates: input.requestedUpdates,
-      inferRemainingAnswers: input.inferRemainingAnswers,
-    },
+  const followThrough = {
+    kind: 'planning' as const,
+    title: input.title,
+    description: input.description,
+    acceptanceCriteria: input.acceptanceCriteria,
+    answers: input.answers,
+    requestedUpdates: input.requestedUpdates,
+    inferRemainingAnswers: input.inferRemainingAnswers,
+  }
+  const resolvedSourceResponseFormat = resolveAutoPlanningSourceResponseFormat(
+    followThrough,
     sourceResponse,
     answerSources,
     sourceResponseFormat,
-    sourceResponseState,
+  )
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, resolvedSourceResponseFormat)
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    followThrough,
+    sourceResponse,
+    answerSources,
+    resolvedSourceResponseFormat,
+    interpretationState,
   )
   if (!materialized || materialized.kind !== 'planning') {
     throw new Error(`Expected materialized planning input for ${input.title}.`)
@@ -759,18 +1062,28 @@ export function materializeInterpretedPlanningBatchInput<
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
 ): MaterializedPlanningAnswerCarrier<T> {
-  const materialized = materializeInterpretedDecisionFollowThrough(
-    {
-      kind: 'planning_batch',
-      groupKey: input.groupKey,
-      requests: input.requests,
-      answers: input.answers,
-      inferRemainingAnswers: input.inferRemainingAnswers,
-    },
+  const followThrough = {
+    kind: 'planning_batch' as const,
+    groupKey: input.groupKey,
+    requests: input.requests,
+    answers: input.answers,
+    inferRemainingAnswers: input.inferRemainingAnswers,
+  }
+  const resolvedSourceResponseFormat = resolveAutoPlanningSourceResponseFormat(
+    followThrough,
     sourceResponse,
     answerSources,
     sourceResponseFormat,
-    sourceResponseState,
+  )
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, resolvedSourceResponseFormat)
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    followThrough,
+    sourceResponse,
+    answerSources,
+    resolvedSourceResponseFormat,
+    interpretationState,
   )
   if (!materialized || materialized.kind !== 'planning_batch') {
     throw new Error(`Expected materialized planning batch input for ${input.groupKey}.`)
@@ -798,20 +1111,30 @@ export function materializeInterpretedPlanningWorkflowBatchInput<
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
 ): MaterializedPlanningWorkflowBatchCarrier<T> {
-  const materialized = materializeInterpretedDecisionFollowThrough(
-    {
-      kind: 'workflow_batch',
-      workflowKey: input.workflowKey,
-      reuseTaskRef: input.reuseTaskRef,
-      reuseGroupKey: input.reuseGroupKey,
-      inferRemainingAnswers: input.inferRemainingAnswers,
-      answers: input.answers,
-      workflows: [...input.workflows] as InterpretableDecisionWorkflowLeafFollowThroughInput[],
-    },
+  const followThrough = {
+    kind: 'workflow_batch' as const,
+    workflowKey: input.workflowKey,
+    reuseTaskRef: input.reuseTaskRef,
+    reuseGroupKey: input.reuseGroupKey,
+    inferRemainingAnswers: input.inferRemainingAnswers,
+    answers: input.answers,
+    workflows: [...input.workflows] as InterpretableDecisionWorkflowLeafFollowThroughInput[],
+  }
+  const resolvedSourceResponseFormat = resolveAutoPlanningSourceResponseFormat(
+    followThrough,
     sourceResponse,
     answerSources,
     sourceResponseFormat,
-    sourceResponseState,
+  )
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, resolvedSourceResponseFormat)
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    followThrough,
+    sourceResponse,
+    answerSources,
+    resolvedSourceResponseFormat,
+    interpretationState,
   )
   if (!materialized || materialized.kind !== 'workflow_batch') {
     throw new Error(

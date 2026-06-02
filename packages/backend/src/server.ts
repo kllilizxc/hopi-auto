@@ -13,12 +13,9 @@ import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
   INTERPRETABLE_SOURCE_RESPONSE_FORMATS,
-  createInterpretedSourceResponseState,
   followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerCandidateGroups,
-  materializeInterpretedDecisionAnswerBatch,
-  materializeInterpretedDecisionAnswers,
-  materializeInterpretedDecisionFollowThrough,
+  materializeInterpretedDecisionBundle,
   materializeInterpretedPlanningInput,
   materializeInterpretedPlanningWorkflowBatchInput,
 } from './runtime/answerInterpretation'
@@ -536,12 +533,8 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionSchema)
-          const sourceResponseState = createInterpretedSourceResponseState(
-            body.sourceResponse,
-            body.sourceResponseFormat,
-          )
-          const answers = materializeInterpretedDecisionAnswers(
-            [
+          const materialized = materializeInterpretedDecisionBundle({
+            answers: [
               {
                 summary: body.summary,
                 summaryKey: body.summaryKey,
@@ -554,12 +547,17 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 answerSourceKey: body.answerSourceKey,
               },
             ],
-            body.sourceResponse,
-            body.answerSources,
-            body.sourceResponseFormat,
-            sourceResponseState,
-            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
-          )
+            openDecisions: [],
+            inferOpenDecisions: false,
+            sourceResponse: body.sourceResponse,
+            answerSources: body.answerSources,
+            sourceResponseFormat: body.sourceResponseFormat,
+            followThrough: body.followThrough,
+            reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+              body.followThrough,
+            ),
+          })
+          const answers = materialized.answers
           const firstAnswer = answers[0]
           if (!firstAnswer) {
             throw new HttpError(400, 'Expected one decision answer.')
@@ -579,13 +577,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               matchHints: firstAnswer.matchHints,
               taskRef: firstAnswer.taskRef,
               answer: firstAnswer.answer,
-              followThrough: materializeInterpretedDecisionFollowThrough(
-                body.followThrough,
-                body.sourceResponse,
-                body.answerSources,
-                body.sourceResponseFormat,
-                sourceResponseState,
-              ),
+              followThrough: materialized.followThrough,
               writer: 'api',
               reason: `api record answer ${body.decisionKey ?? body.summary}`,
             },
@@ -615,13 +607,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             )
           }
           const current = await decisions.readGoalDecisions(currentGoalKey)
-          const sourceResponseState = createInterpretedSourceResponseState(
-            body.sourceResponse,
-            body.sourceResponseFormat,
-          )
-          const answers = materializeInterpretedDecisionAnswerBatch(
-            body.answers,
-            current.decisions
+          const materialized = materializeInterpretedDecisionBundle({
+            answers: body.answers,
+            openDecisions: current.decisions
               .filter((decision) => decision.status === 'open')
               .map((decision) => ({
                 decisionKey: decision.decisionKey,
@@ -631,13 +619,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 matchHints: decision.matchHints,
                 taskRef: decision.taskRef,
               })),
-            body.inferOpenDecisions ?? false,
-            body.sourceResponse,
-            body.answerSources,
-            body.sourceResponseFormat,
-            sourceResponseState,
-            body.inferDecisionTopics ?? false,
-            current.decisions.map((decision) => ({
+            inferOpenDecisions: body.inferOpenDecisions ?? false,
+            sourceResponse: body.sourceResponse,
+            answerSources: body.answerSources,
+            sourceResponseFormat: body.sourceResponseFormat,
+            inferDecisionTopics: body.inferDecisionTopics ?? false,
+            knownDecisions: current.decisions.map((decision) => ({
               decisionKey: decision.decisionKey,
               summary: decision.summary,
               summaryKey: decision.summaryKey,
@@ -645,8 +632,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               matchHints: decision.matchHints,
               taskRef: decision.taskRef,
             })),
-            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
-          )
+            followThrough: body.followThrough,
+            reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+              body.followThrough,
+            ),
+          })
+          const answers = materialized.answers
           const result = await answerGoalDecisions(
             {
               boardStore: store,
@@ -656,13 +647,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               answers,
-              followThrough: materializeInterpretedDecisionFollowThrough(
-                body.followThrough,
-                body.sourceResponse,
-                body.answerSources,
-                body.sourceResponseFormat,
-                sourceResponseState,
-              ),
+              followThrough: materialized.followThrough,
               writer: 'api',
               reason: `api record answers ${answers
                 .map((answer) => answer.decisionKey ?? answer.summary)
@@ -692,12 +677,8 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
             throw new HttpError(404, `Decision not found: ${decisionKey}`)
           }
-          const sourceResponseState = createInterpretedSourceResponseState(
-            body.sourceResponse,
-            body.sourceResponseFormat,
-          )
-          const materializedAnswers = materializeInterpretedDecisionAnswers(
-            [
+          const materialized = materializeInterpretedDecisionBundle({
+            answers: [
               {
                 summary: body.summary ?? `Decision: ${decisionKey}`,
                 summaryKey: body.summaryKey,
@@ -710,12 +691,17 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 answerSourceKey: body.answerSourceKey,
               },
             ],
-            body.sourceResponse,
-            body.answerSources,
-            body.sourceResponseFormat,
-            sourceResponseState,
-            listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
-          )
+            openDecisions: [],
+            inferOpenDecisions: false,
+            sourceResponse: body.sourceResponse,
+            answerSources: body.answerSources,
+            sourceResponseFormat: body.sourceResponseFormat,
+            followThrough: body.followThrough,
+            reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+              body.followThrough,
+            ),
+          })
+          const materializedAnswers = materialized.answers
           const firstAnswer = materializedAnswers[0]
           if (!firstAnswer) {
             throw new HttpError(400, `Expected one decision answer for ${decisionKey}.`)
@@ -733,13 +719,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               prompt: firstAnswer.prompt,
               matchHints: firstAnswer.matchHints,
               answer: firstAnswer.answer,
-              followThrough: materializeInterpretedDecisionFollowThrough(
-                body.followThrough,
-                body.sourceResponse,
-                body.answerSources,
-                body.sourceResponseFormat,
-                sourceResponseState,
-              ),
+              followThrough: materialized.followThrough,
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,
             },
@@ -762,10 +742,6 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, createPlanningWorkflowBatchSchema)
-          const sourceResponseState = createInterpretedSourceResponseState(
-            body.sourceResponse,
-            body.sourceResponseFormat,
-          )
           const materialized = materializeInterpretedPlanningWorkflowBatchInput(
             {
               workflowKey: body.workflowKey,
@@ -778,7 +754,6 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.sourceResponse,
             body.answerSources,
             body.sourceResponseFormat,
-            sourceResponseState,
           )
           const result = await requestGoalPlanningWorkflows(
             {
@@ -811,10 +786,6 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, createPlanningRequestSchema)
-          const sourceResponseState = createInterpretedSourceResponseState(
-            body.sourceResponse,
-            body.sourceResponseFormat,
-          )
           const materialized = materializeInterpretedPlanningInput(
             {
               requestKey: body.requestKey,
@@ -832,7 +803,6 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.sourceResponse,
             body.answerSources,
             body.sourceResponseFormat,
-            sourceResponseState,
           )
           const result = await requestGoalPlanning(
             {
