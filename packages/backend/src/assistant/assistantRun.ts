@@ -299,6 +299,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceResponseFormat: z
       .enum([
         'labeled_sections',
+        'single_pending',
         'ordered_items',
         'ordered_blocks',
         'question_blocks',
@@ -329,6 +330,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceResponseFormat: z
       .enum([
         'labeled_sections',
+        'single_pending',
         'ordered_items',
         'ordered_blocks',
         'question_blocks',
@@ -370,6 +372,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceResponseFormat: z
       .enum([
         'labeled_sections',
+        'single_pending',
         'ordered_items',
         'ordered_blocks',
         'question_blocks',

@@ -9,6 +9,7 @@ export class AnswerInterpretationError extends Error {}
 
 export type InterpretableSourceResponseFormat =
   | 'labeled_sections'
+  | 'single_pending'
   | 'ordered_items'
   | 'ordered_blocks'
   | 'question_blocks'
@@ -53,6 +54,7 @@ export interface InterpretedSourceResponseState {
   topicAnchorCandidateLabels?: Set<string>
   orderedItems?: string[]
   orderedBlocks?: string[]
+  singlePendingConsumed: boolean
   nextOrderedItemIndex: number
   nextOrderedBlockIndex: number
   consumedQuestionBlockIndexes: Set<number>
@@ -328,6 +330,7 @@ export function createInterpretedSourceResponseState(
   return {
     sourceResponse,
     sourceResponseFormat,
+    singlePendingConsumed: false,
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
     consumedQuestionBlockIndexes: new Set<number>(),
@@ -1063,6 +1066,12 @@ function resolveAnswerContent(
     }
   }
 
+  if (sourceResponseFormat === 'single_pending') {
+    return {
+      answer: consumeSinglePendingSourceResponse(sourceResponse, label, sourceResponseState),
+    }
+  }
+
   if (sourceResponseFormat === 'ordered_items') {
     return {
       answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
@@ -1441,6 +1450,31 @@ function resolveInlineTopicSourceResponseSection(
   throw new AnswerInterpretationError(`No inline topic clause matched ${label} in sourceResponse.`)
 }
 
+function consumeSinglePendingSourceResponse(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.singlePendingConsumed) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat single_pending requires exactly one pending answer consumer.',
+    )
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat single_pending requires sourceResponse for ${label}.`,
+    )
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.singlePendingConsumed = true
+  }
+
+  return shared
+}
+
 function materializeMatchingOpenDecisionAnswers(
   openDecisions: InterpretableOpenDecision[],
   explicitDecisionKeys: Set<string>,
@@ -1450,6 +1484,7 @@ function materializeMatchingOpenDecisionAnswers(
 ) {
   if (
     sourceResponseFormat !== 'labeled_sections' &&
+    sourceResponseFormat !== 'single_pending' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'question_blocks' &&
@@ -1471,7 +1506,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
 
@@ -1505,6 +1540,12 @@ function materializeMatchingOpenDecisionAnswers(
       match = findLabeledSourceResponseSection(
         sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
         buildOpenDecisionSourceResponseCandidates(decision),
+      )
+    } else if (sourceResponseFormat === 'single_pending') {
+      match = consumeSinglePendingSourceResponse(
+        sourceResponse,
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
       )
     } else if (sourceResponseFormat === 'ordered_blocks') {
       match = resolveOrderedSourceResponseBlock(

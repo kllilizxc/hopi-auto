@@ -242,6 +242,7 @@ const resolveDecisionSchema = z.object({
   sourceResponseFormat: z
     .enum([
       'labeled_sections',
+      'single_pending',
       'ordered_items',
       'ordered_blocks',
       'question_blocks',
@@ -280,6 +281,7 @@ const answerDecisionSchema = z.object({
   sourceResponseFormat: z
     .enum([
       'labeled_sections',
+      'single_pending',
       'ordered_items',
       'ordered_blocks',
       'question_blocks',
@@ -321,6 +323,7 @@ const answerDecisionBatchSchema = z.object({
   sourceResponseFormat: z
     .enum([
       'labeled_sections',
+      'single_pending',
       'ordered_items',
       'ordered_blocks',
       'question_blocks',
