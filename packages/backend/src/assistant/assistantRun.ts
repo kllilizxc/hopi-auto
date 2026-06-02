@@ -283,14 +283,18 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
+    sourceResponseFormat: z
+      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),
   z.object({
     kind: z.literal('record_answers'),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
+    sourceResponseFormat: z
+      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .optional(),
     sourceResponse: z.string().min(1).optional(),
     inferOpenDecisions: z.boolean().default(false),
     inferDecisionTopics: z.boolean().default(false),
@@ -306,7 +310,9 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     answerSourceKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
+    sourceResponseFormat: z
+      .enum(['labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences'])
+      .optional(),
     sourceResponse: z.string().min(1).optional(),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),

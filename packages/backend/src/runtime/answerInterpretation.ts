@@ -10,19 +10,27 @@ export type InterpretableSourceResponseFormat =
   | 'labeled_sections'
   | 'ordered_items'
   | 'inline_topics'
+  | 'topic_sentences'
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
   sourceResponseFormat: InterpretableSourceResponseFormat
   labeledSections?: Map<string, LabeledSourceResponseSection>
   inlineTopics?: Map<string, LabeledSourceResponseSection>
+  topicSentences?: TopicSourceResponseSentence[]
   orderedItems?: string[]
   nextOrderedItemIndex: number
+  consumedTopicSentenceIndexes: Set<number>
 }
 
 interface LabeledSourceResponseSection {
   label: string
   value: string
+}
+
+interface TopicSourceResponseSentence {
+  text: string
+  normalizedText: string
 }
 
 export type InterpretableAnswerSource =
@@ -150,6 +158,7 @@ export function createInterpretedSourceResponseState(
     sourceResponse,
     sourceResponseFormat,
     nextOrderedItemIndex: 0,
+    consumedTopicSentenceIndexes: new Set<number>(),
   }
 }
 
@@ -373,7 +382,7 @@ function resolveAnswerText(
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseCandidates: string[] = [],
   sourceResponseState?: InterpretedSourceResponseState,
-) {
+): string {
   const explicit = answer?.trim()
   if (explicit) {
     return explicit
@@ -415,6 +424,20 @@ function resolveAnswerText(
       label,
       sourceResponseState,
     )
+  }
+
+  if (sourceResponseFormat === 'topic_sentences') {
+    const topicSentence = consumeTopicSentenceSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    if (!topicSentence) {
+      throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
+    }
+    return topicSentence
   }
 
   const shared = sourceResponse?.trim()
@@ -507,10 +530,11 @@ function materializeMatchingOpenDecisionAnswers(
   if (
     sourceResponseFormat !== 'labeled_sections' &&
     sourceResponseFormat !== 'ordered_items' &&
-    sourceResponseFormat !== 'inline_topics'
+    sourceResponseFormat !== 'inline_topics' &&
+    sourceResponseFormat !== 'topic_sentences'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", or "inline_topics".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", or "topic_sentences".',
     )
   }
 
@@ -545,11 +569,19 @@ function materializeMatchingOpenDecisionAnswers(
             sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
             buildOpenDecisionSourceResponseCandidates(decision),
           )
-        : resolveOrderedSourceResponseItem(
-            sourceResponse,
-            `decision answer ${decision.decisionKey}`,
-            sourceResponseState,
-          )
+        : sourceResponseFormat === 'topic_sentences'
+          ? consumeTopicSentenceSourceResponseSection(
+              sourceResponse,
+              buildOpenDecisionSourceResponseCandidates(decision),
+              `decision answer ${decision.decisionKey}`,
+              sourceResponseState,
+              false,
+            )
+          : resolveOrderedSourceResponseItem(
+              sourceResponse,
+              `decision answer ${decision.decisionKey}`,
+              sourceResponseState,
+            )
     if (!match) {
       continue
     }
@@ -699,6 +731,29 @@ function parseRequiredInlineTopicSections(
   return sections
 }
 
+function parseRequiredTopicSourceResponseSentences(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.topicSentences) {
+    return sourceResponseState.topicSentences
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat topic_sentences requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const sentences = parseTopicSourceResponseSentences(shared)
+  if (sourceResponseState) {
+    sourceResponseState.topicSentences = sentences
+  }
+  return sentences
+}
+
 function findLabeledSourceResponseSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
@@ -710,6 +765,43 @@ function findLabeledSourceResponseSection(
     }
   }
   return undefined
+}
+
+function consumeTopicSentenceSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  const sentences = parseRequiredTopicSourceResponseSentences(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes = sourceResponseState?.consumedTopicSentenceIndexes ?? new Set<number>()
+  const matchingIndexes = findMatchingTopicSentenceIndexes(sentences, candidates, consumedIndexes)
+
+  if (matchingIndexes.length === 0) {
+    if (!required) {
+      return undefined
+    }
+    throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
+  }
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(
+      `Multiple topic sentences matched ${label} in sourceResponse.`,
+    )
+  }
+
+  const sentenceIndex = matchingIndexes[0]
+  if (sentenceIndex === undefined) {
+    return undefined
+  }
+  if (sourceResponseState) {
+    sourceResponseState.consumedTopicSentenceIndexes.add(sentenceIndex)
+  }
+  return sentences[sentenceIndex]?.text
 }
 
 function resolveOrderedSourceResponseItem(
@@ -767,6 +859,17 @@ function parseOrderedSourceResponseItems(sourceResponse: string) {
     items.push(value)
   }
   return items
+}
+
+function parseTopicSourceResponseSentences(sourceResponse: string) {
+  return sourceResponse
+    .split(/(?:\r?\n+|;+\s*|(?<=[.?!])\s+)/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .map((sentence) => ({
+      text: sentence,
+      normalizedText: normalizeSourceResponseText(sentence),
+    }))
 }
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {
@@ -872,6 +975,33 @@ function normalizeInlineTopicAnswer(value: string) {
   return `${stripped.slice(0, 1).toUpperCase()}${stripped.slice(1)}`
 }
 
+function findMatchingTopicSentenceIndexes(
+  sentences: TopicSourceResponseSentence[],
+  candidates: string[],
+  consumedIndexes: Set<number>,
+) {
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const matchingIndexes = new Set<number>()
+
+  for (const normalizedCandidate of normalizedCandidates) {
+    if (!normalizedCandidate) {
+      continue
+    }
+    const needle = ` ${normalizedCandidate} `
+
+    sentences.forEach((sentence, index) => {
+      if (consumedIndexes.has(index)) {
+        return
+      }
+      if (` ${sentence.normalizedText} `.includes(needle)) {
+        matchingIndexes.add(index)
+      }
+    })
+  }
+
+  return [...matchingIndexes].sort((left, right) => left - right)
+}
+
 function reserveMatchedLabeledSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
@@ -905,6 +1035,14 @@ function normalizeSourceResponseLabel(value: string) {
     .trim()
     .toLowerCase()
     .replace(/[\s_-]+/g, ' ')
+}
+
+function normalizeSourceResponseText(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
 }
 
 function humanizeDecisionKey(value: string | undefined) {
