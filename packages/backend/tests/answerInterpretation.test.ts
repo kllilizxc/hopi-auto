@@ -831,6 +831,42 @@ test('materializes matching open decisions from topic sentences by durable promp
   ])
 })
 
+test('materializes new decision topics from remaining topic sentences while reserving planner summaries', () => {
+  const sourceResponse = [
+    'We should use Bun-native auth for auth strategy.',
+    'Use a staged rollout for rollout strategy.',
+    'Start with five enterprise customers before broader launch for pilot scope.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'topic_sentences',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: undefined,
+      summary: 'Auth strategy',
+      taskRef: undefined,
+      answer: 'We should use Bun-native auth for auth strategy.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout for rollout strategy.',
+    },
+  ])
+})
+
 test('materializes topic paragraphs across decision and planner answers without per-sentence topic labels', () => {
   const sourceResponse = [
     'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
@@ -960,6 +996,44 @@ test('materializes matching open decisions from topic paragraphs by durable prom
       summary: 'Choose the rollout strategy',
       taskRef: undefined,
       answer: 'Rollout should happen in stages, not once. That keeps the launch reversible.',
+    },
+  ])
+})
+
+test('materializes new decision topics from remaining topic paragraphs while reserving planner summaries', () => {
+  const sourceResponse = [
+    'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
+    '',
+    'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
+    '',
+    'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'topic_paragraphs',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: undefined,
+      summary: 'Auth strategy',
+      taskRef: undefined,
+      answer: 'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
     },
   ])
 })
@@ -2199,7 +2273,7 @@ test('rejects inferDecisionTopics when labeled-section interpretation is not ena
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", or "question_spans".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", or "topic_paragraphs".',
     ),
   )
 })

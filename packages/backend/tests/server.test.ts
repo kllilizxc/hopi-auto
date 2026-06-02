@@ -3674,6 +3674,64 @@ describe('createServer', () => {
     })
   })
 
+  test('records new durable decision topics through the API from remaining topic sentences without explicit answers', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'We should use Bun-native auth for auth strategy.',
+        'Use a staged rollout for rollout strategy.',
+        'Start with five enterprise customers before broader launch for pilot scope.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_sentences',
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1', 'D-2'],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'We should use Bun-native auth for auth strategy.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout for rollout strategy.',
+        }),
+      ],
+    })
+  })
+
   test('records multiple durable answers through the API from topic blocks with continuation paragraphs', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -4474,7 +4532,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", or "question_spans".',
+        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", or "topic_paragraphs".',
     })
   })
 
@@ -9010,6 +9068,57 @@ preferences:
           decisionKey: 'rollout-strategy',
           answer: 'Rollout should happen in stages, not once.',
           status: 'resolved',
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and infers new durable decision topics from remaining topic paragraphs', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one topic-paragraph reply and infer new decision topics from the remaining topic summaries.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I inferred new durable decision topics from the remaining topic paragraphs.', actions: [{ kind: 'record_answers', sourceResponse: ['We should use Bun-native auth for auth strategy. That keeps the runtime simple.', '', 'Use a staged rollout for rollout strategy. That keeps the launch reversible.', '', 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.'].join('\\n'), sourceResponseFormat: 'topic_paragraphs', inferDecisionTopics: true, followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one topic-paragraph reply and infer new decision topics from the remaining topic summaries.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I inferred new durable decision topics from the remaining topic paragraphs.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          createdDecisionKeys: ['D-1', 'D-2'],
+        }),
+      ]),
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
         }),
       ],
     })
