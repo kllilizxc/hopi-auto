@@ -10,6 +10,7 @@ export class AnswerInterpretationError extends Error {}
 export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'labeled_sections',
   'single_pending',
+  'pending_clauses',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -59,8 +60,10 @@ export interface InterpretedSourceResponseState {
   orderedItems?: string[]
   orderedBlocks?: string[]
   singlePendingConsumed: boolean
+  pendingClauses?: string[]
   nextOrderedItemIndex: number
   nextOrderedBlockIndex: number
+  nextPendingClauseIndex: number
   consumedQuestionBlockIndexes: Set<number>
   consumedQuestionClauseIndexes: Set<number>
   consumedQuestionSpanIndexes: Set<number>
@@ -370,6 +373,7 @@ export function createInterpretedSourceResponseState(
     sourceResponse,
     sourceResponseFormat,
     singlePendingConsumed: false,
+    nextPendingClauseIndex: 0,
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
     consumedQuestionBlockIndexes: new Set<number>(),
@@ -1236,6 +1240,12 @@ function resolveAnswerContent(
     }
   }
 
+  if (sourceResponseFormat === 'pending_clauses') {
+    return {
+      answer: resolvePendingSourceResponseClause(sourceResponse, label, sourceResponseState),
+    }
+  }
+
   if (sourceResponseFormat === 'ordered_items') {
     return {
       answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
@@ -1639,6 +1649,29 @@ function consumeSinglePendingSourceResponse(
   return shared
 }
 
+function resolvePendingSourceResponseClause(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const clauses = parseRequiredPendingSourceResponseClauses(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const nextIndex = sourceResponseState?.nextPendingClauseIndex ?? 0
+  const nextClause = clauses[nextIndex]
+  if (!nextClause) {
+    throw new AnswerInterpretationError(
+      `No pending clause remained for ${label} in sourceResponse.`,
+    )
+  }
+  if (sourceResponseState) {
+    sourceResponseState.nextPendingClauseIndex = nextIndex + 1
+  }
+  return nextClause
+}
+
 function materializeMatchingOpenDecisionAnswers(
   openDecisions: InterpretableOpenDecision[],
   explicitDecisionKeys: Set<string>,
@@ -1649,6 +1682,7 @@ function materializeMatchingOpenDecisionAnswers(
   if (
     sourceResponseFormat !== 'labeled_sections' &&
     sourceResponseFormat !== 'single_pending' &&
+    sourceResponseFormat !== 'pending_clauses' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'question_blocks' &&
@@ -1670,7 +1704,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
 
@@ -1707,6 +1741,12 @@ function materializeMatchingOpenDecisionAnswers(
       )
     } else if (sourceResponseFormat === 'single_pending') {
       match = consumeSinglePendingSourceResponse(
+        sourceResponse,
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+      )
+    } else if (sourceResponseFormat === 'pending_clauses') {
+      match = resolvePendingSourceResponseClause(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
@@ -4188,6 +4228,29 @@ function parseRequiredOrderedSourceResponseItems(
     sourceResponseState.orderedItems = items
   }
   return items
+}
+
+function parseRequiredPendingSourceResponseClauses(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.pendingClauses) {
+    return sourceResponseState.pendingClauses
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_clauses requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const clauses = parseTopicSourceResponseClauses(shared).map((clause) => clause.text)
+  if (sourceResponseState) {
+    sourceResponseState.pendingClauses = clauses
+  }
+  return clauses
 }
 
 function parseRequiredOrderedSourceResponseBlocks(
