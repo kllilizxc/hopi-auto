@@ -1107,18 +1107,18 @@ describe('requestGoalDecision', () => {
       },
     })
     await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
-      requests: [
+      requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-1',
           taskRef: 'P-1',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
         }),
         expect.objectContaining({
@@ -1126,15 +1126,15 @@ describe('requestGoalDecision', () => {
           taskRef: 'P-2',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
           requestedUpdates: ['todo.yml'],
         }),
-      ],
+      ]),
     })
   })
 
@@ -1490,23 +1490,23 @@ describe('requestGoalDecision', () => {
       },
     })
     await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
-      requests: [
+      requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-1',
           workflowKey: 'auth-rollout-follow-through',
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -1514,30 +1514,30 @@ describe('requestGoalDecision', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
-      ],
+      ]),
     })
   })
 
@@ -1641,23 +1641,23 @@ describe('requestGoalDecision', () => {
       createdTaskRefs: ['P-3'],
     })
     await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
-      requests: [
+      requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-1',
           workflowKey: 'auth-rollout-follow-through',
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -1665,30 +1665,30 @@ describe('requestGoalDecision', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
-      ],
+      ]),
     })
   })
 

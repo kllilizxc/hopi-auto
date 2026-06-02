@@ -2,6 +2,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname, posix as pathPosix } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
+import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
@@ -675,7 +676,10 @@ function mergePlanningRequestAnswers(
     const key = `${value.summary}\u0000${value.answer}`
     const existingIndex = seen.get(key)
     if (existingIndex === undefined) {
-      const nextPrompt = value.prompt?.trim() || undefined
+      const nextPrompt = resolveCanonicalPromptFromSummary({
+        summary: value.summary,
+        incomingPrompt: value.prompt,
+      })
       const nextMatchHints = normalizeGoalPlanningRequestMatchHints(value.matchHints)
       merged.push({
         ...value,
@@ -690,7 +694,11 @@ function mergePlanningRequestAnswers(
     if (!current) {
       continue
     }
-    const nextPrompt = current.prompt?.trim() || value.prompt?.trim() || undefined
+    const nextPrompt = resolveCanonicalPromptFromSummary({
+      summary: current.summary,
+      currentPrompt: current.prompt,
+      incomingPrompt: value.prompt,
+    })
     const nextMatchHints = mergePlanningRequestAnswerMatchHints(
       current.matchHints,
       value.matchHints,

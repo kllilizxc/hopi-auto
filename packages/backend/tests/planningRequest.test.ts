@@ -75,8 +75,16 @@ describe('requestGoalPlanning', () => {
         taskRef: 'P-1',
         decisionRefs: ['db-provider', 'migration-strategy'],
         answers: [
-          { summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' },
-          { summary: 'Migration policy', answer: 'Avoid compatibility shims.' },
+          {
+            summary: 'Database direction',
+            prompt: 'What should the database direction be?',
+            answer: 'Use Postgres with Bun.sql.',
+          },
+          {
+            summary: 'Migration policy',
+            prompt: 'What should the migration policy be?',
+            answer: 'Avoid compatibility shims.',
+          },
         ],
         requestedUpdates: ['design.md', 'todo.yml'],
       },
@@ -97,8 +105,16 @@ describe('requestGoalPlanning', () => {
           requestKey: 'PR-1',
           decisionRefs: ['db-provider', 'migration-strategy'],
           answers: [
-            { summary: 'Database direction', answer: 'Use Postgres with Bun.sql.' },
-            { summary: 'Migration policy', answer: 'Avoid compatibility shims.' },
+            {
+              summary: 'Database direction',
+              prompt: 'What should the database direction be?',
+              answer: 'Use Postgres with Bun.sql.',
+            },
+            {
+              summary: 'Migration policy',
+              prompt: 'What should the migration policy be?',
+              answer: 'Avoid compatibility shims.',
+            },
           ],
           requestedUpdates: ['design.md', 'todo.yml'],
         }),
@@ -311,7 +327,11 @@ describe('requestGoalPlanning', () => {
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
           answers: [
-            { summary: 'Auth direction', answer: 'Use Bun-native auth with SSO-first scope.' },
+            {
+              summary: 'Auth direction',
+              prompt: 'What should the auth direction be?',
+              answer: 'Use Bun-native auth with SSO-first scope.',
+            },
           ],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
@@ -322,7 +342,11 @@ describe('requestGoalPlanning', () => {
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
           answers: [
-            { summary: 'Auth direction', answer: 'Use Bun-native auth with SSO-first scope.' },
+            {
+              summary: 'Auth direction',
+              prompt: 'What should the auth direction be?',
+              answer: 'Use Bun-native auth with SSO-first scope.',
+            },
           ],
           requestedUpdates: ['todo.yml'],
         }),
@@ -411,7 +435,13 @@ describe('requestGoalPlanning', () => {
           taskRef: 'P-1',
           workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
-          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers.',
+            },
+          ],
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
         }),
         expect.objectContaining({
@@ -421,7 +451,13 @@ describe('requestGoalPlanning', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: [
+            {
+              summary: 'Auth scope',
+              prompt: 'What should the auth scope be?',
+              answer: 'Support enterprise SSO first.',
+            },
+          ],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
@@ -431,7 +467,13 @@ describe('requestGoalPlanning', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: [
+            {
+              summary: 'Auth scope',
+              prompt: 'What should the auth scope be?',
+              answer: 'Support enterprise SSO first.',
+            },
+          ],
           requestedUpdates: ['todo.yml'],
         }),
       ],
@@ -636,9 +678,14 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+            {
+              summary: 'Rollback trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: 'Abort after two regressions.',
+            },
           ],
           requestedUpdates: ['goal.md', 'design.md'],
         }),
@@ -651,9 +698,14 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+            {
+              summary: 'Rollback trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: 'Abort after two regressions.',
+            },
           ],
           requestedUpdates: ['todo.yml'],
         }),
@@ -665,6 +717,7 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
           ],
@@ -763,9 +816,14 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+            {
+              summary: 'Rollback trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: 'Abort after two regressions.',
+            },
           ],
         }),
         expect.objectContaining({
@@ -777,9 +835,14 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
+            {
+              summary: 'Rollback trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: 'Abort after two regressions.',
+            },
           ],
         }),
         expect.objectContaining({
@@ -790,6 +853,7 @@ describe('requestGoalPlanning', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader rollout.',
             },
           ],

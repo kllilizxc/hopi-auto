@@ -2,6 +2,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
+import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
@@ -102,10 +103,14 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         }
         const createdAt = new Date().toISOString()
         const matchHints = normalizeDecisionMatchHints(input.matchHints)
+        const prompt = resolveCanonicalPromptFromSummary({
+          summary: input.summary,
+          incomingPrompt: input.prompt,
+        })
         const decision: GoalDecision = {
           decisionKey,
           summary: input.summary,
-          prompt: input.prompt,
+          ...(prompt ? { prompt } : {}),
           ...(matchHints ? { matchHints } : {}),
           status: 'open',
           taskRef: input.taskRef,
@@ -206,10 +211,15 @@ function nextDecisionKey(decisions: GoalDecision[]) {
 }
 
 function backfillDecisionPrompt(decision: GoalDecision, prompt: string | undefined) {
-  if (decision.prompt || !prompt) {
+  const nextPrompt = resolveCanonicalPromptFromSummary({
+    summary: decision.summary,
+    currentPrompt: decision.prompt,
+    incomingPrompt: prompt,
+  })
+  if (!nextPrompt || nextPrompt === decision.prompt) {
     return false
   }
-  decision.prompt = prompt
+  decision.prompt = nextPrompt
   return true
 }
 

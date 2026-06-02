@@ -39,7 +39,13 @@ describe('createPlanningRequestStore', () => {
       taskRef: 'P-1',
       status: 'open',
       decisionRefs: ['auth-strategy'],
-      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+      answers: [
+        {
+          summary: 'Auth scope',
+          prompt: 'What should the auth scope be?',
+          answer: 'Support enterprise SSO first.',
+        },
+      ],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
 
@@ -62,7 +68,13 @@ describe('createPlanningRequestStore', () => {
           status: 'resolved',
           resolution: 'Planning task P-1 completed.',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: [
+            {
+              summary: 'Auth scope',
+              prompt: 'What should the auth scope be?',
+              answer: 'Support enterprise SSO first.',
+            },
+          ],
           requestedUpdates: ['design.md', 'todo.yml'],
         },
       ],
@@ -209,17 +221,30 @@ describe('createPlanningRequestStore', () => {
     })
 
     expect(merged.answers).toEqual([
-      { summary: 'Pilot scope', answer: 'Start with five enterprise customers.' },
-      { summary: 'Release notes', answer: 'Document rollback triggers in notes/rollout.md.' },
+      {
+        summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
+        answer: 'Start with five enterprise customers.',
+      },
+      {
+        summary: 'Release notes',
+        prompt: 'What should the release notes be?',
+        answer: 'Document rollback triggers in notes/rollout.md.',
+      },
     ])
     await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: created.requestKey,
           answers: [
-            { summary: 'Pilot scope', answer: 'Start with five enterprise customers.' },
+            {
+              summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers.',
+            },
             {
               summary: 'Release notes',
+              prompt: 'What should the release notes be?',
               answer: 'Document rollback triggers in notes/rollout.md.',
             },
           ],
@@ -238,6 +263,13 @@ describe('createPlanningRequestStore', () => {
       taskRef: 'P-6',
       answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
     })
+    expect(created.answers).toEqual([
+      {
+        summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
+        answer: 'Start with five enterprise customers.',
+      },
+    ])
 
     const merged = await store.mergeRequestMetadata(goalKey, created.requestKey, {
       answers: [

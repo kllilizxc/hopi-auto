@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { createDecisionStore } from '../src/storage/decisionStore'
 
 const goalKey = 'goal-1'
@@ -31,6 +31,7 @@ describe('createDecisionStore', () => {
     expect(created).toMatchObject({
       decisionKey: 'D-1',
       summary: 'Choose the auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: 'T-7',
       status: 'open',
     })
@@ -40,6 +41,7 @@ describe('createDecisionStore', () => {
     })
     expect(resolved).toMatchObject({
       decisionKey: 'D-1',
+      prompt: 'What should the auth strategy be?',
       status: 'resolved',
       answer: 'Use Bun-native auth middleware.',
     })
@@ -50,6 +52,7 @@ describe('createDecisionStore', () => {
         {
           decisionKey: 'D-1',
           summary: 'Choose the auth strategy',
+          prompt: 'What should the auth strategy be?',
           taskRef: 'T-7',
           status: 'resolved',
           answer: 'Use Bun-native auth middleware.',
@@ -117,18 +120,23 @@ describe('createDecisionStore', () => {
     })
   })
 
-  test('backfills a missing decision prompt when resolving', async () => {
+  test('upgrades a synthesized decision prompt when resolving with an explicit prompt', async () => {
     const store = createDecisionStore(testRoot())
 
     const created = await store.createDecision(goalKey, {
       summary: 'Choose the auth strategy',
       taskRef: 'T-7',
     })
+    expect(created).toMatchObject({
+      decisionKey: 'D-1',
+      prompt: 'What should the auth strategy be?',
+      status: 'open',
+    })
 
     const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
       answer: 'Use Bun-native auth middleware.',
       prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
-    } as never)
+    })
     expect(resolved).toMatchObject({
       decisionKey: 'D-1',
       prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
@@ -143,6 +151,50 @@ describe('createDecisionStore', () => {
           decisionKey: 'D-1',
           summary: 'Choose the auth strategy',
           prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use Bun-native auth middleware.',
+        },
+      ],
+    })
+  })
+
+  test('backfills a legacy missing decision prompt from summary when resolving', async () => {
+    const rootDir = testRoot()
+    const store = createDecisionStore(rootDir)
+    const decisionPath = join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'decisions.yml')
+
+    await mkdir(dirname(decisionPath), { recursive: true })
+    await Bun.write(
+      decisionPath,
+      `version: 1
+goalKey: ${goalKey}
+decisions:
+  - decisionKey: D-1
+    summary: Choose the auth strategy
+    taskRef: T-7
+    status: open
+    createdAt: 2026-06-02T00:00:00.000Z
+`,
+    )
+
+    const resolved = await store.resolveDecision(goalKey, 'D-1', {
+      answer: 'Use Bun-native auth middleware.',
+    })
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      prompt: 'What should the auth strategy be?',
+      status: 'resolved',
+      answer: 'Use Bun-native auth middleware.',
+    })
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          prompt: 'What should the auth strategy be?',
           taskRef: 'T-7',
           status: 'resolved',
           answer: 'Use Bun-native auth middleware.',

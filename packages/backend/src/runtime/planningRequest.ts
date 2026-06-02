@@ -1,4 +1,5 @@
 import type { BlockerRef } from '../domain/board'
+import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import type { BoardStore } from '../storage/boardStore'
 import type {
   GoalPlanningRequest,
@@ -2130,11 +2131,15 @@ function mergePlanningRequestAnswers(
     if (!current) {
       continue
     }
-    const nextPrompt = current.prompt?.trim() || value.prompt?.trim() || undefined
+    const nextPrompt = resolveCanonicalPromptFromSummary({
+      summary: current.summary,
+      currentPrompt: current.prompt,
+      incomingPrompt: value.prompt,
+    })
     if (nextPrompt !== current.prompt) {
       merged[existingIndex] = {
         ...current,
-        prompt: nextPrompt,
+        ...(nextPrompt ? { prompt: nextPrompt } : {}),
       }
     }
   }

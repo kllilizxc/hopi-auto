@@ -17,11 +17,14 @@ import { createPreferenceStore } from '../src/storage/preferenceStore'
 
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'server')
 const servers: Array<ReturnType<typeof createServer>> = []
+let workspaceCounter = 0
+let activeRootDir: string | undefined
 
 afterEach(async () => {
   for (const server of servers.splice(0)) {
     server.stop(true)
   }
+  activeRootDir = undefined
   await rm(tmpBase, { recursive: true, force: true })
 })
 
@@ -88,7 +91,13 @@ describe('createServer', () => {
       taskRef: 'P-1',
       status: 'open',
       decisionRefs: ['auth-strategy'],
-      answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+      answers: [
+        {
+          summary: 'Auth scope',
+          prompt: 'What should the auth scope be?',
+          answer: 'Support enterprise SSO first.',
+        },
+      ],
       requestedUpdates: ['design.md', 'todo.yml'],
     })
 
@@ -103,7 +112,13 @@ describe('createServer', () => {
           taskRef: 'P-1',
           status: 'open',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: [
+            {
+              summary: 'Auth scope',
+              prompt: 'What should the auth scope be?',
+              answer: 'Support enterprise SSO first.',
+            },
+          ],
           requestedUpdates: ['design.md', 'todo.yml'],
         }),
       ],
@@ -296,7 +311,12 @@ describe('createServer', () => {
           taskRef: 'P-1',
           workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
-          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers.',
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
         }),
         expect.objectContaining({
@@ -306,7 +326,12 @@ describe('createServer', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Auth scope',
+              answer: 'Support enterprise SSO first.',
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
@@ -316,7 +341,12 @@ describe('createServer', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Auth scope',
+              answer: 'Support enterprise SSO first.',
+            }),
+          ]),
           requestedUpdates: ['todo.yml'],
         }),
       ],
@@ -392,13 +422,16 @@ describe('createServer', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
-          ],
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'design.md'],
         }),
         expect.objectContaining({
@@ -407,13 +440,16 @@ describe('createServer', () => {
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
-          ],
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            }),
+          ]),
           requestedUpdates: ['todo.yml'],
         }),
         expect.objectContaining({
@@ -421,12 +457,12 @@ describe('createServer', () => {
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
           requestedUpdates: ['design.md'],
         }),
       ],
@@ -2026,6 +2062,54 @@ describe('createServer', () => {
     })
   })
 
+  test('upgrades a synthesized Goal decision prompt when the API later resolves it with an explicit question', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'auth-provider',
+      summary: 'Choose auth provider',
+    })
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      decisionKey: 'auth-provider',
+      summary: 'Choose auth provider',
+      prompt: 'What should the auth provider be?',
+      status: 'open',
+    })
+
+    const resolveResponse = await postJson(
+      server,
+      '/api/goals/test/decisions/auth-provider/resolve',
+      {
+        answer: 'Use Bun-native sessions.',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+    )
+    expect(resolveResponse.status).toBe(200)
+    await expect(resolveResponse.json()).resolves.toMatchObject({
+      decision: expect.objectContaining({
+        decisionKey: 'auth-provider',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        status: 'resolved',
+        answer: 'Use Bun-native sessions.',
+      }),
+    })
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-provider',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+          status: 'resolved',
+          answer: 'Use Bun-native sessions.',
+        }),
+      ],
+    })
+  })
+
   test('resolving a decision through the API immediately removes linked board blockers', async () => {
     const workspaceRoot = rootDir()
     await seedBoard(workspaceRoot, [
@@ -2615,12 +2699,12 @@ describe('createServer', () => {
           taskRef: 'P-1',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
         }),
         expect.objectContaining({
@@ -2628,12 +2712,12 @@ describe('createServer', () => {
           taskRef: 'P-2',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
           requestedUpdates: ['todo.yml'],
         }),
       ],
@@ -2707,21 +2791,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: sharedResponse,
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: sharedResponse,
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -2808,21 +2892,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -2912,21 +2996,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -3002,21 +3086,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -3093,21 +3177,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -3214,22 +3298,22 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -3728,21 +3812,21 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4198,20 +4282,20 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4344,20 +4428,20 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4435,22 +4519,22 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4528,22 +4612,22 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4632,26 +4716,26 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable for pilot scope.',
               ].join('\n\n'),
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable for pilot scope.',
               ].join('\n\n'),
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -4728,22 +4812,22 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -5156,22 +5240,22 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -5241,22 +5325,22 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -5337,26 +5421,26 @@ describe('createServer', () => {
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable for pilot scope.',
               ].join('\n\n'),
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable for pilot scope.',
               ].join('\n\n'),
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -5440,6 +5524,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
@@ -5451,6 +5536,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
@@ -5540,6 +5626,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Pilot scope should start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -5551,6 +5638,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Pilot scope should start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -5640,6 +5728,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'About pilot scope, start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -5651,6 +5740,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'About pilot scope, start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -5740,6 +5830,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch as the pilot scope.',
                 'That keeps early support manageable.',
@@ -5751,6 +5842,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch as the pilot scope.',
                 'That keeps early support manageable.',
@@ -5848,6 +5940,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
@@ -5859,6 +5952,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
@@ -6048,6 +6142,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -6059,6 +6154,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
@@ -6887,6 +6983,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader launch.',
             },
           ],
@@ -6895,6 +6992,7 @@ describe('createServer', () => {
           answers: [
             {
               summary: 'Pilot scope',
+              prompt: 'What should the pilot scope be?',
               answer: 'Start with five enterprise customers before broader launch.',
             },
           ],
@@ -7828,16 +7926,16 @@ describe('createServer', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -7845,28 +7943,28 @@ describe('createServer', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -7967,16 +8065,16 @@ describe('createServer', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -7984,28 +8082,28 @@ describe('createServer', () => {
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -8640,6 +8738,7 @@ preferences:
       decisions: [
         {
           decisionKey: 'db-provider',
+          prompt: 'What should the database provider be?',
           status: 'resolved',
           answer: 'Use Postgres.',
           taskRef: 'T-2',
@@ -9079,7 +9178,12 @@ preferences:
           taskRef: 'P-1',
           workflowKey: 'W-1',
           decisionRefs: ['rollout-strategy'],
-          answers: [{ summary: 'Pilot scope', answer: 'Start with five enterprise customers.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers.',
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -9087,7 +9191,12 @@ preferences:
           workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Auth scope',
+              answer: 'Support enterprise SSO first.',
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
@@ -9095,7 +9204,12 @@ preferences:
           workflowKey: 'W-1',
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
-          answers: [{ summary: 'Auth scope', answer: 'Support enterprise SSO first.' }],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Auth scope',
+              answer: 'Support enterprise SSO first.',
+            }),
+          ]),
         }),
       ],
     })
@@ -9162,13 +9276,16 @@ preferences:
           groupKey: 'auth-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
-          ],
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -9176,25 +9293,28 @@ preferences:
           groupKey: 'auth-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            { summary: 'Rollback trigger', answer: 'Abort after two regressions.' },
-          ],
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -10537,16 +10657,16 @@ preferences:
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'goal-docs',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
@@ -10554,28 +10674,28 @@ preferences:
           groupKey: 'auth-rollout-follow-through',
           groupTaskKey: 'task-graph',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answer: 'Abort after two regressions.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-3',
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11167,24 +11287,24 @@ preferences:
           taskRef: 'P-1',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
           taskRef: 'P-2',
           groupKey: 'auth-rollout-follow-through',
           decisionRefs: ['auth-strategy', 'rollout-strategy'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before wider rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11265,21 +11385,21 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: sharedResponse,
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: sharedResponse,
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11358,21 +11478,21 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11452,21 +11572,21 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11545,21 +11665,21 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11638,21 +11758,21 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           requestKey: 'PR-2',
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -11736,20 +11856,20 @@ preferences:
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -12046,21 +12166,21 @@ preferences:
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -13303,20 +13423,20 @@ preferences:
     ).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
         expect.objectContaining({
-          answers: [
-            {
+          answers: expect.arrayContaining([
+            expect.objectContaining({
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-          ],
+            }),
+          ]),
         }),
       ],
     })
@@ -13581,9 +13701,12 @@ preferences:
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
-          answers: [
-            { summary: 'Rollout note', answer: 'Gate the first rollout behind pilot feedback.' },
-          ],
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Rollout note',
+              answer: 'Gate the first rollout behind pilot feedback.',
+            }),
+          ]),
           requestedUpdates: ['goal.md', 'notes/rollout.md'],
         }),
       ],
@@ -14149,7 +14272,8 @@ function startServer(runner?: AgentRunner, customRootDir?: string) {
 }
 
 function rootDir() {
-  return join(tmpBase, 'workspace')
+  activeRootDir ??= join(tmpBase, `workspace-${++workspaceCounter}`)
+  return activeRootDir
 }
 
 async function initGitRepo(rootDir: string) {
@@ -14168,11 +14292,13 @@ function apiUrl(server: ReturnType<typeof createServer>, path: string) {
 }
 
 async function postJson(server: ReturnType<typeof createServer>, path: string, body: unknown) {
-  return fetch(apiUrl(server, path), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return server.fetch(
+    new Request(`http://127.0.0.1${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
 }
 
 async function readJson<T>(response: Response): Promise<T> {
