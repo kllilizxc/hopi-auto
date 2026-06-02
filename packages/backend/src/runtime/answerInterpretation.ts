@@ -6,6 +6,8 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
 
+export type InterpretableSourceResponseFormat = 'labeled_sections'
+
 export type InterpretableAnswerSource =
   | {
       answerSourceKey: string
@@ -92,6 +94,7 @@ export function materializeInterpretedDecisionAnswers(
   answers: InterpretableDecisionAnswerEntryInput[],
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
 ) {
   const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
   return answers.map((answer) => ({
@@ -105,6 +108,8 @@ export function materializeInterpretedDecisionAnswers(
       sourceResponse,
       `decision answer ${answer.decisionKey ?? answer.summary}`,
       answerSourcesByKey,
+      sourceResponseFormat,
+      buildDecisionAnswerSourceResponseCandidates(answer),
     ),
   }))
 }
@@ -113,6 +118,7 @@ export function materializeInterpretedDecisionFollowThrough(
   followThrough: InterpretableDecisionFollowThroughInput | undefined,
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
 ) {
   if (!followThrough) {
     return undefined
@@ -126,6 +132,7 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
+        sourceResponseFormat,
       ),
     }
   }
@@ -137,6 +144,7 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
+        sourceResponseFormat,
       ),
     }
   }
@@ -150,6 +158,7 @@ export function materializeInterpretedDecisionFollowThrough(
       followThrough.answers,
       sourceResponse,
       answerSourcesByKey,
+      sourceResponseFormat,
     ),
     workflows: followThrough.workflows.map((workflow) => {
       if (workflow.kind === 'planning') {
@@ -159,6 +168,7 @@ export function materializeInterpretedDecisionFollowThrough(
             workflow.answers,
             sourceResponse,
             answerSourcesByKey,
+            sourceResponseFormat,
           ),
         }
       }
@@ -169,6 +179,7 @@ export function materializeInterpretedDecisionFollowThrough(
           workflow.answers,
           sourceResponse,
           answerSourcesByKey,
+          sourceResponseFormat,
         ),
       }
     }),
@@ -179,6 +190,7 @@ function materializeInterpretedPlanningAnswers(
   answers: InterpretablePlanningAnswer[] | undefined,
   sourceResponse?: string,
   answerSourcesByKey?: Map<string, string>,
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
 ): GoalPlanningRequestAnswer[] | undefined {
   if (!answers || answers.length === 0) {
     return answers ? [] : undefined
@@ -193,6 +205,8 @@ function materializeInterpretedPlanningAnswers(
       sourceResponse,
       `planner answer ${answer.summary}`,
       answerSourcesByKey,
+      sourceResponseFormat,
+      [answer.summary],
     ),
   }))
 }
@@ -204,6 +218,8 @@ function resolveAnswerText(
   sourceResponse: string | undefined,
   label: string,
   answerSourcesByKey?: Map<string, string>,
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseCandidates: string[] = [],
 ) {
   const explicit = answer?.trim()
   if (explicit) {
@@ -226,6 +242,10 @@ function resolveAnswerText(
     return sourced
   }
 
+  if (sourceResponseFormat === 'labeled_sections') {
+    return resolveLabeledSourceResponseSection(sourceResponse, sourceResponseCandidates, label)
+  }
+
   const shared = sourceResponse?.trim()
   if (shared) {
     return shared
@@ -234,6 +254,12 @@ function resolveAnswerText(
   throw new AnswerInterpretationError(
     `Missing answer text for ${label}. Provide item.answer, answerSourceKey, or sourceResponse.`,
   )
+}
+
+function buildDecisionAnswerSourceResponseCandidates(
+  answer: InterpretableDecisionAnswerEntryInput,
+) {
+  return dedupeNonEmptyStrings([humanizeDecisionKey(answer.decisionKey), answer.summary])
 }
 
 function resolveSourceExcerpt(
@@ -256,6 +282,85 @@ function resolveSourceExcerpt(
     )
   }
   return excerpt
+}
+
+function resolveLabeledSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat labeled_sections requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const sectionsByLabel = parseLabeledSourceResponseSections(shared)
+  for (const candidate of candidates) {
+    const match = sectionsByLabel.get(normalizeSourceResponseLabel(candidate))
+    if (match) {
+      return match
+    }
+  }
+
+  throw new AnswerInterpretationError(`No labeled section matched ${label} in sourceResponse.`)
+}
+
+function parseLabeledSourceResponseSections(sourceResponse: string) {
+  const sectionsByLabel = new Map<string, string>()
+  for (const line of sourceResponse.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    const match = /^(?:[-*•]\s*)?([^:]+?)\s*:\s*(.+)$/.exec(trimmed)
+    if (!match) {
+      continue
+    }
+    const rawLabel = match[1]?.trim()
+    const value = match[2]?.trim()
+    if (!rawLabel || !value) {
+      continue
+    }
+    const normalized = normalizeSourceResponseLabel(rawLabel)
+    if (sectionsByLabel.has(normalized)) {
+      throw new AnswerInterpretationError(
+        `Duplicate labeled section "${rawLabel}" in sourceResponse.`,
+      )
+    }
+    sectionsByLabel.set(normalized, value)
+  }
+  return sectionsByLabel
+}
+
+function normalizeSourceResponseLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ')
+}
+
+function humanizeDecisionKey(value: string | undefined) {
+  return value?.trim().replace(/[_-]+/g, ' ')
+}
+
+function dedupeNonEmptyStrings(values: Array<string | undefined>) {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const trimmed = value?.trim()
+    if (!trimmed) {
+      continue
+    }
+    const normalized = normalizeSourceResponseLabel(trimmed)
+    if (seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    result.push(trimmed)
+  }
+  return result
 }
 
 function createAnswerSourceLookup(

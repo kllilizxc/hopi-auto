@@ -384,6 +384,7 @@ async function applyAssistantAction(
       ],
       action.sourceResponse,
       action.answerSources,
+      action.sourceResponseFormat,
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -405,6 +406,7 @@ async function applyAssistantAction(
           action.followThrough,
           action.sourceResponse,
           action.answerSources,
+          action.sourceResponseFormat,
         ),
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
@@ -433,6 +435,7 @@ async function applyAssistantAction(
       ],
       action.sourceResponse,
       action.answerSources,
+      action.sourceResponseFormat,
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -454,6 +457,7 @@ async function applyAssistantAction(
           action.followThrough,
           action.sourceResponse,
           action.answerSources,
+          action.sourceResponseFormat,
         ),
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
@@ -482,11 +486,13 @@ async function applyAssistantAction(
           action.answers,
           action.sourceResponse,
           action.answerSources,
+          action.sourceResponseFormat,
         ),
         followThrough: materializeInterpretedDecisionFollowThrough(
           action.followThrough,
           action.sourceResponse,
           action.answerSources,
+          action.sourceResponseFormat,
         ),
         writer: 'assistant',
         reason: `assistant record answers ${action.answers

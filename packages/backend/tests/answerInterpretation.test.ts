@@ -293,6 +293,89 @@ test('materializes direct item source excerpts from one shared response without 
   })
 })
 
+test('materializes labeled sections from one shared response without per-topic mapping', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+    'Pilot scope: Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'labeled_sections',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'labeled_sections',
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
 test('rejects unknown answer source keys deterministically', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
@@ -404,6 +487,35 @@ test('rejects direct item source excerpts when sourceResponse is missing', () =>
   ).toThrowError(
     new AnswerInterpretationError(
       'sourceExcerpt for decision answer auth-strategy requires sourceResponse.',
+    ),
+  )
+})
+
+test('rejects labeled-section interpretation when one requested topic is missing', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Pilot scope: Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'labeled_sections',
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'No labeled section matched decision answer rollout-strategy in sourceResponse.',
     ),
   )
 })

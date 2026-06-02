@@ -232,6 +232,7 @@ const resolveDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: z.literal('labeled_sections').optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -244,6 +245,7 @@ const answerDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: z.literal('labeled_sections').optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -259,6 +261,7 @@ const answerDecisionBatchEntrySchema = z.object({
 
 const answerDecisionBatchSchema = z.object({
   answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: z.literal('labeled_sections').optional(),
   sourceResponse: z.string().min(1).optional(),
   answers: z.array(answerDecisionBatchEntrySchema).min(1),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
@@ -505,6 +508,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             ],
             body.sourceResponse,
             body.answerSources,
+            body.sourceResponseFormat,
           )
           const firstAnswer = answers[0]
           if (!firstAnswer) {
@@ -526,6 +530,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.followThrough,
                 body.sourceResponse,
                 body.answerSources,
+                body.sourceResponseFormat,
               ),
               writer: 'api',
               reason: `api record answer ${body.decisionKey ?? body.summary}`,
@@ -561,11 +566,13 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.answers,
                 body.sourceResponse,
                 body.answerSources,
+                body.sourceResponseFormat,
               ),
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,
                 body.sourceResponse,
                 body.answerSources,
+                body.sourceResponseFormat,
               ),
               writer: 'api',
               reason: `api record answers ${body.answers
@@ -609,6 +616,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             ],
             body.sourceResponse,
             body.answerSources,
+            body.sourceResponseFormat,
           )
           const firstAnswer = materializedAnswers[0]
           if (!firstAnswer) {
@@ -628,6 +636,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.followThrough,
                 body.sourceResponse,
                 body.answerSources,
+                body.sourceResponseFormat,
               ),
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,
