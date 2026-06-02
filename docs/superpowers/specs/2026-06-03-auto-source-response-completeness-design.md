@@ -85,6 +85,8 @@ After this slice:
 
 For explicit label surfaces, later slices now additionally treat established label authority as fail-closed instead of letting weaker later surfaces reinterpret the same reply after a label-surface completeness failure.
 
+For explicit reusable answer-source surfaces, later slices now additionally allow fallback inside the answer-source family (`matching_answer_sources` -> `pending_answer_sources`) but fail closed before weaker raw reply surfaces can reinterpret the same call after reusable-source incompleteness has already been established.
+
 ## Non-Goals
 
 - inventing new deeper-reply parser shapes
@@ -97,4 +99,5 @@ For explicit label surfaces, later slices now additionally treat established lab
 - direct planning auto interpretation can do the same
 - unit-based `auto` no longer stops on a candidate that silently leaves its own reply units behind
 - label-based `auto` no longer accepts replies that leave explicit labels unconsumed
+- answer-source-based `auto` no longer accepts weaker raw reply reinterpretation after reusable-source incompleteness has already been established
 - existing explicit `sourceResponseFormat` still bypasses `auto`

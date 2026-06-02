@@ -350,6 +350,53 @@ describe('createServer', () => {
     })
   })
 
+  test('rejects direct decision answers through the API when incomplete answer sources would otherwise fall back to raw sourceResponse surfaces', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy: Use Bun-native auth',
+        'Rollout strategy: Use a staged rollout',
+      ].join('\n'),
+      answerSources: [
+        {
+          answerSourceKey: 'auth-answer',
+          summary: 'Auth strategy',
+          answer: 'Use Bun-native auth',
+        },
+        {
+          answerSourceKey: 'rollout-answer',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout',
+        },
+        {
+          answerSourceKey: 'pilot-answer',
+          summary: 'Pilot scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Rollout strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+      ),
+    })
+  })
+
   test('materializes multiple pending planner answers through the direct planning-request API from one pending-clause reply', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)

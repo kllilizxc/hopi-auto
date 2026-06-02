@@ -2642,6 +2642,99 @@ test('auto sourceResponseFormat keeps labeled sections when inferDecisionTopics 
   expect(materialized.followThrough).toBeUndefined()
 })
 
+test('auto sourceResponseFormat falls through from matching answer sources to pending answer sources before leaving source-based authority', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    sourceResponseFormat: 'auto',
+    answerSources: [
+      {
+        answerSourceKey: 'source-1',
+        answer: 'Use Bun-native auth.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        answer: 'Use a staged rollout.',
+      },
+    ],
+    answers: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Auth strategy',
+      },
+      {
+        decisionKey: 'rollout-strategy',
+        summary: 'Rollout strategy',
+      },
+    ],
+    openDecisions: [],
+    inferOpenDecisions: false,
+  })
+
+  expect(materialized.sourceResponseFormat).toBe('pending_answer_sources')
+  expect(materialized.answers).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Auth strategy',
+      taskRef: undefined,
+      prompt: undefined,
+      matchHints: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Rollout strategy',
+      taskRef: undefined,
+      prompt: undefined,
+      matchHints: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
+test('auto sourceResponseFormat rejects incomplete answer sources instead of falling back to raw sourceResponse surfaces', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse,
+      answerSources: [
+        {
+          answerSourceKey: 'auth-answer',
+          summary: 'Auth strategy',
+          answer: 'Use Bun-native auth',
+        },
+        {
+          answerSourceKey: 'rollout-answer',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout',
+        },
+        {
+          answerSourceKey: 'pilot-answer',
+          summary: 'Pilot scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Rollout strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+    }),
+  ).toThrow(
+    'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+  )
+})
+
 test('materializes matching open decisions from topic paragraphs by durable prompt keyword anchors', () => {
   const sourceResponse = [
     'Adopt the Bun-native auth provider for the Bun-first product path. That keeps the runtime simple.',

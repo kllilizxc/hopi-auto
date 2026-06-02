@@ -1076,6 +1076,9 @@ function shouldAutoSourceResponseProbeFailClosed(
   sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
   sourceResponseState: InterpretedSourceResponseState | undefined,
 ) {
+  if (sourceResponseFormat === 'pending_answer_sources') {
+    return (sourceResponseState?.pendingAnswerSourceEntries?.length ?? 0) > 0
+  }
   if (sourceResponseFormat === 'labeled_sections') {
     return (sourceResponseState?.labeledSections?.size ?? 0) > 0
   }
