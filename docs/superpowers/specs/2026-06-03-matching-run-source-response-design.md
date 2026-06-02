@@ -68,7 +68,7 @@ Shared runtime now:
 
 ### Auto Interaction
 
-`matching_runs` is also available to `sourceResponseFormat: "auto"` as a later generic fallback.
+`matching_runs` is also available to `sourceResponseFormat: "auto"` as a later generic fallback when no stronger explicit label, reusable-source, or question/topic-anchor authority has already attached to the same reply and then remained incomplete.
 
 This slice does **not** change the broader `auto` success heuristic. It only adds one more already-implemented deterministic surface that `auto` may choose after stronger existing surfaces fail.
 

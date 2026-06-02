@@ -1085,6 +1085,54 @@ function shouldAutoSourceResponseProbeFailClosed(
   if (sourceResponseFormat === 'inline_topics') {
     return (sourceResponseState?.inlineTopics?.size ?? 0) > 1
   }
+  if (sourceResponseFormat === 'question_blocks') {
+    return (sourceResponseState?.questionBlocks?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_clauses') {
+    return (sourceResponseState?.questionClauses?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_spans') {
+    return (sourceResponseState?.questionSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_middle_spans') {
+    return (sourceResponseState?.questionMiddleSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_closing_spans') {
+    return (sourceResponseState?.questionClosingSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_closing_blocks') {
+    return (sourceResponseState?.questionClosingBlocks?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'question_middle_blocks') {
+    return (sourceResponseState?.questionMiddleBlocks?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_clauses') {
+    return (sourceResponseState?.topicClauses?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_sentences') {
+    return (sourceResponseState?.topicSentences?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_spans') {
+    return (sourceResponseState?.topicSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_middle_spans') {
+    return (sourceResponseState?.topicMiddleSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_closing_spans') {
+    return (sourceResponseState?.topicClosingSpans?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_closing_blocks') {
+    return (sourceResponseState?.topicClosingBlocks?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_paragraphs') {
+    return (sourceResponseState?.topicParagraphs?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_middle_blocks') {
+    return (sourceResponseState?.topicMiddleBlocks?.length ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'topic_blocks') {
+    return (sourceResponseState?.topicBlocks?.length ?? 0) > 0
+  }
   return false
 }
 

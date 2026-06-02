@@ -65,6 +65,7 @@ It does this by:
 - selecting the first candidate that materializes successfully and fully consumes its own structured units when that candidate has unit-level completeness checks
 - failing closed instead of falling through when a higher-priority label surface has already established explicit label authority but still leaves some labels unconsumed
 - failing closed instead of falling through to weaker raw-reply surfaces once explicit reusable-source authority has already progressed through the answer-source family and still remains incomplete
+- failing closed instead of falling through to weaker generic surfaces once explicit `question_*` or `topic_*` anchor surfaces have already parsed anchored units and still remain incomplete
 - failing closed if no candidate succeeds
 
 `auto` therefore remains a meta-surface over existing deterministic interpreters, not a new parser family. Later authority slices may strengthen the completeness checks for more existing surfaces, but `auto` still never invents a new parser family of its own.
@@ -95,11 +96,12 @@ Current priority intentionally prefers stronger reusable or context-preserving s
 20. `topic_clauses`
 21. `ordered_blocks`
 22. `ordered_items`
-23. `single_pending`
-24. `pending_paragraphs`
-25. `pending_sentences`
-26. `pending_conjunctions`
-27. `pending_clauses`
+23. `matching_runs`
+24. `single_pending`
+25. `pending_paragraphs`
+26. `pending_sentences`
+27. `pending_conjunctions`
+28. `pending_clauses`
 
 This keeps runtime from discarding richer context too early by falling into a weaker clause or pending-order surface first.
 
@@ -127,6 +129,7 @@ That means:
 - `auto` rejects partially successful existing surfaces once they leave their own structured units unconsumed and a later existing surface can fully capture the reply
 - `auto` does not let weaker later surfaces reinterpret a reply once higher-priority explicit label authority has already been established and then left incomplete
 - `auto` does not let weaker raw reply surfaces reinterpret a call once explicit reusable-source authority has already advanced through the answer-source family and still remains incomplete
+- `auto` does not let weaker generic surfaces reinterpret a call once explicit `question_*` or `topic_*` anchor authority has already parsed anchored units and still remains incomplete
 - richer context-preserving surfaces outrank weaker clause-only or pending-order fallbacks
 - runtime fails closed when no existing deterministic surface fits
 - explicit concrete `sourceResponseFormat` still bypasses `auto` selection

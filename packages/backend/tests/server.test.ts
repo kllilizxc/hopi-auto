@@ -258,7 +258,7 @@ describe('createServer', () => {
     })
   })
 
-  test('materializes planner answers through the direct planning-request API from auto-detected matching runs', async () => {
+  test('materializes planner answers through the direct planning-request API from explicit matching runs', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -269,7 +269,7 @@ describe('createServer', () => {
       sourceResponse: [
         'Pilot scope should start with five enterprise customers, that keeps support manageable, rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
       ].join(' '),
-      sourceResponseFormat: 'auto',
+      sourceResponseFormat: 'matching_runs',
       answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
       requestedUpdates: ['goal.md', 'notes/rollout.md'],
     })
@@ -329,6 +329,35 @@ describe('createServer', () => {
         'Rollout strategy: Use a staged rollout',
         'Pilot scope: Start with five enterprise customers before broader launch.',
       ].join('\n'),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+      ),
+    })
+  })
+
+  test('rejects direct decision answers through the API when auto-detected question clauses would otherwise fall back to weaker surfaces', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy? Use Bun-native auth. Rollout strategy? Use a staged rollout. Pilot scope? Start with five enterprise customers before broader launch.',
+      ].join(' '),
       sourceResponseFormat: 'auto',
       answers: [
         {

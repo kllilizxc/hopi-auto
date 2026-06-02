@@ -2529,46 +2529,54 @@ test('auto sourceResponseFormat selects topic paragraphs across decision and pla
   })
 })
 
-test('auto sourceResponseFormat falls through to matching runs when earlier topic clauses leave continuation clauses unconsumed', () => {
-  const materialized = materializeInterpretedDecisionBundle({
-    sourceResponse: [
-      'Auth strategy should use Bun-native auth, that keeps the runtime close to Bun primitives, rollout strategy should use a staged launch, that keeps rollback simple.',
-    ].join(' '),
-    sourceResponseFormat: 'auto',
-    answers: [
-      {
-        decisionKey: 'auth-strategy',
-        summary: 'Auth strategy',
-      },
-      {
-        decisionKey: 'rollout-strategy',
-        summary: 'Rollout strategy',
-      },
-    ],
-    openDecisions: [],
-    inferOpenDecisions: false,
-  })
+test('auto sourceResponseFormat rejects weaker fallback when topic clauses leave continuation clauses unconsumed', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse: [
+        'Auth strategy should use Bun-native auth, that keeps the runtime close to Bun primitives, rollout strategy should use a staged launch, that keeps rollback simple.',
+      ].join(' '),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Rollout strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+    }),
+  ).toThrow(
+    'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+  )
+})
 
-  expect(materialized.sourceResponseFormat).toBe('matching_runs')
-  expect(materialized.answers).toEqual([
-    {
-      decisionKey: 'auth-strategy',
-      summary: 'Auth strategy',
-      taskRef: undefined,
-      prompt: undefined,
-      matchHints: undefined,
-      answer:
-        'Auth strategy should use Bun-native auth, that keeps the runtime close to Bun primitives',
-    },
-    {
-      decisionKey: 'rollout-strategy',
-      summary: 'Rollout strategy',
-      taskRef: undefined,
-      prompt: undefined,
-      matchHints: undefined,
-      answer: 'rollout strategy should use a staged launch, that keeps rollback simple.',
-    },
-  ])
+test('auto sourceResponseFormat rejects weaker fallback when question clauses leave later question clauses unconsumed', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse: [
+        'Auth strategy? Use Bun-native auth. Rollout strategy? Use a staged rollout. Pilot scope? Start with five enterprise customers before broader launch.',
+      ].join(' '),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+    }),
+  ).toThrow(
+    'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+  )
 })
 
 test('auto sourceResponseFormat rejects labeled sections that leave unmatched labels unconsumed', () => {
