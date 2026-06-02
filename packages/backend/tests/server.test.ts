@@ -4636,6 +4636,75 @@ describe('createServer', () => {
     })
   })
 
+  test('records matching open decisions through the API from repeated matching runs without duplicating one consumer', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    const decisionStore = createDecisionStore(workspaceRoot)
+    await decisionStore.createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+    await decisionStore.createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should rollout happen in stages or all at once?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy should use Bun-native auth.',
+        '',
+        'The auth strategy should stay close to Bun-native primitives.',
+        '',
+        'Rollout strategy should use a staged rollout.',
+        '',
+        'The rollout strategy should stay reversible.',
+      ].join('\n'),
+      sourceResponseFormat: 'matching_runs',
+      inferOpenDecisions: true,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: [],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: [
+            'Auth strategy should use Bun-native auth.',
+            'The auth strategy should stay close to Bun-native primitives.',
+          ].join('\n\n'),
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: [
+            'Rollout strategy should use a staged rollout.',
+            'The rollout strategy should stay reversible.',
+          ].join('\n\n'),
+        }),
+      ],
+    })
+    await expect(decisionStore.readGoalDecisions('test')).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: [
+            'Auth strategy should use Bun-native auth.',
+            'The auth strategy should stay close to Bun-native primitives.',
+          ].join('\n\n'),
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: [
+            'Rollout strategy should use a staged rollout.',
+            'The rollout strategy should stay reversible.',
+          ].join('\n\n'),
+        }),
+      ],
+    })
+  })
+
   test('records new durable decision topics through the API from remaining labeled sections without explicit answers', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -9072,7 +9141,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     })
   })
 

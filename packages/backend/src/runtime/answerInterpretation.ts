@@ -17,6 +17,7 @@ export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'pending_conjunctions',
   'pending_answer_sources',
   'matching_answer_sources',
+  'matching_runs',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -65,6 +66,9 @@ export interface InterpretedSourceResponseState {
   topicMiddleBlocks?: TopicSourceResponseBlock[]
   topicBlocks?: TopicSourceResponseBlock[]
   topicAnchorCandidateLabels?: Set<string>
+  matchingRunCandidateGroups?: string[][]
+  matchingRunCandidateLookup?: Map<string, number>
+  matchingRuns?: MatchingSourceResponseRun[]
   orderedItems?: string[]
   orderedBlocks?: string[]
   singlePendingConsumed: boolean
@@ -82,6 +86,7 @@ export interface InterpretedSourceResponseState {
   nextPendingSentenceIndex: number
   nextPendingConjunctionIndex: number
   nextPendingAnswerSourceIndex: number
+  consumedMatchingRunIndexes: Set<number>
   consumedMatchingAnswerSourceIndexes: Set<number>
   consumedQuestionBlockIndexes: Set<number>
   consumedQuestionClauseIndexes: Set<number>
@@ -166,6 +171,11 @@ interface TopicSourceResponseBlock {
   text: string
   anchorText: string
   normalizedAnchorLabel: string
+}
+
+interface MatchingSourceResponseRun {
+  text: string
+  candidateGroupIndex: number
 }
 
 interface ResolvedAnswerContent {
@@ -379,6 +389,7 @@ const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseF
   'topic_clauses',
   'ordered_blocks',
   'ordered_items',
+  'matching_runs',
   'single_pending',
   'pending_paragraphs',
   'pending_sentences',
@@ -400,6 +411,7 @@ const INFER_OPEN_DECISION_FORMATS = new Set<ConcreteInterpretableSourceResponseF
   'pending_conjunctions',
   'pending_answer_sources',
   'matching_answer_sources',
+  'matching_runs',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -613,6 +625,7 @@ export function createInterpretedSourceResponseState(
     nextPendingAnswerSourceIndex: 0,
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
+    consumedMatchingRunIndexes: new Set<number>(),
     consumedMatchingAnswerSourceIndexes: new Set<number>(),
     consumedQuestionBlockIndexes: new Set<number>(),
     consumedQuestionClauseIndexes: new Set<number>(),
@@ -649,6 +662,10 @@ export function materializeInterpretedDecisionAnswers(
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   registerTopicAnchorCandidates(interpretationState, [
+    ...answers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...additionalSourceResponseCandidates,
+  ])
+  registerMatchingRunCandidateGroups(interpretationState, [
     ...answers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
     ...additionalSourceResponseCandidates,
   ])
@@ -709,12 +726,23 @@ export function materializeInterpretedDecisionAnswerBatch(
     ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
     ...reservedAnswerCandidateGroups,
   ])
+  registerMatchingRunCandidateGroups(interpretationState, [
+    ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+    ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
+    ...reservedAnswerCandidateGroups,
+  ])
   const materializedExplicitAnswers = materializeInterpretedDecisionAnswers(
     explicitAnswers,
     sourceResponse,
     answerSources,
     sourceResponseFormat,
     interpretationState,
+    [
+      ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+      ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
+      ...reservedAnswerCandidateGroups,
+    ],
   )
   const explicitDecisionKeys = new Set(
     materializedExplicitAnswers.flatMap((answer) =>
@@ -1179,6 +1207,9 @@ function materializeInterpretedPlanningAnswers(
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   const explicitAnswers = answers ?? []
   registerTopicAnchorCandidates(interpretationState, [
+    ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
+  ])
+  registerMatchingRunCandidateGroups(interpretationState, [
     ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
   ])
   const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
@@ -1742,6 +1773,17 @@ function resolveAnswerContent(
     return {
       answer: resolveMatchingAnswerSourceValue(
         matchingAnswerSourceEntries,
+        sourceResponseCandidates,
+        label,
+        sourceResponseState,
+      ),
+    }
+  }
+
+  if (sourceResponseFormat === 'matching_runs') {
+    return {
+      answer: resolveMatchingRunSourceResponseValue(
+        sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
@@ -2337,6 +2379,186 @@ function resolveMatchingAnswerSourceValue(
   return matchingEntry.answer
 }
 
+function resolveMatchingRunSourceResponseValue(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const runs = parseMatchingSourceResponseRuns(sourceResponse, label, sourceResponseState)
+  const candidateGroupIndex = resolveMatchingRunCandidateGroupIndex(
+    candidates,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes = sourceResponseState?.consumedMatchingRunIndexes ?? new Set<number>()
+  const matchingIndexes = runs.flatMap((run, index) => {
+    if (consumedIndexes.has(index)) {
+      return []
+    }
+    return run.candidateGroupIndex === candidateGroupIndex ? [index] : []
+  })
+
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(`Multiple matching runs matched ${label}.`)
+  }
+
+  const matchingIndex = matchingIndexes[0]
+  if (matchingIndex === undefined) {
+    throw new AnswerInterpretationError(`No matching run matched ${label} in sourceResponse.`)
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.consumedMatchingRunIndexes.add(matchingIndex)
+  }
+
+  const matchingRun = runs[matchingIndex]
+  if (!matchingRun) {
+    throw new AnswerInterpretationError(`No matching run matched ${label} in sourceResponse.`)
+  }
+
+  return matchingRun.text
+}
+
+function resolveMatchingRunCandidateGroupIndex(
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  registerMatchingRunCandidateGroups(sourceResponseState, [candidates])
+  const groupKey = buildMatchingRunCandidateGroupKey(candidates)
+  const groupIndex = groupKey
+    ? sourceResponseState?.matchingRunCandidateLookup?.get(groupKey)
+    : undefined
+
+  if (groupIndex === undefined) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_runs could not register candidate group for ${label}.`,
+    )
+  }
+
+  return groupIndex
+}
+
+function parseMatchingSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const cachedRuns = sourceResponseState?.matchingRuns
+  if (cachedRuns) {
+    return cachedRuns
+  }
+
+  const candidateGroups = sourceResponseState?.matchingRunCandidateGroups ?? []
+  if (candidateGroups.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_runs requires registered candidate groups for ${label}.`,
+    )
+  }
+
+  const { units, joiner } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  const runs: MatchingSourceResponseRun[] = []
+  let leadingTexts: string[] = []
+  let currentRun: MatchingSourceResponseRun | undefined
+
+  for (const unit of units) {
+    const matchingGroupIndexes = findMatchingRunGroupIndexes(unit, candidateGroups)
+    if (matchingGroupIndexes.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple matching runs matched unit "${unit.text}" in sourceResponse.`,
+      )
+    }
+
+    const matchingGroupIndex = matchingGroupIndexes[0]
+    if (matchingGroupIndex === undefined) {
+      if (currentRun) {
+        currentRun.text = `${currentRun.text}${joiner}${unit.text}`
+      } else {
+        leadingTexts.push(unit.text)
+      }
+      continue
+    }
+
+    if (!currentRun) {
+      currentRun = {
+        text: [...leadingTexts, unit.text].join(joiner),
+        candidateGroupIndex: matchingGroupIndex,
+      }
+      leadingTexts = []
+      continue
+    }
+
+    if (currentRun.candidateGroupIndex === matchingGroupIndex) {
+      currentRun.text = `${currentRun.text}${joiner}${unit.text}`
+      continue
+    }
+
+    runs.push(currentRun)
+    currentRun = {
+      text: unit.text,
+      candidateGroupIndex: matchingGroupIndex,
+    }
+  }
+
+  if (!currentRun) {
+    throw new AnswerInterpretationError(
+      `No matching run matched any candidate group for ${label} in sourceResponse.`,
+    )
+  }
+
+  runs.push(currentRun)
+  if (sourceResponseState) {
+    sourceResponseState.matchingRuns = runs
+  }
+  return runs
+}
+
+function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined, label: string) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_runs requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const paragraphs = parseTopicSourceResponseParagraphs(shared)
+  if (paragraphs.length > 1) {
+    return { units: paragraphs, joiner: '\n\n' }
+  }
+
+  const sentences = parseTopicSourceResponseSentences(shared)
+  if (sentences.length > 1) {
+    return { units: sentences, joiner: ' ' }
+  }
+
+  const clauses = parseTopicSourceResponseClauses(shared)
+  if (clauses.length > 1) {
+    return { units: clauses, joiner: ', ' }
+  }
+
+  return {
+    units: [
+      {
+        text: shared,
+        normalizedText: normalizeSourceResponseText(shared),
+      },
+    ],
+    joiner: ' ',
+  }
+}
+
+function findMatchingRunGroupIndexes(
+  unit: { normalizedText: string },
+  candidateGroups: string[][],
+) {
+  return candidateGroups.flatMap((candidateGroup, index) =>
+    findMatchingTopicTextUnitIndexes([unit], candidateGroup, new Set<number>()).length > 0
+      ? [index]
+      : [],
+  )
+}
+
 function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, label: string) {
   const summary = entry.summary?.trim()
   if (summary) {
@@ -2391,6 +2613,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'pending_conjunctions' &&
     sourceResponseFormat !== 'pending_answer_sources' &&
     sourceResponseFormat !== 'matching_answer_sources' &&
+    sourceResponseFormat !== 'matching_runs' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'question_blocks' &&
@@ -2412,12 +2635,16 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const orderedAnswerSourceValues = resolvedAnswerSources?.orderedValues
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
+  registerMatchingRunCandidateGroups(
+    sourceResponseState,
+    openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+  )
 
   const sectionsByLabel =
     sourceResponseFormat === 'labeled_sections'
@@ -2489,6 +2716,13 @@ function materializeMatchingOpenDecisionAnswers(
     } else if (sourceResponseFormat === 'matching_answer_sources') {
       match = resolveMatchingAnswerSourceValue(
         matchingAnswerSourceEntries,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+      )
+    } else if (sourceResponseFormat === 'matching_runs') {
+      match = resolveMatchingRunSourceResponseValue(
+        sourceResponse,
         buildOpenDecisionSourceResponseCandidates(decision),
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
@@ -6416,6 +6650,41 @@ function registerTopicAnchorCandidates(
   }
 }
 
+function registerMatchingRunCandidateGroups(
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  candidateGroups: string[][],
+) {
+  if (!sourceResponseState || sourceResponseState.sourceResponseFormat !== 'matching_runs') {
+    return
+  }
+
+  const groups = sourceResponseState.matchingRunCandidateGroups ?? []
+  const lookup = sourceResponseState.matchingRunCandidateLookup ?? new Map<string, number>()
+  let changed = false
+
+  for (const candidateGroup of candidateGroups) {
+    const dedupedGroup = dedupeNonEmptyStrings(candidateGroup)
+    if (dedupedGroup.length === 0) {
+      continue
+    }
+
+    const groupKey = buildMatchingRunCandidateGroupKey(dedupedGroup)
+    if (!groupKey || lookup.has(groupKey)) {
+      continue
+    }
+
+    lookup.set(groupKey, groups.length)
+    groups.push(dedupedGroup)
+    changed = true
+  }
+
+  sourceResponseState.matchingRunCandidateGroups = groups
+  sourceResponseState.matchingRunCandidateLookup = lookup
+  if (changed) {
+    sourceResponseState.matchingRuns = undefined
+  }
+}
+
 function reserveMatchedLabeledSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
@@ -7294,6 +7563,14 @@ function buildKnownDecisionSourceResponseCandidates(decision: InterpretableKnown
     decision.prompt,
     ...(decision.matchHints ?? []),
   ])
+}
+
+function buildMatchingRunCandidateGroupKey(candidates: string[]) {
+  return dedupeNonEmptyStrings(candidates)
+    .map((candidate) => normalizeSourceResponseLabel(candidate))
+    .filter(Boolean)
+    .sort()
+    .join('|')
 }
 
 function dedupeNonEmptyStrings(values: Array<string | undefined>) {

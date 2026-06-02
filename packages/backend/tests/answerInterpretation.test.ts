@@ -4374,6 +4374,59 @@ test('materializes multiple pending open decisions from one pending-paragraph sh
   ])
 })
 
+test('materializes matching open decisions from repeated matching runs without splitting one consumer into duplicates', () => {
+  const sourceResponse = [
+    'Auth strategy should use Bun-native auth.',
+    '',
+    'The auth strategy should stay close to Bun-native primitives.',
+    '',
+    'Rollout strategy should use a staged rollout.',
+    '',
+    'The rollout strategy should stay reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'matching_runs',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: [
+        'Auth strategy should use Bun-native auth.',
+        'The auth strategy should stay close to Bun-native primitives.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: [
+        'Rollout strategy should use a staged rollout.',
+        'The rollout strategy should stay reversible.',
+      ].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes multiple pending open decisions from one pending-sentence shared reply without anchors', () => {
   const sourceResponse = 'Use Bun-native auth. Use a staged rollout.'
 
@@ -7624,7 +7677,7 @@ test('rejects inferOpenDecisions when labeled-section interpretation is not enab
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     ),
   )
 })
