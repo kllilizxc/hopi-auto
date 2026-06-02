@@ -652,6 +652,50 @@ describe('createServer', () => {
     })
   })
 
+  test('infers remaining planner answers through the direct planning-request API from explicit summaryKey without explicit summary, prompt, match hints, or stable answerSourceKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          summaryKey: 'early-customer-set',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      answers: [{ summary: 'Pilot scope' }],
+      inferRemainingAnswers: true,
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'What should the pilot scope be?',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          summary: 'Early customer set',
+          prompt: 'What should the early customer set be?',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+    })
+  })
+
   test('accepts goal.md as a requested durable update through the planning-request API', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -8031,6 +8075,50 @@ describe('createServer', () => {
     })
   })
 
+  test('records new durable decision topics through the API from explicit summaryKey without explicit summary, prompt, match hints, or stable answerSourceKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          summaryKey: 'launch-shape',
+          answer: 'Use a staged rollout.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+      inferDecisionTopics: true,
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1'],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Launch shape',
+          prompt: 'What should the launch shape be?',
+          answer: 'Use a staged rollout.',
+        }),
+      ],
+    })
+  })
+
   test('records inferred planner answers through the API from remaining question closing spans without explicit follow-through summaries', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -14883,6 +14971,48 @@ preferences:
     await expect(response.json()).resolves.toMatchObject({
       message:
         'I resolved the open auth decision and inferred the new launch-shape decision from stable answerSourceKey authority.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'D-1'],
+          createdDecisionKeys: ['D-1'],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and records new durable decision topics from explicit summaryKey without explicit summary, prompt, match hints, or stable answerSourceKey', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Resolve the open auth decision and infer one new launch-shape decision from explicit summaryKey authority.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the open auth decision and inferred the new launch-shape decision from explicit summaryKey authority.', actions: [{ kind: 'record_answers', answerSources: [{ answerSourceKey: 'auth-strategy-answer', answer: 'Use Bun-native auth.' }, { answerSourceKey: 'source-2', summaryKey: 'launch-shape', answer: 'Use a staged rollout.' }], sourceResponseFormat: 'matching_answer_sources', inferOpenDecisions: true, inferDecisionTopics: true }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Resolve the open auth decision and infer one new launch-shape decision from explicit summaryKey authority.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I resolved the open auth decision and inferred the new launch-shape decision from explicit summaryKey authority.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',

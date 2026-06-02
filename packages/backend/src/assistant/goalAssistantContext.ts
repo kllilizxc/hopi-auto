@@ -336,6 +336,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "summaryKey": "optional explicit reusable summary key like launch-shape when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
@@ -418,10 +419,12 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "summaryKey": "optional explicit reusable summary key like auth-strategy when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "first exact substring to lift from sourceResponse"
         },
         {
           "answerSourceKey": "rollout-strategy-answer",
+          "summaryKey": "optional explicit reusable summary key like rollout-strategy when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "second exact substring to lift from sourceResponse"
         }
       ],
@@ -497,6 +500,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "summaryKey": "optional explicit reusable summary key like launch-shape when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
@@ -591,7 +595,7 @@ Rules:
 - Never combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true; remaining structured reply items must belong to either new durable decision topics or shared planner answers, not both.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
-- When one root "answerSources" bundle already contains extra reusable snippets that do not need per-item mapping onto known pending consumers, give those remaining source entries either explicit "summary" authority, one stable "prompt" authority, exactly one stable "matchHint" authority, or one stable suffixed "answerSourceKey" authority like "launch-shape-answer". Canonical noun-phrase prompts like "What should the pilot scope be?", explicit question-shaped prompts like "How should rollout happen?", one stable phrase hint like "launch shape", and one noun-phrase key with an explicit "-answer" or "-source" suffix now all work. Runtime still accepts the "matchHints" path only when there is exactly one stable hint, and the "answerSourceKey" path only when the key carries that explicit suffix and humanizes to one stable noun phrase, so it never has to guess between multiple hints or generic keys. Then prefer "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources" plus "inferDecisionTopics": true or "followThrough.inferRemainingAnswers": true over repeating those same summaries again inside "answers" or "followThrough.answers".
+- When one root "answerSources" bundle already contains extra reusable snippets that do not need per-item mapping onto known pending consumers, give those remaining source entries either explicit "summary" authority, one explicit "summaryKey" authority, one stable "prompt" authority, exactly one stable "matchHint" authority, or one stable suffixed "answerSourceKey" authority like "launch-shape-answer". Canonical noun-phrase prompts like "What should the pilot scope be?", explicit question-shaped prompts like "How should rollout happen?", one explicit "summaryKey" like "launch-shape", one stable phrase hint like "launch shape", and one noun-phrase key with an explicit "-answer" or "-source" suffix now all work. Runtime still accepts the "matchHints" path only when there is exactly one stable hint, and the "answerSourceKey" path only when the key carries that explicit suffix and humanizes to one stable noun phrase, so it never has to guess between multiple hints or generic keys. Then prefer "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources" plus "inferDecisionTopics": true or "followThrough.inferRemainingAnswers": true over repeating those same summaries again inside "answers" or "followThrough.answers".
 - When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
 - When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.
 - When "sourceResponse" is already structured as labeled lines like "Auth strategy: ..." or "Pilot scope: ...", prefer root "sourceResponseFormat": "labeled_sections" so runtime can map those labeled sections directly without per-topic excerpts or named answer-source bundles.
@@ -616,7 +620,7 @@ Rules:
 - When one reply is already written as topic-specific paragraphs where one sentence in the paragraph names the topic, whether as a leading phrase like "Pilot scope should ...", a prefixed phrase like "About pilot scope, ...", a copular phrase like "Five enterprise customers should be the pilot scope.", an "as <topic>" phrase like "... as the pilot scope", or a trailing phrase like "... for pilot scope", prefer root "sourceResponseFormat": "topic_paragraphs" so runtime can reuse the whole paragraph for one known or inferred topic without repeating the topic name in every sentence.
 - When one reply is already written as topic-specific multi-paragraph blocks where one middle paragraph names the topic and there is still at least one leading paragraph before it plus one trailing paragraph after it, prefer root "sourceResponseFormat": "topic_middle_blocks" so runtime can deterministically split adjacent blocks by letting the paragraph immediately before the next topic anchor paragraph become the leading paragraph of the next block.
 - When one reply is already written as topic-specific blocks where the first paragraph names the topic and later continuation paragraphs stay on that same topic until the next anchor paragraph appears, prefer root "sourceResponseFormat": "topic_blocks" so runtime can reuse the whole anchored block whether that first paragraph uses a leading topic phrase, a prefixed topic phrase, a copular phrase like "Five enterprise customers should be the pilot scope.", an "as <topic>" phrase, or a trailing topic mention.
-- Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
+- Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, explicit "summaryKey" when a reusable source may later need to materialize directly without repeating summary text, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.

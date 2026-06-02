@@ -173,6 +173,7 @@ interface ResolvedAnswerContent {
 interface ResolvedAnswerSourceEntry {
   key: string
   answer: string
+  summaryKey?: string
   summary?: string
   prompt?: string
   matchHints?: string[]
@@ -191,6 +192,7 @@ const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 type InterpretableAnswerSourceMetadata = {
   answerSourceKey: string
+  summaryKey?: string
   summary?: string
   prompt?: string
   matchHints?: string[]
@@ -1724,6 +1726,7 @@ function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanni
 
 function buildAnswerSourceResponseCandidates(source: InterpretableAnswerSource) {
   return dedupeNonEmptyStrings([
+    humanizeSummaryKey(source.summaryKey),
     humanizeAnswerSourceKey(source.answerSourceKey),
     source.summary,
     source.prompt,
@@ -1993,6 +1996,11 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     return summaryFromPrompt
   }
 
+  const summaryFromSummaryKey = inferSummaryFromStableSummaryKey(entry.summaryKey)
+  if (summaryFromSummaryKey) {
+    return summaryFromSummaryKey
+  }
+
   const summaryFromMatchHint = inferSummaryFromStableMatchHints(entry.matchHints)
   if (summaryFromMatchHint) {
     return summaryFromMatchHint
@@ -2000,7 +2008,7 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
 
   if (hasMultipleStableMatchHints(entry.matchHints)) {
     throw new AnswerInterpretationError(
-      `Remaining answerSource "${entry.key}" requires summary, stable prompt, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
+      `Remaining answerSource "${entry.key}" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
     )
   }
 
@@ -2010,7 +2018,7 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
   }
 
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires summary, stable prompt, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
+    `Remaining answerSource "${entry.key}" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
   )
 }
 
@@ -6718,6 +6726,15 @@ function hasMultipleStableMatchHints(matchHints: string[] | undefined) {
   return dedupeNonEmptyStrings(matchHints ?? []).length > 1
 }
 
+function inferSummaryFromStableSummaryKey(summaryKey: string | undefined) {
+  const humanized = humanizeSummaryKey(summaryKey)
+  if (!humanized) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(humanized, true)
+}
+
 function inferSummaryFromStableAnswerSourceKey(key: string | undefined) {
   const trimmed = key?.trim()
   if (!trimmed) {
@@ -6839,6 +6856,10 @@ function humanizeDecisionKey(value: string | undefined) {
   return value?.trim().replace(/[_-]+/g, ' ')
 }
 
+function humanizeSummaryKey(value: string | undefined) {
+  return value?.trim().replace(/[_-]+/g, ' ')
+}
+
 function humanizeAnswerSourceKey(value: string | undefined) {
   const humanized = value?.trim().replace(/[_-]+/g, ' ')
   if (!humanized) {
@@ -6927,6 +6948,7 @@ function createResolvedAnswerSources(
       }
       resolved = sourceExcerpt
     }
+    const summaryKey = source.summaryKey?.trim() || undefined
     const summary = source.summary?.trim() || undefined
     const prompt = source.prompt?.trim() || undefined
     const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
@@ -6935,6 +6957,7 @@ function createResolvedAnswerSources(
     entries.push({
       key,
       answer: resolved,
+      summaryKey,
       summary,
       prompt,
       ...(matchHints.length ? { matchHints } : {}),
