@@ -9,6 +9,7 @@ export class AnswerInterpretationError extends Error {}
 export type InterpretableSourceResponseFormat =
   | 'labeled_sections'
   | 'ordered_items'
+  | 'ordered_blocks'
   | 'inline_topics'
   | 'topic_sentences'
   | 'topic_paragraphs'
@@ -24,7 +25,9 @@ export interface InterpretedSourceResponseState {
   topicBlocks?: TopicSourceResponseBlock[]
   topicBlockCandidateLabels?: Set<string>
   orderedItems?: string[]
+  orderedBlocks?: string[]
   nextOrderedItemIndex: number
+  nextOrderedBlockIndex: number
   consumedTopicSentenceIndexes: Set<number>
   consumedTopicParagraphIndexes: Set<number>
   consumedTopicBlockIndexes: Set<number>
@@ -175,6 +178,7 @@ export function createInterpretedSourceResponseState(
     sourceResponse,
     sourceResponseFormat,
     nextOrderedItemIndex: 0,
+    nextOrderedBlockIndex: 0,
     consumedTopicSentenceIndexes: new Set<number>(),
     consumedTopicParagraphIndexes: new Set<number>(),
     consumedTopicBlockIndexes: new Set<number>(),
@@ -449,6 +453,10 @@ function resolveAnswerText(
     return resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState)
   }
 
+  if (sourceResponseFormat === 'ordered_blocks') {
+    return resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState)
+  }
+
   if (sourceResponseFormat === 'inline_topics') {
     return resolveInlineTopicSourceResponseSection(
       sourceResponse,
@@ -590,13 +598,14 @@ function materializeMatchingOpenDecisionAnswers(
   if (
     sourceResponseFormat !== 'labeled_sections' &&
     sourceResponseFormat !== 'ordered_items' &&
+    sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'inline_topics' &&
     sourceResponseFormat !== 'topic_sentences' &&
     sourceResponseFormat !== 'topic_paragraphs' &&
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -631,35 +640,41 @@ function materializeMatchingOpenDecisionAnswers(
             sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
             buildOpenDecisionSourceResponseCandidates(decision),
           )
-        : sourceResponseFormat === 'topic_sentences'
-          ? consumeTopicSentenceSourceResponseSection(
+        : sourceResponseFormat === 'ordered_blocks'
+          ? resolveOrderedSourceResponseBlock(
               sourceResponse,
-              buildOpenDecisionSourceResponseCandidates(decision),
               `decision answer ${decision.decisionKey}`,
               sourceResponseState,
-              false,
             )
-          : sourceResponseFormat === 'topic_paragraphs'
-            ? consumeTopicParagraphSourceResponseSection(
+          : sourceResponseFormat === 'topic_sentences'
+            ? consumeTopicSentenceSourceResponseSection(
                 sourceResponse,
                 buildOpenDecisionSourceResponseCandidates(decision),
                 `decision answer ${decision.decisionKey}`,
                 sourceResponseState,
                 false,
               )
-            : sourceResponseFormat === 'topic_blocks'
-              ? consumeTopicBlockSourceResponseSection(
+            : sourceResponseFormat === 'topic_paragraphs'
+              ? consumeTopicParagraphSourceResponseSection(
                   sourceResponse,
                   buildOpenDecisionSourceResponseCandidates(decision),
                   `decision answer ${decision.decisionKey}`,
                   sourceResponseState,
                   false,
                 )
-              : resolveOrderedSourceResponseItem(
-                  sourceResponse,
-                  `decision answer ${decision.decisionKey}`,
-                  sourceResponseState,
-                )
+              : sourceResponseFormat === 'topic_blocks'
+                ? consumeTopicBlockSourceResponseSection(
+                    sourceResponse,
+                    buildOpenDecisionSourceResponseCandidates(decision),
+                    `decision answer ${decision.decisionKey}`,
+                    sourceResponseState,
+                    false,
+                  )
+                : resolveOrderedSourceResponseItem(
+                    sourceResponse,
+                    `decision answer ${decision.decisionKey}`,
+                    sourceResponseState,
+                  )
     if (!match) {
       continue
     }
@@ -1017,6 +1032,27 @@ function resolveOrderedSourceResponseItem(
   return nextItem
 }
 
+function resolveOrderedSourceResponseBlock(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const blocks = parseRequiredOrderedSourceResponseBlocks(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const nextIndex = sourceResponseState?.nextOrderedBlockIndex ?? 0
+  const nextBlock = blocks[nextIndex]
+  if (!nextBlock) {
+    throw new AnswerInterpretationError(`No ordered block remained for ${label} in sourceResponse.`)
+  }
+  if (sourceResponseState) {
+    sourceResponseState.nextOrderedBlockIndex = nextIndex + 1
+  }
+  return nextBlock
+}
+
 function parseRequiredOrderedSourceResponseItems(
   sourceResponse: string | undefined,
   label: string,
@@ -1040,6 +1076,29 @@ function parseRequiredOrderedSourceResponseItems(
   return items
 }
 
+function parseRequiredOrderedSourceResponseBlocks(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.orderedBlocks) {
+    return sourceResponseState.orderedBlocks
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat ordered_blocks requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const blocks = parseOrderedSourceResponseBlocks(shared)
+  if (sourceResponseState) {
+    sourceResponseState.orderedBlocks = blocks
+  }
+  return blocks
+}
+
 function parseOrderedSourceResponseItems(sourceResponse: string) {
   const items: string[] = []
   for (const line of sourceResponse.split(/\r?\n/)) {
@@ -1055,6 +1114,13 @@ function parseOrderedSourceResponseItems(sourceResponse: string) {
     items.push(value)
   }
   return items
+}
+
+function parseOrderedSourceResponseBlocks(sourceResponse: string) {
+  return sourceResponse
+    .split(/\r?\n\s*\r?\n\s*\r?\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean)
 }
 
 function parseTopicSourceResponseSentences(sourceResponse: string) {

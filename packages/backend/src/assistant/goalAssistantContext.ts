@@ -327,7 +327,7 @@ Required outcome shape:
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "workflow_batch",
@@ -406,9 +406,9 @@ Required outcome shape:
           "sourceExcerpt": "second exact substring to lift from sourceResponse"
         }
       ],
-      "inferOpenDecisions": "optional boolean; when true with sourceResponseFormat labeled_sections, ordered_items, inline_topics, topic_sentences, topic_paragraphs, or topic_blocks, runtime also resolves matching current open decisions you did not repeat in answers[]",
+      "inferOpenDecisions": "optional boolean; when true with sourceResponseFormat labeled_sections, ordered_items, ordered_blocks, inline_topics, topic_sentences, topic_paragraphs, or topic_blocks, runtime also resolves matching current open decisions you did not repeat in answers[]",
       "inferDecisionTopics": "optional boolean; when true with sourceResponseFormat labeled_sections or inline_topics, runtime also turns remaining unclaimed labeled sections or inline topic clauses into durable decision topics",
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across more than one decision topic and any followThrough answers",
       "answers": [
         {
@@ -472,7 +472,7 @@ Required outcome shape:
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "planning_batch",
@@ -548,7 +548,7 @@ Rules:
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
-- When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".
+- When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "ordered_blocks", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".
 - When there is no existing durable decision surface yet but one structured reply already names the durable decision topics, prefer "record_answers" with "inferDecisionTopics": true plus root "sourceResponseFormat": "labeled_sections" or "inline_topics" so runtime can create those durable decision topics from the remaining unclaimed topic pairs after planner-only answers are reserved.
 - When mixing "inferOpenDecisions": true with explicit "record_answers" entries, keep explicit entries keyed by stable "decisionKey" so runtime does not have to guess whether you meant to reuse an existing open decision topic or create a new one.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
@@ -557,6 +557,7 @@ Rules:
 - When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.
 - When "sourceResponse" is already structured as labeled lines like "Auth strategy: ..." or "Pilot scope: ...", prefer root "sourceResponseFormat": "labeled_sections" so runtime can map those labeled sections directly without per-topic excerpts or named answer-source bundles.
 - When one reply is already an ordered list of answers but does not carry stable labels, prefer root "sourceResponseFormat": "ordered_items" so runtime can map reply items by deterministic order across explicit decision answers, inferred open decisions, and followThrough answers.
+- When one reply is already organized as blank-line-separated multi-paragraph answer blocks but still does not carry labels, prefer root "sourceResponseFormat": "ordered_blocks" so runtime can map those larger answer blocks by deterministic order across explicit decision answers, inferred open decisions, and followThrough answers.
 - When one reply is already written as natural clauses that still name the topics inline, like "Auth strategy should use ..." or "Pilot scope should start with ...", prefer root "sourceResponseFormat": "inline_topics" so runtime can map those inline topic clauses without requiring one label per line or an ordered list.
 - When one reply is already written as natural sentences that mention the topic later in the sentence, like "Use Bun-native auth for auth strategy." or "Start with five enterprise customers for pilot scope.", prefer root "sourceResponseFormat": "topic_sentences" so runtime can match one sentence per known topic without forcing inline labels or ordered bullets.
 - When one reply is already written as topic-specific paragraphs where only one sentence in the paragraph names the topic, prefer root "sourceResponseFormat": "topic_paragraphs" so runtime can reuse the whole paragraph for one known topic without repeating the topic name in every sentence.

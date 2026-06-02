@@ -239,6 +239,7 @@ const resolveDecisionSchema = z.object({
     .enum([
       'labeled_sections',
       'ordered_items',
+      'ordered_blocks',
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',
@@ -261,6 +262,7 @@ const answerDecisionSchema = z.object({
     .enum([
       'labeled_sections',
       'ordered_items',
+      'ordered_blocks',
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',
@@ -286,6 +288,7 @@ const answerDecisionBatchSchema = z.object({
     .enum([
       'labeled_sections',
       'ordered_items',
+      'ordered_blocks',
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',

@@ -287,6 +287,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
       .enum([
         'labeled_sections',
         'ordered_items',
+        'ordered_blocks',
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
@@ -303,6 +304,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
       .enum([
         'labeled_sections',
         'ordered_items',
+        'ordered_blocks',
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
@@ -328,6 +330,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
       .enum([
         'labeled_sections',
         'ordered_items',
+        'ordered_blocks',
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
