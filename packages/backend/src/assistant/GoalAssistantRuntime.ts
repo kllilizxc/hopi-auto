@@ -510,6 +510,7 @@ async function applyAssistantAction(
         .map((decision) => ({
           decisionKey: decision.decisionKey,
           summary: decision.summary,
+          prompt: decision.prompt,
           taskRef: decision.taskRef,
         })),
       action.inferOpenDecisions ?? false,
@@ -521,6 +522,7 @@ async function applyAssistantAction(
       current.decisions.map((decision) => ({
         decisionKey: decision.decisionKey,
         summary: decision.summary,
+        prompt: decision.prompt,
         taskRef: decision.taskRef,
       })),
       listInterpretableFollowThroughAnswerSummaries(action.followThrough),

@@ -101,12 +101,14 @@ export interface InterpretableDecisionAnswerEntryInput {
 export interface InterpretableOpenDecision {
   decisionKey: string
   summary: string
+  prompt?: string
   taskRef?: string
 }
 
 export interface InterpretableKnownDecision {
   decisionKey: string
   summary: string
+  prompt?: string
   taskRef?: string
 }
 
@@ -579,11 +581,19 @@ function resolveAnswerText(
 function buildDecisionAnswerSourceResponseCandidates(
   answer: InterpretableDecisionAnswerEntryInput,
 ) {
-  return dedupeNonEmptyStrings([humanizeDecisionKey(answer.decisionKey), answer.summary])
+  return dedupeNonEmptyStrings([
+    humanizeDecisionKey(answer.decisionKey),
+    answer.summary,
+    answer.prompt,
+  ])
 }
 
 function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDecision) {
-  return dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary])
+  return dedupeNonEmptyStrings([
+    humanizeDecisionKey(decision.decisionKey),
+    decision.summary,
+    decision.prompt,
+  ])
 }
 
 function resolveSourceExcerpt(
@@ -1965,6 +1975,11 @@ function findMatchingKnownDecisionsForQuestionBlock(
         [block],
         dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
         new Set<number>(),
+      ).length > 0 ||
+      findMatchingQuestionBlockIndexes(
+        [block],
+        dedupeNonEmptyStrings([decision.prompt]),
+        new Set<number>(),
       ).length > 0,
   )
 }
@@ -1978,6 +1993,11 @@ function findMatchingKnownDecisionsForQuestionSpan(
       findMatchingQuestionSpanIndexes(
         [span],
         dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
+        new Set<number>(),
+      ).length > 0 ||
+      findMatchingQuestionSpanIndexes(
+        [span],
+        dedupeNonEmptyStrings([decision.prompt]),
         new Set<number>(),
       ).length > 0,
   )

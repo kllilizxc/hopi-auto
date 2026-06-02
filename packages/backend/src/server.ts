@@ -622,6 +622,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               .map((decision) => ({
                 decisionKey: decision.decisionKey,
                 summary: decision.summary,
+                prompt: decision.prompt,
                 taskRef: decision.taskRef,
               })),
             body.inferOpenDecisions ?? false,
@@ -633,6 +634,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             current.decisions.map((decision) => ({
               decisionKey: decision.decisionKey,
               summary: decision.summary,
+              prompt: decision.prompt,
               taskRef: decision.taskRef,
             })),
             listInterpretableFollowThroughAnswerSummaries(body.followThrough),

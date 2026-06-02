@@ -1374,6 +1374,57 @@ test('materializes matching open decisions from question blocks without per-topi
   ])
 })
 
+test('materializes matching open decisions from question blocks by exact durable prompt text', () => {
+  const sourceResponse = [
+    'Should we use Bun-native auth or an external auth provider?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Should rollout happen in stages or all at once?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Should we use Bun-native auth or an external auth provider?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_blocks',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes new decision topics from remaining question blocks while reserving planner summaries', () => {
   const sourceResponse = [
     'Auth strategy?',
@@ -1538,6 +1589,52 @@ test('materializes matching open decisions from question spans without per-topic
         {
           decisionKey: 'rollout-strategy',
           summary: 'Choose the rollout strategy',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_spans',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout. That keeps the launch reversible.',
+    },
+  ])
+})
+
+test('materializes matching open decisions from question spans by exact durable prompt text', () => {
+  const sourceResponse = [
+    'Should we use Bun-native auth or an external auth provider?',
+    'Use Bun-native auth.',
+    'That keeps the runtime simple.',
+    'Should rollout happen in stages or all at once?',
+    'Use a staged rollout.',
+    'That keeps the launch reversible.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Should we use Bun-native auth or an external auth provider?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
         },
       ],
       true,
