@@ -1222,6 +1222,208 @@ test('materializes matching open decisions from ordered blocks without labels', 
   ])
 })
 
+test('materializes question blocks across decision and planner answers without repeating topic names in answers', () => {
+  const sourceResponse = [
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+    '',
+    'That keeps early support manageable.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_blocks')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'question_blocks',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_blocks',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: [
+          'Start with five enterprise customers before broader launch.',
+          'That keeps early support manageable.',
+        ].join('\n\n'),
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes matching open decisions from question blocks without per-topic mapping', () => {
+  const sourceResponse = [
+    'What should auth strategy be?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'How should rollout strategy happen?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_blocks',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+})
+
+test('materializes new decision topics from remaining question blocks while reserving planner summaries', () => {
+  const sourceResponse = [
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+    '',
+    'That keeps early support manageable.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_blocks',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      summary: 'Auth strategy',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      summary: 'Rollout strategy',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes ordered items across decision and planner answers without labels', () => {
   const sourceResponse = [
     '- Use Bun-native auth',
@@ -1362,7 +1564,7 @@ test('rejects inferOpenDecisions when labeled-section interpretation is not enab
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
     ),
   )
 })
@@ -1383,7 +1585,7 @@ test('rejects inferDecisionTopics when labeled-section interpretation is not ena
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections" or "inline_topics".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", or "question_blocks".',
     ),
   )
 })
@@ -1515,6 +1717,26 @@ test('rejects ordered-block interpretation when not enough blocks remain', () =>
   ).toThrowError(
     new AnswerInterpretationError(
       'No ordered block remained for decision answer rollout-strategy in sourceResponse.',
+    ),
+  )
+})
+
+test('rejects question-block interpretation when a matched question omits its answer block', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      'Auth strategy?',
+      [],
+      'question_blocks',
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'Question block "Auth strategy?" in sourceResponse did not include an answer block.',
     ),
   )
 })
