@@ -4540,6 +4540,104 @@ describe('createServer', () => {
     })
   })
 
+  test('records multiple durable answers through the API from topic middle spans with anchor sentences in the middle', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Keep the runtime simple.',
+        'We should use Bun-native auth for auth strategy.',
+        'That avoids extra infra.',
+        'Launch in phases.',
+        'Use a staged rollout for rollout strategy.',
+        'That keeps the launch reversible.',
+        'Keep support load manageable.',
+        'Start with five enterprise customers before broader launch for pilot scope.',
+        'That keeps the pilot focused.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_middle_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer:
+            'Keep the runtime simple. We should use Bun-native auth for auth strategy. That avoids extra infra.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer:
+            'Launch in phases. Use a staged rollout for rollout strategy. That keeps the launch reversible.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'Keep support load manageable. Start with five enterprise customers before broader launch for pilot scope. That keeps the pilot focused.',
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'Keep support load manageable. Start with five enterprise customers before broader launch for pilot scope. That keeps the pilot focused.',
+            }),
+          ]),
+        }),
+      ],
+    })
+  })
+
   test('records multiple durable answers through the API from topic closing spans without front-loaded topic anchors', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -7286,7 +7384,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "inline_topics", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", or "topic_blocks".',
+        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "inline_topics", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     })
   })
 
@@ -7303,7 +7401,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", or "topic_blocks".',
+        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     })
   })
 
@@ -12899,6 +12997,42 @@ preferences:
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       message: 'I reused the topic spans across auth rollout follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and reuses topic middle spans across decisions and planner answers', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one topic-middle-span reply for auth, rollout, and pilot scope with one leading sentence and one trailing sentence around each topic anchor.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the topic middle spans across auth rollout follow-through.', actions: [{ kind: 'record_answers', sourceResponse: ['Keep the runtime simple.', 'We should use Bun-native auth for auth strategy.', 'That avoids extra infra.', 'Launch in phases.', 'Use a staged rollout for rollout strategy.', 'That keeps the launch reversible.', 'Keep support load manageable.', 'Start with five enterprise customers before broader launch for pilot scope.', 'That keeps the pilot focused.'].join(' '), sourceResponseFormat: 'topic_middle_spans', answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy' }], followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one topic-middle-span reply for auth, rollout, and pilot scope with one leading sentence and one trailing sentence around each topic anchor.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I reused the topic middle spans across auth rollout follow-through.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',
