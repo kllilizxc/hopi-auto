@@ -34,6 +34,12 @@ export interface InterpretableDecisionAnswerEntryInput {
   answerSourceKey?: string
 }
 
+export interface InterpretableOpenDecision {
+  decisionKey: string
+  summary: string
+  taskRef?: string
+}
+
 export interface InterpretableDecisionPlanningFollowThroughInput {
   kind: 'planning'
   title: string
@@ -112,6 +118,53 @@ export function materializeInterpretedDecisionAnswers(
       buildDecisionAnswerSourceResponseCandidates(answer),
     ),
   }))
+}
+
+export function materializeInterpretedDecisionAnswerBatch(
+  answers: InterpretableDecisionAnswerEntryInput[] | undefined,
+  openDecisions: InterpretableOpenDecision[],
+  inferOpenDecisions: boolean,
+  sourceResponse?: string,
+  answerSources?: InterpretableAnswerSource[],
+  sourceResponseFormat?: InterpretableSourceResponseFormat,
+) {
+  const explicitAnswers = answers ?? []
+  if (inferOpenDecisions && explicitAnswers.some((answer) => !answer.decisionKey?.trim())) {
+    throw new AnswerInterpretationError(
+      'inferOpenDecisions requires every explicit answer entry to include decisionKey.',
+    )
+  }
+
+  const materializedExplicitAnswers = materializeInterpretedDecisionAnswers(
+    explicitAnswers,
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat,
+  )
+
+  const materializedAnswers = inferOpenDecisions
+    ? [
+        ...materializedExplicitAnswers,
+        ...materializeMatchingOpenDecisionAnswers(
+          openDecisions,
+          new Set(
+            materializedExplicitAnswers.flatMap((answer) =>
+              answer.decisionKey ? [answer.decisionKey] : [],
+            ),
+          ),
+          sourceResponse,
+          sourceResponseFormat,
+        ),
+      ]
+    : materializedExplicitAnswers
+
+  if (materializedAnswers.length === 0) {
+    throw new AnswerInterpretationError(
+      'No decision answers were materialized. Provide explicit answers or use inferOpenDecisions with labeled sections that match at least one open decision.',
+    )
+  }
+
+  return materializedAnswers
 }
 
 export function materializeInterpretedDecisionFollowThrough(
@@ -262,6 +315,10 @@ function buildDecisionAnswerSourceResponseCandidates(
   return dedupeNonEmptyStrings([humanizeDecisionKey(answer.decisionKey), answer.summary])
 }
 
+function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDecision) {
+  return dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary])
+}
+
 function resolveSourceExcerpt(
   sourceExcerpt: string | undefined,
   sourceResponse: string | undefined,
@@ -289,6 +346,64 @@ function resolveLabeledSourceResponseSection(
   candidates: string[],
   label: string,
 ) {
+  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(sourceResponse, label)
+  const match = findLabeledSourceResponseSection(sectionsByLabel, candidates)
+  if (match) {
+    return match
+  }
+
+  throw new AnswerInterpretationError(`No labeled section matched ${label} in sourceResponse.`)
+}
+
+function materializeMatchingOpenDecisionAnswers(
+  openDecisions: InterpretableOpenDecision[],
+  explicitDecisionKeys: Set<string>,
+  sourceResponse: string | undefined,
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+) {
+  if (sourceResponseFormat !== 'labeled_sections') {
+    throw new AnswerInterpretationError(
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections".',
+    )
+  }
+
+  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(
+    sourceResponse,
+    'inferOpenDecisions',
+  )
+  const materializedAnswers: Array<{
+    summary: string
+    decisionKey: string
+    taskRef?: string
+    answer: string
+  }> = []
+
+  for (const decision of openDecisions) {
+    if (explicitDecisionKeys.has(decision.decisionKey)) {
+      continue
+    }
+    const match = findLabeledSourceResponseSection(
+      sectionsByLabel,
+      buildOpenDecisionSourceResponseCandidates(decision),
+    )
+    if (!match) {
+      continue
+    }
+    materializedAnswers.push({
+      summary: decision.summary,
+      decisionKey: decision.decisionKey,
+      taskRef: decision.taskRef,
+      answer: match,
+    })
+  }
+
+  return materializedAnswers
+}
+
+function parseRequiredLabeledSourceResponseSections(
+  sourceResponse: string | undefined,
+  label: string,
+) {
   const shared = sourceResponse?.trim()
   if (!shared) {
     throw new AnswerInterpretationError(
@@ -296,15 +411,20 @@ function resolveLabeledSourceResponseSection(
     )
   }
 
-  const sectionsByLabel = parseLabeledSourceResponseSections(shared)
+  return parseLabeledSourceResponseSections(shared)
+}
+
+function findLabeledSourceResponseSection(
+  sectionsByLabel: Map<string, string>,
+  candidates: string[],
+) {
   for (const candidate of candidates) {
     const match = sectionsByLabel.get(normalizeSourceResponseLabel(candidate))
     if (match) {
       return match
     }
   }
-
-  throw new AnswerInterpretationError(`No labeled section matched ${label} in sourceResponse.`)
+  return undefined
 }
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {

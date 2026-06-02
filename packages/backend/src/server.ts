@@ -12,6 +12,7 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
+  materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
 } from './runtime/answerInterpretation'
@@ -263,7 +264,8 @@ const answerDecisionBatchSchema = z.object({
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: z.literal('labeled_sections').optional(),
   sourceResponse: z.string().min(1).optional(),
-  answers: z.array(answerDecisionBatchEntrySchema).min(1),
+  inferOpenDecisions: z.boolean().default(false),
+  answers: z.array(answerDecisionBatchEntrySchema).default([]),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
 
@@ -554,6 +556,21 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionBatchSchema)
+          const current = await decisions.readGoalDecisions(currentGoalKey)
+          const answers = materializeInterpretedDecisionAnswerBatch(
+            body.answers,
+            current.decisions
+              .filter((decision) => decision.status === 'open')
+              .map((decision) => ({
+                decisionKey: decision.decisionKey,
+                summary: decision.summary,
+                taskRef: decision.taskRef,
+              })),
+            body.inferOpenDecisions ?? false,
+            body.sourceResponse,
+            body.answerSources,
+            body.sourceResponseFormat,
+          )
           const result = await answerGoalDecisions(
             {
               boardStore: store,
@@ -562,12 +579,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             },
             {
               goalKey: currentGoalKey,
-              answers: materializeInterpretedDecisionAnswers(
-                body.answers,
-                body.sourceResponse,
-                body.answerSources,
-                body.sourceResponseFormat,
-              ),
+              answers,
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,
                 body.sourceResponse,
@@ -575,7 +587,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.sourceResponseFormat,
               ),
               writer: 'api',
-              reason: `api record answers ${body.answers
+              reason: `api record answers ${answers
                 .map((answer) => answer.decisionKey ?? answer.summary)
                 .join(', ')}`,
             },

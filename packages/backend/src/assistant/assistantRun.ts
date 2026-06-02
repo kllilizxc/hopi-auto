@@ -292,7 +292,8 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: z.literal('labeled_sections').optional(),
     sourceResponse: z.string().min(1).optional(),
-    answers: z.array(assistantDecisionAnswerSchema).min(1),
+    inferOpenDecisions: z.boolean().default(false),
+    answers: z.array(assistantDecisionAnswerSchema).default([]),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),
   z.object({

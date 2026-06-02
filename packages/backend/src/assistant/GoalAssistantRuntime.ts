@@ -7,6 +7,7 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
+  materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
 } from '../runtime/answerInterpretation'
@@ -474,6 +475,21 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answers') {
+    const current = await stores.decisions.readGoalDecisions(goalKey)
+    const answers = materializeInterpretedDecisionAnswerBatch(
+      action.answers,
+      current.decisions
+        .filter((decision) => decision.status === 'open')
+        .map((decision) => ({
+          decisionKey: decision.decisionKey,
+          summary: decision.summary,
+          taskRef: decision.taskRef,
+        })),
+      action.inferOpenDecisions ?? false,
+      action.sourceResponse,
+      action.answerSources,
+      action.sourceResponseFormat,
+    )
     const result = await answerGoalDecisions(
       {
         boardStore: stores.boardStore,
@@ -482,12 +498,7 @@ async function applyAssistantAction(
       },
       {
         goalKey,
-        answers: materializeInterpretedDecisionAnswers(
-          action.answers,
-          action.sourceResponse,
-          action.answerSources,
-          action.sourceResponseFormat,
-        ),
+        answers,
         followThrough: materializeInterpretedDecisionFollowThrough(
           action.followThrough,
           action.sourceResponse,
@@ -495,7 +506,7 @@ async function applyAssistantAction(
           action.sourceResponseFormat,
         ),
         writer: 'assistant',
-        reason: `assistant record answers ${action.answers
+        reason: `assistant record answers ${answers
           .map((answer) => answer.decisionKey ?? answer.summary)
           .join(', ')}`,
       },

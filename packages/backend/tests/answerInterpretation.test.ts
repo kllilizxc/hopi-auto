@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import {
   AnswerInterpretationError,
+  materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
 } from '../src/runtime/answerInterpretation'
@@ -374,6 +375,69 @@ test('materializes labeled sections from one shared response without per-topic m
       },
     ],
   })
+})
+
+test('materializes matching open decisions from labeled sections without repeating per-decision entries', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+    'Pilot scope: Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'labeled_sections',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout',
+    },
+  ])
+})
+
+test('rejects inferOpenDecisions when labeled-section interpretation is not enabled', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      true,
+      'Auth strategy: Use Bun-native auth',
+      [],
+      undefined,
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections".',
+    ),
+  )
 })
 
 test('rejects unknown answer source keys deterministically', () => {

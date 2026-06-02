@@ -684,6 +684,10 @@ function mergeOrderedStrings(values: string[]) {
 }
 
 function validateDecisionAnswerBatch(answers: GoalDecisionAnswerEntryInput[]) {
+  if (answers.length === 0) {
+    throw new Error('Expected at least one decision answer.')
+  }
+
   const seen = new Set<string>()
   for (const answer of answers) {
     if (!answer.decisionKey) {
