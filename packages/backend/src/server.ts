@@ -235,7 +235,7 @@ const resolveDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -248,7 +248,7 @@ const answerDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -264,7 +264,7 @@ const answerDecisionBatchEntrySchema = z.object({
 
 const answerDecisionBatchSchema = z.object({
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items', 'inline_topics']).optional(),
   sourceResponse: z.string().min(1).optional(),
   inferOpenDecisions: z.boolean().default(false),
   inferDecisionTopics: z.boolean().default(false),

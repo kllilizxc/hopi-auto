@@ -6,12 +6,16 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
 
-export type InterpretableSourceResponseFormat = 'labeled_sections' | 'ordered_items'
+export type InterpretableSourceResponseFormat =
+  | 'labeled_sections'
+  | 'ordered_items'
+  | 'inline_topics'
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
   sourceResponseFormat: InterpretableSourceResponseFormat
   labeledSections?: Map<string, LabeledSourceResponseSection>
+  inlineTopics?: Map<string, LabeledSourceResponseSection>
   orderedItems?: string[]
   nextOrderedItemIndex: number
 }
@@ -404,6 +408,15 @@ function resolveAnswerText(
     return resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState)
   }
 
+  if (sourceResponseFormat === 'inline_topics') {
+    return resolveInlineTopicSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+  }
+
   const shared = sourceResponse?.trim()
   if (shared) {
     return shared
@@ -465,6 +478,25 @@ function resolveLabeledSourceResponseSection(
   throw new AnswerInterpretationError(`No labeled section matched ${label} in sourceResponse.`)
 }
 
+function resolveInlineTopicSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const sectionsByLabel = parseRequiredInlineTopicSections(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const match = findLabeledSourceResponseSection(sectionsByLabel, candidates)
+  if (match) {
+    return match
+  }
+
+  throw new AnswerInterpretationError(`No inline topic clause matched ${label} in sourceResponse.`)
+}
+
 function materializeMatchingOpenDecisionAnswers(
   openDecisions: InterpretableOpenDecision[],
   explicitDecisionKeys: Set<string>,
@@ -472,9 +504,13 @@ function materializeMatchingOpenDecisionAnswers(
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
   sourceResponseState?: InterpretedSourceResponseState,
 ) {
-  if (sourceResponseFormat !== 'labeled_sections' && sourceResponseFormat !== 'ordered_items') {
+  if (
+    sourceResponseFormat !== 'labeled_sections' &&
+    sourceResponseFormat !== 'ordered_items' &&
+    sourceResponseFormat !== 'inline_topics'
+  ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections" or "ordered_items".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", or "inline_topics".',
     )
   }
 
@@ -485,7 +521,13 @@ function materializeMatchingOpenDecisionAnswers(
           'inferOpenDecisions',
           sourceResponseState,
         )
-      : undefined
+      : sourceResponseFormat === 'inline_topics'
+        ? parseRequiredInlineTopicSections(
+            sourceResponse,
+            'inferOpenDecisions',
+            sourceResponseState,
+          )
+        : undefined
   const materializedAnswers: Array<{
     summary: string
     decisionKey: string
@@ -498,7 +540,7 @@ function materializeMatchingOpenDecisionAnswers(
       continue
     }
     const match =
-      sourceResponseFormat === 'labeled_sections'
+      sourceResponseFormat === 'labeled_sections' || sourceResponseFormat === 'inline_topics'
         ? findLabeledSourceResponseSection(
             sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
             buildOpenDecisionSourceResponseCandidates(decision),
@@ -537,17 +579,20 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     return []
   }
 
-  if (sourceResponseFormat !== 'labeled_sections') {
+  if (sourceResponseFormat !== 'labeled_sections' && sourceResponseFormat !== 'inline_topics') {
     throw new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections" or "inline_topics".',
     )
   }
 
-  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(
-    sourceResponse,
-    'inferDecisionTopics',
-    sourceResponseState,
-  )
+  const sectionsByLabel =
+    sourceResponseFormat === 'labeled_sections'
+      ? parseRequiredLabeledSourceResponseSections(
+          sourceResponse,
+          'inferDecisionTopics',
+          sourceResponseState,
+        )
+      : parseRequiredInlineTopicSections(sourceResponse, 'inferDecisionTopics', sourceResponseState)
   const reservedLabels = new Set<string>()
 
   for (const answer of explicitAnswers) {
@@ -627,6 +672,29 @@ function parseRequiredLabeledSourceResponseSections(
   const sections = parseLabeledSourceResponseSections(shared)
   if (sourceResponseState) {
     sourceResponseState.labeledSections = sections
+  }
+  return sections
+}
+
+function parseRequiredInlineTopicSections(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.inlineTopics) {
+    return sourceResponseState.inlineTopics
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat inline_topics requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const sections = parseInlineTopicSections(shared)
+  if (sourceResponseState) {
+    sourceResponseState.inlineTopics = sections
   }
   return sections
 }
@@ -729,6 +797,79 @@ function parseLabeledSourceResponseSections(sourceResponse: string) {
     })
   }
   return sectionsByLabel
+}
+
+function parseInlineTopicSections(sourceResponse: string) {
+  const sectionsByLabel = new Map<string, LabeledSourceResponseSection>()
+  const clauses = sourceResponse
+    .split(/(?:\r?\n+|;+\s*|(?<=[.?!])\s+)/)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+
+  for (const clause of clauses) {
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    const normalized = normalizeSourceResponseLabel(parsed.label)
+    if (sectionsByLabel.has(normalized)) {
+      throw new AnswerInterpretationError(
+        `Duplicate inline topic clause "${parsed.label}" in sourceResponse.`,
+      )
+    }
+    sectionsByLabel.set(normalized, parsed)
+  }
+
+  return sectionsByLabel
+}
+
+function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | undefined {
+  const trimmed = clause.trim().replace(/^(?:and|but)\s+/i, '')
+  if (!trimmed) {
+    return undefined
+  }
+
+  const punctuated = /^(?<label>.+?)\s*(?::|=|->)\s*(?<answer>.+)$/.exec(trimmed)?.groups
+  if (punctuated?.label && punctuated.answer) {
+    return {
+      label: punctuated.label.trim(),
+      value: normalizeInlineTopicAnswer(punctuated.answer),
+    }
+  }
+
+  const dashed = /^(?<label>.+?)\s+-\s+(?<answer>.+)$/.exec(trimmed)?.groups
+  if (dashed?.label && dashed.answer) {
+    return {
+      label: dashed.label.trim(),
+      value: normalizeInlineTopicAnswer(dashed.answer),
+    }
+  }
+
+  const verbal =
+    /^(?<label>.+?)\s+(?<answer>(?:should|will|must|can|could|would|is|are|was|were|uses|use|means|requires|starts)\b.+)$/i.exec(
+      trimmed,
+    )?.groups
+  if (verbal?.label && verbal.answer) {
+    return {
+      label: verbal.label.trim(),
+      value: normalizeInlineTopicAnswer(verbal.answer),
+    }
+  }
+
+  return undefined
+}
+
+function normalizeInlineTopicAnswer(value: string) {
+  const stripped = value
+    .trim()
+    .replace(/^(?:should|will|must|can|could|would|is|are|was|were)\b\s*/i, '')
+
+  if (stripped.length === 0) {
+    return stripped
+  }
+
+  return `${stripped.slice(0, 1).toUpperCase()}${stripped.slice(1)}`
 }
 
 function reserveMatchedLabeledSection(
