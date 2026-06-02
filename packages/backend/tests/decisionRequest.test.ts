@@ -1990,6 +1990,121 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('answering an unlinked decision can explicitly reuse one current planning surface as the first workflow child', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Plan rollout baseline',
+        description: 'Create the first visible rollout planning surface.',
+        acceptanceCriteria: ['The rollout baseline is visible.'],
+      },
+    )
+
+    const result = await answerGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        summary: 'Choose the rollout strategy',
+        answer: 'Use a staged Bun-first rollout.',
+        followThrough: {
+          kind: 'workflow_batch',
+          reuseTaskRef: 'P-1',
+          workflows: [
+            {
+              kind: 'planning',
+              title: 'Capture rollout answer',
+              description: 'Upgrade the current rollout planning surface with the final answer.',
+              acceptanceCriteria: ['The rollout answer is durable in Goal docs.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+            },
+            {
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              title: 'Review rollout readiness',
+              description: 'Inspect rollout readiness after the answer is durable.',
+              acceptanceCriteria: ['The rollout review is visible.'],
+              requestedUpdates: ['notes/rollout.md'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      created: true,
+      decision: {
+        decisionKey: 'D-1',
+        status: 'resolved',
+      },
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'W-1',
+        groupKeys: [],
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-1', 'P-2'],
+        workflows: [
+          expect.objectContaining({
+            kind: 'planning',
+            taskRefs: ['P-1'],
+          }),
+          expect.objectContaining({
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            taskRefs: ['P-2'],
+          }),
+        ],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture rollout answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Review rollout readiness',
+          blockedBy: [],
+        }),
+      ]),
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          workflowKey: 'W-1',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          workflowKey: 'W-1',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
+        }),
+      ],
+    })
+  })
+
   test('resolving a planning-linked decision can reuse the current grouped planning surface as the first workflow in a multi-workflow answer', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)
@@ -2149,6 +2264,144 @@ describe('requestGoalDecision', () => {
           workflowKey: 'auth-rollout-follow-through',
           workflowTaskKey: 'handoff-review',
           decisionRefs: ['auth-strategy'],
+        }),
+      ],
+    })
+  })
+
+  test('answering an unlinked decision can explicitly reuse one current grouped planning surface as the first workflow child', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningBatch(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        groupKey: 'auth-follow-through',
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+
+    const result = await answerGoalDecision(
+      {
+        boardStore,
+        decisions,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        summary: 'Choose the rollout strategy',
+        answer: 'Use a staged Bun-first rollout.',
+        followThrough: {
+          kind: 'workflow_batch',
+          workflowKey: 'rollout-review',
+          reuseGroupKey: 'auth-follow-through',
+          workflows: [
+            {
+              kind: 'planning_batch',
+              groupKey: 'auth-follow-through',
+              requests: [],
+            },
+            {
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              title: 'Review auth rollout readiness',
+              description: 'Inspect the reused grouped workflow before handoff.',
+              acceptanceCriteria: ['The rollout review is visible.'],
+              requestedUpdates: ['notes/rollout.md'],
+            },
+          ],
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      created: true,
+      decision: {
+        decisionKey: 'D-1',
+        status: 'resolved',
+      },
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'rollout-review',
+        groupKeys: ['auth-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-2', 'P-3'],
+        workflows: [
+          expect.objectContaining({
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            taskRefs: ['P-1', 'P-2'],
+          }),
+          expect.objectContaining({
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            taskRefs: ['P-3'],
+          }),
+        ],
+      },
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          blockedBy: [{ kind: 'task', ref: 'P-1' }],
+        }),
+        expect.objectContaining({
+          ref: 'P-3',
+          blockedBy: [],
+        }),
+      ]),
+    })
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'rollout-review',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['D-1'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'rollout-review',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['D-1'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'rollout-review',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
         }),
       ],
     })

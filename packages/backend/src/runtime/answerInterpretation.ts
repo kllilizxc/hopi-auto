@@ -60,6 +60,8 @@ export type InterpretableDecisionWorkflowLeafFollowThroughInput =
 export interface InterpretableDecisionWorkflowBatchFollowThroughInput {
   kind: 'workflow_batch'
   workflowKey?: string
+  reuseTaskRef?: string
+  reuseGroupKey?: string
   answers?: InterpretablePlanningAnswer[]
   workflows: InterpretableDecisionWorkflowLeafFollowThroughInput[]
 }
@@ -113,6 +115,8 @@ export function materializeInterpretedDecisionFollowThrough(
   return {
     kind: 'workflow_batch' as const,
     workflowKey: followThrough.workflowKey,
+    reuseTaskRef: followThrough.reuseTaskRef,
+    reuseGroupKey: followThrough.reuseGroupKey,
     answers: materializeInterpretedPlanningAnswers(followThrough.answers, sourceResponse),
     workflows: followThrough.workflows.map((workflow) => {
       if (workflow.kind === 'planning') {

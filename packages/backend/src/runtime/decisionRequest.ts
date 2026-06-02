@@ -95,6 +95,8 @@ export type GoalDecisionWorkflowLeafFollowThroughInput =
 export interface GoalDecisionWorkflowBatchFollowThroughInput {
   kind: 'workflow_batch'
   workflowKey?: string
+  reuseTaskRef?: string
+  reuseGroupKey?: string
   answers?: GoalPlanningRequestAnswer[]
   workflows: GoalDecisionWorkflowLeafFollowThroughInput[]
 }
@@ -475,11 +477,14 @@ async function createDecisionResolutionFollowThrough(
   }
   if (followThrough?.kind === 'workflow_batch') {
     const reuseGroupKey =
-      reusablePlanningGroupKey &&
+      followThrough.reuseGroupKey ??
+      (reusablePlanningGroupKey &&
       followThrough.workflows[0]?.kind === 'planning_batch' &&
       followThrough.workflows[0].groupKey === reusablePlanningGroupKey
         ? reusablePlanningGroupKey
-        : undefined
+        : undefined)
+    const reuseTaskRef =
+      followThrough.reuseTaskRef ?? (reuseGroupKey ? undefined : reusablePlanningTaskRef)
     const result = await requestGoalPlanningWorkflows(
       {
         boardStore: stores.boardStore,
@@ -491,7 +496,7 @@ async function createDecisionResolutionFollowThrough(
         reuseGroupKey,
         decisionRefs,
         answers: followThrough.answers,
-        reuseTaskRef: reuseGroupKey ? undefined : reusablePlanningTaskRef,
+        reuseTaskRef: reuseGroupKey ? undefined : reuseTaskRef,
         workflows: followThrough.workflows.map((workflow) => {
           if (workflow.kind === 'planning_batch') {
             return {

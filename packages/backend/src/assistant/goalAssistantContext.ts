@@ -323,6 +323,8 @@ Required outcome shape:
       "followThrough": {
         "kind": "workflow_batch",
         "workflowKey": "optional stable top-level workflow key for later extension",
+        "reuseTaskRef": "optional current planning task ref to reuse only for the first child workflow",
+        "reuseGroupKey": "optional current grouped planning surface to reuse only for the first child workflow when that child is planning_batch",
         "answers": [
           {
             "summary": "optional shared user answer summary",
@@ -506,6 +508,8 @@ Rules:
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.
 - Once an answer-driven durable workflow graph has already persisted root shared answers on one "workflowKey", later extension actions on that same key can omit repeated root answers unless you are intentionally expanding that shared baseline.
+- When one answer-driven "workflow_batch" should expand an existing visible planning surface instead of creating a wrapper, set "followThrough.reuseTaskRef" and let runtime reuse that task only for the first child workflow.
+- When one answer-driven "workflow_batch" should adopt an existing grouped planning surface instead of replaying every grouped request manually, set "followThrough.reuseGroupKey" and make the first child a matching "planning_batch"; that child may use an empty requests array if you are only adopting the current group into the workflow graph, or include only genuinely new grouped extensions.
 - When resolving an engineering-linked decision and the answer implies richer planner follow-through than one generic bridge, prefer "followThrough" on "resolve_decision" over a separate follow-up planning action.
 - When resolving a planning-linked decision and the answer should reshape the current planning surface, prefer "followThrough" on "resolve_decision" so runtime can reuse that visible planning task instead of creating a wrapper.
 - When a decision answer should immediately open durable planner work even before there is a visible blocker or reusable planning surface, prefer "followThrough" on "resolve_decision" so runtime can create that visible planning workflow in one action.

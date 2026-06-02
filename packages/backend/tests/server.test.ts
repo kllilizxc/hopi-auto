@@ -2066,6 +2066,101 @@ describe('createServer', () => {
     })
   })
 
+  test('records a durable answer through the API and explicitly reuses a current planning surface in a workflow graph', async () => {
+    const workspaceRoot = rootDir()
+    await requestGoalPlanning(
+      {
+        boardStore: createBoardStore(workspaceRoot),
+        planningRequests: createPlanningRequestStore(workspaceRoot),
+      },
+      {
+        goalKey: 'test',
+        title: 'Plan rollout baseline',
+        description: 'Create the first visible rollout planning surface.',
+        acceptanceCriteria: ['The rollout baseline is visible.'],
+      },
+    )
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/decisions/answer', {
+      summary: 'Choose the rollout strategy',
+      answer: 'Use a staged Bun-first rollout.',
+      followThrough: {
+        kind: 'workflow_batch',
+        reuseTaskRef: 'P-1',
+        workflows: [
+          {
+            kind: 'planning',
+            title: 'Capture rollout answer',
+            description: 'Upgrade the current rollout planning surface with the final answer.',
+            acceptanceCriteria: ['The rollout answer is durable in Goal docs.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review rollout readiness',
+            description: 'Inspect rollout readiness after the answer is durable.',
+            acceptanceCriteria: ['The rollout review is visible.'],
+            requestedUpdates: ['notes/rollout.md'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      decision: expect.objectContaining({
+        decisionKey: 'D-1',
+        status: 'resolved',
+      }),
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'W-1',
+        groupKeys: [],
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-1', 'P-2'],
+      },
+    })
+    await expect(createBoardStore(workspaceRoot).readBoard('test')).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'P-1',
+          title: 'Capture rollout answer',
+          blockedBy: [],
+        }),
+        expect.objectContaining({
+          ref: 'P-2',
+          title: 'Review rollout readiness',
+          blockedBy: [],
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          workflowKey: 'W-1',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['goal.md', 'design.md'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          taskRef: 'P-2',
+          workflowKey: 'W-1',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
+        }),
+      ],
+    })
+  })
+
   test('records multiple durable answers through the API and shares one non-decision answer across a workflow graph', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -4521,6 +4616,103 @@ preferences:
           actionType: 'record_answer',
         }),
       ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and explicitly reuses a current grouped planning surface in a decision-backed workflow graph', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await requestGoalPlanningBatch(
+      {
+        boardStore: createBoardStore(workspaceRoot),
+        planningRequests: createPlanningRequestStore(workspaceRoot),
+      },
+      {
+        goalKey: 'test',
+        groupKey: 'auth-follow-through',
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    )
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Answer rollout and reuse the grouped auth planning surface.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I recorded the rollout answer and reused the grouped auth planning surface.', actions: [{ kind: 'record_answer', summary: 'Choose the rollout strategy', answer: 'Use a staged Bun-first rollout.', followThrough: { kind: 'workflow_batch', workflowKey: 'rollout-review', reuseGroupKey: 'auth-follow-through', workflows: [{ kind: 'planning_batch', groupKey: 'auth-follow-through', requests: [] }, { kind: 'planning', workflowTaskKey: 'handoff-review', title: 'Review auth rollout readiness', description: 'Inspect the reused grouped workflow before handoff.', acceptanceCriteria: ['The rollout review is visible.'], requestedUpdates: ['notes/rollout.md'] }] } }] })); console.log('assistant reused grouped workflow')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Answer rollout and reuse the grouped auth planning surface.',
+    })
+
+    expect(response.status).toBe(200)
+    const responseBody = await response.json()
+    expect(responseBody.message).toBe(
+      'I recorded the rollout answer and reused the grouped auth planning surface.',
+    )
+    expect(responseBody.actionResults[0]).toMatchObject({
+      kind: 'record_answer',
+      decisionKey: 'D-1',
+      created: true,
+      blockerRemoved: false,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'rollout-review',
+        groupKeys: ['auth-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-2', 'P-3'],
+      },
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          workflowKey: 'rollout-review',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'goal-docs',
+          decisionRefs: ['D-1'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          workflowKey: 'rollout-review',
+          groupKey: 'auth-follow-through',
+          groupTaskKey: 'task-graph',
+          decisionRefs: ['D-1'],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-3',
+          workflowKey: 'rollout-review',
+          workflowTaskKey: 'handoff-review',
+          decisionRefs: ['D-1'],
+          requestedUpdates: ['notes/rollout.md'],
+        }),
+      ],
     })
   })
 

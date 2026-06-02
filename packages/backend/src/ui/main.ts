@@ -258,6 +258,7 @@ interface AssistantAction {
   answer?: string
   content?: string
   reuseTaskRef?: string
+  reuseGroupKey?: string
   preferenceKey?: string
   rationale?: string
   supersedes?: string[]
