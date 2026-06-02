@@ -4535,6 +4535,312 @@ test('materializes new decision topics from remaining question spans while reser
   ])
 })
 
+test('materializes question middle spans across decision and planner answers with question sentences in the middle', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    'Auth strategy?',
+    'Use Bun-native auth.',
+    'Launch in phases.',
+    'Rollout strategy?',
+    'Use a staged rollout.',
+    'Keep support load manageable.',
+    'Pilot scope?',
+    'Start with five enterprise customers before broader launch.',
+  ].join(' ')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_middle_spans')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
+      taskRef: undefined,
+      answer: 'Keep the runtime simple. Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
+      taskRef: undefined,
+      answer: 'Launch in phases. Use a staged rollout.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
+        answer:
+          'Keep support load manageable. Start with five enterprise customers before broader launch.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes inferred planner answers from remaining question middle spans without explicit follow-through summaries', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    'Auth strategy?',
+    'Use Bun-native auth.',
+    'Launch in phases.',
+    'Rollout strategy?',
+    'Use a staged rollout.',
+    'Keep support load manageable.',
+    'Pilot scope?',
+    'Start with five enterprise customers before broader launch.',
+  ].join(' ')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_middle_spans')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
+      taskRef: undefined,
+      answer: 'Keep the runtime simple. Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
+      taskRef: undefined,
+      answer: 'Launch in phases. Use a staged rollout.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        inferRemainingAnswers: true,
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    inferRemainingAnswers: true,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
+        answer:
+          'Keep support load manageable. Start with five enterprise customers before broader launch.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes matching open decisions from question middle spans by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    'Should we adopt the auth provider for the Bun-first product path?',
+    'Use Bun-native auth.',
+    'Launch in phases.',
+    'Should rollout be all at once or in stages?',
+    'Use a staged rollout.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_middle_spans',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Keep the runtime simple. Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Launch in phases. Use a staged rollout.',
+    },
+  ])
+})
+
+test('materializes new decision topics from remaining question middle spans while reserving planner summaries', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    'Auth strategy?',
+    'Use Bun-native auth.',
+    'Launch in phases.',
+    'Rollout strategy?',
+    'Use a staged rollout.',
+    'Keep support load manageable.',
+    'Pilot scope?',
+    'Start with five enterprise customers before broader launch.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      summary: 'Auth strategy',
+      prompt: 'Auth strategy?',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: 'Keep the runtime simple. Use Bun-native auth.',
+    },
+    {
+      summary: 'Rollout strategy',
+      prompt: 'Rollout strategy?',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: 'Launch in phases. Use a staged rollout.',
+    },
+  ])
+})
+
+test('rejects question middle span interpretation when adjacent anchors do not leave both trailing and leading sentences', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    'Auth strategy?',
+    'Launch in phases.',
+    'Rollout strategy?',
+    'Use a staged rollout.',
+  ].join(' ')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_spans',
+      undefined,
+      true,
+    ),
+  ).toThrow(
+    'sourceResponseFormat question_middle_spans requires at least one trailing sentence before the next question sentence and at least one leading sentence for that next span.',
+  )
+})
+
 test('materializes question closing spans across decision and planner answers without front-loaded question sentences', () => {
   const sourceResponse = [
     'Use Bun-native auth.',
@@ -5138,6 +5444,349 @@ test('materializes new decision topics from remaining question closing blocks wh
   ])
 })
 
+test('materializes question middle blocks across decision and planner answers with question paragraphs in the middle', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    '',
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'Launch in phases.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'Keep support load manageable.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_middle_blocks')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
+      taskRef: undefined,
+      answer: ['Keep the runtime simple.', 'Use Bun-native auth.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
+      taskRef: undefined,
+      answer: ['Launch in phases.', 'Use a staged rollout.'].join('\n\n'),
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
+        answer: [
+          'Keep support load manageable.',
+          'Start with five enterprise customers before broader launch.',
+        ].join('\n\n'),
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes inferred planner answers from remaining question middle blocks without explicit follow-through summaries', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    '',
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'Launch in phases.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'Keep support load manageable.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_middle_blocks')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
+      taskRef: undefined,
+      answer: ['Keep the runtime simple.', 'Use Bun-native auth.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Rollout strategy?',
+      taskRef: undefined,
+      answer: ['Launch in phases.', 'Use a staged rollout.'].join('\n\n'),
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        inferRemainingAnswers: true,
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    inferRemainingAnswers: true,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Pilot scope?',
+        answer: [
+          'Keep support load manageable.',
+          'Start with five enterprise customers before broader launch.',
+        ].join('\n\n'),
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes matching open decisions from question middle blocks by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    '',
+    'Should we adopt the auth provider for the Bun-first product path?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'Launch in phases.',
+    '',
+    'Should rollout be all at once or in stages?',
+    '',
+    'Use a staged rollout.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Keep the runtime simple.', 'Use Bun-native auth.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Launch in phases.', 'Use a staged rollout.'].join('\n\n'),
+    },
+  ])
+})
+
+test('materializes new decision topics from remaining question middle blocks while reserving planner summaries', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    '',
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'Launch in phases.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'Keep support load manageable.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      summary: 'Auth strategy',
+      prompt: 'Auth strategy?',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: ['Keep the runtime simple.', 'Use Bun-native auth.'].join('\n\n'),
+    },
+    {
+      summary: 'Rollout strategy',
+      prompt: 'Rollout strategy?',
+      decisionKey: undefined,
+      taskRef: undefined,
+      answer: ['Launch in phases.', 'Use a staged rollout.'].join('\n\n'),
+    },
+  ])
+})
+
+test('rejects question middle block interpretation when adjacent anchors do not leave both trailing and leading paragraphs', () => {
+  const sourceResponse = [
+    'Keep the runtime simple.',
+    '',
+    'Auth strategy?',
+    '',
+    'Launch in phases.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_middle_blocks',
+      undefined,
+      true,
+    ),
+  ).toThrow(
+    'sourceResponseFormat question_middle_blocks requires at least one trailing paragraph before the next question paragraph and at least one leading paragraph for that next block.',
+  )
+})
+
 test('materializes ordered items across decision and planner answers without labels', () => {
   const sourceResponse = [
     '- Use Bun-native auth',
@@ -5278,7 +5927,7 @@ test('rejects inferOpenDecisions when labeled-section interpretation is not enab
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "inline_topics", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     ),
   )
 })
@@ -5299,7 +5948,7 @@ test('rejects inferDecisionTopics when labeled-section interpretation is not ena
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     ),
   )
 })
