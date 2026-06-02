@@ -3792,6 +3792,99 @@ describe('createServer', () => {
     })
   })
 
+  test('records multiple durable answers through the API from topic closing spans without front-loaded topic anchors', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'We should use Bun-native auth.',
+        'That keeps the runtime simple for auth strategy.',
+        'Use a staged rollout.',
+        'That keeps the launch reversible for rollout strategy.',
+        'Start with five enterprise customers before broader launch.',
+        'That keeps early support manageable for pilot scope.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_closing_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'We should use Bun-native auth. That keeps the runtime simple for auth strategy.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: 'Use a staged rollout. That keeps the launch reversible for rollout strategy.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer:
+                'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer:
+                'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('records multiple durable answers through the API from topic paragraphs without per-sentence topic labels', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -4105,6 +4198,91 @@ describe('createServer', () => {
               summary: 'Pilot scope',
               answer:
                 'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('records new durable decision topics through the API from remaining topic closing spans without explicit answers', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'We should use Bun-native auth.',
+        'That keeps the runtime simple for auth strategy.',
+        'Use a staged rollout.',
+        'That keeps the launch reversible for rollout strategy.',
+        'Start with five enterprise customers before broader launch.',
+        'That keeps early support manageable for pilot scope.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_closing_spans',
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1', 'D-2'],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'We should use Bun-native auth. That keeps the runtime simple for auth strategy.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout. That keeps the launch reversible for rollout strategy.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer:
+                'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer:
+                'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
             },
           ],
         }),
@@ -5422,7 +5600,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks".',
+        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_paragraphs", or "topic_blocks".',
     })
   })
 
@@ -5439,7 +5617,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks".',
+        'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_paragraphs", or "topic_blocks".',
     })
   })
 
@@ -5601,6 +5779,33 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error: 'Multiple topic spans matched decision answer auth-strategy in sourceResponse.',
+    })
+  })
+
+  test('returns HTTP 400 when topic-closing-span interpretation matches one requested topic more than once', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Use Bun-native auth.',
+        'That keeps the runtime simple for auth strategy.',
+        'Document Bun-native fallback decisions.',
+        'That keeps incident recovery explicit for auth strategy.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_closing_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'Multiple topic closing spans matched decision answer auth-strategy in sourceResponse.',
     })
   })
 
@@ -10379,6 +10584,42 @@ preferences:
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       message: 'I reused the topic spans across auth rollout follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and reuses topic closing spans across decisions and planner answers', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one topic-closing-span reply for auth, rollout, and pilot scope without front-loaded topic anchors.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the topic closing spans across auth rollout follow-through.', actions: [{ kind: 'record_answers', sourceResponse: ['We should use Bun-native auth.', 'That keeps the runtime simple for auth strategy.', 'Use a staged rollout.', 'That keeps the launch reversible for rollout strategy.', 'Start with five enterprise customers before broader launch.', 'That keeps early support manageable for pilot scope.'].join(' '), sourceResponseFormat: 'topic_closing_spans', answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy' }], followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one topic-closing-span reply for auth, rollout, and pilot scope without front-loaded topic anchors.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I reused the topic closing spans across auth rollout follow-through.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',

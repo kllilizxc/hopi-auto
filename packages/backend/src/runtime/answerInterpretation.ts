@@ -15,6 +15,7 @@ export type InterpretableSourceResponseFormat =
   | 'inline_topics'
   | 'topic_sentences'
   | 'topic_spans'
+  | 'topic_closing_spans'
   | 'topic_paragraphs'
   | 'topic_blocks'
 
@@ -27,6 +28,7 @@ export interface InterpretedSourceResponseState {
   questionSpans?: QuestionSourceResponseSpan[]
   topicSentences?: TopicSourceResponseSentence[]
   topicSpans?: TopicSourceResponseSpan[]
+  topicClosingSpans?: TopicSourceResponseClosingSpan[]
   topicParagraphs?: TopicSourceResponseParagraph[]
   topicBlocks?: TopicSourceResponseBlock[]
   topicAnchorCandidateLabels?: Set<string>
@@ -38,6 +40,7 @@ export interface InterpretedSourceResponseState {
   consumedQuestionSpanIndexes: Set<number>
   consumedTopicSentenceIndexes: Set<number>
   consumedTopicSpanIndexes: Set<number>
+  consumedTopicClosingSpanIndexes: Set<number>
   consumedTopicParagraphIndexes: Set<number>
   consumedTopicBlockIndexes: Set<number>
 }
@@ -61,6 +64,12 @@ interface TopicSourceResponseSpan {
   text: string
   anchorText: string
   normalizedAnchorLabel: string
+}
+
+interface TopicSourceResponseClosingSpan {
+  text: string
+  closingText: string
+  normalizedClosingLabel: string
 }
 
 interface QuestionSourceResponseBlock {
@@ -272,6 +281,7 @@ export function createInterpretedSourceResponseState(
     consumedQuestionSpanIndexes: new Set<number>(),
     consumedTopicSentenceIndexes: new Set<number>(),
     consumedTopicSpanIndexes: new Set<number>(),
+    consumedTopicClosingSpanIndexes: new Set<number>(),
     consumedTopicParagraphIndexes: new Set<number>(),
     consumedTopicBlockIndexes: new Set<number>(),
   }
@@ -580,11 +590,12 @@ function materializeRemainingInterpretedPlanningAnswers(
     sourceResponseFormat !== 'question_spans' &&
     sourceResponseFormat !== 'topic_sentences' &&
     sourceResponseFormat !== 'topic_spans' &&
+    sourceResponseFormat !== 'topic_closing_spans' &&
     sourceResponseFormat !== 'topic_paragraphs' &&
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'followThrough.inferRemainingAnswers requires sourceResponseFormat "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks".',
+      'followThrough.inferRemainingAnswers requires sourceResponseFormat "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -668,6 +679,26 @@ function materializeRemainingInterpretedPlanningAnswers(
       interpretationState?.consumedTopicSpanIndexes.add(index)
       answers.push({
         summary: inferTopicSummaryFromTopicSpan(span),
+        answer: span.text,
+      })
+    }
+    return answers
+  }
+
+  if (sourceResponseFormat === 'topic_closing_spans') {
+    const spans = parseRequiredTopicSourceResponseClosingSpans(
+      sourceResponse,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, span] of spans.entries()) {
+      if (interpretationState?.consumedTopicClosingSpanIndexes.has(index)) {
+        continue
+      }
+      interpretationState?.consumedTopicClosingSpanIndexes.add(index)
+      answers.push({
+        summary: inferTopicSummaryFromTopicClosingSpan(span),
         answer: span.text,
       })
     }
@@ -841,6 +872,22 @@ function resolveAnswerContent(
     return { answer: topicSpan }
   }
 
+  if (sourceResponseFormat === 'topic_closing_spans') {
+    const topicClosingSpan = consumeTopicClosingSpanSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    if (!topicClosingSpan) {
+      throw new AnswerInterpretationError(
+        `No topic closing span matched ${label} in sourceResponse.`,
+      )
+    }
+    return { answer: topicClosingSpan }
+  }
+
   if (sourceResponseFormat === 'topic_paragraphs') {
     const topicParagraph = consumeTopicParagraphSourceResponseSection(
       sourceResponse,
@@ -977,11 +1024,12 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'inline_topics' &&
     sourceResponseFormat !== 'topic_sentences' &&
     sourceResponseFormat !== 'topic_spans' &&
+    sourceResponseFormat !== 'topic_closing_spans' &&
     sourceResponseFormat !== 'topic_paragraphs' &&
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -1054,6 +1102,14 @@ function materializeMatchingOpenDecisionAnswers(
         sourceResponseState,
         false,
       )
+    } else if (sourceResponseFormat === 'topic_closing_spans') {
+      match = consumeTopicClosingSpanSourceResponseSection(
+        sourceResponse,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+        false,
+      )
     } else if (sourceResponseFormat === 'topic_paragraphs') {
       match = consumeTopicParagraphSourceResponseSection(
         sourceResponse,
@@ -1113,11 +1169,12 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     sourceResponseFormat !== 'question_spans' &&
     sourceResponseFormat !== 'topic_sentences' &&
     sourceResponseFormat !== 'topic_spans' &&
+    sourceResponseFormat !== 'topic_closing_spans' &&
     sourceResponseFormat !== 'topic_paragraphs' &&
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -1161,6 +1218,14 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
           sourceResponseState,
         )
       : undefined
+  const topicClosingSpans =
+    sourceResponseFormat === 'topic_closing_spans'
+      ? parseRequiredTopicSourceResponseClosingSpans(
+          sourceResponse,
+          'inferDecisionTopics',
+          sourceResponseState,
+        )
+      : undefined
   const topicParagraphs =
     sourceResponseFormat === 'topic_paragraphs'
       ? parseRequiredTopicSourceResponseParagraphs(
@@ -1182,6 +1247,7 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
   const reservedQuestionSpanIndexes = new Set<number>()
   const reservedTopicSentenceIndexes = new Set<number>()
   const reservedTopicSpanIndexes = new Set<number>()
+  const reservedTopicClosingSpanIndexes = new Set<number>()
   const reservedTopicParagraphIndexes = new Set<number>()
   const reservedTopicBlockIndexes = new Set<number>()
 
@@ -1218,6 +1284,15 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
         topicSpans,
         buildDecisionAnswerSourceResponseCandidates(answer),
         reservedTopicSpanIndexes,
+      )
+      continue
+    }
+
+    if (topicClosingSpans) {
+      reserveMatchedTopicClosingSpan(
+        topicClosingSpans,
+        buildDecisionAnswerSourceResponseCandidates(answer),
+        reservedTopicClosingSpanIndexes,
       )
       continue
     }
@@ -1291,6 +1366,15 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
         continue
       }
 
+      if (topicClosingSpans) {
+        reserveMatchedTopicClosingSpan(
+          topicClosingSpans,
+          buildOpenDecisionSourceResponseCandidates(decision),
+          reservedTopicClosingSpanIndexes,
+        )
+        continue
+      }
+
       if (topicParagraphs) {
         reserveMatchedTopicParagraph(
           topicParagraphs,
@@ -1335,6 +1419,11 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
 
     if (topicSpans) {
       reserveMatchedTopicSpan(topicSpans, candidates, reservedTopicSpanIndexes)
+      continue
+    }
+
+    if (topicClosingSpans) {
+      reserveMatchedTopicClosingSpan(topicClosingSpans, candidates, reservedTopicClosingSpanIndexes)
       continue
     }
 
@@ -1453,6 +1542,34 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
         summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSpan(span),
+        decisionKey: matchingKnownDecision?.decisionKey,
+        taskRef: matchingKnownDecision?.taskRef,
+        answer: span.text,
+      })
+    }
+
+    return materializedAnswers
+  }
+
+  if (topicClosingSpans) {
+    for (const [index, span] of topicClosingSpans.entries()) {
+      if (reservedTopicClosingSpanIndexes.has(index)) {
+        continue
+      }
+
+      const matchingKnownDecisions = findMatchingKnownDecisionsForTopicClosingSpan(
+        span,
+        knownDecisions,
+      )
+      if (matchingKnownDecisions.length > 1) {
+        throw new AnswerInterpretationError(
+          `Multiple existing decisions match inferred topic closing span "${span.closingText}".`,
+        )
+      }
+
+      const matchingKnownDecision = matchingKnownDecisions[0]
+      materializedAnswers.push({
+        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingSpan(span),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: span.text,
@@ -1677,6 +1794,32 @@ function parseRequiredTopicSourceResponseSpans(
   )
   if (sourceResponseState) {
     sourceResponseState.topicSpans = spans
+  }
+  return spans
+}
+
+function parseRequiredTopicSourceResponseClosingSpans(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.topicClosingSpans) {
+    return sourceResponseState.topicClosingSpans
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat topic_closing_spans requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const spans = parseTopicSourceResponseClosingSpans(
+    parseTopicSourceResponseSentences(shared),
+    sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
+  )
+  if (sourceResponseState) {
+    sourceResponseState.topicClosingSpans = spans
   }
   return spans
 }
@@ -1912,6 +2055,44 @@ function consumeTopicSpanSourceResponseSection(
   }
   if (sourceResponseState) {
     sourceResponseState.consumedTopicSpanIndexes.add(spanIndex)
+  }
+  return spans[spanIndex]?.text
+}
+
+function consumeTopicClosingSpanSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  registerTopicAnchorCandidates(sourceResponseState, [candidates])
+  const spans = parseRequiredTopicSourceResponseClosingSpans(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes = sourceResponseState?.consumedTopicClosingSpanIndexes ?? new Set<number>()
+  const matchingIndexes = findMatchingTopicClosingSpanIndexes(spans, candidates, consumedIndexes)
+
+  if (matchingIndexes.length === 0) {
+    if (!required) {
+      return undefined
+    }
+    throw new AnswerInterpretationError(`No topic closing span matched ${label} in sourceResponse.`)
+  }
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(
+      `Multiple topic closing spans matched ${label} in sourceResponse.`,
+    )
+  }
+
+  const spanIndex = matchingIndexes[0]
+  if (spanIndex === undefined) {
+    return undefined
+  }
+  if (sourceResponseState) {
+    sourceResponseState.consumedTopicClosingSpanIndexes.add(spanIndex)
   }
   return spans[spanIndex]?.text
 }
@@ -2287,6 +2468,48 @@ function parseTopicSourceResponseSpans(
   return spans
 }
 
+function parseTopicSourceResponseClosingSpans(
+  sentences: TopicSourceResponseSentence[],
+  normalizedCandidateLabels: Set<string>,
+) {
+  const spans: TopicSourceResponseClosingSpan[] = []
+  let pendingSentences: string[] = []
+
+  for (const sentence of sentences) {
+    pendingSentences.push(sentence.text)
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      sentence.normalizedText,
+      normalizedCandidateLabels,
+    )
+
+    if (matchingLabels.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple topic closing span anchors matched sentence "${sentence.text}" in sourceResponse.`,
+      )
+    }
+
+    const closingLabel = matchingLabels[0] ?? inferTopicClosingSpanLabelFromSentence(sentence.text)
+    if (!closingLabel) {
+      continue
+    }
+
+    spans.push({
+      text: pendingSentences.join(' '),
+      closingText: sentence.text,
+      normalizedClosingLabel: closingLabel,
+    })
+    pendingSentences = []
+  }
+
+  if (pendingSentences.length > 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_closing_spans requires each span to end with a topic-closing sentence.',
+    )
+  }
+
+  return spans
+}
+
 function parseTopicSourceResponseBlocks(
   paragraphs: TopicSourceResponseParagraph[],
   normalizedCandidateLabels: Set<string>,
@@ -2605,6 +2828,32 @@ function findMatchingTopicSpanIndexes(
   return [...matchingIndexes].sort((left, right) => left - right)
 }
 
+function findMatchingTopicClosingSpanIndexes(
+  spans: TopicSourceResponseClosingSpan[],
+  candidates: string[],
+  consumedIndexes: Set<number>,
+) {
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseText)
+  const matchingIndexes = new Set<number>()
+
+  for (const normalizedCandidate of normalizedCandidates) {
+    if (!normalizedCandidate) {
+      continue
+    }
+
+    spans.forEach((span, index) => {
+      if (consumedIndexes.has(index)) {
+        return
+      }
+      if (span.normalizedClosingLabel === normalizedCandidate) {
+        matchingIndexes.add(index)
+      }
+    })
+  }
+
+  return [...matchingIndexes].sort((left, right) => left - right)
+}
+
 function findMatchingTopicBlockIndexes(
   blocks: TopicSourceResponseBlock[],
   candidates: string[],
@@ -2657,6 +2906,7 @@ function registerTopicAnchorCandidates(
   if (
     !sourceResponseState ||
     (sourceResponseState.sourceResponseFormat !== 'topic_spans' &&
+      sourceResponseState.sourceResponseFormat !== 'topic_closing_spans' &&
       sourceResponseState.sourceResponseFormat !== 'topic_blocks')
   ) {
     return
@@ -2678,6 +2928,7 @@ function registerTopicAnchorCandidates(
   sourceResponseState.topicAnchorCandidateLabels = candidateLabels
   if (changed) {
     sourceResponseState.topicSpans = undefined
+    sourceResponseState.topicClosingSpans = undefined
     sourceResponseState.topicBlocks = undefined
   }
 }
@@ -2738,6 +2989,18 @@ function reserveMatchedTopicSpan(
   reservedIndexes: Set<number>,
 ) {
   const matchingIndexes = findMatchingTopicSpanIndexes(spans, candidates, reservedIndexes)
+  const firstMatch = matchingIndexes[0]
+  if (firstMatch !== undefined) {
+    reservedIndexes.add(firstMatch)
+  }
+}
+
+function reserveMatchedTopicClosingSpan(
+  spans: TopicSourceResponseClosingSpan[],
+  candidates: string[],
+  reservedIndexes: Set<number>,
+) {
+  const matchingIndexes = findMatchingTopicClosingSpanIndexes(spans, candidates, reservedIndexes)
   const firstMatch = matchingIndexes[0]
   if (firstMatch !== undefined) {
     reservedIndexes.add(firstMatch)
@@ -2855,6 +3118,20 @@ function findMatchingKnownDecisionsForTopicSpan(
   return knownDecisions.filter(
     (decision) =>
       findMatchingTopicSpanIndexes(
+        [span],
+        buildKnownDecisionSourceResponseCandidates(decision),
+        new Set<number>(),
+      ).length > 0,
+  )
+}
+
+function findMatchingKnownDecisionsForTopicClosingSpan(
+  span: TopicSourceResponseClosingSpan,
+  knownDecisions: InterpretableKnownDecision[],
+) {
+  return knownDecisions.filter(
+    (decision) =>
+      findMatchingTopicClosingSpanIndexes(
         [span],
         buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
@@ -3043,6 +3320,14 @@ function inferTopicSpanAnchorLabelFromSentence(sentence: string) {
   return normalizeSourceResponseLabel(summary)
 }
 
+function inferTopicClosingSpanLabelFromSentence(sentence: string) {
+  const summary = extractInferredTopicSummaries(sentence)[0]
+  if (!summary) {
+    return undefined
+  }
+  return normalizeSourceResponseLabel(summary)
+}
+
 function inferTopicBlockAnchorLabelFromParagraph(paragraph: string) {
   const summary = extractInferredTopicSummaries(paragraph)[0]
   if (!summary) {
@@ -3087,6 +3372,10 @@ function inferTopicSummaryFromTopicParagraph(paragraph: string) {
 
 function inferTopicSummaryFromTopicSpan(span: TopicSourceResponseSpan) {
   return inferTopicSummaryFromTopicSentence(span.anchorText)
+}
+
+function inferTopicSummaryFromTopicClosingSpan(span: TopicSourceResponseClosingSpan) {
+  return inferTopicSummaryFromTopicSentence(span.closingText)
 }
 
 function inferTopicSummaryFromTopicBlock(block: TopicSourceResponseBlock) {

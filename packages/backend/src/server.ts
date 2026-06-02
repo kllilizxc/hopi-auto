@@ -253,6 +253,7 @@ const resolveDecisionSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_spans',
+      'topic_closing_spans',
       'topic_paragraphs',
       'topic_blocks',
     ])
@@ -280,6 +281,7 @@ const answerDecisionSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_spans',
+      'topic_closing_spans',
       'topic_paragraphs',
       'topic_blocks',
     ])
@@ -310,6 +312,7 @@ const answerDecisionBatchSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_spans',
+      'topic_closing_spans',
       'topic_paragraphs',
       'topic_blocks',
     ])
