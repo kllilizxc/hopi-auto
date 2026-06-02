@@ -6,10 +6,15 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
 
-export interface InterpretableAnswerSource {
-  answerSourceKey: string
-  answer: string
-}
+export type InterpretableAnswerSource =
+  | {
+      answerSourceKey: string
+      answer: string
+    }
+  | {
+      answerSourceKey: string
+      sourceExcerpt: string
+    }
 
 export interface InterpretablePlanningAnswer {
   summary: string
@@ -86,7 +91,7 @@ export function materializeInterpretedDecisionAnswers(
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
 ) {
-  const answerSourcesByKey = createAnswerSourceLookup(answerSources)
+  const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
   return answers.map((answer) => ({
     summary: answer.summary,
     decisionKey: answer.decisionKey,
@@ -109,7 +114,7 @@ export function materializeInterpretedDecisionFollowThrough(
   if (!followThrough) {
     return undefined
   }
-  const answerSourcesByKey = createAnswerSourceLookup(answerSources)
+  const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
 
   if (followThrough.kind === 'planning') {
     return {
@@ -221,7 +226,10 @@ function resolveAnswerText(
   )
 }
 
-function createAnswerSourceLookup(answerSources: InterpretableAnswerSource[] | undefined) {
+function createAnswerSourceLookup(
+  answerSources: InterpretableAnswerSource[] | undefined,
+  sourceResponse: string | undefined,
+) {
   if (!answerSources || answerSources.length === 0) {
     return undefined
   }
@@ -232,7 +240,24 @@ function createAnswerSourceLookup(answerSources: InterpretableAnswerSource[] | u
     if (answerSourcesByKey.has(key)) {
       throw new AnswerInterpretationError(`Duplicate answerSourceKey: ${key}`)
     }
-    answerSourcesByKey.set(key, source.answer.trim())
+    if ('answer' in source) {
+      answerSourcesByKey.set(key, source.answer.trim())
+      continue
+    }
+
+    const sourceExcerpt = source.sourceExcerpt.trim()
+    const shared = sourceResponse?.trim()
+    if (!shared) {
+      throw new AnswerInterpretationError(
+        `sourceExcerpt for answerSourceKey "${key}" requires sourceResponse.`,
+      )
+    }
+    if (!shared.includes(sourceExcerpt)) {
+      throw new AnswerInterpretationError(
+        `sourceExcerpt for answerSourceKey "${key}" was not found in sourceResponse.`,
+      )
+    }
+    answerSourcesByKey.set(key, sourceExcerpt)
   }
   return answerSourcesByKey
 }

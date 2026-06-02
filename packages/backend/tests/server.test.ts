@@ -2237,6 +2237,110 @@ describe('createServer', () => {
     })
   })
 
+  test('records multiple durable answers through the API from excerpt-backed answer sources', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    const sourceResponse =
+      'Use Bun-native auth with a staged rollout to five enterprise customers before broader launch.'
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse,
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth',
+        },
+        {
+          answerSourceKey: 'rollout-strategy-answer',
+          sourceExcerpt: 'a staged rollout',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          sourceExcerpt: 'five enterprise customers before broader launch.',
+        },
+      ],
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          answerSourceKey: 'rollout-strategy-answer',
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answerSourceKey: 'pilot-scope-answer',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: 'a staged rollout',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('returns HTTP 400 when answer-driven interpretation omits both item answers and sourceResponse', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -2298,6 +2402,60 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error: 'Unknown answerSourceKey "auth-strategy-answer" for decision answer auth-strategy.',
+    })
+  })
+
+  test('returns HTTP 400 when excerpt-backed answer sources do not match sourceResponse', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: 'Use Bun-native auth with a staged rollout.',
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use OAuth device flow',
+        },
+      ],
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'sourceExcerpt for answerSourceKey "auth-strategy-answer" was not found in sourceResponse.',
+    })
+  })
+
+  test('returns HTTP 400 when excerpt-backed answer sources omit sourceResponse', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth',
+        },
+      ],
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'sourceExcerpt for answerSourceKey "auth-strategy-answer" requires sourceResponse.',
     })
   })
 
@@ -5644,6 +5802,100 @@ preferences:
             {
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and reuses excerpt-backed answer sources across decision and planner answers', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Ground reusable answer sources in one raw reply for auth, rollout, and pilot scope.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I grounded reusable answer sources in the raw reply and routed them across auth rollout follow-through.', actions: [{ kind: 'record_answers', sourceResponse: 'Use Bun-native auth with a staged rollout to five enterprise customers before broader launch.', answerSources: [{ answerSourceKey: 'auth-strategy-answer', sourceExcerpt: 'Use Bun-native auth' }, { answerSourceKey: 'rollout-strategy-answer', sourceExcerpt: 'a staged rollout' }, { answerSourceKey: 'pilot-scope-answer', sourceExcerpt: 'five enterprise customers before broader launch.' }], answers: [{ decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', answerSourceKey: 'auth-strategy-answer' }, { decisionKey: 'rollout-strategy', summary: 'Choose the rollout strategy', answerSourceKey: 'rollout-strategy-answer' }], followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope', answerSourceKey: 'pilot-scope-answer' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Ground reusable answer sources in one raw reply for auth, rollout, and pilot scope.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I grounded reusable answer sources in the raw reply and routed them across auth rollout follow-through.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: ['rollout-strategy'],
+        }),
+      ]),
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: 'a staged rollout',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          requestKey: 'PR-2',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'five enterprise customers before broader launch.',
             },
           ],
         }),

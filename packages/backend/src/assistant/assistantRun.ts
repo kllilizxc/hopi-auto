@@ -149,10 +149,16 @@ const interpretablePlanningAnswerArraySchema = z
 
 const interpretableAnswerSourceArraySchema = z
   .array(
-    z.object({
-      answerSourceKey: z.string().min(1),
-      answer: z.string().min(1),
-    }),
+    z.union([
+      z.object({
+        answerSourceKey: z.string().min(1),
+        answer: z.string().min(1),
+      }),
+      z.object({
+        answerSourceKey: z.string().min(1),
+        sourceExcerpt: z.string().min(1),
+      }),
+    ]),
   )
   .default([])
 

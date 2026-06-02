@@ -113,6 +113,105 @@ test('materializes decision and planner answers from named answer sources', () =
   })
 })
 
+test('materializes named answer sources from source excerpts inside one shared response', () => {
+  const sourceResponse =
+    'Use Bun-native auth with a staged rollout to five enterprise customers before broader launch.'
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          answerSourceKey: 'rollout-strategy-answer',
+        },
+      ],
+      sourceResponse,
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth',
+        },
+        {
+          answerSourceKey: 'rollout-strategy-answer',
+          sourceExcerpt: 'a staged rollout',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          sourceExcerpt: 'five enterprise customers before broader launch.',
+        },
+      ],
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'a staged rollout',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answerSourceKey: 'pilot-scope-answer',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          sourceExcerpt: 'five enterprise customers before broader launch.',
+        },
+      ],
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: 'five enterprise customers before broader launch.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
 test('rejects unknown answer source keys deterministically', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
@@ -156,4 +255,54 @@ test('rejects duplicate answer source keys deterministically', () => {
       ],
     ),
   ).toThrowError(new AnswerInterpretationError('Duplicate answerSourceKey: shared-answer'))
+})
+
+test('rejects excerpt-backed answer sources when the excerpt is not present in sourceResponse', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+      'Use Bun-native auth with a staged rollout.',
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use OAuth device flow',
+        },
+      ],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'sourceExcerpt for answerSourceKey "auth-strategy-answer" was not found in sourceResponse.',
+    ),
+  )
+})
+
+test('rejects excerpt-backed answer sources when sourceResponse is missing', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+      undefined,
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth',
+        },
+      ],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'sourceExcerpt for answerSourceKey "auth-strategy-answer" requires sourceResponse.',
+    ),
+  )
 })

@@ -323,7 +323,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
-          "answer": "explicit extracted answer snippet you want to reuse across more than one item"
+          "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
@@ -394,11 +394,11 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
-          "answer": "first reusable extracted answer snippet"
+          "sourceExcerpt": "first exact substring to lift from sourceResponse"
         },
         {
           "answerSourceKey": "rollout-strategy-answer",
-          "answer": "second reusable extracted answer snippet"
+          "sourceExcerpt": "second exact substring to lift from sourceResponse"
         }
       ],
       "sourceResponse": "optional less-structured raw user reply to reuse across more than one decision topic and any followThrough answers",
@@ -457,7 +457,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
-          "answer": "explicit extracted answer snippet you want to reuse across more than one item"
+          "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
@@ -536,7 +536,8 @@ Rules:
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
-- Use explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
+- When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
+- Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.

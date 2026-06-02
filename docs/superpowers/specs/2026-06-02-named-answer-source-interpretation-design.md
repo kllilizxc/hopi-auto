@@ -44,6 +44,8 @@ on:
 
 These sources are ephemeral interpretation input only. Runtime materializes them into existing durable decision answers and planning-request answers before touching the authoritative stores.
 
+Later slices may add more grounded source-entry forms, but the core authority here is still one reusable named source bundle resolved before durable writes.
+
 ### Per-Item `answerSourceKey`
 
 Decision-answer entries and interpretable planner-answer entries now support:
