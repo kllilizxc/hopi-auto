@@ -1998,8 +1998,19 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     return summaryFromMatchHint
   }
 
+  if (hasMultipleStableMatchHints(entry.matchHints)) {
+    throw new AnswerInterpretationError(
+      `Remaining answerSource "${entry.key}" requires summary, stable prompt, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
+    )
+  }
+
+  const summaryFromAnswerSourceKey = inferSummaryFromStableAnswerSourceKey(entry.key)
+  if (summaryFromAnswerSourceKey) {
+    return summaryFromAnswerSourceKey
+  }
+
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires summary, stable prompt, or exactly one stable match hint for ${label}.`,
+    `Remaining answerSource "${entry.key}" requires summary, stable prompt, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
   )
 }
 
@@ -6701,6 +6712,25 @@ function inferSummaryFromStableMatchHints(matchHints: string[] | undefined) {
     normalizeExtractedTopicSummary(onlyHint, true) ||
     (synthesizeCanonicalPromptFromSummary(onlyHint) === onlyHint ? onlyHint : undefined)
   )
+}
+
+function hasMultipleStableMatchHints(matchHints: string[] | undefined) {
+  return dedupeNonEmptyStrings(matchHints ?? []).length > 1
+}
+
+function inferSummaryFromStableAnswerSourceKey(key: string | undefined) {
+  const trimmed = key?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const humanizedWithSuffix = trimmed.replace(/[_-]+/g, ' ')
+  const humanized = humanizeAnswerSourceKey(trimmed)
+  if (!humanized || humanized === humanizedWithSuffix) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(humanized, true)
 }
 
 function extractPrefixedTopicSummary(text: string) {
