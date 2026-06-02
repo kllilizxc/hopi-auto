@@ -419,6 +419,42 @@ test('materializes matching open decisions from labeled sections without repeati
   ])
 })
 
+test('materializes new decision topics from remaining labeled sections while reserving planner summaries', () => {
+  const sourceResponse = [
+    'Auth strategy: Use Bun-native auth',
+    'Rollout strategy: Use a staged rollout',
+    'Pilot scope: Start with five enterprise customers before broader launch.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'labeled_sections',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: undefined,
+      summary: 'Auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout',
+    },
+  ])
+})
+
 test('materializes ordered items across decision and planner answers without labels', () => {
   const sourceResponse = [
     '- Use Bun-native auth',
@@ -560,6 +596,27 @@ test('rejects inferOpenDecisions when labeled-section interpretation is not enab
   ).toThrowError(
     new AnswerInterpretationError(
       'inferOpenDecisions requires sourceResponseFormat "labeled_sections" or "ordered_items".',
+    ),
+  )
+})
+
+test('rejects inferDecisionTopics when labeled-section interpretation is not enabled', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      'Auth strategy: Use Bun-native auth',
+      [],
+      'ordered_items',
+      undefined,
+      true,
+      [],
+      [],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections".',
     ),
   )
 })

@@ -11,9 +11,14 @@ export type InterpretableSourceResponseFormat = 'labeled_sections' | 'ordered_it
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
   sourceResponseFormat: InterpretableSourceResponseFormat
-  labeledSections?: Map<string, string>
+  labeledSections?: Map<string, LabeledSourceResponseSection>
   orderedItems?: string[]
   nextOrderedItemIndex: number
+}
+
+interface LabeledSourceResponseSection {
+  label: string
+  value: string
 }
 
 export type InterpretableAnswerSource =
@@ -43,6 +48,12 @@ export interface InterpretableDecisionAnswerEntryInput {
 }
 
 export interface InterpretableOpenDecision {
+  decisionKey: string
+  summary: string
+  taskRef?: string
+}
+
+export interface InterpretableKnownDecision {
   decisionKey: string
   summary: string
   taskRef?: string
@@ -104,6 +115,25 @@ export type InterpretableDecisionFollowThroughInput =
   | InterpretableDecisionLeafFollowThroughInput
   | InterpretableDecisionWorkflowBatchFollowThroughInput
 
+export function listInterpretableFollowThroughAnswerSummaries(
+  followThrough: InterpretableDecisionFollowThroughInput | undefined,
+) {
+  if (!followThrough) {
+    return []
+  }
+
+  if (followThrough.kind === 'workflow_batch') {
+    return [
+      ...(followThrough.answers?.map((answer) => answer.summary) ?? []),
+      ...followThrough.workflows.flatMap(
+        (workflow) => workflow.answers?.map((answer) => answer.summary) ?? [],
+      ),
+    ]
+  }
+
+  return followThrough.answers?.map((answer) => answer.summary) ?? []
+}
+
 export function createInterpretedSourceResponseState(
   sourceResponse: string | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
@@ -157,6 +187,9 @@ export function materializeInterpretedDecisionAnswerBatch(
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
+  inferDecisionTopics = false,
+  knownDecisions: InterpretableKnownDecision[] = [],
+  reservedAnswerSummaries: string[] = [],
 ) {
   const explicitAnswers = answers ?? []
   if (inferOpenDecisions && explicitAnswers.some((answer) => !answer.decisionKey?.trim())) {
@@ -176,22 +209,35 @@ export function materializeInterpretedDecisionAnswerBatch(
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
-  const materializedAnswers = inferOpenDecisions
-    ? [
-        ...materializedExplicitAnswers,
-        ...materializeMatchingOpenDecisionAnswers(
-          openDecisions,
-          new Set(
-            materializedExplicitAnswers.flatMap((answer) =>
-              answer.decisionKey ? [answer.decisionKey] : [],
-            ),
-          ),
-          sourceResponse,
-          sourceResponseFormat,
-          interpretationState,
-        ),
-      ]
-    : materializedExplicitAnswers
+  const explicitDecisionKeys = new Set(
+    materializedExplicitAnswers.flatMap((answer) =>
+      answer.decisionKey ? [answer.decisionKey] : [],
+    ),
+  )
+  const matchedOpenDecisionAnswers = inferOpenDecisions
+    ? materializeMatchingOpenDecisionAnswers(
+        openDecisions,
+        explicitDecisionKeys,
+        sourceResponse,
+        sourceResponseFormat,
+        interpretationState,
+      )
+    : []
+  const materializedAnswers = [
+    ...materializedExplicitAnswers,
+    ...matchedOpenDecisionAnswers,
+    ...materializeNewDecisionTopicAnswersFromLabeledSections(
+      explicitAnswers,
+      openDecisions,
+      inferOpenDecisions,
+      inferDecisionTopics,
+      sourceResponse,
+      sourceResponseFormat,
+      interpretationState,
+      knownDecisions,
+      reservedAnswerSummaries,
+    ),
+  ]
 
   if (materializedAnswers.length === 0) {
     throw new AnswerInterpretationError(
@@ -454,7 +500,7 @@ function materializeMatchingOpenDecisionAnswers(
     const match =
       sourceResponseFormat === 'labeled_sections'
         ? findLabeledSourceResponseSection(
-            sectionsByLabel ?? new Map<string, string>(),
+            sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
             buildOpenDecisionSourceResponseCandidates(decision),
           )
         : resolveOrderedSourceResponseItem(
@@ -470,6 +516,93 @@ function materializeMatchingOpenDecisionAnswers(
       decisionKey: decision.decisionKey,
       taskRef: decision.taskRef,
       answer: match,
+    })
+  }
+
+  return materializedAnswers
+}
+
+function materializeNewDecisionTopicAnswersFromLabeledSections(
+  explicitAnswers: InterpretableDecisionAnswerEntryInput[],
+  openDecisions: InterpretableOpenDecision[],
+  inferOpenDecisions: boolean,
+  inferDecisionTopics: boolean,
+  sourceResponse: string | undefined,
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  knownDecisions: InterpretableKnownDecision[],
+  reservedAnswerSummaries: string[],
+) {
+  if (!inferDecisionTopics) {
+    return []
+  }
+
+  if (sourceResponseFormat !== 'labeled_sections') {
+    throw new AnswerInterpretationError(
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections".',
+    )
+  }
+
+  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(
+    sourceResponse,
+    'inferDecisionTopics',
+    sourceResponseState,
+  )
+  const reservedLabels = new Set<string>()
+
+  for (const answer of explicitAnswers) {
+    reserveMatchedLabeledSection(
+      sectionsByLabel,
+      buildDecisionAnswerSourceResponseCandidates(answer),
+      reservedLabels,
+    )
+  }
+
+  if (inferOpenDecisions) {
+    const explicitDecisionKeys = new Set(
+      explicitAnswers.flatMap((answer) => (answer.decisionKey ? [answer.decisionKey] : [])),
+    )
+    for (const decision of openDecisions) {
+      if (explicitDecisionKeys.has(decision.decisionKey)) {
+        continue
+      }
+      reserveMatchedLabeledSection(
+        sectionsByLabel,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        reservedLabels,
+      )
+    }
+  }
+
+  for (const summary of reservedAnswerSummaries) {
+    reserveMatchedLabeledSection(sectionsByLabel, [summary], reservedLabels)
+  }
+
+  const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
+  const materializedAnswers: Array<{
+    summary: string
+    decisionKey?: string
+    taskRef?: string
+    answer: string
+  }> = []
+  for (const [normalizedLabel, section] of sectionsByLabel) {
+    if (reservedLabels.has(normalizedLabel)) {
+      continue
+    }
+
+    const matchingKnownDecisions = knownDecisionsBySummary.get(normalizedLabel) ?? []
+    if (matchingKnownDecisions.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple existing decisions match inferred label "${section.label}".`,
+      )
+    }
+
+    const matchingKnownDecision = matchingKnownDecisions[0]
+    materializedAnswers.push({
+      summary: matchingKnownDecision?.summary ?? section.label,
+      decisionKey: matchingKnownDecision?.decisionKey,
+      taskRef: matchingKnownDecision?.taskRef,
+      answer: section.value,
     })
   }
 
@@ -499,13 +632,13 @@ function parseRequiredLabeledSourceResponseSections(
 }
 
 function findLabeledSourceResponseSection(
-  sectionsByLabel: Map<string, string>,
+  sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
 ) {
   for (const candidate of candidates) {
     const match = sectionsByLabel.get(normalizeSourceResponseLabel(candidate))
     if (match) {
-      return match
+      return match.value
     }
   }
   return undefined
@@ -569,7 +702,7 @@ function parseOrderedSourceResponseItems(sourceResponse: string) {
 }
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {
-  const sectionsByLabel = new Map<string, string>()
+  const sectionsByLabel = new Map<string, LabeledSourceResponseSection>()
   for (const line of sourceResponse.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed) {
@@ -590,9 +723,40 @@ function parseLabeledSourceResponseSections(sourceResponse: string) {
         `Duplicate labeled section "${rawLabel}" in sourceResponse.`,
       )
     }
-    sectionsByLabel.set(normalized, value)
+    sectionsByLabel.set(normalized, {
+      label: rawLabel,
+      value,
+    })
   }
   return sectionsByLabel
+}
+
+function reserveMatchedLabeledSection(
+  sectionsByLabel: Map<string, LabeledSourceResponseSection>,
+  candidates: string[],
+  reservedLabels: Set<string>,
+) {
+  for (const candidate of candidates) {
+    const normalized = normalizeSourceResponseLabel(candidate)
+    if (sectionsByLabel.has(normalized)) {
+      reservedLabels.add(normalized)
+      return
+    }
+  }
+}
+
+function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownDecision[]) {
+  const lookup = new Map<string, InterpretableKnownDecision[]>()
+  for (const decision of knownDecisions) {
+    const normalized = normalizeSourceResponseLabel(decision.summary)
+    const existing = lookup.get(normalized)
+    if (existing) {
+      existing.push(decision)
+      continue
+    }
+    lookup.set(normalized, [decision])
+  }
+  return lookup
 }
 
 function normalizeSourceResponseLabel(value: string) {

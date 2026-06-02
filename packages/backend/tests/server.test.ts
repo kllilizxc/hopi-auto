@@ -2644,6 +2644,104 @@ describe('createServer', () => {
     })
   })
 
+  test('records new durable decision topics through the API from remaining labeled sections without explicit answers', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy: Use Bun-native auth',
+        'Rollout strategy: Use a staged rollout',
+        'Pilot scope: Start with five enterprise customers before broader launch.',
+      ].join('\n'),
+      sourceResponseFormat: 'labeled_sections',
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1', 'D-2'],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout',
+        }),
+      ],
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          decisionRefs: ['D-1', 'D-2'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          decisionRefs: ['D-1', 'D-2'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('records multiple durable answers through the API from ordered items without labels', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -2916,6 +3014,22 @@ describe('createServer', () => {
     await expect(response.json()).resolves.toMatchObject({
       error:
         'inferOpenDecisions requires sourceResponseFormat "labeled_sections" or "ordered_items".',
+    })
+  })
+
+  test('returns HTTP 400 when inferDecisionTopics is used without labeled-section interpretation', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: 'Auth strategy: Use Bun-native auth',
+      sourceResponseFormat: 'ordered_items',
+      inferDecisionTopics: true,
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'inferDecisionTopics requires sourceResponseFormat "labeled_sections".',
     })
   })
 
@@ -6660,6 +6774,80 @@ preferences:
           ],
         }),
         expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and infers new durable decision topics from remaining labeled sections', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one labeled reply and infer new decision topics from the remaining sections.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I inferred new durable decision topics from the remaining labeled reply sections.', actions: [{ kind: 'record_answers', sourceResponse: ['Auth strategy: Use Bun-native auth', 'Rollout strategy: Use a staged rollout', 'Pilot scope: Start with five enterprise customers before broader launch.'].join('\\n'), sourceResponseFormat: 'labeled_sections', inferDecisionTopics: true, followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Use one labeled reply and infer new decision topics from the remaining sections.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I inferred new durable decision topics from the remaining labeled reply sections.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          createdDecisionKeys: ['D-1', 'D-2'],
+        }),
+      ]),
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'D-1',
+          summary: 'Auth strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'D-2',
+          summary: 'Rollout strategy',
+          answer: 'Use a staged rollout',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          decisionRefs: ['D-1', 'D-2'],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          decisionRefs: ['D-1', 'D-2'],
           answers: [
             {
               summary: 'Pilot scope',

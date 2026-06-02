@@ -13,6 +13,7 @@ import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
   createInterpretedSourceResponseState,
+  listInterpretableFollowThroughAnswerSummaries,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -266,6 +267,7 @@ const answerDecisionBatchSchema = z.object({
   sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
   sourceResponse: z.string().min(1).optional(),
   inferOpenDecisions: z.boolean().default(false),
+  inferDecisionTopics: z.boolean().default(false),
   answers: z.array(answerDecisionBatchEntrySchema).default([]),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -582,6 +584,13 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.answerSources,
             body.sourceResponseFormat,
             sourceResponseState,
+            body.inferDecisionTopics ?? false,
+            current.decisions.map((decision) => ({
+              decisionKey: decision.decisionKey,
+              summary: decision.summary,
+              taskRef: decision.taskRef,
+            })),
+            listInterpretableFollowThroughAnswerSummaries(body.followThrough),
           )
           const result = await answerGoalDecisions(
             {

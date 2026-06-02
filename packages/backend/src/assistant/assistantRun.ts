@@ -293,6 +293,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
     sourceResponse: z.string().min(1).optional(),
     inferOpenDecisions: z.boolean().default(false),
+    inferDecisionTopics: z.boolean().default(false),
     answers: z.array(assistantDecisionAnswerSchema).default([]),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
   }),

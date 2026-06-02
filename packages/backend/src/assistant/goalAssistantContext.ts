@@ -407,6 +407,7 @@ Required outcome shape:
         }
       ],
       "inferOpenDecisions": "optional boolean; when true with sourceResponseFormat labeled_sections or ordered_items, runtime also resolves matching current open decisions you did not repeat in answers[]",
+      "inferDecisionTopics": "optional boolean; when true with sourceResponseFormat labeled_sections, runtime also turns remaining unclaimed labeled sections into durable decision topics",
       "sourceResponseFormat": "optional literal 'labeled_sections' or 'ordered_items' when sourceResponse should be interpreted as labeled answers or ordered reply items",
       "sourceResponse": "optional less-structured raw user reply to reuse across more than one decision topic and any followThrough answers",
       "answers": [
@@ -548,6 +549,7 @@ Rules:
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections" or "ordered_items" instead of repeating those same decision topics again inside "answers".
+- When there is no existing durable decision surface yet but one labeled reply already names the durable decision topics, prefer "record_answers" with "inferDecisionTopics": true plus root "sourceResponseFormat": "labeled_sections" so runtime can create those durable decision topics from the remaining labeled sections after planner-only answers are reserved.
 - When mixing "inferOpenDecisions": true with explicit "record_answers" entries, keep explicit entries keyed by stable "decisionKey" so runtime does not have to guess whether you meant to reuse an existing open decision topic or create a new one.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.

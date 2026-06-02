@@ -8,6 +8,7 @@ import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
   createInterpretedSourceResponseState,
+  listInterpretableFollowThroughAnswerSummaries,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -507,6 +508,13 @@ async function applyAssistantAction(
       action.answerSources,
       action.sourceResponseFormat,
       sourceResponseState,
+      action.inferDecisionTopics ?? false,
+      current.decisions.map((decision) => ({
+        decisionKey: decision.decisionKey,
+        summary: decision.summary,
+        taskRef: decision.taskRef,
+      })),
+      listInterpretableFollowThroughAnswerSummaries(action.followThrough),
     )
     const result = await answerGoalDecisions(
       {
