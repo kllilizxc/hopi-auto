@@ -348,6 +348,7 @@ async function applyAssistantAction(
         goalKey,
         decisionKey: action.decisionKey,
         summary: action.summary,
+        prompt: action.prompt,
         taskRef: action.taskRef,
         writer: 'assistant',
         reason: `assistant request decision ${action.decisionKey}`,
@@ -442,6 +443,7 @@ async function applyAssistantAction(
       [
         {
           summary: action.summary,
+          prompt: action.prompt,
           decisionKey: action.decisionKey,
           taskRef: action.taskRef,
           answer: action.answer,
@@ -470,6 +472,7 @@ async function applyAssistantAction(
       {
         goalKey,
         summary: firstAnswer.summary,
+        prompt: firstAnswer.prompt,
         decisionKey: firstAnswer.decisionKey,
         taskRef: firstAnswer.taskRef,
         answer: firstAnswer.answer,

@@ -12,6 +12,7 @@ export type GoalDecisionStatus = (typeof DECISION_STATUSES)[number]
 export interface GoalDecision {
   decisionKey: string
   summary: string
+  prompt?: string
   status: GoalDecisionStatus
   taskRef?: string
   answer?: string
@@ -30,7 +31,7 @@ export interface DecisionStore {
   ensureGoalDecisions(goalKey: string): Promise<GoalDecisionSet>
   createDecision(
     goalKey: string,
-    input: { decisionKey?: string; summary: string; taskRef?: string },
+    input: { decisionKey?: string; summary: string; prompt?: string; taskRef?: string },
   ): Promise<GoalDecision>
   resolveDecision(
     goalKey: string,
@@ -42,6 +43,7 @@ export interface DecisionStore {
 const GoalDecisionSchema = z.object({
   decisionKey: z.string().min(1),
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   status: z.enum(DECISION_STATUSES),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
@@ -84,6 +86,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         const decision: GoalDecision = {
           decisionKey,
           summary: input.summary,
+          prompt: input.prompt,
           status: 'open',
           taskRef: input.taskRef,
           createdAt,

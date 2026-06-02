@@ -17,6 +17,7 @@ import {
 export interface GoalDecisionRequestInput {
   goalKey: string
   summary: string
+  prompt?: string
   decisionKey?: string
   taskRef?: string
   writer?: string
@@ -41,6 +42,7 @@ export interface GoalDecisionAnswerResult extends GoalDecisionResolveResult {
 
 export interface GoalDecisionAnswerEntryInput {
   summary: string
+  prompt?: string
   decisionKey?: string
   taskRef?: string
   answer: string
@@ -161,6 +163,7 @@ export async function requestGoalDecision(
     (await stores.decisions.createDecision(input.goalKey, {
       decisionKey: input.decisionKey,
       summary: input.summary,
+      prompt: input.prompt,
       taskRef: input.taskRef,
     }))
   let blockerAdded = false
@@ -291,6 +294,7 @@ export async function answerGoalDecision(
   input: {
     goalKey: string
     summary: string
+    prompt?: string
     decisionKey?: string
     taskRef?: string
     answer: string
@@ -304,6 +308,7 @@ export async function answerGoalDecision(
     answers: [
       {
         summary: input.summary,
+        prompt: input.prompt,
         decisionKey: input.decisionKey,
         taskRef: input.taskRef,
         answer: input.answer,
@@ -356,6 +361,7 @@ export async function answerGoalDecisions(
       (await stores.decisions.createDecision(input.goalKey, {
         decisionKey: answer.decisionKey,
         summary: answer.summary,
+        prompt: answer.prompt,
         taskRef: answer.taskRef,
       }))
     const resolved = await stores.decisions.resolveDecision(input.goalKey, decision.decisionKey, {

@@ -29,6 +29,7 @@ Phase 1 backend is complete:
 - Exact assistant bundle inspection is now implemented on the Bun product path for `context.md`, `prompt.md`, `outcome.json`, and `result.json`.
 - Repo preference editing is now implemented on the active Bun API/UI path, and assistant now supports structured `request_planning` and durable preference lifecycle actions.
 - Assistant can now explicitly request decision topics, and the Bun product path now supports direct decision creation and resolution with visible blocker linking.
+- Durable decision topics now also support optional exact `prompt` text, so assistant/API/UI can preserve the canonical user-facing question directly in `decisions.yml` instead of relying only on short summaries or thread history.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Resolving a decision that was blocking engineering work now creates or reuses visible planner follow-through, rewires engineering blockers onto that planning task, and lets richer later planning requests upgrade the generic follow-through instead of duplicating it.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
@@ -109,6 +110,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`: current authority note for exact assistant bundle inspection on the Bun product path.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`: current authority note for repo preference editing and safer assistant planning/preference actions.
 - `docs/superpowers/specs/2026-06-02-structured-preference-lifecycle-design.md`: current authority note for canonical structured repo preferences with stable keys, active/retired lifecycle, and assistant/API preference mutations.
+- `docs/superpowers/specs/2026-06-02-durable-decision-prompt-design.md`: current authority note for preserving exact user-facing decision questions directly on durable decision topics through shared runtime, assistant, API, and Bun UI surfaces.
 - `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
 - `docs/superpowers/specs/2026-06-02-named-answer-source-interpretation-design.md`: current authority note for reusing explicitly extracted topic-specific answer snippets across durable decision topics and non-decision follow-through answers without introducing a second durable store.
 - `docs/superpowers/specs/2026-06-02-answer-source-excerpt-grounding-design.md`: current authority note for grounding reusable named answer sources directly in one shared raw reply through exact source excerpts.
@@ -307,7 +309,7 @@ Current backend source:
 - `packages/backend/src/storage/paths.ts`: `.hopi` path construction.
 - `packages/backend/src/storage/lock.ts`: file lock with same-process queue and stale lock handling.
 - `packages/backend/src/storage/boardStore.ts`: atomic board reads, mutations, and event appends.
-- `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`.
+- `packages/backend/src/storage/decisionStore.ts`: durable Goal decision storage in `decisions.yml`, including optional exact question prompts.
 - `packages/backend/src/storage/preferenceStore.ts`: canonical structured repo preference storage with stable keys, active/retired lifecycle, and file-native migration/validation for `.hopi/preference.md`.
 - `packages/backend/src/storage/planningRequestStore.ts`: durable Goal planning-request storage in `planning-requests.yml`.
 - `packages/backend/src/runtime/assistantThreadStore.ts`: Goal-scoped assistant conversation overlay under `.hopi/runtime/**`.
@@ -626,7 +628,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on explicit topic mentions inside each mapped question sentence, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
+- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply by grounding against durable decision prompts when available, without first relying on explicit topic mentions inside each mapped question sentence, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -635,7 +637,7 @@ What is still missing:
 Next high-leverage phase:
 
 1. Add richer planner/runtime workflows on top of Goal-local durable docs, `planning-requests.yml`, and the current deterministic scheduler core, now that planning follow-through carries explicit decision lineage, captured non-decision answers, generalized requested-update paths, scheduler-enforced coverage checks, automatic decision-to-request enrichment, Goal-doc-aware coverage policy, grouped multi-task follow-through, grouped decision-lineage propagation, durable grouped task keys for incremental extension, current-open-leaf blocker propagation for grouped planning, mixed answer follow-through on decision-backed actions, direct multi-workflow planning on the pure planning surface, one-surface reuse for the first child in direct workflow batches, grouped-surface reuse for the first child in direct and decision-backed workflow graphs, generated durable `W-*` identity for workflow graphs that omit explicit `workflowKey`, cross-workflow blocker propagation when that reused surface was already blocking engineering, stable `workflowTaskKey`-backed reuse for standalone direct-workflow children, stable `blockedByWorkflowKeys`-backed child dependencies across direct workflow tails, workflow-root shared decision/answer context for direct workflow graphs, workflow-root shared non-decision answers for decision-backed workflow graphs, durable workflow-root shared-context persistence across later `workflowKey` extensions, and shared workflow-graph authority across both direct-planning and decision-backed multi-workflow follow-through.
-2. Explore deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on explicit topic mentions inside each mapped question sentence, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
+2. Explore deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply by grounding against durable decision prompts when available, without first relying on explicit topic mentions inside each mapped question sentence, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 

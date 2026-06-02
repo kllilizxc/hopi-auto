@@ -85,6 +85,7 @@ const moveTaskSchema = z.object({
 const createDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
 })
 
@@ -255,6 +256,7 @@ const resolveDecisionSchema = z.object({
 const answerDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -280,6 +282,7 @@ const answerDecisionSchema = z.object({
 const answerDecisionBatchEntrySchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -516,6 +519,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey: body.decisionKey,
               summary: body.summary,
+              prompt: body.prompt,
               taskRef: body.taskRef,
               writer: 'api',
               reason: `api request decision ${body.decisionKey ?? body.summary}`,
@@ -544,6 +548,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             [
               {
                 summary: body.summary,
+                prompt: body.prompt,
                 decisionKey: body.decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
@@ -573,6 +578,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey: firstAnswer.decisionKey,
               summary: firstAnswer.summary,
+              prompt: firstAnswer.prompt,
               taskRef: firstAnswer.taskRef,
               answer: firstAnswer.answer,
               followThrough: materializeInterpretedDecisionFollowThrough(

@@ -311,11 +311,13 @@ Required outcome shape:
       "kind": "request_decision",
       "decisionKey": "stable-decision-key",
       "summary": "highest-leverage missing answer",
+      "prompt": "exact user-facing question to preserve on the durable decision topic",
       "taskRef": "optional task ref to block visibly"
     },
     {
       "kind": "record_answer",
       "summary": "durable decision topic",
+      "prompt": "exact user-facing question to preserve on the durable decision topic",
       "decisionKey": "optional stable decision key to reuse",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
@@ -414,6 +416,7 @@ Required outcome shape:
         {
           "summary": "first durable decision topic",
           "decisionKey": "optional first stable decision key",
+          "prompt": "exact user-facing question for this first decision topic",
           "taskRef": "optional linked task ref",
           "answer": "first explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
@@ -422,6 +425,7 @@ Required outcome shape:
         {
           "summary": "second durable decision topic",
           "decisionKey": "optional second stable decision key",
+          "prompt": "exact user-facing question for this second decision topic",
           "answer": "second explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
           "answerSourceKey": "optional reusable extracted answer source key"
@@ -546,6 +550,7 @@ Rules:
 - Prefer captured answers on "request_planning", "request_planning_batch", or "request_planning_workflows" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
+- When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".

@@ -38,6 +38,7 @@ interface TodoBoard {
 interface GoalDecision {
   decisionKey: string
   summary: string
+  prompt?: string
   status: 'open' | 'resolved'
   taskRef?: string
   answer?: string
@@ -566,6 +567,7 @@ root.addEventListener('submit', (event: SubmitEvent) => {
       {
         decisionKey: `${formData.get('decisionKey') ?? ''}`.trim(),
         summary,
+        prompt: `${formData.get('prompt') ?? ''}`.trim(),
         taskRef: `${formData.get('taskRef') ?? ''}`.trim(),
       },
       form,
@@ -1066,6 +1068,7 @@ async function createDecision(
   input: {
     decisionKey: string
     summary: string
+    prompt: string
     taskRef: string
   },
   form: HTMLFormElement,
@@ -1077,6 +1080,7 @@ async function createDecision(
       body: JSON.stringify({
         decisionKey: input.decisionKey || undefined,
         summary: input.summary,
+        prompt: input.prompt || undefined,
         taskRef: input.taskRef || undefined,
       }),
     })
@@ -1467,6 +1471,7 @@ function render() {
                 </div>
                 <form class="decision-form" data-role="decision-create-form">
                   <input name="summary" placeholder="Open one visible decision topic" />
+                  <input name="prompt" placeholder="exact question to ask (optional)" />
                   <input name="decisionKey" placeholder="decision key (optional)" />
                   <input name="taskRef" placeholder="task ref to block (optional)" />
                   <div class="assistant-actions-row">
@@ -1641,6 +1646,11 @@ function renderDecision(decision: GoalDecision) {
       </div>
       <strong>${escapeHtml(decision.decisionKey)}</strong>
       <p>${escapeHtml(decision.summary)}</p>
+      ${
+        decision.prompt
+          ? `<div class="assistant-summary">Prompt: ${escapeHtml(decision.prompt)}</div>`
+          : ''
+      }
       ${decision.taskRef ? `<div class="assistant-summary">Task: ${escapeHtml(decision.taskRef)}</div>` : ''}
       ${
         decision.answer

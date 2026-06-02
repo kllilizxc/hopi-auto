@@ -1410,15 +1410,46 @@ describe('createServer', () => {
     expect(board.items[0]).toMatchObject({ status: 'in_review' })
   })
 
-  test('lists and resolves Goal decisions through the API', async () => {
+  test('creates, lists, and resolves Goal decisions through the API', async () => {
     const workspaceRoot = rootDir()
-    const decisions = createDecisionStore(workspaceRoot)
-    const created = await decisions.createDecision('test', {
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-5',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Decide auth provider',
+        description: 'Wait for the auth provider decision.',
+        acceptanceCriteria: ['The auth provider choice is visible.'],
+        blockedBy: [],
+      }),
+    ])
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'auth-provider',
       summary: 'Choose auth provider',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
       taskRef: 'T-5',
     })
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      decisionKey: 'auth-provider',
+      summary: 'Choose auth provider',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      taskRef: 'T-5',
+      status: 'open',
+    })
 
-    const server = startServer(undefined, workspaceRoot)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-provider',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        }),
+      ],
+    })
 
     const listResponse = await fetch(apiUrl(server, '/api/goals/test/decisions'))
     expect(listResponse.status).toBe(200)
@@ -1426,8 +1457,9 @@ describe('createServer', () => {
       goalKey: 'test',
       decisions: [
         {
-          decisionKey: created.decisionKey,
+          decisionKey: 'auth-provider',
           summary: 'Choose auth provider',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
           status: 'open',
         },
       ],
@@ -1435,17 +1467,18 @@ describe('createServer', () => {
 
     const resolveResponse = await postJson(
       server,
-      `/api/goals/test/decisions/${created.decisionKey}/resolve`,
+      '/api/goals/test/decisions/auth-provider/resolve',
       { answer: 'Use Bun-native sessions.' },
     )
     expect(resolveResponse.status).toBe(200)
     await expect(resolveResponse.json()).resolves.toMatchObject({
       decision: expect.objectContaining({
-        decisionKey: created.decisionKey,
+        decisionKey: 'auth-provider',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
         status: 'resolved',
         answer: 'Use Bun-native sessions.',
       }),
-      blockerRemoved: false,
+      blockerRemoved: true,
     })
   })
 
@@ -5453,7 +5486,7 @@ preferences:
         cmd: [
           'bun',
           '-e',
-          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Plan auth integration')) throw new Error('missing planning context'); if (!prompt.includes('We need one auth decision before planning can continue.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the visible planning task and opened one decision topic before planning continues.', actions: [{ kind: 'request_planning', title: 'Plan auth integration', description: 'Clarify the auth integration plan.', acceptanceCriteria: ['The auth planning path is visible.'] }, { kind: 'request_decision', decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', taskRef: 'P-7' }] })); console.log('assistant decision requested')",
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Plan auth integration')) throw new Error('missing planning context'); if (!prompt.includes('We need one auth decision before planning can continue.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused the visible planning task and opened one decision topic before planning continues.', actions: [{ kind: 'request_planning', title: 'Plan auth integration', description: 'Clarify the auth integration plan.', acceptanceCriteria: ['The auth planning path is visible.'] }, { kind: 'request_decision', decisionKey: 'auth-strategy', summary: 'Choose the auth strategy', prompt: 'Which auth strategy should we adopt before implementation continues?', taskRef: 'P-7' }] })); console.log('assistant decision requested')",
           '${PROMPT_FILE}',
           '${OUTCOME_FILE}',
         ],
@@ -5490,6 +5523,7 @@ preferences:
         expect.objectContaining({
           decisionKey: 'auth-strategy',
           summary: 'Choose the auth strategy',
+          prompt: 'Which auth strategy should we adopt before implementation continues?',
           status: 'open',
           taskRef: 'P-7',
         }),

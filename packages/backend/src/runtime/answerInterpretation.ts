@@ -90,6 +90,7 @@ export interface InterpretablePlanningAnswer {
 
 export interface InterpretableDecisionAnswerEntryInput {
   summary: string
+  prompt?: string
   decisionKey?: string
   taskRef?: string
   answer?: string
@@ -107,6 +108,14 @@ export interface InterpretableKnownDecision {
   decisionKey: string
   summary: string
   taskRef?: string
+}
+
+export interface MaterializedInterpretedDecisionAnswer {
+  summary: string
+  prompt?: string
+  decisionKey?: string
+  taskRef?: string
+  answer: string
 }
 
 export interface InterpretableDecisionPlanningFollowThroughInput {
@@ -212,7 +221,7 @@ export function materializeInterpretedDecisionAnswers(
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
   additionalSourceResponseCandidates: string[][] = [],
-) {
+): MaterializedInterpretedDecisionAnswer[] {
   const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
   const interpretationState =
     sourceResponseState ??
@@ -224,6 +233,7 @@ export function materializeInterpretedDecisionAnswers(
 
   return answers.map((answer) => ({
     summary: answer.summary,
+    prompt: answer.prompt?.trim() || undefined,
     decisionKey: answer.decisionKey,
     taskRef: answer.taskRef,
     answer: resolveAnswerText(
@@ -251,7 +261,7 @@ export function materializeInterpretedDecisionAnswerBatch(
   inferDecisionTopics = false,
   knownDecisions: InterpretableKnownDecision[] = [],
   reservedAnswerSummaries: string[] = [],
-) {
+): MaterializedInterpretedDecisionAnswer[] {
   const explicitAnswers = answers ?? []
   if (inferOpenDecisions && explicitAnswers.some((answer) => !answer.decisionKey?.trim())) {
     throw new AnswerInterpretationError(

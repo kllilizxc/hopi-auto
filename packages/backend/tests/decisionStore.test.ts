@@ -74,6 +74,48 @@ describe('createDecisionStore', () => {
       status: 'open',
     })
   })
+
+  test('persists an explicit decision prompt across create and resolve', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      taskRef: 'T-7',
+    })
+
+    expect(created).toMatchObject({
+      decisionKey: 'D-1',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      taskRef: 'T-7',
+      status: 'open',
+    })
+
+    const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware.',
+    })
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+      status: 'resolved',
+      answer: 'Use Bun-native auth middleware.',
+    })
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use Bun-native auth middleware.',
+        },
+      ],
+    })
+  })
 })
 
 function testRoot() {

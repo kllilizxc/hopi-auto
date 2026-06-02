@@ -131,6 +131,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
 
 const assistantDecisionAnswerSchema = z.object({
   summary: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   decisionKey: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
@@ -272,11 +273,13 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1),
+    prompt: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal('record_answer'),
     summary: z.string().min(1),
+    prompt: z.string().min(1).optional(),
     decisionKey: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),

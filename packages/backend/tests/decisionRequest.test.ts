@@ -575,6 +575,7 @@ describe('requestGoalDecision', () => {
       {
         goalKey: 'goal-1',
         summary: 'Choose the rollout strategy',
+        prompt: 'Which rollout strategy should we use before engineering continues?',
         answer: 'Use a staged Bun-first rollout.',
         followThrough: {
           kind: 'planning_batch',
@@ -605,6 +606,7 @@ describe('requestGoalDecision', () => {
       decision: {
         decisionKey: 'D-1',
         summary: 'Choose the rollout strategy',
+        prompt: 'Which rollout strategy should we use before engineering continues?',
         status: 'resolved',
         answer: 'Use a staged Bun-first rollout.',
       },
@@ -622,6 +624,7 @@ describe('requestGoalDecision', () => {
         expect.objectContaining({
           decisionKey: 'D-1',
           summary: 'Choose the rollout strategy',
+          prompt: 'Which rollout strategy should we use before engineering continues?',
           status: 'resolved',
           answer: 'Use a staged Bun-first rollout.',
         }),
