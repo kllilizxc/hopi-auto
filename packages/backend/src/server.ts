@@ -63,6 +63,7 @@ type EventClient = ReadableStreamDefaultController<Uint8Array>
 
 const jsonHeaders = { 'content-type': 'application/json' }
 const encoder = new TextEncoder()
+const matchHintArraySchema = z.array(z.string().min(1)).default([])
 
 const blockerSchema = z.object({
   kind: z.enum(BLOCKER_KINDS),
@@ -87,6 +88,7 @@ const createDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
 })
 
@@ -144,6 +146,7 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       prompt: z.string().min(1).optional(),
+      matchHints: matchHintArraySchema,
       answer: z.string().min(1).optional(),
       sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),
@@ -171,15 +174,7 @@ const createPlanningWorkflowBatchSchema = z.object({
   reuseTaskRef: z.string().min(1).optional(),
   reuseGroupKey: z.string().min(1).optional(),
   decisionRefs: z.array(z.string().min(1)).default([]),
-  answers: z
-    .array(
-      z.object({
-        summary: z.string().min(1),
-        prompt: z.string().min(1).optional(),
-        answer: z.string().min(1),
-      }),
-    )
-    .default([]),
+  answers: goalPlanningRequestAnswerArraySchema,
   workflows: z.array(planningWorkflowLeafSchema).min(1),
 })
 
@@ -238,6 +233,7 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
 const resolveDecisionSchema = z.object({
   summary: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -269,6 +265,7 @@ const answerDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -300,6 +297,7 @@ const answerDecisionBatchEntrySchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
@@ -542,6 +540,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               decisionKey: body.decisionKey,
               summary: body.summary,
               prompt: body.prompt,
+              matchHints: body.matchHints,
               taskRef: body.taskRef,
               writer: 'api',
               reason: `api request decision ${body.decisionKey ?? body.summary}`,
@@ -571,6 +570,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               {
                 summary: body.summary,
                 prompt: body.prompt,
+                matchHints: body.matchHints,
                 decisionKey: body.decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
@@ -599,6 +599,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               decisionKey: firstAnswer.decisionKey,
               summary: firstAnswer.summary,
               prompt: firstAnswer.prompt,
+              matchHints: firstAnswer.matchHints,
               taskRef: firstAnswer.taskRef,
               answer: firstAnswer.answer,
               followThrough: materializeInterpretedDecisionFollowThrough(
@@ -649,6 +650,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 decisionKey: decision.decisionKey,
                 summary: decision.summary,
                 prompt: decision.prompt,
+                matchHints: decision.matchHints,
                 taskRef: decision.taskRef,
               })),
             body.inferOpenDecisions ?? false,
@@ -661,6 +663,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               decisionKey: decision.decisionKey,
               summary: decision.summary,
               prompt: decision.prompt,
+              matchHints: decision.matchHints,
               taskRef: decision.taskRef,
             })),
             listInterpretableFollowThroughAnswerCandidateGroups(body.followThrough),
@@ -719,6 +722,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               {
                 summary: body.summary ?? `Decision: ${decisionKey}`,
                 prompt: body.prompt,
+                matchHints: body.matchHints,
                 decisionKey,
                 taskRef: body.taskRef,
                 answer: body.answer,
@@ -746,6 +750,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey,
               prompt: firstAnswer.prompt,
+              matchHints: firstAnswer.matchHints,
               answer: firstAnswer.answer,
               followThrough: materializeInterpretedDecisionFollowThrough(
                 body.followThrough,

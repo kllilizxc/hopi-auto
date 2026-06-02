@@ -7,6 +7,8 @@ import {
 } from '../storage/planningRequestStore'
 import { PREFERENCE_KEY_PATTERN } from '../storage/preferenceStore'
 
+const matchHintArraySchema = z.array(z.string().min(1)).default([])
+
 const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('message'),
@@ -132,6 +134,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
 const assistantDecisionAnswerSchema = z.object({
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
   decisionKey: z.string().min(1).optional(),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
@@ -144,6 +147,7 @@ const interpretablePlanningAnswerArraySchema = z
     z.object({
       summary: z.string().min(1),
       prompt: z.string().min(1).optional(),
+      matchHints: matchHintArraySchema,
       answer: z.string().min(1).optional(),
       sourceExcerpt: z.string().min(1).optional(),
       answerSourceKey: z.string().min(1).optional(),
@@ -278,12 +282,14 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     decisionKey: z.string().min(1),
     summary: z.string().min(1),
     prompt: z.string().min(1).optional(),
+    matchHints: matchHintArraySchema,
     taskRef: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal('record_answer'),
     summary: z.string().min(1),
     prompt: z.string().min(1).optional(),
+    matchHints: matchHintArraySchema,
     decisionKey: z.string().min(1).optional(),
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
@@ -343,6 +349,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     decisionKey: z.string().min(1),
     summary: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
+    matchHints: matchHintArraySchema,
     taskRef: z.string().min(1).optional(),
     answer: z.string().min(1).optional(),
     sourceExcerpt: z.string().min(1).optional(),

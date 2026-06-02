@@ -20,6 +20,7 @@ export type GoalPlanningRequestUpdateTarget = string
 export interface GoalPlanningRequestAnswer {
   summary: string
   prompt?: string
+  matchHints?: string[]
   answer: string
 }
 
@@ -176,6 +177,10 @@ export const goalPlanningRequestUpdateTargetArraySchema = z
 export const goalPlanningRequestAnswerSchema = z.object({
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: z
+    .array(z.string().min(1))
+    .optional()
+    .transform((values) => normalizeGoalPlanningRequestMatchHints(values)),
   answer: z.string().min(1),
 })
 
@@ -623,6 +628,29 @@ function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[]
   return mergePlanningRequestAnswers([], values ?? [])
 }
 
+function normalizeGoalPlanningRequestMatchHints(values: string[] | undefined) {
+  if (!values || values.length === 0) {
+    return undefined
+  }
+
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+    const key = trimmed.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    normalized.push(trimmed)
+  }
+
+  return normalized.length > 0 ? normalized : undefined
+}
+
 function normalizeWorkflowSharedDecisionRefs(values: string[] | undefined) {
   return mergeUniqueValues([], values ?? [])
 }
@@ -647,7 +675,13 @@ function mergePlanningRequestAnswers(
     const key = `${value.summary}\u0000${value.answer}`
     const existingIndex = seen.get(key)
     if (existingIndex === undefined) {
-      merged.push(value)
+      const nextPrompt = value.prompt?.trim() || undefined
+      const nextMatchHints = normalizeGoalPlanningRequestMatchHints(value.matchHints)
+      merged.push({
+        ...value,
+        ...(nextPrompt ? { prompt: nextPrompt } : {}),
+        ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
+      })
       seen.set(key, merged.length - 1)
       continue
     }
@@ -657,10 +691,18 @@ function mergePlanningRequestAnswers(
       continue
     }
     const nextPrompt = current.prompt?.trim() || value.prompt?.trim() || undefined
-    if (nextPrompt !== current.prompt) {
+    const nextMatchHints = mergePlanningRequestAnswerMatchHints(
+      current.matchHints,
+      value.matchHints,
+    )
+    if (
+      nextPrompt !== current.prompt ||
+      !sameOptionalStringArray(current.matchHints, nextMatchHints)
+    ) {
       merged[existingIndex] = {
         ...current,
-        prompt: nextPrompt,
+        ...(nextPrompt ? { prompt: nextPrompt } : {}),
+        ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
       }
     }
   }
@@ -677,9 +719,46 @@ function samePlanningRequestAnswerArray(
       (value, index) =>
         right[index]?.summary === value.summary &&
         right[index]?.prompt === value.prompt &&
+        sameOptionalStringArray(right[index]?.matchHints, value.matchHints) &&
         right[index]?.answer === value.answer,
     )
   )
+}
+
+function mergePlanningRequestAnswerMatchHints(
+  existing: string[] | undefined,
+  incoming: string[] | undefined,
+) {
+  if (!incoming || incoming.length === 0) {
+    return existing
+  }
+
+  const merged = [...(existing ?? [])]
+  const seen = new Set(merged.map((value) => value.trim().toLowerCase().replace(/\s+/g, ' ')))
+  for (const value of incoming) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+    const key = trimmed.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    merged.push(trimmed)
+  }
+
+  return normalizeGoalPlanningRequestMatchHints(merged)
+}
+
+function sameOptionalStringArray(left: string[] | undefined, right: string[] | undefined) {
+  if (!left && !right) {
+    return true
+  }
+  if (!left || !right) {
+    return false
+  }
+  return left.length === right.length && left.every((value, index) => right[index] === value)
 }
 
 function resolveGroupKey(existing: string | undefined, incoming: string | undefined) {

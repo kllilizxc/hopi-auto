@@ -4834,6 +4834,128 @@ describe('createServer', () => {
     })
   })
 
+  test('records matching open decisions and planner answers through the API from topic paragraphs by durable match hints', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt:
+        'Which authentication provider should the Bun-first runtime adopt before coding continues?',
+      matchHints: ['login path'],
+      taskRef: 'T-7',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should launch happen in waves or all at once after readiness review?',
+      matchHints: ['launch shape'],
+      taskRef: 'T-7',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Login path should use Bun-native auth. That keeps the runtime simple.',
+        '',
+        'Launch shape should use a staged rollout. That keeps the launch reversible.',
+        '',
+        'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+      ].join('\n'),
+      sourceResponseFormat: 'topic_paragraphs',
+      inferOpenDecisions: true,
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which cohort should we expose first after readiness review?',
+            matchHints: ['early customer set'],
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          matchHints: ['login path'],
+          answer: 'Login path should use Bun-native auth. That keeps the runtime simple.',
+          status: 'resolved',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          matchHints: ['launch shape'],
+          answer: 'Launch shape should use a staged rollout. That keeps the launch reversible.',
+          status: 'resolved',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which cohort should we expose first after readiness review?',
+              matchHints: ['early customer set'],
+              answer:
+                'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which cohort should we expose first after readiness review?',
+              matchHints: ['early customer set'],
+              answer:
+                'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('records new durable decision topics through the API from remaining topic sentences without explicit answers', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -12898,6 +13020,117 @@ preferences:
             'That keeps the launch reversible.',
           ].join('\n\n'),
           status: 'resolved',
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and reuses durable match hints across topic paragraphs', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt:
+        'Which authentication provider should the Bun-first runtime adopt before coding continues?',
+      matchHints: ['login path'],
+      taskRef: 'T-7',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should launch happen in waves or all at once after readiness review?',
+      matchHints: ['launch shape'],
+      taskRef: 'T-7',
+    })
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one topic-paragraph reply and infer the current open auth and rollout decisions from durable match hints.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I reused durable match hints across the auth rollout topic paragraphs.', actions: [{ kind: 'record_answers', sourceResponse: ['Login path should use Bun-native auth. That keeps the runtime simple.', '', 'Launch shape should use a staged rollout. That keeps the launch reversible.', '', 'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.'].join('\\n'), sourceResponseFormat: 'topic_paragraphs', inferOpenDecisions: true, followThrough: { kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Pilot scope', prompt: 'Which cohort should we expose first after readiness review?', matchHints: ['early customer set'] }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one topic-paragraph reply and infer the current open auth and rollout decisions from durable match hints.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I reused durable match hints across the auth rollout topic paragraphs.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: [],
+        }),
+      ]),
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          matchHints: ['login path'],
+          answer: 'Login path should use Bun-native auth. That keeps the runtime simple.',
+          status: 'resolved',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          matchHints: ['launch shape'],
+          answer: 'Launch shape should use a staged rollout. That keeps the launch reversible.',
+          status: 'resolved',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which cohort should we expose first after readiness review?',
+              matchHints: ['early customer set'],
+              answer:
+                'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              prompt: 'Which cohort should we expose first after readiness review?',
+              matchHints: ['early customer set'],
+              answer:
+                'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+            },
+          ],
         }),
       ],
     })

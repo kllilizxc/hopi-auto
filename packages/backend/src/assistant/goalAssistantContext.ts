@@ -218,6 +218,7 @@ Required outcome shape:
         {
           "summary": "optional captured user answer summary",
           "prompt": "optional exact user-facing question that this captured planner answer should preserve",
+          "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
           "answer": "explicit user answer that should shape planning even without a decision topic"
         }
       ],
@@ -232,6 +233,7 @@ Required outcome shape:
         {
           "summary": "optional shared user answer summary",
           "prompt": "optional exact user-facing question that this shared planner answer should preserve",
+          "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
           "answer": "explicit user answer that should shape every request in the grouped follow-through"
         }
       ],
@@ -264,6 +266,7 @@ Required outcome shape:
         {
           "summary": "optional shared user answer summary",
           "prompt": "optional exact user-facing question that this shared planner answer should preserve",
+          "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
           "answer": "explicit user answer that should shape every child in this workflow graph"
         }
       ],
@@ -280,6 +283,7 @@ Required outcome shape:
             {
               "summary": "optional captured user answer summary",
               "prompt": "optional exact user-facing question that this child planner answer should preserve",
+              "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
               "answer": "explicit user answer that should shape this workflow"
             }
           ],
@@ -316,12 +320,14 @@ Required outcome shape:
       "decisionKey": "stable-decision-key",
       "summary": "highest-leverage missing answer",
       "prompt": "exact user-facing question to preserve on the durable decision topic",
+      "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "taskRef": "optional task ref to block visibly"
     },
     {
       "kind": "record_answer",
       "summary": "durable decision topic",
       "prompt": "exact user-facing question to preserve on the durable decision topic",
+      "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "decisionKey": "optional stable decision key to reuse",
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
@@ -345,6 +351,7 @@ Required outcome shape:
           {
             "summary": "optional shared user answer summary",
             "prompt": "optional exact user-facing question that this shared planner answer should preserve for later answer interpretation",
+            "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should shape every child in this decision-backed workflow graph",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -362,6 +369,7 @@ Required outcome shape:
               {
                 "summary": "optional extra user answer summary",
                 "prompt": "optional exact user-facing question that this child planner answer should preserve",
+                "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
                 "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
@@ -377,6 +385,7 @@ Required outcome shape:
               {
                 "summary": "optional shared extra answer summary",
                 "prompt": "optional exact user-facing question that this grouped planner answer should preserve",
+                "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
                 "answer": "explicit user answer that should shape every task in this grouped workflow",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
                 "answerSourceKey": "optional reusable extracted answer source key"
@@ -425,6 +434,7 @@ Required outcome shape:
           "summary": "first durable decision topic",
           "decisionKey": "optional first stable decision key",
           "prompt": "exact user-facing question for this first decision topic",
+          "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
           "taskRef": "optional linked task ref",
           "answer": "first explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
@@ -434,6 +444,7 @@ Required outcome shape:
           "summary": "second durable decision topic",
           "decisionKey": "optional second stable decision key",
           "prompt": "exact user-facing question for this second decision topic",
+          "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
           "answer": "second explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
           "answerSourceKey": "optional reusable extracted answer source key"
@@ -447,6 +458,7 @@ Required outcome shape:
           {
             "summary": "optional non-decision answer summary",
             "prompt": "optional exact user-facing question that this planner answer should preserve for later interpretation",
+            "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -476,6 +488,8 @@ Required outcome shape:
       "kind": "resolve_decision",
       "decisionKey": "stable-decision-key",
       "summary": "required if the decision topic does not already exist",
+      "prompt": "optional exact user-facing question to preserve on the resolved durable decision topic",
+      "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "taskRef": "optional linked task ref",
       "answer": "explicit user answer",
       "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
@@ -496,6 +510,7 @@ Required outcome shape:
           {
             "summary": "optional non-decision answer summary",
             "prompt": "optional exact user-facing question that this planner answer should preserve for later interpretation",
+            "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should shape this planner follow-through without becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
             "answerSourceKey": "optional reusable extracted answer source key"
@@ -564,6 +579,7 @@ Rules:
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.
+- When later user replies are likely to reuse one stable product-approved phrase that is better than the formal summary or prompt, persist that phrase in "matchHints" on the durable decision or planner answer instead of forcing runtime to rely on deeper parser heuristics.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
 - When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "question_closing_spans", "question_closing_blocks", "inline_topics", "topic_sentences", "topic_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".

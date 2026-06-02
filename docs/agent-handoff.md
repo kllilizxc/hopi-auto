@@ -34,6 +34,7 @@ Phase 1 backend is complete:
 - Answer-driven `question_blocks`, `question_spans`, `question_closing_spans`, and `question_closing_blocks` now also match current durable decisions by exact stored `prompt` text when available, so question-based replies no longer need to repeat topic labels inside the question itself.
 - Answer-driven `question_blocks`, `question_spans`, `question_closing_spans`, and `question_closing_blocks` now also match current durable decisions by deterministic stored `prompt` core text, so question-based replies can restate the canonical durable question more tersely without falling back to fuzzy topic inference.
 - Answer-driven `question_blocks`, `question_spans`, `question_closing_spans`, and `question_closing_blocks` now also match current durable decisions by deterministic stored `prompt` keyword anchors, so question-based replies can reorder the canonical durable question’s meaningful words without requiring exact prompt-core containment or fuzzy NLP.
+- Durable decisions and durable planner answers now also support explicit `matchHints`, so assistant/API can persist stable product-approved phrases as deterministic answer-interpretation authority when later replies should not depend on exact prompt reuse or ever-looser parser heuristics.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Resolving a decision that was blocking engineering work now creates or reuses visible planner follow-through, rewires engineering blockers onto that planning task, and lets richer later planning requests upgrade the generic follow-through instead of duplicating it.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
@@ -133,6 +134,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-02-prompt-core-question-interpretation-design.md`: current authority note for deterministic prompt-core reuse on question-block and question-span answer interpretation when the shared reply question is shorter than the stored durable prompt.
 - `docs/superpowers/specs/2026-06-02-prompt-keyword-question-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on question-block and question-span answer interpretation when the shared reply question keeps the same meaningful prompt words but changes their order.
 - `docs/superpowers/specs/2026-06-02-prompt-keyword-topic-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on `topic_sentences` and `topic_paragraphs` when the answer prose keeps the durable prompt’s meaningful words but omits the explicit topic label.
+- `docs/superpowers/specs/2026-06-02-durable-match-hint-design.md`: current authority note for persisting explicit durable `matchHints` on decisions and planner answers, so later answer interpretation can reuse stable product-approved phrases without adding a second alias store or broader parser heuristics.
 - `docs/superpowers/specs/2026-06-02-leading-topic-summary-interpretation-design.md`: current authority note for deterministic topic-summary inference from leading topic phrases like `Pilot scope should ...`.
 - `docs/superpowers/specs/2026-06-02-prefixed-topic-summary-interpretation-design.md`: current authority note for deterministic topic-summary inference from prefixed topic phrases like `For auth strategy, ...`.
 - `docs/superpowers/specs/2026-06-02-as-topic-summary-interpretation-design.md`: current authority note for deterministic topic-summary inference from `... as the auth strategy` style phrases across topic surfaces.
@@ -672,7 +674,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit question sentences or paragraphs, explicit topic-bearing anchor paragraphs, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
+- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit durable `matchHints`, explicit question sentences or paragraphs, explicit topic-bearing anchor paragraphs, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -680,7 +682,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit question sentences or paragraphs, explicit topic-bearing anchor paragraphs, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
+1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit durable `matchHints`, explicit question sentences or paragraphs, explicit topic-bearing anchor paragraphs, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 

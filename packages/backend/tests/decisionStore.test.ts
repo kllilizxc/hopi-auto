@@ -171,6 +171,50 @@ describe('createDecisionStore', () => {
       answer: 'Use Bun-native auth middleware.',
     })
   })
+
+  test('merges durable decision match hints across create, enrich, and resolve', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the auth strategy',
+      matchHints: ['login path'],
+      taskRef: 'T-7',
+    })
+
+    const enriched = await store.enrichDecision(goalKey, created.decisionKey, {
+      matchHints: ['login path', 'sign-in flow'],
+    })
+    expect(enriched).toMatchObject({
+      decisionKey: 'D-1',
+      matchHints: ['login path', 'sign-in flow'],
+      status: 'open',
+    })
+
+    const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware.',
+      matchHints: ['auth entry'],
+    })
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      matchHints: ['login path', 'sign-in flow', 'auth entry'],
+      status: 'resolved',
+      answer: 'Use Bun-native auth middleware.',
+    })
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          matchHints: ['login path', 'sign-in flow', 'auth entry'],
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use Bun-native auth middleware.',
+        },
+      ],
+    })
+  })
 })
 
 function testRoot() {

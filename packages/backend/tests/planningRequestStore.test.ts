@@ -228,7 +228,7 @@ describe('createPlanningRequestStore', () => {
     })
   })
 
-  test('upgrades captured user answers with richer prompt metadata', async () => {
+  test('upgrades captured user answers with richer prompt metadata and match hints', async () => {
     const store = createPlanningRequestStore(testRoot())
 
     const created = await store.createRequest(goalKey, {
@@ -245,6 +245,7 @@ describe('createPlanningRequestStore', () => {
           summary: 'Pilot scope',
           answer: 'Start with five enterprise customers.',
           prompt: 'Which customers should pilot first before broader launch?',
+          matchHints: ['early customer set'],
         },
       ],
     })
@@ -254,6 +255,7 @@ describe('createPlanningRequestStore', () => {
         summary: 'Pilot scope',
         answer: 'Start with five enterprise customers.',
         prompt: 'Which customers should pilot first before broader launch?',
+        matchHints: ['early customer set'],
       },
     ])
     await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
@@ -265,6 +267,7 @@ describe('createPlanningRequestStore', () => {
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers.',
               prompt: 'Which customers should pilot first before broader launch?',
+              matchHints: ['early customer set'],
             },
           ],
         }),

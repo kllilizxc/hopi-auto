@@ -13,6 +13,7 @@ export interface GoalDecision {
   decisionKey: string
   summary: string
   prompt?: string
+  matchHints?: string[]
   status: GoalDecisionStatus
   taskRef?: string
   answer?: string
@@ -31,24 +32,36 @@ export interface DecisionStore {
   ensureGoalDecisions(goalKey: string): Promise<GoalDecisionSet>
   createDecision(
     goalKey: string,
-    input: { decisionKey?: string; summary: string; prompt?: string; taskRef?: string },
+    input: {
+      decisionKey?: string
+      summary: string
+      prompt?: string
+      matchHints?: string[]
+      taskRef?: string
+    },
   ): Promise<GoalDecision>
   enrichDecision(
     goalKey: string,
     decisionKey: string,
-    input: { prompt?: string },
+    input: { prompt?: string; matchHints?: string[] },
   ): Promise<GoalDecision>
   resolveDecision(
     goalKey: string,
     decisionKey: string,
-    input: { answer: string; prompt?: string },
+    input: { answer: string; prompt?: string; matchHints?: string[] },
   ): Promise<GoalDecision>
 }
+
+const goalDecisionMatchHintsSchema = z
+  .array(z.string().min(1))
+  .optional()
+  .transform((values) => normalizeDecisionMatchHints(values))
 
 const GoalDecisionSchema = z.object({
   decisionKey: z.string().min(1),
   summary: z.string().min(1),
   prompt: z.string().min(1).optional(),
+  matchHints: goalDecisionMatchHintsSchema,
   status: z.enum(DECISION_STATUSES),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
@@ -88,10 +101,12 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
           throw new Error(`Decision already exists: ${decisionKey}`)
         }
         const createdAt = new Date().toISOString()
+        const matchHints = normalizeDecisionMatchHints(input.matchHints)
         const decision: GoalDecision = {
           decisionKey,
           summary: input.summary,
           prompt: input.prompt,
+          ...(matchHints ? { matchHints } : {}),
           status: 'open',
           taskRef: input.taskRef,
           createdAt,
@@ -110,7 +125,9 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         if (!decision) {
           throw new Error(`Decision not found: ${decisionKey}`)
         }
-        const changed = backfillDecisionPrompt(decision, input.prompt)
+        const changed =
+          backfillDecisionPrompt(decision, input.prompt) ||
+          mergeDecisionMatchHints(decision, input.matchHints)
         if (changed) {
           await writeDecisionSet(decisionPath, current)
         }
@@ -127,6 +144,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
           throw new Error(`Decision not found: ${decisionKey}`)
         }
         backfillDecisionPrompt(decision, input.prompt)
+        mergeDecisionMatchHints(decision, input.matchHints)
         decision.status = 'resolved'
         decision.answer = input.answer
         decision.resolvedAt = new Date().toISOString()
@@ -193,4 +211,69 @@ function backfillDecisionPrompt(decision: GoalDecision, prompt: string | undefin
   }
   decision.prompt = prompt
   return true
+}
+
+function mergeDecisionMatchHints(decision: GoalDecision, incoming: string[] | undefined) {
+  const nextMatchHints = mergeNormalizedMatchHints(decision.matchHints, incoming)
+  if (sameOptionalStringArray(decision.matchHints, nextMatchHints)) {
+    return false
+  }
+  decision.matchHints = nextMatchHints
+  return true
+}
+
+function normalizeDecisionMatchHints(values: string[] | undefined) {
+  if (!values || values.length === 0) {
+    return undefined
+  }
+
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+    const key = trimmed.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    normalized.push(trimmed)
+  }
+
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function mergeNormalizedMatchHints(existing: string[] | undefined, incoming: string[] | undefined) {
+  if (!incoming || incoming.length === 0) {
+    return existing
+  }
+
+  const merged = [...(existing ?? [])]
+  const seen = new Set(merged.map((value) => value.trim().toLowerCase().replace(/\s+/g, ' ')))
+  for (const value of incoming) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+    const key = trimmed.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    merged.push(trimmed)
+  }
+
+  return normalizeDecisionMatchHints(merged)
+}
+
+function sameOptionalStringArray(left: string[] | undefined, right: string[] | undefined) {
+  if (!left && !right) {
+    return true
+  }
+  if (!left || !right) {
+    return false
+  }
+  return left.length === right.length && left.every((value, index) => right[index] === value)
 }

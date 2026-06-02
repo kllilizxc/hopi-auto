@@ -1950,6 +1950,106 @@ test('materializes matching open decisions from topic paragraphs by durable prom
   ])
 })
 
+test('materializes matching open decisions and planner answers from topic paragraphs by durable match hints', () => {
+  const sourceResponse = [
+    'Login path should use Bun-native auth. That keeps the runtime simple.',
+    '',
+    'Launch shape should use a staged rollout. That keeps the launch reversible.',
+    '',
+    'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'topic_paragraphs')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt:
+            'Which authentication provider should the Bun-first runtime adopt before coding continues?',
+          matchHints: ['login path'],
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should launch happen in waves or all at once after readiness review?',
+          matchHints: ['launch shape'],
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'topic_paragraphs',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Login path should use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Launch shape should use a staged rollout. That keeps the launch reversible.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which cohort should we expose first after readiness review?',
+            matchHints: ['early customer set'],
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'topic_paragraphs',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Which cohort should we expose first after readiness review?',
+        matchHints: ['early customer set'],
+        answer:
+          'Early customer set should stay limited to five enterprise customers. That keeps early support manageable.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
 test('materializes new decision topics from remaining topic paragraphs while reserving planner summaries', () => {
   const sourceResponse = [
     'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',

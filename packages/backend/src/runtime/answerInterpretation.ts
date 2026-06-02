@@ -143,6 +143,7 @@ export type InterpretableAnswerSource =
 export interface InterpretablePlanningAnswer {
   summary: string
   prompt?: string
+  matchHints?: string[]
   answer?: string
   sourceExcerpt?: string
   answerSourceKey?: string
@@ -151,6 +152,7 @@ export interface InterpretablePlanningAnswer {
 export interface InterpretableDecisionAnswerEntryInput {
   summary: string
   prompt?: string
+  matchHints?: string[]
   decisionKey?: string
   taskRef?: string
   answer?: string
@@ -162,6 +164,7 @@ export interface InterpretableOpenDecision {
   decisionKey: string
   summary: string
   prompt?: string
+  matchHints?: string[]
   taskRef?: string
 }
 
@@ -169,12 +172,14 @@ export interface InterpretableKnownDecision {
   decisionKey: string
   summary: string
   prompt?: string
+  matchHints?: string[]
   taskRef?: string
 }
 
 export interface MaterializedInterpretedDecisionAnswer {
   summary: string
   prompt?: string
+  matchHints?: string[]
   decisionKey?: string
   taskRef?: string
   answer: string
@@ -351,6 +356,7 @@ export function materializeInterpretedDecisionAnswers(
     return {
       summary: answer.summary,
       prompt: answer.prompt?.trim() || resolved.prompt,
+      matchHints: answer.matchHints,
       decisionKey: answer.decisionKey,
       taskRef: answer.taskRef,
       answer: resolved.answer,
@@ -593,6 +599,7 @@ function materializeInterpretedPlanningAnswers(
           : resolved.prompt
             ? { prompt: resolved.prompt }
             : {}),
+        ...(answer.matchHints?.length ? { matchHints: answer.matchHints } : {}),
         answer: resolved.answer,
       }
     })(),
@@ -1084,11 +1091,12 @@ function buildDecisionAnswerSourceResponseCandidates(
     humanizeDecisionKey(answer.decisionKey),
     answer.summary,
     answer.prompt,
+    ...(answer.matchHints ?? []),
   ])
 }
 
 function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanningAnswer) {
-  return dedupeNonEmptyStrings([answer.summary, answer.prompt])
+  return dedupeNonEmptyStrings([answer.summary, answer.prompt, ...(answer.matchHints ?? [])])
 }
 
 function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDecision) {
@@ -1096,6 +1104,7 @@ function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDe
     humanizeDecisionKey(decision.decisionKey),
     decision.summary,
     decision.prompt,
+    ...(decision.matchHints ?? []),
   ])
 }
 
@@ -3911,12 +3920,7 @@ function findMatchingKnownDecisionsForQuestionBlock(
     (decision) =>
       findMatchingQuestionBlockIndexes(
         [block],
-        dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
-        new Set<number>(),
-      ).length > 0 ||
-      findMatchingQuestionBlockIndexes(
-        [block],
-        dedupeNonEmptyStrings([decision.prompt]),
+        buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
       ).length > 0,
   )
@@ -3930,12 +3934,7 @@ function findMatchingKnownDecisionsForQuestionSpan(
     (decision) =>
       findMatchingQuestionSpanIndexes(
         [span],
-        dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
-        new Set<number>(),
-      ).length > 0 ||
-      findMatchingQuestionSpanIndexes(
-        [span],
-        dedupeNonEmptyStrings([decision.prompt]),
+        buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
       ).length > 0,
   )
@@ -3949,12 +3948,7 @@ function findMatchingKnownDecisionsForQuestionClosingSpan(
     (decision) =>
       findMatchingQuestionClosingSpanIndexes(
         [span],
-        dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
-        new Set<number>(),
-      ).length > 0 ||
-      findMatchingQuestionClosingSpanIndexes(
-        [span],
-        dedupeNonEmptyStrings([decision.prompt]),
+        buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
       ).length > 0,
   )
@@ -3968,12 +3962,7 @@ function findMatchingKnownDecisionsForQuestionClosingBlock(
     (decision) =>
       findMatchingQuestionClosingBlockIndexes(
         [block],
-        dedupeNonEmptyStrings([humanizeDecisionKey(decision.decisionKey), decision.summary]),
-        new Set<number>(),
-      ).length > 0 ||
-      findMatchingQuestionClosingBlockIndexes(
-        [block],
-        dedupeNonEmptyStrings([decision.prompt]),
+        buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
       ).length > 0,
   )
@@ -4434,6 +4423,7 @@ function buildKnownDecisionSourceResponseCandidates(decision: InterpretableKnown
     humanizeDecisionKey(decision.decisionKey),
     decision.summary,
     decision.prompt,
+    ...(decision.matchHints ?? []),
   ])
 }
 
