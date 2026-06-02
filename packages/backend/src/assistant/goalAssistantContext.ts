@@ -333,14 +333,14 @@ Required outcome shape:
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_spans', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, anchored topic sentence spans with continuation sentences, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "workflow_batch",
         "workflowKey": "optional stable top-level workflow key for later extension",
         "reuseTaskRef": "optional current planning task ref to reuse only for the first child workflow",
         "reuseGroupKey": "optional current grouped planning surface to reuse only for the first child workflow when that child is planning_batch",
-        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers onto the root shared workflow answers after child explicit answers consume their own items",
+        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_spans, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers onto the root shared workflow answers after child explicit answers consume their own items",
         "answers": [
           {
             "summary": "optional shared user answer summary",
@@ -416,9 +416,9 @@ Required outcome shape:
           "sourceExcerpt": "second exact substring to lift from sourceResponse"
         }
       ],
-      "inferOpenDecisions": "optional boolean; when true with sourceResponseFormat labeled_sections, ordered_items, ordered_blocks, question_blocks, question_spans, inline_topics, topic_sentences, topic_paragraphs, or topic_blocks, runtime also resolves matching current open decisions you did not repeat in answers[]",
-      "inferDecisionTopics": "optional boolean; when true with sourceResponseFormat labeled_sections, inline_topics, question_blocks, or question_spans, runtime also turns remaining unclaimed labeled sections, inline topic clauses, question blocks, or question spans into durable decision topics",
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "inferOpenDecisions": "optional boolean; when true with sourceResponseFormat labeled_sections, ordered_items, ordered_blocks, question_blocks, question_spans, inline_topics, topic_sentences, topic_spans, topic_paragraphs, or topic_blocks, runtime also resolves matching current open decisions you did not repeat in answers[]",
+      "inferDecisionTopics": "optional boolean; when true with sourceResponseFormat labeled_sections, inline_topics, question_blocks, question_spans, topic_sentences, topic_spans, topic_paragraphs, or topic_blocks, runtime also turns remaining unclaimed labeled sections, inline topic clauses, question blocks, question spans, topic sentence spans, topic paragraphs, or topic blocks into durable decision topics",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_spans', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, anchored topic sentence spans with continuation sentences, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across more than one decision topic and any followThrough answers",
       "answers": [
         {
@@ -442,7 +442,7 @@ Required outcome shape:
       "followThrough": {
         "kind": "planning_batch",
         "groupKey": "shared-group-key",
-        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers directly onto this shared follow-through",
+        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_spans, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers directly onto this shared follow-through",
         "answers": [
           {
             "summary": "optional non-decision answer summary",
@@ -486,12 +486,12 @@ Required outcome shape:
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
       ],
-      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
+      "sourceResponseFormat": "optional literal 'labeled_sections', 'ordered_items', 'ordered_blocks', 'question_blocks', 'question_spans', 'inline_topics', 'topic_sentences', 'topic_spans', 'topic_paragraphs', or 'topic_blocks' when sourceResponse should be interpreted as labeled answers, ordered reply items, ordered reply blocks, question-answer blocks, inline question-answer spans, inline topic clauses, sentence-level topic mentions, anchored topic sentence spans with continuation sentences, paragraph-level topic mentions, or anchored topic blocks with continuation paragraphs",
       "sourceResponse": "optional less-structured raw user reply to reuse across this decision and any followThrough answers",
       "followThrough": {
         "kind": "planning_batch",
         "groupKey": "stable-group-key",
-        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers directly onto this shared follow-through",
+        "inferRemainingAnswers": "optional boolean; when true with sourceResponseFormat question_blocks, question_spans, topic_sentences, topic_spans, topic_paragraphs, or topic_blocks, runtime also captures the remaining unclaimed planner answers directly onto this shared follow-through",
         "answers": [
           {
             "summary": "optional non-decision answer summary",
@@ -566,8 +566,8 @@ Rules:
 - When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.
 - Prefer "record_answers" when one user answer resolves more than one durable decision topic and those resolved topics should share one planner follow-through.
 - When using "record_answers", every answer entry still needs its own concise summary if the decision key is not already known.
-- When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".
-- When there is no existing durable decision surface yet but one structured reply already names the durable decision topics, prefer "record_answers" with "inferDecisionTopics": true plus root "sourceResponseFormat": "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_paragraphs", or "topic_blocks" so runtime can create those durable decision topics from the remaining unclaimed topic pairs after planner-only answers are reserved.
+- When current Goal state already contains the relevant open durable decisions and one structured reply answers them directly, prefer "record_answers" with "inferOpenDecisions": true plus root "sourceResponseFormat": "labeled_sections", "ordered_items", "ordered_blocks", "question_blocks", "question_spans", "inline_topics", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks" instead of repeating those same decision topics again inside "answers".
+- When there is no existing durable decision surface yet but one structured reply already names the durable decision topics, prefer "record_answers" with "inferDecisionTopics": true plus root "sourceResponseFormat": "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_spans", "topic_paragraphs", or "topic_blocks" so runtime can create those durable decision topics from the remaining unclaimed topic pairs after planner-only answers are reserved.
 - When mixing "inferOpenDecisions": true with explicit "record_answers" entries, keep explicit entries keyed by stable "decisionKey" so runtime does not have to guess whether you meant to reuse an existing open decision topic or create a new one.
 - When the structured reply already resolves the real decision topics but the remaining question/topic items should become shared planner answers, prefer "followThrough.inferRemainingAnswers": true on a root "planning", "planning_batch", or "workflow_batch" follow-through instead of repeating those non-decision summaries manually.
 - Never combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true; remaining structured reply items must belong to either new durable decision topics or shared planner answers, not both.
@@ -583,6 +583,7 @@ Rules:
 - When "inferDecisionTopics" or "followThrough.inferRemainingAnswers" consumes "question_blocks" or "question_spans", runtime now preserves the matched question text as the durable "prompt" automatically; only set explicit item-level "prompt" when you need to override that canonical question wording.
 - When one reply is already written as natural clauses that still name the topics inline, like "Auth strategy should use ..." or "Pilot scope should start with ...", prefer root "sourceResponseFormat": "inline_topics" so runtime can map those inline topic clauses without requiring one label per line or an ordered list.
 - When one reply is already written as natural sentences that name the topic either as a leading phrase, a prefixed phrase, an "as <topic>" phrase, or later in the sentence, like "Auth strategy should use Bun-native auth.", "For auth strategy, use Bun-native auth.", "Use Bun-native auth as the auth strategy.", or "Use Bun-native auth for auth strategy.", prefer root "sourceResponseFormat": "topic_sentences" so runtime can match one sentence per known or inferred topic without forcing inline labels or ordered bullets.
+- When one reply is already written as consecutive topic-specific sentences where one anchor sentence names the topic and the following sentences stay on that same topic until the next anchor sentence appears, prefer root "sourceResponseFormat": "topic_spans" so runtime can reuse the whole anchored sentence span without requiring blank-line paragraph or block boundaries.
 - When one reply is already written as topic-specific paragraphs where one sentence in the paragraph names the topic, whether as a leading phrase like "Pilot scope should ...", a prefixed phrase like "About pilot scope, ...", an "as <topic>" phrase like "... as the pilot scope", or a trailing phrase like "... for pilot scope", prefer root "sourceResponseFormat": "topic_paragraphs" so runtime can reuse the whole paragraph for one known or inferred topic without repeating the topic name in every sentence.
 - When one reply is already written as topic-specific blocks where the first paragraph names the topic and later continuation paragraphs stay on that same topic until the next anchor paragraph appears, prefer root "sourceResponseFormat": "topic_blocks" so runtime can reuse the whole anchored block whether that first paragraph uses a leading topic phrase, a prefixed topic phrase, an "as <topic>" phrase, or a trailing topic mention.
 - Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
