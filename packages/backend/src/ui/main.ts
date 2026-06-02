@@ -48,6 +48,11 @@ interface GoalDecision {
 interface GoalPlanningRequest {
   requestKey: string
   workflowKey?: string
+  workflowSharedDecisionRefs?: string[]
+  workflowSharedAnswers?: Array<{
+    summary: string
+    answer: string
+  }>
   workflowTaskKey?: string
   blockedByWorkflowKeys: string[]
   groupKey?: string
@@ -66,6 +71,42 @@ interface GoalPlanningRequest {
   createdAt: string
   resolvedAt?: string
   resolution?: string
+}
+
+interface GoalPlanningWorkflowPlanningState {
+  kind: 'planning'
+  workflowTaskKey?: string
+  groupKey?: string
+  blockedByWorkflowKeys: string[]
+  request: GoalPlanningRequest
+  blockerTaskRefs: string[]
+}
+
+interface GoalPlanningWorkflowPlanningBatchState {
+  kind: 'planning_batch'
+  groupKey: string
+  blockedByWorkflowKeys: string[]
+  requests: GoalPlanningRequest[]
+  blockerTaskRefs: string[]
+}
+
+type GoalPlanningWorkflowLeafState =
+  | GoalPlanningWorkflowPlanningState
+  | GoalPlanningWorkflowPlanningBatchState
+
+interface GoalPlanningWorkflowState {
+  kind: 'workflow_batch'
+  workflowKey: string
+  workflowSharedDecisionRefs: string[]
+  workflowSharedAnswers: Array<{
+    summary: string
+    answer: string
+  }>
+  workflows: GoalPlanningWorkflowLeafState[]
+  groupKeys: string[]
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
 }
 
 interface GoalDocSnapshot {
@@ -378,6 +419,7 @@ interface AppState {
   preferenceEntries: PreferenceEntry[]
   preferenceDirty: boolean
   goalDocs: GoalDocsSnapshot | null
+  planningWorkflows: GoalPlanningWorkflowState[]
   planningRequests: GoalPlanningRequest[]
   board: TodoBoard | null
   decisions: GoalDecision[]
@@ -429,6 +471,7 @@ const state: AppState = {
   preferenceEntries: [],
   preferenceDirty: false,
   goalDocs: null,
+  planningWorkflows: [],
   planningRequests: [],
   board: null,
   decisions: [],
@@ -737,6 +780,7 @@ async function loadGoalData() {
     const [
       boardResponse,
       docsResponse,
+      planningWorkflowsResponse,
       planningRequestsResponse,
       runsResponse,
       decisionsResponse,
@@ -746,6 +790,7 @@ async function loadGoalData() {
     ] = await Promise.all([
       fetch(`/api/goals/${state.goalKey}/board`),
       fetch(`/api/goals/${state.goalKey}/docs`),
+      fetch(`/api/goals/${state.goalKey}/planning-requests/workflows`),
       fetch(`/api/goals/${state.goalKey}/planning-requests`),
       fetch(`/api/goals/${state.goalKey}/runs`),
       fetch(`/api/goals/${state.goalKey}/decisions`),
@@ -759,6 +804,9 @@ async function loadGoalData() {
     }
     if (!docsResponse.ok) {
       throw new Error(`Docs request failed with ${docsResponse.status}`)
+    }
+    if (!planningWorkflowsResponse.ok) {
+      throw new Error(`Planning workflows failed with ${planningWorkflowsResponse.status}`)
     }
     if (!planningRequestsResponse.ok) {
       throw new Error(`Planning requests failed with ${planningRequestsResponse.status}`)
@@ -786,6 +834,9 @@ async function loadGoalData() {
 
     state.board = (await boardResponse.json()) as TodoBoard
     state.goalDocs = (await docsResponse.json()) as GoalDocsSnapshot
+    state.planningWorkflows = (
+      (await planningWorkflowsResponse.json()) as { workflows: GoalPlanningWorkflowState[] }
+    ).workflows
     state.planningRequests = (
       (await planningRequestsResponse.json()) as { requests: GoalPlanningRequest[] }
     ).requests
@@ -839,6 +890,7 @@ async function loadGoalData() {
     state.loadingBoard = false
     state.board = null
     state.goalDocs = null
+    state.planningWorkflows = []
     state.planningRequests = []
     state.preferenceContent = ''
     state.preferenceEditor = ''
@@ -1343,6 +1395,23 @@ function render() {
 
               <section class="assistant-card">
                 <div class="assistant-card-header">
+                  <h3>Planning Workflows</h3>
+                  <span class="goal-chip soft">${state.planningWorkflows.length}</span>
+                </div>
+                <p class="assistant-note">
+                  Durable workflow graphs reconstruct from planning-requests.yml plus current open planning tasks. Use this to inspect one reusable multi-workflow surface without manually correlating request ids.
+                </p>
+                <div class="assistant-list">
+                  ${
+                    state.planningWorkflows.length === 0
+                      ? '<div class="ghost-card">No durable planning workflow graphs yet</div>'
+                      : state.planningWorkflows.map(renderPlanningWorkflow).join('')
+                  }
+                </div>
+              </section>
+
+              <section class="assistant-card">
+                <div class="assistant-card-header">
                   <h3>Planning Requests</h3>
                   <span class="goal-chip soft">${state.planningRequests.length}</span>
                 </div>
@@ -1653,6 +1722,66 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
           : ''
       }
     </article>
+  `
+}
+
+function renderPlanningWorkflow(workflow: GoalPlanningWorkflowState) {
+  return `
+    <article class="assistant-entry">
+      <div class="assistant-entry-top">
+        <span class="assistant-kind kind-open">workflow</span>
+        <span>${escapeHtml(workflow.workflowKey)}</span>
+      </div>
+      ${
+        workflow.workflowSharedDecisionRefs.length > 0
+          ? `<div class="assistant-summary">Workflow-shared decisions: ${escapeHtml(workflow.workflowSharedDecisionRefs.join(', '))}</div>`
+          : ''
+      }
+      ${
+        workflow.workflowSharedAnswers.length > 0
+          ? `<div class="assistant-summary">Workflow-shared answers: ${escapeHtml(workflow.workflowSharedAnswers.map((entry) => `${entry.summary}: ${entry.answer}`).join(' | '))}</div>`
+          : ''
+      }
+      ${
+        workflow.groupKeys.length > 0
+          ? `<div class="assistant-summary">Grouped children: ${escapeHtml(workflow.groupKeys.join(', '))}</div>`
+          : ''
+      }
+      <div class="assistant-summary">Current tail blockers: ${escapeHtml(workflow.blockerTaskRefs.join(', '))}</div>
+      ${workflow.workflows.map(renderPlanningWorkflowLeaf).join('')}
+    </article>
+  `
+}
+
+function renderPlanningWorkflowLeaf(workflow: GoalPlanningWorkflowLeafState) {
+  if (workflow.kind === 'planning_batch') {
+    return `
+      <div class="assistant-summary">
+        Grouped child ${escapeHtml(workflow.groupKey)} -> tail ${escapeHtml(workflow.blockerTaskRefs.join(', '))}
+      </div>
+      ${
+        workflow.blockedByWorkflowKeys.length > 0
+          ? `<div class="assistant-summary">Depends on workflow children: ${escapeHtml(workflow.blockedByWorkflowKeys.join(', '))}</div>`
+          : ''
+      }
+      <div class="criteria-list">${workflow.requests
+        .map(
+          (request) =>
+            `<span>${escapeHtml(`${request.groupTaskKey ?? request.requestKey}: ${request.title}`)}</span>`,
+        )
+        .join('')}</div>
+    `
+  }
+
+  return `
+    <div class="assistant-summary">
+      Planning child ${escapeHtml(workflow.workflowTaskKey ?? workflow.request.requestKey)} -> ${escapeHtml(workflow.request.title)} -> tail ${escapeHtml(workflow.blockerTaskRefs.join(', '))}
+    </div>
+    ${
+      workflow.blockedByWorkflowKeys.length > 0
+        ? `<div class="assistant-summary">Depends on workflow children: ${escapeHtml(workflow.blockedByWorkflowKeys.join(', '))}</div>`
+        : ''
+    }
   `
 }
 

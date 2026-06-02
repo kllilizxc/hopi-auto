@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  listGoalPlanningWorkflows,
+  readGoalPlanningWorkflow,
   requestGoalPlanning,
   requestGoalPlanningBatch,
   requestGoalPlanningWorkflows,
@@ -794,6 +796,157 @@ describe('requestGoalPlanning', () => {
         }),
       ],
     })
+  })
+
+  test('lists and reads durable workflow graph state with root shared context and child request detail', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+
+    await requestGoalPlanningWorkflows(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        workflowKey: 'auth-rollout-follow-through',
+        decisionRefs: ['auth-strategy'],
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answer: 'Start with five enterprise customers before broader rollout.',
+          },
+        ],
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            decisionRefs: ['rollout-strategy'],
+            answers: [{ summary: 'Rollback trigger', answer: 'Abort after two regressions.' }],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+                description: 'Record the auth and rollout workflow context across Goal docs.',
+                acceptanceCriteria: ['The auth rollout context is durable.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth rollout task graph',
+                description: 'Reflect the auth rollout workflow in todo.yml.',
+                acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the shared auth rollout workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    )
+
+    await expect(
+      listGoalPlanningWorkflows(
+        {
+          boardStore,
+          planningRequests,
+        },
+        {
+          goalKey: 'goal-1',
+        },
+      ),
+    ).resolves.toMatchObject([
+      {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        workflowSharedDecisionRefs: ['auth-strategy'],
+        workflowSharedAnswers: [
+          {
+            summary: 'Pilot scope',
+            answer: 'Start with five enterprise customers before broader rollout.',
+          },
+        ],
+        groupKeys: ['auth-follow-through'],
+        requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        taskRefs: ['P-1', 'P-2', 'P-3'],
+        blockerTaskRefs: ['P-2', 'P-3'],
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-follow-through',
+            blockedByWorkflowKeys: [],
+            blockerTaskRefs: ['P-2'],
+            requests: [
+              expect.objectContaining({
+                requestKey: 'PR-1',
+                groupTaskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+              }),
+              expect.objectContaining({
+                requestKey: 'PR-2',
+                groupTaskKey: 'task-graph',
+                title: 'Decompose auth rollout task graph',
+              }),
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            blockedByWorkflowKeys: [],
+            blockerTaskRefs: ['P-3'],
+            request: expect.objectContaining({
+              requestKey: 'PR-3',
+              title: 'Review auth rollout readiness',
+            }),
+          },
+        ],
+      },
+    ])
+
+    await expect(
+      readGoalPlanningWorkflow(
+        {
+          boardStore,
+          planningRequests,
+        },
+        {
+          goalKey: 'goal-1',
+          workflowKey: 'auth-rollout-follow-through',
+        },
+      ),
+    ).resolves.toMatchObject({
+      kind: 'workflow_batch',
+      workflowKey: 'auth-rollout-follow-through',
+      workflowSharedDecisionRefs: ['auth-strategy'],
+      workflowSharedAnswers: [
+        {
+          summary: 'Pilot scope',
+          answer: 'Start with five enterprise customers before broader rollout.',
+        },
+      ],
+      blockerTaskRefs: ['P-2', 'P-3'],
+    })
+    await expect(
+      readGoalPlanningWorkflow(
+        {
+          boardStore,
+          planningRequests,
+        },
+        {
+          goalKey: 'goal-1',
+          workflowKey: 'missing-workflow',
+        },
+      ),
+    ).resolves.toBeUndefined()
   })
 
   test('reuses an existing planning surface as the first workflow in a direct workflow batch', async () => {

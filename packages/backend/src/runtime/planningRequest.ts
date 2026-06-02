@@ -110,6 +110,27 @@ export type GoalPlanningWorkflowLeafResult =
   | GoalPlanningWorkflowResult
   | GoalPlanningWorkflowBatchResult
 
+export interface GoalPlanningWorkflowPlanningState {
+  kind: 'planning'
+  workflowTaskKey?: string
+  groupKey?: string
+  blockedByWorkflowKeys: string[]
+  request: GoalPlanningRequest
+  blockerTaskRefs: string[]
+}
+
+export interface GoalPlanningWorkflowPlanningBatchState {
+  kind: 'planning_batch'
+  groupKey: string
+  blockedByWorkflowKeys: string[]
+  requests: GoalPlanningRequest[]
+  blockerTaskRefs: string[]
+}
+
+export type GoalPlanningWorkflowLeafState =
+  | GoalPlanningWorkflowPlanningState
+  | GoalPlanningWorkflowPlanningBatchState
+
 export interface GoalPlanningWorkflowsResult {
   kind: 'workflow_batch'
   workflowKey?: string
@@ -120,6 +141,18 @@ export interface GoalPlanningWorkflowsResult {
   blockerTaskRefs: string[]
   createdRequestKeys: string[]
   createdTaskRefs: string[]
+}
+
+export interface GoalPlanningWorkflowState {
+  kind: 'workflow_batch'
+  workflowKey: string
+  workflowSharedDecisionRefs: string[]
+  workflowSharedAnswers: GoalPlanningRequestAnswer[]
+  workflows: GoalPlanningWorkflowLeafState[]
+  groupKeys: string[]
+  requestKeys: string[]
+  taskRefs: string[]
+  blockerTaskRefs: string[]
 }
 
 export async function requestGoalPlanning(
@@ -808,6 +841,59 @@ export async function requestGoalPlanningWorkflows(
   }
 
   return result
+}
+
+export async function listGoalPlanningWorkflows(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+  },
+): Promise<GoalPlanningWorkflowState[]> {
+  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  const openTaskRefSet = new Set(
+    board.items.filter((task) => task.status !== 'done').map((task) => task.ref),
+  )
+  const workflowKeys = uniqueStringValues(
+    requestSet.requests
+      .filter(
+        (request) =>
+          request.status === 'open' && request.workflowKey && openTaskRefSet.has(request.taskRef),
+      )
+      .map((request) => request.workflowKey as string),
+  )
+
+  const workflows = await Promise.all(
+    workflowKeys.map((workflowKey) =>
+      readGoalPlanningWorkflow(stores, {
+        goalKey: input.goalKey,
+        workflowKey,
+      }),
+    ),
+  )
+
+  return workflows.filter((workflow): workflow is GoalPlanningWorkflowState => Boolean(workflow))
+}
+
+export async function readGoalPlanningWorkflow(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflowKey: string
+  },
+): Promise<GoalPlanningWorkflowState | undefined> {
+  const detail = await describeOpenPlanningWorkflowDetail(stores, input)
+  if (!detail) {
+    return undefined
+  }
+
+  return detail
 }
 
 async function reuseGoalPlanningBatchWorkflow(
@@ -1588,17 +1674,7 @@ async function describeOpenPlanningWorkflowChildren(
     workflowKey: string
   },
 ): Promise<WorkflowChildState[]> {
-  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
-  const board = await stores.boardStore.readBoard(input.goalKey)
-  const taskByRef = new Map(board.items.map((task) => [task.ref, task]))
-  const openRequests = requestSet.requests.filter((request) => {
-    const task = taskByRef.get(request.taskRef)
-    return (
-      request.status === 'open' &&
-      request.workflowKey === input.workflowKey &&
-      task?.status !== 'done'
-    )
-  })
+  const { openRequests, tasks } = await readOpenPlanningWorkflowRequests(stores, input)
   const children: WorkflowChildState[] = []
   const seenGroupedChildren = new Set<string>()
 
@@ -1615,7 +1691,7 @@ async function describeOpenPlanningWorkflowChildren(
         groupKey: request.groupKey,
         requestKeys: groupedRequests.map((entry) => entry.requestKey),
         taskRefs: groupedRequests.map((entry) => entry.taskRef),
-        blockerTaskRefs: findOpenGroupedPlanningSinkTaskRefs(groupedRequests, board.items),
+        blockerTaskRefs: findOpenGroupedPlanningSinkTaskRefs(groupedRequests, tasks),
         createdRequestKeys: [],
         createdTaskRefs: [],
       }
@@ -1656,6 +1732,34 @@ async function describeOpenPlanningWorkflowChildren(
   }
 
   return children
+}
+
+async function readOpenPlanningWorkflowRequests(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflowKey: string
+  },
+) {
+  const requestSet = await stores.planningRequests.readGoalPlanningRequests(input.goalKey)
+  const board = await stores.boardStore.readBoard(input.goalKey)
+  const taskByRef = new Map(board.items.map((task) => [task.ref, task]))
+  const openRequests = requestSet.requests.filter((request) => {
+    const task = taskByRef.get(request.taskRef)
+    return (
+      request.status === 'open' &&
+      request.workflowKey === input.workflowKey &&
+      task?.status !== 'done'
+    )
+  })
+
+  return {
+    openRequests,
+    tasks: board.items,
+  }
 }
 
 async function describeReusableGroupedPlanningSurface(
@@ -1722,6 +1826,89 @@ async function describeOpenPlanningWorkflowState(
     blockerTaskRefs: computeWorkflowChildSinkBlockerTaskRefs(children),
     createdRequestKeys: [],
     createdTaskRefs: [],
+  }
+}
+
+async function describeOpenPlanningWorkflowDetail(
+  stores: {
+    boardStore: BoardStore
+    planningRequests: PlanningRequestStore
+  },
+  input: {
+    goalKey: string
+    workflowKey: string
+  },
+): Promise<GoalPlanningWorkflowState | undefined> {
+  const { openRequests, tasks } = await readOpenPlanningWorkflowRequests(stores, input)
+  if (openRequests.length === 0) {
+    return undefined
+  }
+
+  const workflows: GoalPlanningWorkflowLeafState[] = []
+  const seenGroupedChildren = new Set<string>()
+
+  for (const request of openRequests) {
+    if (request.groupKey && request.groupTaskKey) {
+      if (seenGroupedChildren.has(request.groupKey)) {
+        continue
+      }
+      const groupedRequests = openRequests.filter(
+        (entry) => entry.groupKey === request.groupKey && entry.groupTaskKey,
+      )
+      workflows.push({
+        kind: 'planning_batch',
+        groupKey: request.groupKey,
+        blockedByWorkflowKeys: uniqueStringValues(
+          groupedRequests.flatMap((entry) => entry.blockedByWorkflowKeys),
+        ),
+        requests: groupedRequests,
+        blockerTaskRefs: findOpenGroupedPlanningSinkTaskRefs(groupedRequests, tasks),
+      })
+      seenGroupedChildren.add(request.groupKey)
+      continue
+    }
+
+    workflows.push({
+      kind: 'planning',
+      workflowTaskKey: request.workflowTaskKey,
+      groupKey: request.groupKey,
+      blockedByWorkflowKeys: request.blockedByWorkflowKeys,
+      request,
+      blockerTaskRefs: [request.taskRef],
+    })
+  }
+
+  return {
+    kind: 'workflow_batch',
+    workflowKey: input.workflowKey,
+    workflowSharedDecisionRefs: uniqueStringValues(
+      openRequests.flatMap((request) => request.workflowSharedDecisionRefs),
+    ),
+    workflowSharedAnswers: mergePlanningRequestAnswers(
+      [],
+      openRequests.flatMap((request) => request.workflowSharedAnswers),
+    ),
+    workflows,
+    groupKeys: uniqueStringValues(
+      workflows.flatMap((workflow) =>
+        workflow.kind === 'planning_batch' ? [workflow.groupKey] : [],
+      ),
+    ),
+    requestKeys: uniqueStringValues(
+      workflows.flatMap((workflow) =>
+        workflow.kind === 'planning_batch'
+          ? workflow.requests.map((request) => request.requestKey)
+          : [workflow.request.requestKey],
+      ),
+    ),
+    taskRefs: uniqueStringValues(
+      workflows.flatMap((workflow) =>
+        workflow.kind === 'planning_batch'
+          ? workflow.requests.map((request) => request.taskRef)
+          : [workflow.request.taskRef],
+      ),
+    ),
+    blockerTaskRefs: computeWorkflowLeafStateSinkBlockerTaskRefs(workflows),
   }
 }
 
@@ -1799,6 +1986,20 @@ function computeWorkflowChildSinkBlockerTaskRefs(children: WorkflowChildState[])
   )
   const relevantChildren = sinkChildren.length > 0 ? sinkChildren : children
   return uniqueStringValues(relevantChildren.flatMap((child) => child.blockerTaskRefs))
+}
+
+function workflowLeafDependencyKey(workflow: GoalPlanningWorkflowLeafState) {
+  return workflow.kind === 'planning_batch' ? workflow.groupKey : workflow.workflowTaskKey
+}
+
+function computeWorkflowLeafStateSinkBlockerTaskRefs(workflows: GoalPlanningWorkflowLeafState[]) {
+  const prerequisiteKeys = new Set(workflows.flatMap((workflow) => workflow.blockedByWorkflowKeys))
+  const sinkWorkflows = workflows.filter((workflow) => {
+    const dependencyKey = workflowLeafDependencyKey(workflow)
+    return !dependencyKey || !prerequisiteKeys.has(dependencyKey)
+  })
+  const relevantWorkflows = sinkWorkflows.length > 0 ? sinkWorkflows : workflows
+  return uniqueStringValues(relevantWorkflows.flatMap((workflow) => workflow.blockerTaskRefs))
 }
 
 function buildWorkflowChildStateMap(children: WorkflowChildState[]) {

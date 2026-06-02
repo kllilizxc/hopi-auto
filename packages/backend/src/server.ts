@@ -24,7 +24,12 @@ import {
   resolveGoalDecision,
 } from './runtime/decisionRequest'
 import { createGoalDocsStore } from './runtime/goalDocsStore'
-import { requestGoalPlanning, requestGoalPlanningWorkflows } from './runtime/planningRequest'
+import {
+  listGoalPlanningWorkflows,
+  readGoalPlanningWorkflow,
+  requestGoalPlanning,
+  requestGoalPlanningWorkflows,
+} from './runtime/planningRequest'
 import { createRunHistoryStore } from './runtime/runHistoryStore'
 import { createWriteTraceStore } from './runtime/writeTraceStore'
 import { reconcileOnce } from './scheduler/reconcileOnce'
@@ -370,6 +375,51 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         if (request.method === 'GET' && isGoalRoute(parts, 'decisions') && parts.length === 4) {
           const currentGoalKey = requireGoalKey(parts)
           return jsonResponse(await decisions.readGoalDecisions(currentGoalKey))
+        }
+
+        if (
+          request.method === 'GET' &&
+          isGoalRoute(parts, 'planning-requests') &&
+          parts.length === 5 &&
+          parts[4] === 'workflows'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          return jsonResponse({
+            goalKey: currentGoalKey,
+            workflows: await listGoalPlanningWorkflows(
+              {
+                boardStore: store,
+                planningRequests,
+              },
+              {
+                goalKey: currentGoalKey,
+              },
+            ),
+          })
+        }
+
+        if (
+          request.method === 'GET' &&
+          isGoalRoute(parts, 'planning-requests') &&
+          parts.length === 6 &&
+          parts[4] === 'workflows'
+        ) {
+          const currentGoalKey = requireGoalKey(parts)
+          const workflowKey = requirePathPart(parts, 5)
+          const workflow = await readGoalPlanningWorkflow(
+            {
+              boardStore: store,
+              planningRequests,
+            },
+            {
+              goalKey: currentGoalKey,
+              workflowKey,
+            },
+          )
+          if (!workflow) {
+            throw new HttpError(404, `Planning workflow not found: ${workflowKey}`)
+          }
+          return jsonResponse(workflow)
         }
 
         if (

@@ -59,6 +59,7 @@ Phase 1 backend is complete:
 - Goal assistant `resolve_decision`, `record_answer`, and `record_answers` action results now also return the full shared decision-runtime follow-through shape, so assistant-run responses, persisted run detail, and the Bun UI no longer flatten workflow authority down to ad hoc `followThrough*Keys` summary fields.
 - Answer-driven assistant and Bun API actions now also support one shared `sourceResponse`, so a less-structured raw user reply can be captured once and reused across multiple durable decision topics plus non-decision follow-through answers instead of repeating the same answer payload in every entry.
 - Decision-backed and answer-backed `workflow_batch` follow-through now also supports explicit `reuseTaskRef` and `reuseGroupKey`, so one answered decision can adopt an arbitrary current planning surface or grouped planning surface through the same shared workflow-graph runtime instead of relying only on narrow implicit planning-linked reuse.
+- Durable planning workflow graphs are now independently inspectable through Bun API list/detail endpoints plus a dedicated Bun UI workflow section, including workflow-root shared context and child request detail reconstructed directly from `planning-requests.yml` plus current open tasks.
 - Normalized tool transcript entries now also persist stable `toolInvocationKey` metadata, and reviewer/merger run evidence now correlates tool calls with their results through that durable key instead of flattening transcript history into unrelated summary strings.
 - Normalized tool-call transcript summaries now also capture stable target detail such as shell commands and file paths when vendor payloads expose them, so run detail and reviewer/merger evidence can show what a tool invocation actually touched without introducing a second tool-log store.
 - Durable repo preferences now also use one canonical structured `.hopi/preference.md` document with stable `preferenceKey`, active or retired lifecycle state, optional rationale, structured record/retire APIs, and assistant preference actions that no longer rely on append-only deduplicated bullet guidance.
@@ -96,6 +97,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-02-structured-preference-lifecycle-design.md`: current authority note for canonical structured repo preferences with stable keys, active/retired lifecycle, and assistant/API preference mutations.
 - `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
 - `docs/superpowers/specs/2026-06-02-decision-workflow-explicit-surface-reuse-design.md`: current authority note for explicit `reuseTaskRef` / `reuseGroupKey` parity on decision-backed and answer-backed `workflow_batch` follow-through.
+- `docs/superpowers/specs/2026-06-02-planning-workflow-inspection-design.md`: current authority note for independent workflow-graph read surfaces on Bun API and UI, including workflow-root shared context and child request detail.
 - `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`: current authority note for assistant decision requests and direct decision management.
 - `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`: current authority note for immediate decision-unblock follow-through and explicit reconcile controls.
 - `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`: current authority note for trace-aware reviewer/merger prompt policy.
@@ -536,6 +538,7 @@ Current UI capabilities:
 - read-only board projection from `todo.yml`
 - durable `goal.md` and `design.md` surfacing with `bootstrapped` versus `curated` status
 - durable planning-request creation and surfacing linked to visible planning work
+- durable workflow-graph surfacing with workflow-root shared context and child request detail
 - decision-linked planning request surfacing with explicit `design.md` / `todo.yml` update targets
 - deterministic planning follow-through coverage enforcement based on requested updates plus durable write traces
 - automatic decision-to-planning enrichment for existing open planning requests on the same planning task
@@ -577,6 +580,7 @@ Current non-UI Goal assistant substrate:
 - decision-backed workflow-graph follow-through that lets resolve_decision, record_answer, and record_answers reuse that same durable direct-workflow graph authority instead of looping through weaker answer-local multi-workflow logic
 - decision-backed workflow shared-answer context that lets resolve_decision, record_answer, and record_answers carry one workflow-root set of shared non-decision captured answers across every child in an answer-driven workflow graph
 - durable workflow-root shared-context persistence that lets both direct and answer-driven workflow graphs extend one `workflowKey` later without restating the same shared decision lineage or captured answers
+- independent workflow-graph inspection that lets Bun API and UI read one current workflow graph by `workflowKey` with root shared context plus child request detail, instead of only exposing raw planning requests or earlier mutation results
 - decision answer/resolve API surfacing that returns the full shared runtime result, including `blockerRemoved`, creation metadata, and generated workflow-graph keys, instead of trimming authority down to decision-only bodies
 - assistant decision action-result surfacing that returns the same shared runtime follow-through structure, including generated workflow keys, instead of flattening decision follow-through into lossy summary arrays
 - transcript tool-correlation evidence that persists stable tool invocation keys and stable tool target details, letting reviewer/merger context see real tool interactions instead of only flat transcript summaries
