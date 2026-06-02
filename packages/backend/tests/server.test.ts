@@ -273,6 +273,40 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes multiple pending planner answers through the direct planning-request API from one pending-sentence reply', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      sourceResponse:
+        'Start with five enterprise customers before broader launch. Abort after two regressions.',
+      sourceResponseFormat: 'pending_sentences',
+      answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'What should the pilot scope be?',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          summary: 'Rollback trigger',
+          prompt: 'What should the rollback trigger be?',
+          answer: 'Abort after two regressions.',
+        },
+      ],
+    })
+  })
+
   test('accepts goal.md as a requested durable update through the planning-request API', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -8210,7 +8244,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     })
   })
 
@@ -13819,6 +13853,68 @@ preferences:
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       message: 'I resolved both pending decisions from one shared paragraph reply.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          createdDecisionKeys: [],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and resolves multiple pending open decisions from one pending-sentence shared reply', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one pending-sentence shared reply to answer both open auth and rollout decisions without repeating their questions.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved both pending decisions from one shared sentence reply.', actions: [{ kind: 'record_answers', sourceResponse: 'Use Bun-native auth. Use a staged rollout.', sourceResponseFormat: 'pending_sentences', inferOpenDecisions: true }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      taskRef: 'T-7',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should rollout happen in stages or all at once?',
+      taskRef: 'T-7',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one pending-sentence shared reply to answer both open auth and rollout decisions without repeating their questions.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'I resolved both pending decisions from one shared sentence reply.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',
