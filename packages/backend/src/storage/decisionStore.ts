@@ -13,6 +13,7 @@ export type GoalDecisionStatus = (typeof DECISION_STATUSES)[number]
 export interface GoalDecision {
   decisionKey: string
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   status: GoalDecisionStatus
@@ -36,6 +37,7 @@ export interface DecisionStore {
     input: {
       decisionKey?: string
       summary: string
+      summaryKey?: string
       prompt?: string
       matchHints?: string[]
       taskRef?: string
@@ -44,12 +46,12 @@ export interface DecisionStore {
   enrichDecision(
     goalKey: string,
     decisionKey: string,
-    input: { prompt?: string; matchHints?: string[] },
+    input: { summaryKey?: string; prompt?: string; matchHints?: string[] },
   ): Promise<GoalDecision>
   resolveDecision(
     goalKey: string,
     decisionKey: string,
-    input: { answer: string; prompt?: string; matchHints?: string[] },
+    input: { answer: string; summaryKey?: string; prompt?: string; matchHints?: string[] },
   ): Promise<GoalDecision>
 }
 
@@ -61,6 +63,7 @@ const goalDecisionMatchHintsSchema = z
 const GoalDecisionSchema = z.object({
   decisionKey: z.string().min(1),
   summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: goalDecisionMatchHintsSchema,
   status: z.enum(DECISION_STATUSES),
@@ -102,6 +105,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
           throw new Error(`Decision already exists: ${decisionKey}`)
         }
         const createdAt = new Date().toISOString()
+        const summaryKey = normalizeDecisionSummaryKey(input.summaryKey)
         const matchHints = normalizeDecisionMatchHints(input.matchHints)
         const prompt = resolveCanonicalPromptFromSummary({
           summary: input.summary,
@@ -110,6 +114,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         const decision: GoalDecision = {
           decisionKey,
           summary: input.summary,
+          ...(summaryKey ? { summaryKey } : {}),
           ...(prompt ? { prompt } : {}),
           ...(matchHints ? { matchHints } : {}),
           status: 'open',
@@ -131,6 +136,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
           throw new Error(`Decision not found: ${decisionKey}`)
         }
         const changed =
+          mergeDecisionSummaryKey(decision, input.summaryKey) ||
           backfillDecisionPrompt(decision, input.prompt) ||
           mergeDecisionMatchHints(decision, input.matchHints)
         if (changed) {
@@ -148,6 +154,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         if (!decision) {
           throw new Error(`Decision not found: ${decisionKey}`)
         }
+        mergeDecisionSummaryKey(decision, input.summaryKey)
         backfillDecisionPrompt(decision, input.prompt)
         mergeDecisionMatchHints(decision, input.matchHints)
         decision.status = 'resolved'
@@ -221,6 +228,28 @@ function backfillDecisionPrompt(decision: GoalDecision, prompt: string | undefin
   }
   decision.prompt = nextPrompt
   return true
+}
+
+function normalizeDecisionSummaryKey(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function mergeDecisionSummaryKey(decision: GoalDecision, incoming: string | undefined) {
+  const nextSummaryKey = normalizeDecisionSummaryKey(incoming)
+  if (!decision.summaryKey) {
+    if (!nextSummaryKey) {
+      return false
+    }
+    decision.summaryKey = nextSummaryKey
+    return true
+  }
+  if (!nextSummaryKey || nextSummaryKey === decision.summaryKey) {
+    return false
+  }
+  throw new Error(
+    `Decision summaryKey conflict for ${decision.decisionKey}: ${decision.summaryKey} != ${nextSummaryKey}`,
+  )
 }
 
 function mergeDecisionMatchHints(decision: GoalDecision, incoming: string[] | undefined) {

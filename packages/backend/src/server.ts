@@ -71,6 +71,7 @@ const interpretablePlanningAnswerArraySchema = z
   .array(
     z.object({
       summary: z.string().min(1),
+      summaryKey: z.string().min(1).optional(),
       prompt: z.string().min(1).optional(),
       matchHints: matchHintArraySchema,
       answer: z.string().min(1).optional(),
@@ -125,6 +126,7 @@ const moveTaskSchema = z.object({
 const createDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
@@ -250,6 +252,7 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
 
 const resolveDecisionSchema = z.object({
   summary: z.string().min(1).optional(),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
@@ -265,6 +268,7 @@ const resolveDecisionSchema = z.object({
 const answerDecisionSchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
@@ -280,6 +284,7 @@ const answerDecisionSchema = z.object({
 const answerDecisionBatchEntrySchema = z.object({
   decisionKey: z.string().min(1).optional(),
   summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: matchHintArraySchema,
   taskRef: z.string().min(1).optional(),
@@ -506,6 +511,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey: body.decisionKey,
               summary: body.summary,
+              summaryKey: body.summaryKey,
               prompt: body.prompt,
               matchHints: body.matchHints,
               taskRef: body.taskRef,
@@ -536,6 +542,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             [
               {
                 summary: body.summary,
+                summaryKey: body.summaryKey,
                 prompt: body.prompt,
                 matchHints: body.matchHints,
                 decisionKey: body.decisionKey,
@@ -565,6 +572,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               goalKey: currentGoalKey,
               decisionKey: firstAnswer.decisionKey,
               summary: firstAnswer.summary,
+              summaryKey: firstAnswer.summaryKey,
               prompt: firstAnswer.prompt,
               matchHints: firstAnswer.matchHints,
               taskRef: firstAnswer.taskRef,
@@ -616,6 +624,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
               .map((decision) => ({
                 decisionKey: decision.decisionKey,
                 summary: decision.summary,
+                summaryKey: decision.summaryKey,
                 prompt: decision.prompt,
                 matchHints: decision.matchHints,
                 taskRef: decision.taskRef,
@@ -629,6 +638,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             current.decisions.map((decision) => ({
               decisionKey: decision.decisionKey,
               summary: decision.summary,
+              summaryKey: decision.summaryKey,
               prompt: decision.prompt,
               matchHints: decision.matchHints,
               taskRef: decision.taskRef,
@@ -688,6 +698,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             [
               {
                 summary: body.summary ?? `Decision: ${decisionKey}`,
+                summaryKey: body.summaryKey,
                 prompt: body.prompt,
                 matchHints: body.matchHints,
                 decisionKey,
@@ -716,6 +727,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             {
               goalKey: currentGoalKey,
               decisionKey,
+              summaryKey: firstAnswer.summaryKey,
               prompt: firstAnswer.prompt,
               matchHints: firstAnswer.matchHints,
               answer: firstAnswer.answer,

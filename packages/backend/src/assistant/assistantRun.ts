@@ -13,6 +13,7 @@ const interpretablePlanningAnswerArraySchema = z
   .array(
     z.object({
       summary: z.string().min(1),
+      summaryKey: z.string().min(1).optional(),
       prompt: z.string().min(1).optional(),
       matchHints: matchHintArraySchema,
       answer: z.string().min(1).optional(),
@@ -169,6 +170,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
 
 const assistantDecisionAnswerSchema = z.object({
   summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: matchHintArraySchema,
   decisionKey: z.string().min(1).optional(),
@@ -301,6 +303,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1),
+    summaryKey: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
     matchHints: matchHintArraySchema,
     taskRef: z.string().min(1).optional(),
@@ -308,6 +311,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('record_answer'),
     summary: z.string().min(1),
+    summaryKey: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
     matchHints: matchHintArraySchema,
     decisionKey: z.string().min(1).optional(),
@@ -334,6 +338,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
     summary: z.string().min(1).optional(),
+    summaryKey: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
     matchHints: matchHintArraySchema,
     taskRef: z.string().min(1).optional(),

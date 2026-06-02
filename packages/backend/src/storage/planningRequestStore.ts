@@ -20,6 +20,7 @@ export type GoalPlanningRequestUpdateTarget = string
 
 export interface GoalPlanningRequestAnswer {
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   answer: string
@@ -177,6 +178,11 @@ export const goalPlanningRequestUpdateTargetArraySchema = z
 
 export const goalPlanningRequestAnswerSchema = z.object({
   summary: z.string().min(1),
+  summaryKey: z
+    .string()
+    .min(1)
+    .optional()
+    .transform((value) => normalizeGoalPlanningRequestSummaryKey(value)),
   prompt: z.string().min(1).optional(),
   matchHints: z
     .array(z.string().min(1))
@@ -629,6 +635,11 @@ function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[]
   return mergePlanningRequestAnswers([], values ?? [])
 }
 
+function normalizeGoalPlanningRequestSummaryKey(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
 function normalizeGoalPlanningRequestMatchHints(values: string[] | undefined) {
   if (!values || values.length === 0) {
     return undefined
@@ -680,9 +691,12 @@ function mergePlanningRequestAnswers(
         summary: value.summary,
         incomingPrompt: value.prompt,
       })
+      const nextSummaryKey = normalizeGoalPlanningRequestSummaryKey(value.summaryKey)
       const nextMatchHints = normalizeGoalPlanningRequestMatchHints(value.matchHints)
       merged.push({
-        ...value,
+        summary: value.summary,
+        answer: value.answer,
+        ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
       })
@@ -699,16 +713,23 @@ function mergePlanningRequestAnswers(
       currentPrompt: current.prompt,
       incomingPrompt: value.prompt,
     })
+    const nextSummaryKey = resolvePlanningRequestAnswerSummaryKey(
+      current.summaryKey,
+      value.summaryKey,
+      current.summary,
+    )
     const nextMatchHints = mergePlanningRequestAnswerMatchHints(
       current.matchHints,
       value.matchHints,
     )
     if (
+      nextSummaryKey !== current.summaryKey ||
       nextPrompt !== current.prompt ||
       !sameOptionalStringArray(current.matchHints, nextMatchHints)
     ) {
       merged[existingIndex] = {
         ...current,
+        ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
       }
@@ -726,6 +747,7 @@ function samePlanningRequestAnswerArray(
     left.every(
       (value, index) =>
         right[index]?.summary === value.summary &&
+        right[index]?.summaryKey === value.summaryKey &&
         right[index]?.prompt === value.prompt &&
         sameOptionalStringArray(right[index]?.matchHints, value.matchHints) &&
         right[index]?.answer === value.answer,
@@ -757,6 +779,23 @@ function mergePlanningRequestAnswerMatchHints(
   }
 
   return normalizeGoalPlanningRequestMatchHints(merged)
+}
+
+function resolvePlanningRequestAnswerSummaryKey(
+  existing: string | undefined,
+  incoming: string | undefined,
+  summary: string,
+) {
+  const nextSummaryKey = normalizeGoalPlanningRequestSummaryKey(incoming)
+  if (!existing) {
+    return nextSummaryKey
+  }
+  if (!nextSummaryKey || nextSummaryKey === existing) {
+    return existing
+  }
+  throw new Error(
+    `Planning request answer summaryKey conflict for "${summary}": ${existing} != ${nextSummaryKey}`,
+  )
 }
 
 function sameOptionalStringArray(left: string[] | undefined, right: string[] | undefined) {

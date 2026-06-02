@@ -208,6 +208,7 @@ export type InterpretableAnswerSource =
 
 export interface InterpretablePlanningAnswer {
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   answer?: string
@@ -217,6 +218,7 @@ export interface InterpretablePlanningAnswer {
 
 export interface InterpretableDecisionAnswerEntryInput {
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   decisionKey?: string
@@ -229,6 +231,7 @@ export interface InterpretableDecisionAnswerEntryInput {
 export interface InterpretableOpenDecision {
   decisionKey: string
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   taskRef?: string
@@ -237,6 +240,7 @@ export interface InterpretableOpenDecision {
 export interface InterpretableKnownDecision {
   decisionKey: string
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   taskRef?: string
@@ -244,6 +248,7 @@ export interface InterpretableKnownDecision {
 
 export interface MaterializedInterpretedDecisionAnswer {
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   decisionKey?: string
@@ -474,6 +479,7 @@ export function materializeInterpretedDecisionAnswers(
     )
     return {
       summary: answer.summary,
+      ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
       prompt: answer.prompt?.trim() || resolved.prompt,
       matchHints: answer.matchHints,
       decisionKey: answer.decisionKey,
@@ -847,10 +853,11 @@ function materializeInterpretedPlanningAnswers(
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   const explicitAnswers = answers ?? []
   registerTopicAnchorCandidates(interpretationState, [
-    ...explicitAnswers.map((answer) => [answer.summary]),
+    ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
   ])
   const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
     summary: answer.summary,
+    ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
     ...(() => {
       const resolved = resolveAnswerContent(
         answer.answer,
@@ -1713,6 +1720,7 @@ function buildDecisionAnswerSourceResponseCandidates(
   answer: InterpretableDecisionAnswerEntryInput,
 ) {
   return dedupeNonEmptyStrings([
+    humanizeSummaryKey(answer.summaryKey),
     humanizeDecisionKey(answer.decisionKey),
     answer.summary,
     answer.prompt,
@@ -1721,7 +1729,12 @@ function buildDecisionAnswerSourceResponseCandidates(
 }
 
 function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanningAnswer) {
-  return dedupeNonEmptyStrings([answer.summary, answer.prompt, ...(answer.matchHints ?? [])])
+  return dedupeNonEmptyStrings([
+    humanizeSummaryKey(answer.summaryKey),
+    answer.summary,
+    answer.prompt,
+    ...(answer.matchHints ?? []),
+  ])
 }
 
 function buildAnswerSourceResponseCandidates(source: InterpretableAnswerSource) {
@@ -1736,6 +1749,7 @@ function buildAnswerSourceResponseCandidates(source: InterpretableAnswerSource) 
 
 function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDecision) {
   return dedupeNonEmptyStrings([
+    humanizeSummaryKey(decision.summaryKey),
     humanizeDecisionKey(decision.decisionKey),
     decision.summary,
     decision.prompt,
@@ -1946,8 +1960,16 @@ function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
   label: string,
 ): GoalPlanningRequestAnswer {
   const summary = resolveRequiredAnswerSourceSummary(entry, label)
+  const inferredSummaryKey = shouldDeriveSummaryKeyFromAnswerSourceKey(entry)
+    ? inferSummaryKeyFromStableAnswerSourceKey(entry.key)
+    : undefined
   return {
     summary,
+    ...(entry.summaryKey?.trim()
+      ? { summaryKey: entry.summaryKey.trim() }
+      : inferredSummaryKey
+        ? { summaryKey: inferredSummaryKey }
+        : {}),
     prompt: entry.prompt?.trim() || synthesizeCanonicalPromptFromSummary(summary),
     ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
     answer: entry.answer,
@@ -2287,6 +2309,7 @@ function materializeMatchingOpenDecisionAnswers(
     }
     materializedAnswers.push({
       summary: decision.summary,
+      ...(decision.summaryKey?.trim() ? { summaryKey: decision.summaryKey.trim() } : {}),
       decisionKey: decision.decisionKey,
       taskRef: decision.taskRef,
       answer: match,
@@ -6216,13 +6239,23 @@ function reserveMatchedTopicBlock(
 function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownDecision[]) {
   const lookup = new Map<string, InterpretableKnownDecision[]>()
   for (const decision of knownDecisions) {
-    const normalized = normalizeSourceResponseLabel(decision.summary)
-    const existing = lookup.get(normalized)
-    if (existing) {
-      existing.push(decision)
-      continue
+    for (const candidate of [decision.summary, humanizeSummaryKey(decision.summaryKey)]) {
+      if (!candidate) {
+        continue
+      }
+      const normalized = normalizeSourceResponseLabel(candidate)
+      if (!normalized) {
+        continue
+      }
+      const existing = lookup.get(normalized)
+      if (existing) {
+        if (!existing.includes(decision)) {
+          existing.push(decision)
+        }
+        continue
+      }
+      lookup.set(normalized, [decision])
     }
-    lookup.set(normalized, [decision])
   }
   return lookup
 }
@@ -6244,8 +6277,18 @@ function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
     }
 
     const matchingKnownDecision = matchingKnownDecisions[0]
+    const inferredSummaryKey = shouldDeriveSummaryKeyFromAnswerSourceKey(entry)
+      ? inferSummaryKeyFromStableAnswerSourceKey(entry.key)
+      : undefined
     return {
       summary: matchingKnownDecision?.summary ?? summary,
+      ...(matchingKnownDecision?.summaryKey?.trim()
+        ? { summaryKey: matchingKnownDecision.summaryKey.trim() }
+        : entry.summaryKey?.trim()
+          ? { summaryKey: entry.summaryKey.trim() }
+          : inferredSummaryKey
+            ? { summaryKey: inferredSummaryKey }
+            : {}),
       ...(entry.prompt?.trim()
         ? { prompt: entry.prompt.trim() }
         : matchingKnownDecision
@@ -6750,6 +6793,43 @@ function inferSummaryFromStableAnswerSourceKey(key: string | undefined) {
   return normalizeExtractedTopicSummary(humanized, true)
 }
 
+function inferSummaryKeyFromStableAnswerSourceKey(key: string | undefined) {
+  const trimmed = key?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const stripped = trimmed.replace(/(?:[_-]+(?:answer|source))$/i, '')
+  if (!stripped || stripped === trimmed) {
+    return undefined
+  }
+
+  const normalized = stripped
+    .trim()
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+
+  return normalized || undefined
+}
+
+function shouldDeriveSummaryKeyFromAnswerSourceKey(entry: ResolvedAnswerSourceEntry) {
+  if (entry.summary?.trim()) {
+    return false
+  }
+  if (inferSummaryFromStablePrompt(entry.prompt)) {
+    return false
+  }
+  if (entry.summaryKey?.trim()) {
+    return false
+  }
+  if (inferSummaryFromStableMatchHints(entry.matchHints)) {
+    return false
+  }
+  return !hasMultipleStableMatchHints(entry.matchHints)
+}
+
 function extractPrefixedTopicSummary(text: string) {
   const trimmed = text.trim()
   if (!trimmed) {
@@ -6853,15 +6933,18 @@ function extractInferredTopicSummaries(text: string) {
 }
 
 function humanizeDecisionKey(value: string | undefined) {
-  return value?.trim().replace(/[_-]+/g, ' ')
+  const trimmed = value?.trim()
+  return trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
 }
 
 function humanizeSummaryKey(value: string | undefined) {
-  return value?.trim().replace(/[_-]+/g, ' ')
+  const trimmed = value?.trim()
+  return trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
 }
 
 function humanizeAnswerSourceKey(value: string | undefined) {
-  const humanized = value?.trim().replace(/[_-]+/g, ' ')
+  const trimmed = value?.trim()
+  const humanized = trimmed ? trimmed.replace(/[_-]+/g, ' ') : undefined
   if (!humanized) {
     return undefined
   }
@@ -6870,6 +6953,7 @@ function humanizeAnswerSourceKey(value: string | undefined) {
 
 function buildKnownDecisionSourceResponseCandidates(decision: InterpretableKnownDecision) {
   return dedupeNonEmptyStrings([
+    humanizeSummaryKey(decision.summaryKey),
     humanizeDecisionKey(decision.decisionKey),
     decision.summary,
     decision.prompt,

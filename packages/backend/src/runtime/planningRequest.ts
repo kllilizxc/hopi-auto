@@ -2122,7 +2122,13 @@ function mergePlanningRequestAnswers(
     const key = `${value.summary}\u0000${value.answer}`
     const existingIndex = seen.get(key)
     if (existingIndex === undefined) {
-      merged.push(value)
+      merged.push({
+        summary: value.summary,
+        answer: value.answer,
+        ...(value.summaryKey?.trim() ? { summaryKey: value.summaryKey.trim() } : {}),
+        ...(value.prompt?.trim() ? { prompt: value.prompt.trim() } : {}),
+        ...(value.matchHints?.length ? { matchHints: value.matchHints } : {}),
+      })
       seen.set(key, merged.length - 1)
       continue
     }
@@ -2131,19 +2137,87 @@ function mergePlanningRequestAnswers(
     if (!current) {
       continue
     }
+    const nextSummaryKey = resolvePlanningRequestAnswerSummaryKey(
+      current.summaryKey,
+      value.summaryKey,
+      current.summary,
+    )
     const nextPrompt = resolveCanonicalPromptFromSummary({
       summary: current.summary,
       currentPrompt: current.prompt,
       incomingPrompt: value.prompt,
     })
-    if (nextPrompt !== current.prompt) {
+    const nextMatchHints = mergePlanningRequestAnswerMatchHints(
+      current.matchHints,
+      value.matchHints,
+    )
+    if (
+      nextSummaryKey !== current.summaryKey ||
+      nextPrompt !== current.prompt ||
+      !sameOptionalStringArray(nextMatchHints, current.matchHints)
+    ) {
       merged[existingIndex] = {
         ...current,
+        ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
+        ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
       }
     }
   }
   return merged
+}
+
+function resolvePlanningRequestAnswerSummaryKey(
+  existing: string | undefined,
+  incoming: string | undefined,
+  summary: string,
+) {
+  const nextSummaryKey = incoming?.trim() || undefined
+  if (!existing) {
+    return nextSummaryKey
+  }
+  if (!nextSummaryKey || nextSummaryKey === existing) {
+    return existing
+  }
+  throw new Error(
+    `Planning request answer summaryKey conflict for "${summary}": ${existing} != ${nextSummaryKey}`,
+  )
+}
+
+function mergePlanningRequestAnswerMatchHints(
+  existing: string[] | undefined,
+  incoming: string[] | undefined,
+) {
+  if (!incoming || incoming.length === 0) {
+    return existing
+  }
+
+  const merged = [...(existing ?? [])]
+  const seen = new Set(merged.map((value) => value.trim().toLowerCase().replace(/\s+/g, ' ')))
+  for (const value of incoming) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+    const key = trimmed.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    merged.push(trimmed)
+  }
+
+  return merged.length > 0 ? merged : undefined
+}
+
+function sameOptionalStringArray(left: string[] | undefined, right: string[] | undefined) {
+  if (!left && !right) {
+    return true
+  }
+  if (!left || !right) {
+    return false
+  }
+  return left.length === right.length && left.every((value, index) => right[index] === value)
 }
 
 function sameBlockerList(left: BlockerRef[], right: BlockerRef[]) {

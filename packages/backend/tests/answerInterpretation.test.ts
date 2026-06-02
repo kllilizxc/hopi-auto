@@ -4406,6 +4406,42 @@ test('materializes multiple pending open decisions from matching answer sources 
   ])
 })
 
+test('materializes matching open decisions from matching answer sources by durable summaryKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'source-1',
+      summaryKey: 'launch-shape',
+      answer: 'Use a staged rollout.',
+    },
+  ]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          summaryKey: 'launch-shape',
+          prompt: 'How should we phase the launch to users?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      summaryKey: 'launch-shape',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes new decision topics from remaining matching answer sources without explicit answer mapping', () => {
   const answerSources = [
     {
@@ -4641,6 +4677,7 @@ test('materializes new decision topics from remaining matching answer sources by
     {
       decisionKey: undefined,
       summary: 'Launch shape',
+      summaryKey: 'launch-shape',
       prompt: 'What should the launch shape be?',
       taskRef: undefined,
       answer: 'Use a staged rollout.',
@@ -4688,6 +4725,7 @@ test('materializes new decision topics from remaining matching answer sources by
     {
       decisionKey: undefined,
       summary: 'Launch shape',
+      summaryKey: 'launch-shape',
       prompt: 'What should the launch shape be?',
       taskRef: undefined,
       answer: 'Use a staged rollout.',
@@ -4900,6 +4938,7 @@ test('materializes inferred planner answers from remaining pending answer source
       },
       {
         summary: 'Early customer set',
+        summaryKey: 'early-customer-set',
         prompt: 'What should the early customer set be?',
         answer: 'Start with five enterprise customers before broader launch.',
       },

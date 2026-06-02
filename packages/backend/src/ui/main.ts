@@ -38,6 +38,7 @@ interface TodoBoard {
 interface GoalDecision {
   decisionKey: string
   summary: string
+  summaryKey?: string
   prompt?: string
   status: 'open' | 'resolved'
   taskRef?: string
@@ -52,6 +53,7 @@ interface GoalPlanningRequest {
   workflowSharedDecisionRefs?: string[]
   workflowSharedAnswers?: Array<{
     summary: string
+    summaryKey?: string
     answer: string
   }>
   workflowTaskKey?: string
@@ -65,6 +67,7 @@ interface GoalPlanningRequest {
   decisionRefs: string[]
   answers: Array<{
     summary: string
+    summaryKey?: string
     answer: string
   }>
   requestedUpdates: string[]

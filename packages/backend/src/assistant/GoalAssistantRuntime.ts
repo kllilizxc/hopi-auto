@@ -411,6 +411,7 @@ async function applyAssistantAction(
         goalKey,
         decisionKey: action.decisionKey,
         summary: action.summary,
+        summaryKey: action.summaryKey,
         prompt: action.prompt,
         matchHints: action.matchHints,
         taskRef: action.taskRef,
@@ -447,6 +448,7 @@ async function applyAssistantAction(
       [
         {
           summary: action.summary ?? `Decision: ${action.decisionKey}`,
+          summaryKey: action.summaryKey,
           prompt: action.prompt,
           matchHints: action.matchHints,
           decisionKey: action.decisionKey,
@@ -475,6 +477,7 @@ async function applyAssistantAction(
       {
         goalKey,
         summary: firstAnswer.summary,
+        summaryKey: firstAnswer.summaryKey,
         prompt: firstAnswer.prompt,
         matchHints: firstAnswer.matchHints,
         decisionKey: action.decisionKey,
@@ -509,6 +512,7 @@ async function applyAssistantAction(
       [
         {
           summary: action.summary,
+          summaryKey: action.summaryKey,
           prompt: action.prompt,
           matchHints: action.matchHints,
           decisionKey: action.decisionKey,
@@ -537,6 +541,7 @@ async function applyAssistantAction(
       {
         goalKey,
         summary: firstAnswer.summary,
+        summaryKey: firstAnswer.summaryKey,
         prompt: firstAnswer.prompt,
         matchHints: firstAnswer.matchHints,
         decisionKey: firstAnswer.decisionKey,
@@ -581,6 +586,7 @@ async function applyAssistantAction(
         .map((decision) => ({
           decisionKey: decision.decisionKey,
           summary: decision.summary,
+          summaryKey: decision.summaryKey,
           prompt: decision.prompt,
           matchHints: decision.matchHints,
           taskRef: decision.taskRef,
@@ -594,6 +600,7 @@ async function applyAssistantAction(
       current.decisions.map((decision) => ({
         decisionKey: decision.decisionKey,
         summary: decision.summary,
+        summaryKey: decision.summaryKey,
         prompt: decision.prompt,
         matchHints: decision.matchHints,
         taskRef: decision.taskRef,

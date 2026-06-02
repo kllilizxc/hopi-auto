@@ -217,6 +217,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional captured user answer summary",
+          "summaryKey": "optional stable reusable summary key like pilot-scope when later reusable answer sources should match this planner answer without relying on summary wording",
           "prompt": "optional exact user-facing question that this captured planner answer should preserve",
           "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
           "answer": "explicit user answer that should shape planning even without a decision topic"
@@ -232,6 +233,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "optional shared user answer summary",
+          "summaryKey": "optional stable reusable summary key like pilot-scope when later reusable answer sources should match this planner answer without relying on summary wording",
           "prompt": "optional exact user-facing question that this shared planner answer should preserve",
           "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
           "answer": "explicit user answer that should shape every request in the grouped follow-through"
@@ -319,6 +321,7 @@ Required outcome shape:
       "kind": "request_decision",
       "decisionKey": "stable-decision-key",
       "summary": "highest-leverage missing answer",
+      "summaryKey": "optional stable reusable summary key like launch-shape when later reusable answer sources should match this decision without relying on summary wording",
       "prompt": "exact user-facing question to preserve on the durable decision topic",
       "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "taskRef": "optional task ref to block visibly"
@@ -326,6 +329,7 @@ Required outcome shape:
     {
       "kind": "record_answer",
       "summary": "durable decision topic",
+      "summaryKey": "optional stable reusable summary key like launch-shape when later reusable answer sources should match this decision without relying on summary wording",
       "prompt": "exact user-facing question to preserve on the durable decision topic",
       "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "decisionKey": "optional stable decision key to reuse",
@@ -435,6 +439,7 @@ Required outcome shape:
       "answers": [
         {
           "summary": "first durable decision topic",
+          "summaryKey": "optional stable reusable summary key like auth-strategy when later reusable answer sources should match this decision without relying on summary wording",
           "decisionKey": "optional first stable decision key",
           "prompt": "exact user-facing question for this first decision topic",
           "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
@@ -445,6 +450,7 @@ Required outcome shape:
         },
         {
           "summary": "second durable decision topic",
+          "summaryKey": "optional stable reusable summary key like rollout-strategy when later reusable answer sources should match this decision without relying on summary wording",
           "decisionKey": "optional second stable decision key",
           "prompt": "exact user-facing question for this second decision topic",
           "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
@@ -491,6 +497,7 @@ Required outcome shape:
       "kind": "resolve_decision",
       "decisionKey": "stable-decision-key",
       "summary": "required if the decision topic does not already exist",
+      "summaryKey": "optional stable reusable summary key like launch-shape when later reusable answer sources should match this decision without relying on summary wording",
       "prompt": "optional exact user-facing question to preserve on the resolved durable decision topic",
       "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
       "taskRef": "optional linked task ref",
@@ -581,6 +588,7 @@ Rules:
 - Prefer captured answers on "request_planning", "request_planning_batch", or "request_planning_workflows" when a user answer should create durable planning work but does not map cleanly to a durable decision topic first.
 - When the exact user-facing question matters for later planner-side authority or answer interpretation, include "prompt" on captured planning answers as well as decision answers, so durable planning requests preserve that canonical question text alongside the shorter summary.
 - When a decision summary or planner-answer summary is already a stable noun phrase or simple command like "Choose the auth strategy", runtime now synthesizes a canonical "prompt" automatically if you omit one; only set explicit "prompt" when the exact wording itself matters as durable authority.
+- When later reusable answer sources should target a durable decision or planner answer by one stable noun-phrase key even if the visible summary or prompt wording is longer, set explicit "summaryKey" on that durable consumer instead of relying on summary text drift or extra parser heuristics.
 - Prefer "record_answer" when the user has already provided one durable answer and that answer should create or reuse a durable decision topic before there is a specific visible decision surface to resolve.
 - When using "record_answer" without a known decision key, include a concise summary so runtime can create the durable decision topic for you.
 - When the exact user-facing question matters for later authority or answer interpretation, include "prompt" on "request_decision", "record_answer", or explicit "record_answers" entries so decisions.yml preserves that durable question text alongside the shorter summary.
@@ -595,6 +603,7 @@ Rules:
 - Never combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true; remaining structured reply items must belong to either new durable decision topics or shared planner answers, not both.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
+- When those reusable answer sources should later match already-known durable decisions or planner answers without per-topic mapping, give both sides the same explicit "summaryKey" whenever summary/prompt wording is not the stable matching authority.
 - When one root "answerSources" bundle already contains extra reusable snippets that do not need per-item mapping onto known pending consumers, give those remaining source entries either explicit "summary" authority, one explicit "summaryKey" authority, one stable "prompt" authority, exactly one stable "matchHint" authority, or one stable suffixed "answerSourceKey" authority like "launch-shape-answer". Canonical noun-phrase prompts like "What should the pilot scope be?", explicit question-shaped prompts like "How should rollout happen?", one explicit "summaryKey" like "launch-shape", one stable phrase hint like "launch shape", and one noun-phrase key with an explicit "-answer" or "-source" suffix now all work. Runtime still accepts the "matchHints" path only when there is exactly one stable hint, and the "answerSourceKey" path only when the key carries that explicit suffix and humanizes to one stable noun phrase, so it never has to guess between multiple hints or generic keys. Then prefer "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources" plus "inferDecisionTopics": true or "followThrough.inferRemainingAnswers": true over repeating those same summaries again inside "answers" or "followThrough.answers".
 - When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
 - When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.

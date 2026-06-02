@@ -120,6 +120,51 @@ describe('createDecisionStore', () => {
     })
   })
 
+  test('persists an explicit decision summary key across create and resolve', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the launch sequencing',
+      summaryKey: 'launch-shape',
+      taskRef: 'T-7',
+    })
+
+    expect(created).toMatchObject({
+      decisionKey: 'D-1',
+      summary: 'Choose the launch sequencing',
+      summaryKey: 'launch-shape',
+      prompt: 'What should the launch sequencing be?',
+      taskRef: 'T-7',
+      status: 'open',
+    })
+
+    const resolved = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use a staged rollout.',
+    })
+    expect(resolved).toMatchObject({
+      decisionKey: 'D-1',
+      summaryKey: 'launch-shape',
+      prompt: 'What should the launch sequencing be?',
+      status: 'resolved',
+      answer: 'Use a staged rollout.',
+    })
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the launch sequencing',
+          summaryKey: 'launch-shape',
+          prompt: 'What should the launch sequencing be?',
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use a staged rollout.',
+        },
+      ],
+    })
+  })
+
   test('upgrades a synthesized decision prompt when resolving with an explicit prompt', async () => {
     const store = createDecisionStore(testRoot())
 
@@ -222,6 +267,36 @@ decisions:
       status: 'resolved',
       answer: 'Use Bun-native auth middleware.',
     })
+  })
+
+  test('backfills a missing decision summary key and rejects conflicting summary keys', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the launch sequencing',
+      taskRef: 'T-7',
+    })
+    expect(created).toMatchObject({
+      decisionKey: 'D-1',
+      status: 'open',
+    })
+    expect(created.summaryKey).toBeUndefined()
+
+    const enriched = await store.enrichDecision(goalKey, created.decisionKey, {
+      summaryKey: 'launch-shape',
+    })
+    expect(enriched).toMatchObject({
+      decisionKey: 'D-1',
+      summaryKey: 'launch-shape',
+      status: 'open',
+    })
+
+    await expect(
+      store.resolveDecision(goalKey, created.decisionKey, {
+        answer: 'Use a staged rollout.',
+        summaryKey: 'rollout-shape',
+      }),
+    ).rejects.toThrow('Decision summaryKey conflict')
   })
 
   test('merges durable decision match hints across create, enrich, and resolve', async () => {

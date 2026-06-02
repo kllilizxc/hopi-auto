@@ -17,6 +17,7 @@ import {
 export interface GoalDecisionRequestInput {
   goalKey: string
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   decisionKey?: string
@@ -43,6 +44,7 @@ export interface GoalDecisionAnswerResult extends GoalDecisionResolveResult {
 
 export interface GoalDecisionAnswerEntryInput {
   summary: string
+  summaryKey?: string
   prompt?: string
   matchHints?: string[]
   decisionKey?: string
@@ -162,12 +164,14 @@ export async function requestGoalDecision(
 
   const decision = existing
     ? await stores.decisions.enrichDecision(input.goalKey, existing.decisionKey, {
+        summaryKey: input.summaryKey,
         prompt: input.prompt,
         matchHints: input.matchHints,
       })
     : await stores.decisions.createDecision(input.goalKey, {
         decisionKey: input.decisionKey,
         summary: input.summary,
+        summaryKey: input.summaryKey,
         prompt: input.prompt,
         matchHints: input.matchHints,
         taskRef: input.taskRef,
@@ -234,6 +238,7 @@ export async function resolveGoalDecision(
     goalKey: string
     decisionKey: string
     answer: string
+    summaryKey?: string
     prompt?: string
     matchHints?: string[]
     followThrough?: GoalDecisionFollowThroughInput
@@ -243,6 +248,7 @@ export async function resolveGoalDecision(
 ): Promise<GoalDecisionResolveResult> {
   const decision = await stores.decisions.resolveDecision(input.goalKey, input.decisionKey, {
     answer: input.answer,
+    summaryKey: input.summaryKey,
     prompt: input.prompt,
     matchHints: input.matchHints,
   })
@@ -304,6 +310,7 @@ export async function answerGoalDecision(
   input: {
     goalKey: string
     summary: string
+    summaryKey?: string
     prompt?: string
     matchHints?: string[]
     decisionKey?: string
@@ -319,6 +326,7 @@ export async function answerGoalDecision(
     answers: [
       {
         summary: input.summary,
+        summaryKey: input.summaryKey,
         prompt: input.prompt,
         matchHints: input.matchHints,
         decisionKey: input.decisionKey,
@@ -373,12 +381,14 @@ export async function answerGoalDecisions(
       (await stores.decisions.createDecision(input.goalKey, {
         decisionKey: answer.decisionKey,
         summary: answer.summary,
+        summaryKey: answer.summaryKey,
         prompt: answer.prompt,
         matchHints: answer.matchHints,
         taskRef: answer.taskRef,
       }))
     const resolved = await stores.decisions.resolveDecision(input.goalKey, decision.decisionKey, {
       answer: answer.answer,
+      summaryKey: answer.summaryKey,
       prompt: answer.prompt,
       matchHints: answer.matchHints,
     })
