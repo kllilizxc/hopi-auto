@@ -737,6 +737,180 @@ describe('createServer', () => {
     })
   })
 
+  test('records inferred shared workflow answers through the API from remaining question blocks', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: 'T-7',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy?',
+        '',
+        'Use Bun-native auth.',
+        '',
+        'That keeps the runtime simple.',
+        '',
+        'Rollout strategy?',
+        '',
+        'Use a staged rollout.',
+        '',
+        'That keeps the launch reversible.',
+        '',
+        'Rollback trigger?',
+        '',
+        'Abort after two regressions.',
+        '',
+        'Pilot scope?',
+        '',
+        'Start with five enterprise customers before broader launch.',
+        '',
+        'That keeps early support manageable.',
+      ].join('\n'),
+      sourceResponseFormat: 'question_blocks',
+      inferOpenDecisions: true,
+      followThrough: {
+        kind: 'workflow_batch',
+        workflowKey: 'auth-rollout-follow-through',
+        inferRemainingAnswers: true,
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            answers: [
+              {
+                summary: 'Rollback trigger',
+              },
+            ],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+                description: 'Record the auth and rollout answers across Goal docs.',
+                acceptanceCriteria: ['The auth and rollout answers are durable.'],
+                requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+              },
+              {
+                taskKey: 'task-graph',
+                title: 'Decompose auth rollout task graph',
+                description: 'Reflect the auth and rollout answers in todo.yml.',
+                acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+                requestedUpdates: ['todo.yml'],
+                blockedByTaskKeys: ['goal-docs'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the shared auth rollout workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('reuses an existing grouped planning surface as the first workflow through the API', async () => {
     const workspaceRoot = rootDir()
     const planningRequests = createPlanningRequestStore(workspaceRoot)
@@ -4800,6 +4974,49 @@ describe('createServer', () => {
     })
   })
 
+  test('returns HTTP 400 when inferDecisionTopics is mixed with workflow_batch inferRemainingAnswers', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Auth strategy?',
+        '',
+        'Use Bun-native auth.',
+        '',
+        'That keeps the runtime simple.',
+        '',
+        'Pilot scope?',
+        '',
+        'Start with five enterprise customers before broader launch.',
+        '',
+        'That keeps early support manageable.',
+      ].join('\n'),
+      sourceResponseFormat: 'question_blocks',
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'workflow_batch',
+        inferRemainingAnswers: true,
+        workflows: [
+          {
+            kind: 'planning',
+            workflowTaskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'followThrough.inferRemainingAnswers cannot be combined with inferDecisionTopics. Pick one authority for the remaining sourceResponse items.',
+    })
+  })
+
   test('returns HTTP 400 when inline-topic interpretation omits one requested topic', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -7946,6 +8163,130 @@ preferences:
             {
               summary: 'Pilot scope',
               answer: 'Start with five enterprise customers before broader rollout.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and infers shared workflow answers from remaining question blocks', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await seedBoard(workspaceRoot, [
+      task({
+        ref: 'T-7',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement auth rollout',
+        description: 'Wait for the auth and rollout decisions before engineering continues.',
+        acceptanceCriteria: ['The auth rollout path is implemented.'],
+        blockedBy: [
+          { kind: 'decision', ref: 'auth-strategy' },
+          { kind: 'decision', ref: 'rollout-strategy' },
+        ],
+      }),
+    ])
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: 'T-7',
+    })
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Use one question-block reply and infer the shared workflow answers without explicit shared summaries.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I inferred shared workflow answers from the remaining question blocks.', actions: [{ kind: 'record_answers', sourceResponse: ['Auth strategy?', '', 'Use Bun-native auth.', '', 'That keeps the runtime simple.', '', 'Rollout strategy?', '', 'Use a staged rollout.', '', 'That keeps the launch reversible.', '', 'Rollback trigger?', '', 'Abort after two regressions.', '', 'Pilot scope?', '', 'Start with five enterprise customers before broader launch.', '', 'That keeps early support manageable.'].join('\\n'), sourceResponseFormat: 'question_blocks', inferOpenDecisions: true, followThrough: { kind: 'workflow_batch', workflowKey: 'auth-rollout-follow-through', inferRemainingAnswers: true, workflows: [{ kind: 'planning_batch', groupKey: 'auth-rollout-follow-through', answers: [{ summary: 'Rollback trigger' }], requests: [{ taskKey: 'goal-docs', title: 'Capture auth rollout goal context', description: 'Record the auth and rollout answers across Goal docs.', acceptanceCriteria: ['The auth and rollout answers are durable.'], requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'] }, { taskKey: 'task-graph', title: 'Decompose auth rollout task graph', description: 'Reflect the auth and rollout answers in todo.yml.', acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'], requestedUpdates: ['todo.yml'], blockedByTaskKeys: ['goal-docs'] }] }, { kind: 'planning', workflowTaskKey: 'handoff-review', title: 'Review auth rollout readiness', description: 'Inspect the shared auth rollout workflow before handoff.', acceptanceCriteria: ['The auth rollout review is visible.'], requestedUpdates: ['design.md'] }] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Use one question-block reply and infer the shared workflow answers without explicit shared summaries.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+            {
+              summary: 'Rollback trigger',
+              answer: 'Abort after two regressions.',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          workflowSharedAnswers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
+            },
+          ],
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answer: [
+                'Start with five enterprise customers before broader launch.',
+                'That keeps early support manageable.',
+              ].join('\n\n'),
             },
           ],
         }),

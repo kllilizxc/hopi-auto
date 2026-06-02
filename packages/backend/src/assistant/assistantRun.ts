@@ -211,6 +211,7 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
     workflowKey: z.string().min(1).optional(),
     reuseTaskRef: z.string().min(1).optional(),
     reuseGroupKey: z.string().min(1).optional(),
+    inferRemainingAnswers: z.boolean().optional(),
     answers: interpretablePlanningAnswerArraySchema,
     workflows: z.array(resolveDecisionWorkflowLeafFollowThroughSchema).min(1),
   }),

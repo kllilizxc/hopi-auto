@@ -169,6 +169,7 @@ export interface InterpretableDecisionWorkflowBatchFollowThroughInput {
   workflowKey?: string
   reuseTaskRef?: string
   reuseGroupKey?: string
+  inferRemainingAnswers?: boolean
   answers?: InterpretablePlanningAnswer[]
   workflows: InterpretableDecisionWorkflowLeafFollowThroughInput[]
 }
@@ -203,7 +204,7 @@ export function listInterpretableFollowThroughAnswerSummaries(
 export function followThroughInfersRemainingAnswers(
   followThrough: InterpretableDecisionFollowThroughInput | undefined,
 ) {
-  if (!followThrough || followThrough.kind === 'workflow_batch') {
+  if (!followThrough) {
     return false
   }
   return followThrough.inferRemainingAnswers === true
@@ -386,32 +387,16 @@ export function materializeInterpretedDecisionFollowThrough(
     }
   }
 
-  return {
-    kind: 'workflow_batch' as const,
-    workflowKey: followThrough.workflowKey,
-    reuseTaskRef: followThrough.reuseTaskRef,
-    reuseGroupKey: followThrough.reuseGroupKey,
-    answers: materializeInterpretedPlanningAnswers(
-      followThrough.answers,
-      sourceResponse,
-      answerSourcesByKey,
-      sourceResponseFormat,
-      interpretationState,
-    ),
-    workflows: followThrough.workflows.map((workflow) => {
-      if (workflow.kind === 'planning') {
-        return {
-          ...workflow,
-          answers: materializeInterpretedPlanningAnswers(
-            workflow.answers,
-            sourceResponse,
-            answerSourcesByKey,
-            sourceResponseFormat,
-            interpretationState,
-          ),
-        }
-      }
+  const rootSharedAnswers = materializeInterpretedPlanningAnswers(
+    followThrough.answers,
+    sourceResponse,
+    answerSourcesByKey,
+    sourceResponseFormat,
+    interpretationState,
+  )
 
+  const workflows = followThrough.workflows.map((workflow) => {
+    if (workflow.kind === 'planning') {
       return {
         ...workflow,
         answers: materializeInterpretedPlanningAnswers(
@@ -422,8 +407,49 @@ export function materializeInterpretedDecisionFollowThrough(
           interpretationState,
         ),
       }
-    }),
+    }
+
+    return {
+      ...workflow,
+      answers: materializeInterpretedPlanningAnswers(
+        workflow.answers,
+        sourceResponse,
+        answerSourcesByKey,
+        sourceResponseFormat,
+        interpretationState,
+      ),
+    }
+  })
+
+  return {
+    kind: 'workflow_batch' as const,
+    workflowKey: followThrough.workflowKey,
+    reuseTaskRef: followThrough.reuseTaskRef,
+    reuseGroupKey: followThrough.reuseGroupKey,
+    inferRemainingAnswers: followThrough.inferRemainingAnswers,
+    answers: mergeMaterializedPlanningAnswers(
+      rootSharedAnswers,
+      followThrough.inferRemainingAnswers
+        ? materializeRemainingInterpretedPlanningAnswers(
+            sourceResponse,
+            sourceResponseFormat,
+            interpretationState,
+          )
+        : [],
+    ),
+    workflows,
   }
+}
+
+function mergeMaterializedPlanningAnswers(
+  explicitAnswers: GoalPlanningRequestAnswer[] | undefined,
+  inferredAnswers: GoalPlanningRequestAnswer[],
+) {
+  if (!explicitAnswers && inferredAnswers.length === 0) {
+    return undefined
+  }
+
+  return [...(explicitAnswers ?? []), ...inferredAnswers]
 }
 
 function materializeInterpretedPlanningAnswers(

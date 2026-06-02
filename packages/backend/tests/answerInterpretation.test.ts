@@ -90,6 +90,7 @@ test('materializes decision and planner answers from named answer sources', () =
     workflowKey: undefined,
     reuseTaskRef: undefined,
     reuseGroupKey: undefined,
+    inferRemainingAnswers: undefined,
     answers: [
       {
         summary: 'Pilot scope',
@@ -1690,6 +1691,153 @@ test('materializes question blocks across decision and planner answers without r
         description: 'Record the auth and rollout answers across Goal docs.',
         acceptanceCriteria: ['The auth and rollout answers are durable.'],
         requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes inferred shared workflow answers after child workflow answers consume question blocks', () => {
+  const sourceResponse = [
+    'Auth strategy?',
+    '',
+    'Use Bun-native auth.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Rollout strategy?',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible.',
+    '',
+    'Rollback trigger?',
+    '',
+    'Abort after two regressions.',
+    '',
+    'Pilot scope?',
+    '',
+    'Start with five enterprise customers before broader launch.',
+    '',
+    'That keeps early support manageable.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'question_blocks')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'question_blocks',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'That keeps the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'That keeps the launch reversible.'].join('\n\n'),
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'workflow_batch',
+        inferRemainingAnswers: true,
+        workflows: [
+          {
+            kind: 'planning_batch',
+            groupKey: 'auth-rollout-follow-through',
+            answers: [
+              {
+                summary: 'Rollback trigger',
+              },
+            ],
+            requests: [
+              {
+                taskKey: 'goal-docs',
+                title: 'Capture auth rollout goal context',
+                description: 'Record the auth and rollout answers across Goal docs.',
+                acceptanceCriteria: ['The auth and rollout answers are durable.'],
+                requestedUpdates: ['goal.md', 'design.md'],
+              },
+            ],
+          },
+          {
+            kind: 'planning',
+            workflowTaskKey: 'handoff-review',
+            title: 'Review auth rollout readiness',
+            description: 'Inspect the shared auth rollout workflow before handoff.',
+            acceptanceCriteria: ['The auth rollout review is visible.'],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'question_blocks',
+      state,
+    ),
+  ).toEqual({
+    kind: 'workflow_batch',
+    workflowKey: undefined,
+    reuseTaskRef: undefined,
+    reuseGroupKey: undefined,
+    inferRemainingAnswers: true,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: [
+          'Start with five enterprise customers before broader launch.',
+          'That keeps early support manageable.',
+        ].join('\n\n'),
+      },
+    ],
+    workflows: [
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Rollback trigger',
+            answer: 'Abort after two regressions.',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      {
+        kind: 'planning',
+        workflowTaskKey: 'handoff-review',
+        title: 'Review auth rollout readiness',
+        description: 'Inspect the shared auth rollout workflow before handoff.',
+        acceptanceCriteria: ['The auth rollout review is visible.'],
+        answers: undefined,
+        requestedUpdates: ['design.md'],
       },
     ],
   })
