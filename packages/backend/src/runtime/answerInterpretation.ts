@@ -2087,6 +2087,28 @@ const QUESTION_CORE_LEADING_TOKENS = new Set([
   'would',
 ])
 
+const QUESTION_KEYWORD_STOPWORDS = new Set([
+  ...QUESTION_CORE_LEADING_TOKENS,
+  'all',
+  'and',
+  'as',
+  'at',
+  'by',
+  'if',
+  'in',
+  'into',
+  'it',
+  'its',
+  'of',
+  'on',
+  'or',
+  'than',
+  'then',
+  'through',
+  'via',
+  'with',
+])
+
 function normalizeQuestionPromptCore(value: string) {
   const normalized = normalizeSourceResponseText(value)
   if (!normalized) {
@@ -2100,6 +2122,32 @@ function normalizeQuestionPromptCore(value: string) {
   }
 
   return tokens.slice(startIndex).join(' ')
+}
+
+function extractQuestionPromptKeywordAnchors(normalizedText: string) {
+  const anchors = new Set<string>()
+  for (const token of normalizedText.split(' ')) {
+    if (!token || QUESTION_KEYWORD_STOPWORDS.has(token)) {
+      continue
+    }
+    anchors.add(token)
+  }
+  return [...anchors]
+}
+
+function keywordAnchorSetsMatch(normalizedQuestionText: string, normalizedCandidate: string) {
+  const questionAnchors = extractQuestionPromptKeywordAnchors(normalizedQuestionText)
+  const candidateAnchors = extractQuestionPromptKeywordAnchors(normalizedCandidate)
+  if (questionAnchors.length < 2 || candidateAnchors.length < 2) {
+    return false
+  }
+
+  const questionAnchorSet = new Set(questionAnchors)
+  const candidateAnchorSet = new Set(candidateAnchors)
+  return (
+    questionAnchors.every((anchor) => candidateAnchorSet.has(anchor)) ||
+    candidateAnchors.every((anchor) => questionAnchorSet.has(anchor))
+  )
 }
 
 function questionTextMatchesCandidate(
@@ -2119,7 +2167,8 @@ function questionTextMatchesCandidate(
   }
   return (
     ` ${normalizedQuestionCoreText} `.includes(` ${normalizedCandidateCore} `) ||
-    ` ${normalizedCandidateCore} `.includes(` ${normalizedQuestionCoreText} `)
+    ` ${normalizedCandidateCore} `.includes(` ${normalizedQuestionCoreText} `) ||
+    keywordAnchorSetsMatch(normalizedQuestionText, normalizedCandidate)
   )
 }
 

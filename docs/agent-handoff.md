@@ -32,6 +32,7 @@ Phase 1 backend is complete:
 - Durable decision topics now also support optional exact `prompt` text, so assistant/API/UI can preserve the canonical user-facing question directly in `decisions.yml` instead of relying only on short summaries or thread history.
 - Answer-driven `question_blocks` and `question_spans` now also match current durable decisions by exact stored `prompt` text when available, so question-based replies no longer need to repeat topic labels inside the question itself.
 - Answer-driven `question_blocks` and `question_spans` now also match current durable decisions by deterministic stored `prompt` core text, so question-based replies can restate the canonical durable question more tersely without falling back to fuzzy topic inference.
+- Answer-driven `question_blocks` and `question_spans` now also match current durable decisions by deterministic stored `prompt` keyword anchors, so question-based replies can reorder the canonical durable question’s meaningful words without requiring exact prompt-core containment or fuzzy NLP.
 - Decision resolution now clears linked visible blockers immediately, and the Bun UI now exposes an explicit `Reconcile Once` control for one deterministic scheduler step.
 - Resolving a decision that was blocking engineering work now creates or reuses visible planner follow-through, rewires engineering blockers onto that planning task, and lets richer later planning requests upgrade the generic follow-through instead of duplicating it.
 - Goal docs are now inspectable through the Bun API/UI with deterministic `bootstrapped` versus `curated` status, and planner prompts now apply explicit doc-status follow-through policy for durable `design.md`.
@@ -115,6 +116,7 @@ Read these first:
 - `docs/superpowers/specs/2026-06-02-durable-decision-prompt-design.md`: current authority note for preserving exact user-facing decision questions directly on durable decision topics through shared runtime, assistant, API, and Bun UI surfaces.
 - `docs/superpowers/specs/2026-06-02-prompt-grounded-question-interpretation-design.md`: current authority note for reusing exact durable decision prompts as the matching authority for question-block and question-span answer interpretation.
 - `docs/superpowers/specs/2026-06-02-prompt-core-question-interpretation-design.md`: current authority note for deterministic prompt-core reuse on question-block and question-span answer interpretation when the shared reply question is shorter than the stored durable prompt.
+- `docs/superpowers/specs/2026-06-02-prompt-keyword-question-interpretation-design.md`: current authority note for deterministic prompt-keyword anchor reuse on question-block and question-span answer interpretation when the shared reply question keeps the same meaningful prompt words but changes their order.
 - `docs/superpowers/specs/2026-06-02-shared-answer-source-design.md`: current authority note for reusing one less-structured raw user reply across multiple durable decision topics and non-decision follow-through answers.
 - `docs/superpowers/specs/2026-06-02-named-answer-source-interpretation-design.md`: current authority note for reusing explicitly extracted topic-specific answer snippets across durable decision topics and non-decision follow-through answers without introducing a second durable store.
 - `docs/superpowers/specs/2026-06-02-answer-source-excerpt-grounding-design.md`: current authority note for grounding reusable named answer sources directly in one shared raw reply through exact source excerpts.
@@ -632,7 +634,7 @@ Current non-UI Goal assistant substrate:
 
 What is still missing:
 
-- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
+- deeper answer interpretation when assistant should infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping inside the action payload
 
 `packages/frontend` remains only as an archived prototype reference and is no longer the product path.
 
@@ -640,7 +642,7 @@ What is still missing:
 
 Next high-leverage phase:
 
-1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
+1. Continue deeper answer interpretation only if product needs assistant to infer brand-new durable decision topics or planner-answer summaries directly from one less-structured reply without first relying on exact repeated durable question text, deterministic prompt-core reuse, deterministic prompt-keyword anchors, explicit topic mentions inside each mapped block anchor paragraph, explicit topic mentions inside each mapped paragraph, explicit topic mentions inside each mapped sentence, explicit inline topic labels, line-based labeled sections, ordered reply structure, grounded excerpts, or per-topic mapping in the action payload.
 
 Keep this out of the next phase unless explicitly requested:
 
