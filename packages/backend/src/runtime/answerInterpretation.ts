@@ -4391,6 +4391,23 @@ function extractAsTopicSummary(text: string) {
   return normalizeExtractedTopicSummary(summary)
 }
 
+function extractCopularTopicSummary(text: string) {
+  const trimmed = text.trim().replace(/^(?:and|but)\s+/i, '')
+  if (!trimmed) {
+    return undefined
+  }
+
+  const summary =
+    /^(?:.+?)\s+(?:should\s+be|will\s+be|must\s+be|can\s+be|could\s+be|would\s+be|is|are|was|were|serves?\s+as|served\s+as|acts?\s+as|acted\s+as|functions?\s+as|functioned\s+as|remain|remains|remained)\s+(?:the|a|an|our|your|their)\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
+      trimmed,
+    )?.groups?.summary
+  if (!summary) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(summary)
+}
+
 const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
   'about',
   ...QUESTION_CORE_LEADING_TOKENS,
@@ -4434,12 +4451,13 @@ function extractLeadingTopicSummary(text: string) {
 }
 
 function extractInferredTopicSummaries(text: string) {
-  return dedupeNonEmptyStrings([
-    extractPrefixedTopicSummary(text),
-    extractAsTopicSummary(text),
-    extractLeadingTopicSummary(text),
-    extractTrailingTopicSummary(text),
-  ])
+  const prefixed = extractPrefixedTopicSummary(text)
+  const asTopic = extractAsTopicSummary(text)
+  const copular = extractCopularTopicSummary(text)
+  const leading = copular ? undefined : extractLeadingTopicSummary(text)
+  const trailing = extractTrailingTopicSummary(text)
+
+  return dedupeNonEmptyStrings([prefixed, asTopic, copular, leading, trailing])
 }
 
 function humanizeDecisionKey(value: string | undefined) {

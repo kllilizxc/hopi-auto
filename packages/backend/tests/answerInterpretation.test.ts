@@ -988,6 +988,44 @@ test('materializes new decision topics from remaining as-topic sentences while r
   ])
 })
 
+test('materializes new decision topics from remaining copular topic sentences while reserving planner summaries', () => {
+  const sourceResponse = [
+    'Bun-native auth should be the auth strategy.',
+    'A staged rollout should be the rollout strategy.',
+    'Five enterprise customers should be the pilot scope.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'topic_sentences',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: undefined,
+      summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
+      taskRef: undefined,
+      answer: 'Bun-native auth should be the auth strategy.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
+      taskRef: undefined,
+      answer: 'A staged rollout should be the rollout strategy.',
+    },
+  ])
+})
+
 test('materializes topic spans across decision and planner answers without block boundaries', () => {
   const sourceResponse = [
     'We should use Bun-native auth for auth strategy.',
@@ -2701,6 +2739,109 @@ test('materializes inferred planner answers from remaining as-topic blocks witho
         prompt: 'What should the pilot scope be?',
         answer: [
           'Start with five enterprise customers before broader launch as the pilot scope.',
+          'That keeps early support manageable.',
+        ].join('\n\n'),
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes inferred planner answers from remaining copular topic blocks without explicit follow-through summaries', () => {
+  const sourceResponse = [
+    'Bun-native auth should be the auth strategy.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'A staged rollout should be the rollout strategy.',
+    '',
+    'That keeps the launch reversible.',
+    '',
+    'Five enterprise customers should be the pilot scope.',
+    '',
+    'That keeps early support manageable.',
+  ].join('\n')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'topic_blocks')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'topic_blocks',
+      state,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: [
+        'Bun-native auth should be the auth strategy.',
+        'That keeps the runtime simple.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: [
+        'A staged rollout should be the rollout strategy.',
+        'That keeps the launch reversible.',
+      ].join('\n\n'),
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        inferRemainingAnswers: true,
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'topic_blocks',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    inferRemainingAnswers: true,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
+        answer: [
+          'Five enterprise customers should be the pilot scope.',
           'That keeps early support manageable.',
         ].join('\n\n'),
       },
