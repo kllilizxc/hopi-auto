@@ -2803,38 +2803,10 @@ function inferTopicSummaryFromTopicBlock(block: TopicSourceResponseBlock) {
   return inferTopicSummaryFromTopicParagraph(block.anchorText)
 }
 
-function extractTrailingTopicSummary(text: string) {
-  const match = /\bfor\s+(?!(?:the|a|an)\b)(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
-    text.trim(),
-  )?.groups?.summary
-  if (!match) {
-    return undefined
-  }
-
-  const summary = match.trim().replace(/\s+/g, ' ')
-  if (!summary) {
-    return undefined
-  }
-  return `${summary.slice(0, 1).toUpperCase()}${summary.slice(1)}`
-}
-
-function extractPrefixedTopicSummary(text: string) {
-  const trimmed = text.trim()
-  if (!trimmed) {
-    return undefined
-  }
-
-  const summary = new RegExp(
-    `^(?:${TOPIC_SUMMARY_PREFIX_PATTERN})\\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\\s*(?:,|:|-)\\s+.+$`,
-    'i',
-  ).exec(trimmed)?.groups?.summary
-  if (!summary) {
-    return undefined
-  }
-
+function normalizeExtractedTopicSummary(summary: string, stripLeadingArticle = false) {
   const normalizedSummary = summary
     .trim()
-    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(stripLeadingArticle ? /^(?:the|a|an)\s+/i : /^$/u, '')
     .replace(/\s+/g, ' ')
   if (!normalizedSummary) {
     return undefined
@@ -2855,6 +2827,50 @@ function extractPrefixedTopicSummary(text: string) {
   }
 
   return `${normalizedSummary.slice(0, 1).toUpperCase()}${normalizedSummary.slice(1)}`
+}
+
+function extractTrailingTopicSummary(text: string) {
+  const match = /\bfor\s+(?!(?:the|a|an)\b)(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
+    text.trim(),
+  )?.groups?.summary
+  if (!match) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(match)
+}
+
+function extractPrefixedTopicSummary(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const summary = new RegExp(
+    `^(?:${TOPIC_SUMMARY_PREFIX_PATTERN})\\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\\s*(?:,|:|-)\\s+.+$`,
+    'i',
+  ).exec(trimmed)?.groups?.summary
+  if (!summary) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(summary, true)
+}
+
+function extractAsTopicSummary(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const summary = /\bas\s+(?:the|a|an)\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
+    trimmed,
+  )?.groups?.summary
+  if (!summary) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(summary)
 }
 
 const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
@@ -2896,34 +2912,13 @@ function extractLeadingTopicSummary(text: string) {
     return undefined
   }
 
-  const summary = label
-    .trim()
-    .replace(/^(?:the|a|an)\s+/i, '')
-    .replace(/\s+/g, ' ')
-  if (!summary) {
-    return undefined
-  }
-
-  const normalized = normalizeSourceResponseLabel(summary)
-  if (!normalized) {
-    return undefined
-  }
-
-  const tokens = normalized.split(' ').filter(Boolean)
-  if (tokens.length === 0 || tokens.length > 6) {
-    return undefined
-  }
-  const firstToken = tokens[0]
-  if (firstToken && LEADING_TOPIC_SUMMARY_REJECT_TOKENS.has(firstToken)) {
-    return undefined
-  }
-
-  return `${summary.slice(0, 1).toUpperCase()}${summary.slice(1)}`
+  return normalizeExtractedTopicSummary(label, true)
 }
 
 function extractInferredTopicSummaries(text: string) {
   return dedupeNonEmptyStrings([
     extractPrefixedTopicSummary(text),
+    extractAsTopicSummary(text),
     extractLeadingTopicSummary(text),
     extractTrailingTopicSummary(text),
   ])
