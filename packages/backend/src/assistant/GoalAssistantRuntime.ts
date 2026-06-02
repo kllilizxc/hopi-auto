@@ -393,6 +393,9 @@ async function applyAssistantAction(
       action.answerSources,
       action.sourceResponseFormat,
       sourceResponseState,
+      listInterpretableFollowThroughAnswerSummaries(action.followThrough).map((summary) => [
+        summary,
+      ]),
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -450,6 +453,9 @@ async function applyAssistantAction(
       action.answerSources,
       action.sourceResponseFormat,
       sourceResponseState,
+      listInterpretableFollowThroughAnswerSummaries(action.followThrough).map((summary) => [
+        summary,
+      ]),
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {

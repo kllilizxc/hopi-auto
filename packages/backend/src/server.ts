@@ -242,6 +242,7 @@ const resolveDecisionSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',
+      'topic_blocks',
     ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
@@ -263,6 +264,7 @@ const answerDecisionSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',
+      'topic_blocks',
     ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
@@ -287,6 +289,7 @@ const answerDecisionBatchSchema = z.object({
       'inline_topics',
       'topic_sentences',
       'topic_paragraphs',
+      'topic_blocks',
     ])
     .optional(),
   sourceResponse: z.string().min(1).optional(),
@@ -543,6 +546,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.answerSources,
             body.sourceResponseFormat,
             sourceResponseState,
+            listInterpretableFollowThroughAnswerSummaries(body.followThrough).map((summary) => [
+              summary,
+            ]),
           )
           const firstAnswer = answers[0]
           if (!firstAnswer) {
@@ -680,6 +686,9 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.answerSources,
             body.sourceResponseFormat,
             sourceResponseState,
+            listInterpretableFollowThroughAnswerSummaries(body.followThrough).map((summary) => [
+              summary,
+            ]),
           )
           const firstAnswer = materializedAnswers[0]
           if (!firstAnswer) {

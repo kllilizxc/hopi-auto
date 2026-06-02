@@ -290,6 +290,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
+        'topic_blocks',
       ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),
@@ -305,6 +306,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
+        'topic_blocks',
       ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),
@@ -329,6 +331,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
         'inline_topics',
         'topic_sentences',
         'topic_paragraphs',
+        'topic_blocks',
       ])
       .optional(),
     sourceResponse: z.string().min(1).optional(),

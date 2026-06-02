@@ -12,6 +12,7 @@ export type InterpretableSourceResponseFormat =
   | 'inline_topics'
   | 'topic_sentences'
   | 'topic_paragraphs'
+  | 'topic_blocks'
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
@@ -20,10 +21,13 @@ export interface InterpretedSourceResponseState {
   inlineTopics?: Map<string, LabeledSourceResponseSection>
   topicSentences?: TopicSourceResponseSentence[]
   topicParagraphs?: TopicSourceResponseParagraph[]
+  topicBlocks?: TopicSourceResponseBlock[]
+  topicBlockCandidateLabels?: Set<string>
   orderedItems?: string[]
   nextOrderedItemIndex: number
   consumedTopicSentenceIndexes: Set<number>
   consumedTopicParagraphIndexes: Set<number>
+  consumedTopicBlockIndexes: Set<number>
 }
 
 interface LabeledSourceResponseSection {
@@ -39,6 +43,11 @@ interface TopicSourceResponseSentence {
 interface TopicSourceResponseParagraph {
   text: string
   normalizedText: string
+}
+
+interface TopicSourceResponseBlock {
+  text: string
+  normalizedAnchorLabel: string
 }
 
 export type InterpretableAnswerSource =
@@ -168,6 +177,7 @@ export function createInterpretedSourceResponseState(
     nextOrderedItemIndex: 0,
     consumedTopicSentenceIndexes: new Set<number>(),
     consumedTopicParagraphIndexes: new Set<number>(),
+    consumedTopicBlockIndexes: new Set<number>(),
   }
 }
 
@@ -177,11 +187,16 @@ export function materializeInterpretedDecisionAnswers(
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
+  additionalSourceResponseCandidates: string[][] = [],
 ) {
   const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+  registerTopicBlockCandidates(interpretationState, [
+    ...answers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...additionalSourceResponseCandidates,
+  ])
 
   return answers.map((answer) => ({
     summary: answer.summary,
@@ -220,17 +235,21 @@ export function materializeInterpretedDecisionAnswerBatch(
     )
   }
 
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+  registerTopicBlockCandidates(interpretationState, [
+    ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+    ...reservedAnswerSummaries.map((summary) => [summary]),
+  ])
   const materializedExplicitAnswers = materializeInterpretedDecisionAnswers(
     explicitAnswers,
     sourceResponse,
     answerSources,
     sourceResponseFormat,
-    sourceResponseState,
+    interpretationState,
   )
-
-  const interpretationState =
-    sourceResponseState ??
-    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   const explicitDecisionKeys = new Set(
     materializedExplicitAnswers.flatMap((answer) =>
       answer.decisionKey ? [answer.decisionKey] : [],
@@ -284,6 +303,9 @@ export function materializeInterpretedDecisionFollowThrough(
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+  registerTopicBlockCandidates(interpretationState, [
+    ...listInterpretableFollowThroughAnswerSummaries(followThrough).map((summary) => [summary]),
+  ])
 
   if (followThrough.kind === 'planning') {
     return {
@@ -365,6 +387,7 @@ function materializeInterpretedPlanningAnswers(
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+  registerTopicBlockCandidates(interpretationState, [...answers.map((answer) => [answer.summary])])
   return answers.map((answer) => ({
     summary: answer.summary,
     answer: resolveAnswerText(
@@ -463,6 +486,20 @@ function resolveAnswerText(
     return topicParagraph
   }
 
+  if (sourceResponseFormat === 'topic_blocks') {
+    const topicBlock = consumeTopicBlockSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    if (!topicBlock) {
+      throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
+    }
+    return topicBlock
+  }
+
   const shared = sourceResponse?.trim()
   if (shared) {
     return shared
@@ -555,10 +592,11 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'inline_topics' &&
     sourceResponseFormat !== 'topic_sentences' &&
-    sourceResponseFormat !== 'topic_paragraphs'
+    sourceResponseFormat !== 'topic_paragraphs' &&
+    sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", "topic_sentences", or "topic_paragraphs".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "ordered_items", "inline_topics", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -609,11 +647,19 @@ function materializeMatchingOpenDecisionAnswers(
                 sourceResponseState,
                 false,
               )
-            : resolveOrderedSourceResponseItem(
-                sourceResponse,
-                `decision answer ${decision.decisionKey}`,
-                sourceResponseState,
-              )
+            : sourceResponseFormat === 'topic_blocks'
+              ? consumeTopicBlockSourceResponseSection(
+                  sourceResponse,
+                  buildOpenDecisionSourceResponseCandidates(decision),
+                  `decision answer ${decision.decisionKey}`,
+                  sourceResponseState,
+                  false,
+                )
+              : resolveOrderedSourceResponseItem(
+                  sourceResponse,
+                  `decision answer ${decision.decisionKey}`,
+                  sourceResponseState,
+                )
     if (!match) {
       continue
     }
@@ -809,6 +855,32 @@ function parseRequiredTopicSourceResponseParagraphs(
   return paragraphs
 }
 
+function parseRequiredTopicSourceResponseBlocks(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.topicBlocks) {
+    return sourceResponseState.topicBlocks
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat topic_blocks requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const blocks = parseTopicSourceResponseBlocks(
+    parseTopicSourceResponseParagraphs(shared),
+    sourceResponseState?.topicBlockCandidateLabels ?? new Set<string>(),
+  )
+  if (sourceResponseState) {
+    sourceResponseState.topicBlocks = blocks
+  }
+  return blocks
+}
+
 function findLabeledSourceResponseSection(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
@@ -896,6 +968,38 @@ function consumeTopicParagraphSourceResponseSection(
   return paragraphs[paragraphIndex]?.text
 }
 
+function consumeTopicBlockSourceResponseSection(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  required: boolean,
+) {
+  registerTopicBlockCandidates(sourceResponseState, [candidates])
+  const blocks = parseRequiredTopicSourceResponseBlocks(sourceResponse, label, sourceResponseState)
+  const consumedIndexes = sourceResponseState?.consumedTopicBlockIndexes ?? new Set<number>()
+  const matchingIndexes = findMatchingTopicBlockIndexes(blocks, candidates, consumedIndexes)
+
+  if (matchingIndexes.length === 0) {
+    if (!required) {
+      return undefined
+    }
+    throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
+  }
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(`Multiple topic blocks matched ${label} in sourceResponse.`)
+  }
+
+  const blockIndex = matchingIndexes[0]
+  if (blockIndex === undefined) {
+    return undefined
+  }
+  if (sourceResponseState) {
+    sourceResponseState.consumedTopicBlockIndexes.add(blockIndex)
+  }
+  return blocks[blockIndex]?.text
+}
+
 function resolveOrderedSourceResponseItem(
   sourceResponse: string | undefined,
   label: string,
@@ -973,6 +1077,52 @@ function parseTopicSourceResponseParagraphs(sourceResponse: string) {
       text: paragraph,
       normalizedText: normalizeSourceResponseText(paragraph),
     }))
+}
+
+function parseTopicSourceResponseBlocks(
+  paragraphs: TopicSourceResponseParagraph[],
+  normalizedCandidateLabels: Set<string>,
+) {
+  const blocks: TopicSourceResponseBlock[] = []
+  let currentBlock: TopicSourceResponseBlock | undefined
+
+  for (const paragraph of paragraphs) {
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      paragraph.normalizedText,
+      normalizedCandidateLabels,
+    )
+
+    if (matchingLabels.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple topic block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
+      )
+    }
+
+    const anchorLabel = matchingLabels[0]
+    if (anchorLabel) {
+      if (currentBlock) {
+        blocks.push(currentBlock)
+      }
+      currentBlock = {
+        text: paragraph.text,
+        normalizedAnchorLabel: anchorLabel,
+      }
+      continue
+    }
+
+    if (currentBlock) {
+      currentBlock = {
+        ...currentBlock,
+        text: `${currentBlock.text}\n\n${paragraph.text}`,
+      }
+    }
+  }
+
+  if (currentBlock) {
+    blocks.push(currentBlock)
+  }
+
+  return blocks
 }
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {
@@ -1130,6 +1280,73 @@ function findMatchingTopicParagraphIndexes(
   }
 
   return [...matchingIndexes].sort((left, right) => left - right)
+}
+
+function findMatchingTopicBlockIndexes(
+  blocks: TopicSourceResponseBlock[],
+  candidates: string[],
+  consumedIndexes: Set<number>,
+) {
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map(normalizeSourceResponseLabel)
+  const matchingIndexes = new Set<number>()
+
+  for (const normalizedCandidate of normalizedCandidates) {
+    if (!normalizedCandidate) {
+      continue
+    }
+
+    blocks.forEach((block, index) => {
+      if (consumedIndexes.has(index)) {
+        return
+      }
+      if (block.normalizedAnchorLabel === normalizedCandidate) {
+        matchingIndexes.add(index)
+      }
+    })
+  }
+
+  return [...matchingIndexes].sort((left, right) => left - right)
+}
+
+function findMatchingNormalizedTopicLabels(
+  normalizedText: string,
+  normalizedCandidateLabels: Set<string>,
+) {
+  const matches: string[] = []
+  for (const normalizedCandidate of normalizedCandidateLabels) {
+    const needle = ` ${normalizedCandidate} `
+    if (` ${normalizedText} `.includes(needle)) {
+      matches.push(normalizedCandidate)
+    }
+  }
+  return matches
+}
+
+function registerTopicBlockCandidates(
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  candidateGroups: string[][],
+) {
+  if (!sourceResponseState || sourceResponseState.sourceResponseFormat !== 'topic_blocks') {
+    return
+  }
+
+  const candidateLabels = sourceResponseState.topicBlockCandidateLabels ?? new Set<string>()
+  let changed = false
+  for (const candidateGroup of candidateGroups) {
+    for (const candidate of dedupeNonEmptyStrings(candidateGroup)) {
+      const normalizedCandidate = normalizeSourceResponseLabel(candidate)
+      if (candidateLabels.has(normalizedCandidate)) {
+        continue
+      }
+      candidateLabels.add(normalizedCandidate)
+      changed = true
+    }
+  }
+
+  sourceResponseState.topicBlockCandidateLabels = candidateLabels
+  if (changed) {
+    sourceResponseState.topicBlocks = undefined
+  }
 }
 
 function reserveMatchedLabeledSection(
