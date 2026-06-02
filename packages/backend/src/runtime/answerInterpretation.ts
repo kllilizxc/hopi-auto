@@ -70,6 +70,7 @@ interface QuestionSourceResponseSpan {
 
 interface TopicSourceResponseBlock {
   text: string
+  anchorText: string
   normalizedAnchorLabel: string
 }
 
@@ -279,6 +280,7 @@ export function materializeInterpretedDecisionAnswerBatch(
   registerTopicBlockCandidates(interpretationState, [
     ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
     ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+    ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
     ...reservedAnswerSummaries.map((summary) => [summary]),
   ])
   const materializedExplicitAnswers = materializeInterpretedDecisionAnswers(
@@ -800,10 +802,11 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     sourceResponseFormat !== 'question_blocks' &&
     sourceResponseFormat !== 'question_spans' &&
     sourceResponseFormat !== 'topic_sentences' &&
-    sourceResponseFormat !== 'topic_paragraphs'
+    sourceResponseFormat !== 'topic_paragraphs' &&
+    sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", or "topic_paragraphs".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
     )
   }
 
@@ -847,11 +850,20 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
           sourceResponseState,
         )
       : undefined
+  const topicBlocks =
+    sourceResponseFormat === 'topic_blocks'
+      ? parseRequiredTopicSourceResponseBlocks(
+          sourceResponse,
+          'inferDecisionTopics',
+          sourceResponseState,
+        )
+      : undefined
   const reservedLabels = new Set<string>()
   const reservedQuestionBlockIndexes = new Set<number>()
   const reservedQuestionSpanIndexes = new Set<number>()
   const reservedTopicSentenceIndexes = new Set<number>()
   const reservedTopicParagraphIndexes = new Set<number>()
+  const reservedTopicBlockIndexes = new Set<number>()
 
   for (const answer of explicitAnswers) {
     if (questionBlocks) {
@@ -886,6 +898,15 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
         topicParagraphs,
         buildDecisionAnswerSourceResponseCandidates(answer),
         reservedTopicParagraphIndexes,
+      )
+      continue
+    }
+
+    if (topicBlocks) {
+      reserveMatchedTopicBlock(
+        topicBlocks,
+        buildDecisionAnswerSourceResponseCandidates(answer),
+        reservedTopicBlockIndexes,
       )
       continue
     }
@@ -941,6 +962,15 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
         continue
       }
 
+      if (topicBlocks) {
+        reserveMatchedTopicBlock(
+          topicBlocks,
+          buildOpenDecisionSourceResponseCandidates(decision),
+          reservedTopicBlockIndexes,
+        )
+        continue
+      }
+
       reserveMatchedLabeledSection(
         sectionsByLabel,
         buildOpenDecisionSourceResponseCandidates(decision),
@@ -967,6 +997,11 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
 
     if (topicParagraphs) {
       reserveMatchedTopicParagraph(topicParagraphs, [summary], reservedTopicParagraphIndexes)
+      continue
+    }
+
+    if (topicBlocks) {
+      reserveMatchedTopicBlock(topicBlocks, [summary], reservedTopicBlockIndexes)
       continue
     }
 
@@ -1085,6 +1120,31 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: paragraph.text,
+      })
+    }
+
+    return materializedAnswers
+  }
+
+  if (topicBlocks) {
+    for (const [index, block] of topicBlocks.entries()) {
+      if (reservedTopicBlockIndexes.has(index)) {
+        continue
+      }
+
+      const matchingKnownDecisions = findMatchingKnownDecisionsForTopicBlock(block, knownDecisions)
+      if (matchingKnownDecisions.length > 1) {
+        throw new AnswerInterpretationError(
+          `Multiple existing decisions match inferred topic block "${block.anchorText}".`,
+        )
+      }
+
+      const matchingKnownDecision = matchingKnownDecisions[0]
+      materializedAnswers.push({
+        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicBlock(block),
+        decisionKey: matchingKnownDecision?.decisionKey,
+        taskRef: matchingKnownDecision?.taskRef,
+        answer: block.text,
       })
     }
 
@@ -1738,13 +1798,14 @@ function parseTopicSourceResponseBlocks(
       )
     }
 
-    const anchorLabel = matchingLabels[0]
+    const anchorLabel = matchingLabels[0] ?? inferTopicBlockAnchorLabelFromParagraph(paragraph.text)
     if (anchorLabel) {
       if (currentBlock) {
         blocks.push(currentBlock)
       }
       currentBlock = {
         text: paragraph.text,
+        anchorText: paragraph.text,
         normalizedAnchorLabel: anchorLabel,
       }
       continue
@@ -2144,6 +2205,18 @@ function reserveMatchedTopicParagraph(
   }
 }
 
+function reserveMatchedTopicBlock(
+  blocks: TopicSourceResponseBlock[],
+  candidates: string[],
+  reservedIndexes: Set<number>,
+) {
+  const matchingIndexes = findMatchingTopicBlockIndexes(blocks, candidates, reservedIndexes)
+  const firstMatch = matchingIndexes[0]
+  if (firstMatch !== undefined) {
+    reservedIndexes.add(firstMatch)
+  }
+}
+
 function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownDecision[]) {
   const lookup = new Map<string, InterpretableKnownDecision[]>()
   for (const decision of knownDecisions) {
@@ -2218,6 +2291,20 @@ function findMatchingKnownDecisionsForTopicParagraph(
     (decision) =>
       findMatchingTopicParagraphIndexes(
         [paragraph],
+        buildKnownDecisionSourceResponseCandidates(decision),
+        new Set<number>(),
+      ).length > 0,
+  )
+}
+
+function findMatchingKnownDecisionsForTopicBlock(
+  block: TopicSourceResponseBlock,
+  knownDecisions: InterpretableKnownDecision[],
+) {
+  return knownDecisions.filter(
+    (decision) =>
+      findMatchingTopicBlockIndexes(
+        [block],
         buildKnownDecisionSourceResponseCandidates(decision),
         new Set<number>(),
       ).length > 0,
@@ -2383,6 +2470,14 @@ function topicTextMatchesCandidate(
   return keywordAnchorSetsMatch(normalizedText, normalizedCandidate)
 }
 
+function inferTopicBlockAnchorLabelFromParagraph(paragraph: string) {
+  const summary = extractTrailingTopicSummary(paragraph)
+  if (!summary) {
+    return undefined
+  }
+  return normalizeSourceResponseLabel(summary)
+}
+
 function inferTopicSummaryFromTopicSentence(sentence: string) {
   const summary = extractTrailingTopicSummary(sentence)
   if (!summary) {
@@ -2410,6 +2505,10 @@ function inferTopicSummaryFromTopicParagraph(paragraph: string) {
     )
   }
   return summaries[0] as string
+}
+
+function inferTopicSummaryFromTopicBlock(block: TopicSourceResponseBlock) {
+  return inferTopicSummaryFromTopicParagraph(block.anchorText)
 }
 
 function extractTrailingTopicSummary(text: string) {

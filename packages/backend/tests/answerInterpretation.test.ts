@@ -1038,6 +1038,56 @@ test('materializes new decision topics from remaining topic paragraphs while res
   ])
 })
 
+test('materializes new decision topics from remaining topic blocks while reserving planner summaries', () => {
+  const sourceResponse = [
+    'We should use Bun-native auth for auth strategy.',
+    '',
+    'That keeps the runtime simple.',
+    '',
+    'Use a staged rollout for rollout strategy.',
+    '',
+    'That keeps the launch reversible.',
+    '',
+    'Start with five enterprise customers before broader launch for pilot scope.',
+    '',
+    'That keeps early support manageable.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [],
+      false,
+      sourceResponse,
+      [],
+      'topic_blocks',
+      undefined,
+      true,
+      [],
+      ['Pilot scope'],
+    ),
+  ).toEqual([
+    {
+      decisionKey: undefined,
+      summary: 'Auth strategy',
+      taskRef: undefined,
+      answer: [
+        'We should use Bun-native auth for auth strategy.',
+        'That keeps the runtime simple.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Rollout strategy',
+      taskRef: undefined,
+      answer: [
+        'Use a staged rollout for rollout strategy.',
+        'That keeps the launch reversible.',
+      ].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes matching open decisions from topic paragraphs without per-topic mapping', () => {
   const sourceResponse = [
     'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
@@ -2273,7 +2323,7 @@ test('rejects inferDecisionTopics when labeled-section interpretation is not ena
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", or "topic_paragraphs".',
+      'inferDecisionTopics requires sourceResponseFormat "labeled_sections", "inline_topics", "question_blocks", "question_spans", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
     ),
   )
 })
