@@ -7,6 +7,7 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
+  createInterpretedSourceResponseState,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -372,6 +373,10 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'resolve_decision') {
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
     const materializedAnswers = materializeInterpretedDecisionAnswers(
       [
         {
@@ -386,6 +391,7 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
+      sourceResponseState,
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -408,6 +414,7 @@ async function applyAssistantAction(
           action.sourceResponse,
           action.answerSources,
           action.sourceResponseFormat,
+          sourceResponseState,
         ),
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
@@ -423,6 +430,10 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answer') {
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
     const materializedAnswers = materializeInterpretedDecisionAnswers(
       [
         {
@@ -437,6 +448,7 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
+      sourceResponseState,
     )
     const firstAnswer = materializedAnswers[0]
     if (!firstAnswer) {
@@ -459,6 +471,7 @@ async function applyAssistantAction(
           action.sourceResponse,
           action.answerSources,
           action.sourceResponseFormat,
+          sourceResponseState,
         ),
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
@@ -476,6 +489,10 @@ async function applyAssistantAction(
 
   if (action.kind === 'record_answers') {
     const current = await stores.decisions.readGoalDecisions(goalKey)
+    const sourceResponseState = createInterpretedSourceResponseState(
+      action.sourceResponse,
+      action.sourceResponseFormat,
+    )
     const answers = materializeInterpretedDecisionAnswerBatch(
       action.answers,
       current.decisions
@@ -489,6 +506,7 @@ async function applyAssistantAction(
       action.sourceResponse,
       action.answerSources,
       action.sourceResponseFormat,
+      sourceResponseState,
     )
     const result = await answerGoalDecisions(
       {
@@ -504,6 +522,7 @@ async function applyAssistantAction(
           action.sourceResponse,
           action.answerSources,
           action.sourceResponseFormat,
+          sourceResponseState,
         ),
         writer: 'assistant',
         reason: `assistant record answers ${answers

@@ -6,7 +6,15 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 
 export class AnswerInterpretationError extends Error {}
 
-export type InterpretableSourceResponseFormat = 'labeled_sections'
+export type InterpretableSourceResponseFormat = 'labeled_sections' | 'ordered_items'
+
+export interface InterpretedSourceResponseState {
+  sourceResponse?: string
+  sourceResponseFormat: InterpretableSourceResponseFormat
+  labeledSections?: Map<string, string>
+  orderedItems?: string[]
+  nextOrderedItemIndex: number
+}
 
 export type InterpretableAnswerSource =
   | {
@@ -96,13 +104,33 @@ export type InterpretableDecisionFollowThroughInput =
   | InterpretableDecisionLeafFollowThroughInput
   | InterpretableDecisionWorkflowBatchFollowThroughInput
 
+export function createInterpretedSourceResponseState(
+  sourceResponse: string | undefined,
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+): InterpretedSourceResponseState | undefined {
+  if (!sourceResponseFormat) {
+    return undefined
+  }
+
+  return {
+    sourceResponse,
+    sourceResponseFormat,
+    nextOrderedItemIndex: 0,
+  }
+}
+
 export function materializeInterpretedDecisionAnswers(
   answers: InterpretableDecisionAnswerEntryInput[],
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
   const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+
   return answers.map((answer) => ({
     summary: answer.summary,
     decisionKey: answer.decisionKey,
@@ -116,6 +144,7 @@ export function materializeInterpretedDecisionAnswers(
       answerSourcesByKey,
       sourceResponseFormat,
       buildDecisionAnswerSourceResponseCandidates(answer),
+      interpretationState,
     ),
   }))
 }
@@ -127,6 +156,7 @@ export function materializeInterpretedDecisionAnswerBatch(
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
   const explicitAnswers = answers ?? []
   if (inferOpenDecisions && explicitAnswers.some((answer) => !answer.decisionKey?.trim())) {
@@ -140,8 +170,12 @@ export function materializeInterpretedDecisionAnswerBatch(
     sourceResponse,
     answerSources,
     sourceResponseFormat,
+    sourceResponseState,
   )
 
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   const materializedAnswers = inferOpenDecisions
     ? [
         ...materializedExplicitAnswers,
@@ -154,13 +188,14 @@ export function materializeInterpretedDecisionAnswerBatch(
           ),
           sourceResponse,
           sourceResponseFormat,
+          interpretationState,
         ),
       ]
     : materializedExplicitAnswers
 
   if (materializedAnswers.length === 0) {
     throw new AnswerInterpretationError(
-      'No decision answers were materialized. Provide explicit answers or use inferOpenDecisions with labeled sections that match at least one open decision.',
+      'No decision answers were materialized. Provide explicit answers or use inferOpenDecisions with structured sourceResponse items that match at least one open decision.',
     )
   }
 
@@ -172,11 +207,15 @@ export function materializeInterpretedDecisionFollowThrough(
   sourceResponse?: string,
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
   if (!followThrough) {
     return undefined
   }
   const answerSourcesByKey = createAnswerSourceLookup(answerSources, sourceResponse)
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
 
   if (followThrough.kind === 'planning') {
     return {
@@ -186,6 +225,7 @@ export function materializeInterpretedDecisionFollowThrough(
         sourceResponse,
         answerSourcesByKey,
         sourceResponseFormat,
+        interpretationState,
       ),
     }
   }
@@ -198,6 +238,7 @@ export function materializeInterpretedDecisionFollowThrough(
         sourceResponse,
         answerSourcesByKey,
         sourceResponseFormat,
+        interpretationState,
       ),
     }
   }
@@ -212,6 +253,7 @@ export function materializeInterpretedDecisionFollowThrough(
       sourceResponse,
       answerSourcesByKey,
       sourceResponseFormat,
+      interpretationState,
     ),
     workflows: followThrough.workflows.map((workflow) => {
       if (workflow.kind === 'planning') {
@@ -222,6 +264,7 @@ export function materializeInterpretedDecisionFollowThrough(
             sourceResponse,
             answerSourcesByKey,
             sourceResponseFormat,
+            interpretationState,
           ),
         }
       }
@@ -233,6 +276,7 @@ export function materializeInterpretedDecisionFollowThrough(
           sourceResponse,
           answerSourcesByKey,
           sourceResponseFormat,
+          interpretationState,
         ),
       }
     }),
@@ -244,11 +288,15 @@ function materializeInterpretedPlanningAnswers(
   sourceResponse?: string,
   answerSourcesByKey?: Map<string, string>,
   sourceResponseFormat?: InterpretableSourceResponseFormat,
+  sourceResponseState?: InterpretedSourceResponseState,
 ): GoalPlanningRequestAnswer[] | undefined {
   if (!answers || answers.length === 0) {
     return answers ? [] : undefined
   }
 
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   return answers.map((answer) => ({
     summary: answer.summary,
     answer: resolveAnswerText(
@@ -260,6 +308,7 @@ function materializeInterpretedPlanningAnswers(
       answerSourcesByKey,
       sourceResponseFormat,
       [answer.summary],
+      interpretationState,
     ),
   }))
 }
@@ -273,6 +322,7 @@ function resolveAnswerText(
   answerSourcesByKey?: Map<string, string>,
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseCandidates: string[] = [],
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
   const explicit = answer?.trim()
   if (explicit) {
@@ -296,7 +346,16 @@ function resolveAnswerText(
   }
 
   if (sourceResponseFormat === 'labeled_sections') {
-    return resolveLabeledSourceResponseSection(sourceResponse, sourceResponseCandidates, label)
+    return resolveLabeledSourceResponseSection(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+  }
+
+  if (sourceResponseFormat === 'ordered_items') {
+    return resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState)
   }
 
   const shared = sourceResponse?.trim()
@@ -345,8 +404,13 @@ function resolveLabeledSourceResponseSection(
   sourceResponse: string | undefined,
   candidates: string[],
   label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
-  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(sourceResponse, label)
+  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(
+    sourceResponse,
+    label,
+    sourceResponseState,
+  )
   const match = findLabeledSourceResponseSection(sectionsByLabel, candidates)
   if (match) {
     return match
@@ -360,17 +424,22 @@ function materializeMatchingOpenDecisionAnswers(
   explicitDecisionKeys: Set<string>,
   sourceResponse: string | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
-  if (sourceResponseFormat !== 'labeled_sections') {
+  if (sourceResponseFormat !== 'labeled_sections' && sourceResponseFormat !== 'ordered_items') {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections" or "ordered_items".',
     )
   }
 
-  const sectionsByLabel = parseRequiredLabeledSourceResponseSections(
-    sourceResponse,
-    'inferOpenDecisions',
-  )
+  const sectionsByLabel =
+    sourceResponseFormat === 'labeled_sections'
+      ? parseRequiredLabeledSourceResponseSections(
+          sourceResponse,
+          'inferOpenDecisions',
+          sourceResponseState,
+        )
+      : undefined
   const materializedAnswers: Array<{
     summary: string
     decisionKey: string
@@ -382,10 +451,17 @@ function materializeMatchingOpenDecisionAnswers(
     if (explicitDecisionKeys.has(decision.decisionKey)) {
       continue
     }
-    const match = findLabeledSourceResponseSection(
-      sectionsByLabel,
-      buildOpenDecisionSourceResponseCandidates(decision),
-    )
+    const match =
+      sourceResponseFormat === 'labeled_sections'
+        ? findLabeledSourceResponseSection(
+            sectionsByLabel ?? new Map<string, string>(),
+            buildOpenDecisionSourceResponseCandidates(decision),
+          )
+        : resolveOrderedSourceResponseItem(
+            sourceResponse,
+            `decision answer ${decision.decisionKey}`,
+            sourceResponseState,
+          )
     if (!match) {
       continue
     }
@@ -403,7 +479,11 @@ function materializeMatchingOpenDecisionAnswers(
 function parseRequiredLabeledSourceResponseSections(
   sourceResponse: string | undefined,
   label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
 ) {
+  if (sourceResponseState?.labeledSections) {
+    return sourceResponseState.labeledSections
+  }
   const shared = sourceResponse?.trim()
   if (!shared) {
     throw new AnswerInterpretationError(
@@ -411,7 +491,11 @@ function parseRequiredLabeledSourceResponseSections(
     )
   }
 
-  return parseLabeledSourceResponseSections(shared)
+  const sections = parseLabeledSourceResponseSections(shared)
+  if (sourceResponseState) {
+    sourceResponseState.labeledSections = sections
+  }
+  return sections
 }
 
 function findLabeledSourceResponseSection(
@@ -425,6 +509,63 @@ function findLabeledSourceResponseSection(
     }
   }
   return undefined
+}
+
+function resolveOrderedSourceResponseItem(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const items = parseRequiredOrderedSourceResponseItems(sourceResponse, label, sourceResponseState)
+  const nextIndex = sourceResponseState?.nextOrderedItemIndex ?? 0
+  const nextItem = items[nextIndex]
+  if (!nextItem) {
+    throw new AnswerInterpretationError(`No ordered item remained for ${label} in sourceResponse.`)
+  }
+  if (sourceResponseState) {
+    sourceResponseState.nextOrderedItemIndex = nextIndex + 1
+  }
+  return nextItem
+}
+
+function parseRequiredOrderedSourceResponseItems(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  if (sourceResponseState?.orderedItems) {
+    return sourceResponseState.orderedItems
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat ordered_items requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const items = parseOrderedSourceResponseItems(shared)
+  if (sourceResponseState) {
+    sourceResponseState.orderedItems = items
+  }
+  return items
+}
+
+function parseOrderedSourceResponseItems(sourceResponse: string) {
+  const items: string[] = []
+  for (const line of sourceResponse.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    const match = /^(?:[-*•]\s*|\d+[.)]\s*)?(.*\S)$/.exec(trimmed)
+    const value = match?.[1]?.trim()
+    if (!value) {
+      continue
+    }
+    items.push(value)
+  }
+  return items
 }
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {

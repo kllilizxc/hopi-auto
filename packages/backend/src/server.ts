@@ -12,6 +12,7 @@ import { createAssistantRunStore } from './assistant/assistantRunStore'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
+  createInterpretedSourceResponseState,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionFollowThrough,
@@ -233,7 +234,7 @@ const resolveDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.literal('labeled_sections').optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -246,7 +247,7 @@ const answerDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.literal('labeled_sections').optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
   sourceResponse: z.string().min(1).optional(),
   followThrough: resolveDecisionFollowThroughSchema.optional(),
 })
@@ -262,7 +263,7 @@ const answerDecisionBatchEntrySchema = z.object({
 
 const answerDecisionBatchSchema = z.object({
   answerSources: interpretableAnswerSourceArraySchema,
-  sourceResponseFormat: z.literal('labeled_sections').optional(),
+  sourceResponseFormat: z.enum(['labeled_sections', 'ordered_items']).optional(),
   sourceResponse: z.string().min(1).optional(),
   inferOpenDecisions: z.boolean().default(false),
   answers: z.array(answerDecisionBatchEntrySchema).default([]),
@@ -497,6 +498,10 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionSchema)
+          const sourceResponseState = createInterpretedSourceResponseState(
+            body.sourceResponse,
+            body.sourceResponseFormat,
+          )
           const answers = materializeInterpretedDecisionAnswers(
             [
               {
@@ -511,6 +516,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.sourceResponse,
             body.answerSources,
             body.sourceResponseFormat,
+            sourceResponseState,
           )
           const firstAnswer = answers[0]
           if (!firstAnswer) {
@@ -533,6 +539,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.sourceResponse,
                 body.answerSources,
                 body.sourceResponseFormat,
+                sourceResponseState,
               ),
               writer: 'api',
               reason: `api record answer ${body.decisionKey ?? body.summary}`,
@@ -557,6 +564,10 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionBatchSchema)
           const current = await decisions.readGoalDecisions(currentGoalKey)
+          const sourceResponseState = createInterpretedSourceResponseState(
+            body.sourceResponse,
+            body.sourceResponseFormat,
+          )
           const answers = materializeInterpretedDecisionAnswerBatch(
             body.answers,
             current.decisions
@@ -570,6 +581,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.sourceResponse,
             body.answerSources,
             body.sourceResponseFormat,
+            sourceResponseState,
           )
           const result = await answerGoalDecisions(
             {
@@ -585,6 +597,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.sourceResponse,
                 body.answerSources,
                 body.sourceResponseFormat,
+                sourceResponseState,
               ),
               writer: 'api',
               reason: `api record answers ${answers
@@ -615,6 +628,10 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (!current.decisions.some((item) => item.decisionKey === decisionKey)) {
             throw new HttpError(404, `Decision not found: ${decisionKey}`)
           }
+          const sourceResponseState = createInterpretedSourceResponseState(
+            body.sourceResponse,
+            body.sourceResponseFormat,
+          )
           const materializedAnswers = materializeInterpretedDecisionAnswers(
             [
               {
@@ -629,6 +646,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
             body.sourceResponse,
             body.answerSources,
             body.sourceResponseFormat,
+            sourceResponseState,
           )
           const firstAnswer = materializedAnswers[0]
           if (!firstAnswer) {
@@ -649,6 +667,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 body.sourceResponse,
                 body.answerSources,
                 body.sourceResponseFormat,
+                sourceResponseState,
               ),
               writer: 'api',
               reason: `api resolve decision ${decisionKey}`,
