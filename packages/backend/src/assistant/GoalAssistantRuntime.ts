@@ -8,6 +8,7 @@ import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
 import type { TaskStatus } from '../domain/board'
 import {
   createInterpretedSourceResponseState,
+  followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerSummaries,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
@@ -498,6 +499,11 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answers') {
+    if (action.inferDecisionTopics && followThroughInfersRemainingAnswers(action.followThrough)) {
+      throw new Error(
+        'followThrough.inferRemainingAnswers cannot be combined with inferDecisionTopics. Pick one authority for the remaining sourceResponse items.',
+      )
+    }
     const current = await stores.decisions.readGoalDecisions(goalKey)
     const sourceResponseState = createInterpretedSourceResponseState(
       action.sourceResponse,

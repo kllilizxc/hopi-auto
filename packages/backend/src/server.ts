@@ -13,6 +13,7 @@ import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
   createInterpretedSourceResponseState,
+  followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerSummaries,
   materializeInterpretedDecisionAnswerBatch,
   materializeInterpretedDecisionAnswers,
@@ -183,6 +184,7 @@ const createPlanningWorkflowBatchSchema = z.object({
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning'),
+    inferRemainingAnswers: z.boolean().optional(),
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -192,6 +194,7 @@ const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    inferRemainingAnswers: z.boolean().optional(),
     answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(planningBatchEntrySchema).min(1),
   }),
@@ -610,6 +613,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionBatchSchema)
+          if (body.inferDecisionTopics && followThroughInfersRemainingAnswers(body.followThrough)) {
+            throw new HttpError(
+              400,
+              'followThrough.inferRemainingAnswers cannot be combined with inferDecisionTopics. Pick one authority for the remaining sourceResponse items.',
+            )
+          }
           const current = await decisions.readGoalDecisions(currentGoalKey)
           const sourceResponseState = createInterpretedSourceResponseState(
             body.sourceResponse,

@@ -125,6 +125,7 @@ export interface MaterializedInterpretedDecisionAnswer {
 
 export interface InterpretableDecisionPlanningFollowThroughInput {
   kind: 'planning'
+  inferRemainingAnswers?: boolean
   title: string
   description: string
   acceptanceCriteria: string[]
@@ -135,6 +136,7 @@ export interface InterpretableDecisionPlanningFollowThroughInput {
 export interface InterpretableDecisionPlanningBatchFollowThroughInput {
   kind: 'planning_batch'
   groupKey: string
+  inferRemainingAnswers?: boolean
   answers?: InterpretablePlanningAnswer[]
   requests: GoalPlanningBatchEntryInput[]
 }
@@ -196,6 +198,15 @@ export function listInterpretableFollowThroughAnswerSummaries(
   }
 
   return followThrough.answers?.map((answer) => answer.summary) ?? []
+}
+
+export function followThroughInfersRemainingAnswers(
+  followThrough: InterpretableDecisionFollowThroughInput | undefined,
+) {
+  if (!followThrough || followThrough.kind === 'workflow_batch') {
+    return false
+  }
+  return followThrough.inferRemainingAnswers === true
 }
 
 export function createInterpretedSourceResponseState(
@@ -356,6 +367,7 @@ export function materializeInterpretedDecisionFollowThrough(
         answerSourcesByKey,
         sourceResponseFormat,
         interpretationState,
+        followThrough.inferRemainingAnswers ?? false,
       ),
     }
   }
@@ -369,6 +381,7 @@ export function materializeInterpretedDecisionFollowThrough(
         answerSourcesByKey,
         sourceResponseFormat,
         interpretationState,
+        followThrough.inferRemainingAnswers ?? false,
       ),
     }
   }
@@ -419,16 +432,16 @@ function materializeInterpretedPlanningAnswers(
   answerSourcesByKey?: Map<string, string>,
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
+  inferRemainingAnswers = false,
 ): GoalPlanningRequestAnswer[] | undefined {
-  if (!answers || answers.length === 0) {
-    return answers ? [] : undefined
-  }
-
   const interpretationState =
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
-  registerTopicBlockCandidates(interpretationState, [...answers.map((answer) => [answer.summary])])
-  return answers.map((answer) => ({
+  const explicitAnswers = answers ?? []
+  registerTopicBlockCandidates(interpretationState, [
+    ...explicitAnswers.map((answer) => [answer.summary]),
+  ])
+  const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
     summary: answer.summary,
     answer: resolveAnswerText(
       answer.answer,
@@ -442,6 +455,139 @@ function materializeInterpretedPlanningAnswers(
       interpretationState,
     ),
   }))
+  const inferredAnswers = inferRemainingAnswers
+    ? materializeRemainingInterpretedPlanningAnswers(
+        sourceResponse,
+        sourceResponseFormat,
+        interpretationState,
+      )
+    : []
+
+  if (answers === undefined && inferredAnswers.length === 0) {
+    return undefined
+  }
+
+  return [...materializedExplicitAnswers, ...inferredAnswers]
+}
+
+function materializeRemainingInterpretedPlanningAnswers(
+  sourceResponse: string | undefined,
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (
+    sourceResponseFormat !== 'question_blocks' &&
+    sourceResponseFormat !== 'question_spans' &&
+    sourceResponseFormat !== 'topic_sentences' &&
+    sourceResponseFormat !== 'topic_paragraphs' &&
+    sourceResponseFormat !== 'topic_blocks'
+  ) {
+    throw new AnswerInterpretationError(
+      'followThrough.inferRemainingAnswers requires sourceResponseFormat "question_blocks", "question_spans", "topic_sentences", "topic_paragraphs", or "topic_blocks".',
+    )
+  }
+
+  const interpretationState =
+    sourceResponseState ??
+    createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
+
+  if (sourceResponseFormat === 'question_blocks') {
+    const blocks = parseRequiredQuestionSourceResponseBlocks(
+      sourceResponse,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, block] of blocks.entries()) {
+      if (interpretationState?.consumedQuestionBlockIndexes.has(index)) {
+        continue
+      }
+      interpretationState?.consumedQuestionBlockIndexes.add(index)
+      answers.push({
+        summary: stripQuestionBlockLabel(block.question),
+        answer: block.answer,
+      })
+    }
+    return answers
+  }
+
+  if (sourceResponseFormat === 'question_spans') {
+    const spans = parseRequiredQuestionSourceResponseSpans(
+      sourceResponse,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, span] of spans.entries()) {
+      if (interpretationState?.consumedQuestionSpanIndexes.has(index)) {
+        continue
+      }
+      interpretationState?.consumedQuestionSpanIndexes.add(index)
+      answers.push({
+        summary: stripQuestionBlockLabel(span.question),
+        answer: span.answer,
+      })
+    }
+    return answers
+  }
+
+  if (sourceResponseFormat === 'topic_sentences') {
+    const sentences = parseRequiredTopicSourceResponseSentences(
+      sourceResponse,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, sentence] of sentences.entries()) {
+      if (interpretationState?.consumedTopicSentenceIndexes.has(index)) {
+        continue
+      }
+      interpretationState?.consumedTopicSentenceIndexes.add(index)
+      answers.push({
+        summary: inferTopicSummaryFromTopicSentence(sentence.text),
+        answer: sentence.text,
+      })
+    }
+    return answers
+  }
+
+  if (sourceResponseFormat === 'topic_paragraphs') {
+    const paragraphs = parseRequiredTopicSourceResponseParagraphs(
+      sourceResponse,
+      'followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const answers: GoalPlanningRequestAnswer[] = []
+    for (const [index, paragraph] of paragraphs.entries()) {
+      if (interpretationState?.consumedTopicParagraphIndexes.has(index)) {
+        continue
+      }
+      interpretationState?.consumedTopicParagraphIndexes.add(index)
+      answers.push({
+        summary: inferTopicSummaryFromTopicParagraph(paragraph.text),
+        answer: paragraph.text,
+      })
+    }
+    return answers
+  }
+
+  const blocks = parseRequiredTopicSourceResponseBlocks(
+    sourceResponse,
+    'followThrough.inferRemainingAnswers',
+    interpretationState,
+  )
+  const answers: GoalPlanningRequestAnswer[] = []
+  for (const [index, block] of blocks.entries()) {
+    if (interpretationState?.consumedTopicBlockIndexes.has(index)) {
+      continue
+    }
+    interpretationState?.consumedTopicBlockIndexes.add(index)
+    answers.push({
+      summary: inferTopicSummaryFromTopicBlock(block),
+      answer: block.text,
+    })
+  }
+  return answers
 }
 
 function resolveAnswerText(

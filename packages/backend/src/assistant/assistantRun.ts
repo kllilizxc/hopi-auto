@@ -168,6 +168,7 @@ const interpretableAnswerSourceArraySchema = z
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning'),
+    inferRemainingAnswers: z.boolean().optional(),
     title: z.string().min(1),
     description: z.string(),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -177,6 +178,7 @@ const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    inferRemainingAnswers: z.boolean().optional(),
     answers: interpretablePlanningAnswerArraySchema,
     requests: z.array(assistantPlanningBatchEntrySchema).min(1),
   }),
