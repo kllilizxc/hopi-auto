@@ -444,12 +444,14 @@ test('materializes new decision topics from remaining labeled sections while res
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'Use Bun-native auth',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout',
     },
@@ -603,12 +605,14 @@ test('materializes new decision topics from remaining inline topic clauses while
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'Use Bun-native auth',
     },
     {
       decisionKey: undefined,
       summary: 'rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout',
     },
@@ -856,12 +860,14 @@ test('materializes new decision topics from remaining topic sentences while rese
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'We should use Bun-native auth for auth strategy.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout for rollout strategy.',
     },
@@ -892,12 +898,14 @@ test('materializes new decision topics from remaining leading topic sentences wh
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'Auth strategy should use Bun-native auth.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Rollout strategy should use a staged rollout.',
     },
@@ -928,12 +936,14 @@ test('materializes new decision topics from remaining prefixed topic sentences w
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'For auth strategy, use Bun-native auth.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Regarding rollout strategy, use a staged rollout.',
     },
@@ -964,12 +974,14 @@ test('materializes new decision topics from remaining as-topic sentences while r
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'Use Bun-native auth as the auth strategy.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout as the rollout strategy.',
     },
@@ -1138,12 +1150,14 @@ test('materializes new decision topics from remaining topic spans while reservin
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
     },
@@ -1223,6 +1237,7 @@ test('materializes inferred planner answers from remaining topic spans without e
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer:
           'Start with five enterprise customers before broader launch for pilot scope. That keeps early support manageable.',
       },
@@ -1407,12 +1422,14 @@ test('materializes new decision topics from remaining topic closing spans while 
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'We should use Bun-native auth. That keeps the runtime simple for auth strategy.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout. That keeps the launch reversible for rollout strategy.',
     },
@@ -1490,6 +1507,7 @@ test('materializes inferred planner answers from remaining topic closing spans w
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer:
           'Start with five enterprise customers before broader launch. That keeps early support manageable for pilot scope.',
       },
@@ -1699,6 +1717,7 @@ test('materializes new decision topics from remaining topic closing blocks while
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: [
         'We should use Bun-native auth.',
@@ -1708,6 +1727,7 @@ test('materializes new decision topics from remaining topic closing blocks while
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: [
         'Use a staged rollout.',
@@ -1799,6 +1819,7 @@ test('materializes inferred planner answers from remaining topic closing blocks 
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer: [
           'Start with five enterprise customers before broader launch.',
           'That keeps early support manageable for pilot scope.',
@@ -2076,12 +2097,14 @@ test('materializes new decision topics from remaining topic paragraphs while res
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: 'We should use Bun-native auth for auth strategy. That keeps the runtime simple.',
     },
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: 'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
     },
@@ -2120,6 +2143,7 @@ test('materializes new decision topics from remaining topic blocks while reservi
     {
       decisionKey: undefined,
       summary: 'Auth strategy',
+      prompt: 'What should the auth strategy be?',
       taskRef: undefined,
       answer: [
         'We should use Bun-native auth for auth strategy.',
@@ -2129,6 +2153,7 @@ test('materializes new decision topics from remaining topic blocks while reservi
     {
       decisionKey: undefined,
       summary: 'Rollout strategy',
+      prompt: 'What should the rollout strategy be?',
       taskRef: undefined,
       answer: [
         'Use a staged rollout for rollout strategy.',
@@ -2367,6 +2392,7 @@ test('materializes inferred planner answers from remaining topic blocks without 
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer: [
           'Start with five enterprise customers before broader launch for pilot scope.',
           'That keeps early support manageable.',
@@ -2468,6 +2494,7 @@ test('materializes inferred planner answers from remaining leading topic blocks 
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer: [
           'Pilot scope should start with five enterprise customers before broader launch.',
           'That keeps early support manageable.',
@@ -2569,6 +2596,7 @@ test('materializes inferred planner answers from remaining prefixed topic blocks
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer: [
           'About pilot scope, start with five enterprise customers before broader launch.',
           'That keeps early support manageable.',
@@ -2670,6 +2698,7 @@ test('materializes inferred planner answers from remaining as-topic blocks witho
     answers: [
       {
         summary: 'Pilot scope',
+        prompt: 'What should the pilot scope be?',
         answer: [
           'Start with five enterprise customers before broader launch as the pilot scope.',
           'That keeps early support manageable.',

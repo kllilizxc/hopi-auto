@@ -741,8 +741,10 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicSentenceIndexes.add(index)
+      const summary = inferTopicSummaryFromTopicSentence(sentence.text)
       answers.push({
-        summary: inferTopicSummaryFromTopicSentence(sentence.text),
+        summary,
+        prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
         answer: sentence.text,
       })
     }
@@ -761,8 +763,10 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicSpanIndexes.add(index)
+      const summary = inferTopicSummaryFromTopicSpan(span)
       answers.push({
-        summary: inferTopicSummaryFromTopicSpan(span),
+        summary,
+        prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
         answer: span.text,
       })
     }
@@ -781,8 +785,10 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicClosingSpanIndexes.add(index)
+      const summary = inferTopicSummaryFromTopicClosingSpan(span)
       answers.push({
-        summary: inferTopicSummaryFromTopicClosingSpan(span),
+        summary,
+        prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
         answer: span.text,
       })
     }
@@ -801,8 +807,10 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicClosingBlockIndexes.add(index)
+      const summary = inferTopicSummaryFromTopicClosingBlock(block)
       answers.push({
-        summary: inferTopicSummaryFromTopicClosingBlock(block),
+        summary,
+        prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
         answer: block.text,
       })
     }
@@ -821,8 +829,10 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicParagraphIndexes.add(index)
+      const summary = inferTopicSummaryFromTopicParagraph(paragraph.text)
       answers.push({
-        summary: inferTopicSummaryFromTopicParagraph(paragraph.text),
+        summary,
+        prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
         answer: paragraph.text,
       })
     }
@@ -840,8 +850,10 @@ function materializeRemainingInterpretedPlanningAnswers(
       continue
     }
     interpretationState?.consumedTopicBlockIndexes.add(index)
+    const summary = inferTopicSummaryFromTopicBlock(block)
     answers.push({
-      summary: inferTopicSummaryFromTopicBlock(block),
+      summary,
+      prompt: synthesizeCanonicalPromptFromInferredSummary(summary),
       answer: block.text,
     })
   }
@@ -1870,9 +1882,13 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary =
+        matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSentence(sentence.text)
       materializedAnswers.push({
-        summary:
-          matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSentence(sentence.text),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: sentence.text,
@@ -1896,8 +1912,12 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSpan(span)
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSpan(span),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: span.text,
@@ -1924,8 +1944,12 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingSpan(span)
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingSpan(span),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: span.text,
@@ -1952,8 +1976,13 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary =
+        matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingBlock(block)
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingBlock(block),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: block.text,
@@ -1980,9 +2009,13 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary =
+        matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicParagraph(paragraph.text)
       materializedAnswers.push({
-        summary:
-          matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicParagraph(paragraph.text),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: paragraph.text,
@@ -2006,8 +2039,12 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicBlock(block)
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicBlock(block),
+        summary,
+        ...(matchingKnownDecision
+          ? {}
+          : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
         answer: block.text,
@@ -2031,8 +2068,12 @@ function materializeNewDecisionTopicAnswersFromLabeledSections(
     }
 
     const matchingKnownDecision = matchingKnownDecisions[0]
+    const summary = matchingKnownDecision?.summary ?? section.label
     materializedAnswers.push({
-      summary: matchingKnownDecision?.summary ?? section.label,
+      summary,
+      ...(matchingKnownDecision
+        ? {}
+        : { prompt: synthesizeCanonicalPromptFromInferredSummary(summary) }),
       decisionKey: matchingKnownDecision?.decisionKey,
       taskRef: matchingKnownDecision?.taskRef,
       answer: section.value,
@@ -4291,6 +4332,33 @@ function inferTopicSummaryFromTopicClosingBlock(block: TopicSourceResponseClosin
 
 function inferTopicSummaryFromTopicBlock(block: TopicSourceResponseBlock) {
   return inferTopicSummaryFromTopicParagraph(block.anchorText)
+}
+
+function synthesizeCanonicalPromptFromInferredSummary(summary: string) {
+  const trimmed = summary
+    .trim()
+    .replace(/[.?!]+\s*$/u, '')
+    .replace(/\s+/g, ' ')
+  if (!trimmed) {
+    throw new AnswerInterpretationError(
+      'Could not synthesize a canonical prompt from an empty inferred topic summary.',
+    )
+  }
+
+  const normalizedSubject = maybeDecapitalizeLeadingTitleCase(trimmed)
+  const subject = /^(?:the|a|an|this|that|these|those|my|our|your|his|her|their|its)\b/i.test(
+    normalizedSubject,
+  )
+    ? normalizedSubject
+    : `the ${normalizedSubject}`
+  return `What should ${subject} be?`
+}
+
+function maybeDecapitalizeLeadingTitleCase(value: string) {
+  if (!/^[A-Z][a-z]/.test(value)) {
+    return value
+  }
+  return `${value.slice(0, 1).toLowerCase()}${value.slice(1)}`
 }
 
 function normalizeExtractedTopicSummary(summary: string, stripLeadingArticle = false) {
