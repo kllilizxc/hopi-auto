@@ -70,6 +70,16 @@ describe('createGoalAssistantContextBuilder', () => {
               answers: [],
               requestedUpdates: ['goal.md', 'notes/rollout.md'],
             },
+            {
+              kind: 'planning',
+              workflowTaskKey: 'handoff-review',
+              blockedByWorkflowKeys: ['rollout-notes'],
+              title: 'Review rollout readiness',
+              description: 'Inspect rollout notes before final handoff.',
+              acceptanceCriteria: ['The rollout handoff review is visible.'],
+              answers: [],
+              requestedUpdates: ['design.md'],
+            },
           ],
         },
       },
@@ -90,6 +100,10 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(context).toContain('Follow-through reusable group key: auth-follow-through')
     expect(context).toContain(
       'Follow-through workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
+    )
+    expect(context).toContain('Follow-through workflow child: handoff-review -> updates design.md')
+    expect(context).toContain(
+      'Follow-through workflow child handoff-review depends on: rollout-notes',
     )
     expect(context).toContain('Follow-through infers remaining answers: yes')
   })

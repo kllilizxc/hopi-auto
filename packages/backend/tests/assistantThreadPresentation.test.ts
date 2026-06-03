@@ -106,6 +106,16 @@ describe('assistant thread presentation', () => {
                 answers: [],
                 requestedUpdates: ['goal.md', 'notes/rollout.md'],
               },
+              {
+                kind: 'planning',
+                workflowTaskKey: 'handoff-review',
+                blockedByWorkflowKeys: ['rollout-notes'],
+                title: 'Review rollout readiness',
+                description: 'Inspect rollout notes before final handoff.',
+                acceptanceCriteria: ['The rollout handoff review is visible.'],
+                answers: [],
+                requestedUpdates: ['design.md'],
+              },
             ],
           },
         },
@@ -122,6 +132,8 @@ describe('assistant thread presentation', () => {
         'Follow-through workflow key: auth-rollout-follow-through',
         'Follow-through reusable group key: auth-follow-through',
         'Follow-through workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
+        'Follow-through workflow child: handoff-review -> updates design.md',
+        'Follow-through workflow child handoff-review depends on: rollout-notes',
         'Follow-through shared planner answers: 1',
         'Follow-through infers remaining answers: yes',
       ],
@@ -204,6 +216,7 @@ describe('assistant thread presentation', () => {
         'Reusable answer sources: 1',
         'Workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
         'Workflow child: auth-follow-through -> requests goal-docs, task-graph',
+        'Workflow child auth-follow-through depends on: rollout-notes',
       ],
     })
   })
