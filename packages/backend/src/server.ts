@@ -62,6 +62,7 @@ type EventClient = ReadableStreamDefaultController<Uint8Array>
 const jsonHeaders = { 'content-type': 'application/json' }
 const encoder = new TextEncoder()
 const matchHintArraySchema = z.array(z.string().min(1)).default([])
+const sourceOccurrenceSchema = z.number().int().positive()
 const interpretableSourceResponseFormatSchema = z.enum(INTERPRETABLE_SOURCE_RESPONSE_FORMATS)
 const interpretablePlanningAnswerArraySchema = z
   .array(
@@ -73,6 +74,7 @@ const interpretablePlanningAnswerArraySchema = z
       matchHints: matchHintArraySchema,
       answer: z.string().min(1).optional(),
       sourceExcerpt: z.string().min(1).optional(),
+      sourceOccurrence: sourceOccurrenceSchema.optional(),
       answerSourceKey: z.string().min(1).optional(),
     }),
   )
@@ -99,6 +101,7 @@ const interpretableAnswerSourceArraySchema = z
       z.object({
         ...interpretableAnswerSourceMetadataSchema,
         sourceExcerpt: z.string().min(1),
+        sourceOccurrence: sourceOccurrenceSchema.optional(),
       }),
     ]),
   )
@@ -258,6 +261,7 @@ const resolveDecisionSchema = z.object({
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
+  sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
@@ -274,6 +278,7 @@ const answerDecisionSchema = z.object({
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
+  sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
@@ -290,6 +295,7 @@ const answerDecisionBatchEntrySchema = z.object({
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
   sourceExcerpt: z.string().min(1).optional(),
+  sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
 })
 
@@ -545,6 +551,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 taskRef: body.taskRef,
                 answer: body.answer,
                 sourceExcerpt: body.sourceExcerpt,
+                sourceOccurrence: body.sourceOccurrence,
                 answerSourceKey: body.answerSourceKey,
               },
             ],
@@ -699,6 +706,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 taskRef: body.taskRef,
                 answer: body.answer,
                 sourceExcerpt: body.sourceExcerpt,
+                sourceOccurrence: body.sourceOccurrence,
                 answerSourceKey: body.answerSourceKey,
               },
             ],

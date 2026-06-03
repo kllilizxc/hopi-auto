@@ -10376,6 +10376,34 @@ describe('createServer', () => {
     })
   })
 
+  test('returns HTTP 400 when excerpt-backed answer sources match more than once without sourceOccurrence', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: 'Use Bun-native auth. Use Bun-native auth.',
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth.',
+        },
+      ],
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'sourceExcerpt for answerSourceKey "auth-strategy-answer" matched 2 occurrences in sourceResponse. Provide sourceOccurrence to disambiguate.',
+    })
+  })
+
   test('returns HTTP 400 when direct item source excerpts omit sourceResponse', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -10393,6 +10421,67 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error: 'sourceExcerpt for decision answer auth-strategy requires sourceResponse.',
+    })
+  })
+
+  test('returns HTTP 400 when direct item sourceOccurrence exceeds the available excerpt matches', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: 'Use Bun-native auth. Use Bun-native auth.',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          sourceExcerpt: 'Use Bun-native auth.',
+          sourceOccurrence: 3,
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'sourceExcerpt for decision answer auth-strategy requested sourceOccurrence 3 but only 2 occurrences were found in sourceResponse.',
+    })
+  })
+
+  test('records direct item source excerpts through the API when sourceOccurrence disambiguates a repeated excerpt', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: 'Use Bun-native auth. Use Bun-native auth.',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          sourceExcerpt: 'Use Bun-native auth.',
+          sourceOccurrence: 2,
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['auth-strategy'],
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+      ],
+    })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+      ],
     })
   })
 

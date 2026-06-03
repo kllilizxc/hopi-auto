@@ -245,6 +245,7 @@ export type InterpretableAnswerSource =
     })
   | (InterpretableAnswerSourceMetadata & {
       sourceExcerpt: string
+      sourceOccurrence?: number
     })
 
 export interface InterpretablePlanningAnswer {
@@ -255,6 +256,7 @@ export interface InterpretablePlanningAnswer {
   matchHints?: string[]
   answer?: string
   sourceExcerpt?: string
+  sourceOccurrence?: number
   answerSourceKey?: string
 }
 
@@ -267,6 +269,7 @@ export interface InterpretableDecisionAnswerEntryInput {
   taskRef?: string
   answer?: string
   sourceExcerpt?: string
+  sourceOccurrence?: number
   answerSourceKey?: string
 }
 
@@ -1256,6 +1259,7 @@ export function materializeInterpretedDecisionAnswers(
     const resolved = resolveAnswerContent(
       answer.answer,
       answer.sourceExcerpt,
+      answer.sourceOccurrence,
       answer.answerSourceKey,
       sourceResponse,
       `decision answer ${answer.decisionKey ?? answer.summary}`,
@@ -1989,6 +1993,7 @@ function materializeInterpretedPlanningAnswers(
       const resolved = resolveAnswerContent(
         answer.answer,
         answer.sourceExcerpt,
+        answer.sourceOccurrence,
         answer.answerSourceKey,
         sourceResponse,
         `planner answer ${answer.summary}`,
@@ -2468,6 +2473,7 @@ function materializeRemainingInterpretedPlanningAnswers(
 function resolveAnswerContent(
   answer: string | undefined,
   sourceExcerpt: string | undefined,
+  sourceOccurrence: number | undefined,
   answerSourceKey: string | undefined,
   sourceResponse: string | undefined,
   label: string,
@@ -2484,7 +2490,7 @@ function resolveAnswerContent(
     return { answer: explicit }
   }
 
-  const directExcerpt = resolveSourceExcerpt(sourceExcerpt, sourceResponse, label)
+  const directExcerpt = resolveSourceExcerpt(sourceExcerpt, sourceOccurrence, sourceResponse, label)
   if (directExcerpt) {
     return { answer: directExcerpt }
   }
@@ -2915,10 +2921,12 @@ function buildOpenDecisionSourceResponseCandidates(decision: InterpretableOpenDe
 
 function resolveSourceExcerpt(
   sourceExcerpt: string | undefined,
+  sourceOccurrence: number | undefined,
   sourceResponse: string | undefined,
   label: string,
 ) {
   const excerpt = sourceExcerpt?.trim()
+  const occurrence = normalizeSourceExcerptOccurrence(sourceOccurrence, label, Boolean(excerpt))
   if (!excerpt) {
     return undefined
   }
@@ -2927,12 +2935,57 @@ function resolveSourceExcerpt(
   if (!shared) {
     throw new AnswerInterpretationError(`sourceExcerpt for ${label} requires sourceResponse.`)
   }
-  if (!shared.includes(excerpt)) {
+  const occurrences = listSourceExcerptOccurrences(shared, excerpt)
+  if (occurrences.length === 0) {
     throw new AnswerInterpretationError(
       `sourceExcerpt for ${label} was not found in sourceResponse.`,
     )
   }
+  if (occurrence === undefined) {
+    if (occurrences.length > 1) {
+      throw new AnswerInterpretationError(
+        `sourceExcerpt for ${label} matched ${occurrences.length} occurrences in sourceResponse. Provide sourceOccurrence to disambiguate.`,
+      )
+    }
+    return excerpt
+  }
+  if (occurrence > occurrences.length) {
+    throw new AnswerInterpretationError(
+      `sourceExcerpt for ${label} requested sourceOccurrence ${occurrence} but only ${occurrences.length} occurrences were found in sourceResponse.`,
+    )
+  }
   return excerpt
+}
+
+function normalizeSourceExcerptOccurrence(
+  sourceOccurrence: number | undefined,
+  label: string,
+  hasSourceExcerpt: boolean,
+) {
+  if (sourceOccurrence === undefined) {
+    return undefined
+  }
+  if (!hasSourceExcerpt) {
+    throw new AnswerInterpretationError(`sourceOccurrence for ${label} requires sourceExcerpt.`)
+  }
+  if (!Number.isInteger(sourceOccurrence) || sourceOccurrence < 1) {
+    throw new AnswerInterpretationError(`sourceOccurrence for ${label} must be a positive integer.`)
+  }
+  return sourceOccurrence
+}
+
+function listSourceExcerptOccurrences(sourceResponse: string, sourceExcerpt: string) {
+  const occurrences: number[] = []
+  let nextIndex = 0
+  while (nextIndex <= sourceResponse.length - sourceExcerpt.length) {
+    const matchIndex = sourceResponse.indexOf(sourceExcerpt, nextIndex)
+    if (matchIndex === -1) {
+      break
+    }
+    occurrences.push(matchIndex)
+    nextIndex = matchIndex + sourceExcerpt.length
+  }
+  return occurrences
 }
 
 function resolveLabeledSourceResponseSection(
@@ -9135,19 +9188,12 @@ function createResolvedAnswerSources(
     if ('answer' in source) {
       resolved = source.answer.trim()
     } else {
-      const sourceExcerpt = source.sourceExcerpt.trim()
-      const shared = sourceResponse?.trim()
-      if (!shared) {
-        throw new AnswerInterpretationError(
-          `sourceExcerpt for answerSourceKey "${key}" requires sourceResponse.`,
-        )
-      }
-      if (!shared.includes(sourceExcerpt)) {
-        throw new AnswerInterpretationError(
-          `sourceExcerpt for answerSourceKey "${key}" was not found in sourceResponse.`,
-        )
-      }
-      resolved = sourceExcerpt
+      resolved = resolveSourceExcerpt(
+        source.sourceExcerpt,
+        source.sourceOccurrence,
+        sourceResponse,
+        `answerSourceKey "${key}"`,
+      ) as string
     }
     const decisionKey = source.decisionKey?.trim() || undefined
     const summaryKey = source.summaryKey?.trim() || undefined

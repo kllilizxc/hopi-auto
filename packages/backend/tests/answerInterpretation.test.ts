@@ -9935,6 +9935,62 @@ test('rejects excerpt-backed answer sources when the excerpt is not present in s
   )
 })
 
+test('rejects excerpt-backed answer sources when the excerpt matches more than once without sourceOccurrence', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+      'Use Bun-native auth. Use Bun-native auth.',
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth.',
+        },
+      ],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'sourceExcerpt for answerSourceKey "auth-strategy-answer" matched 2 occurrences in sourceResponse. Provide sourceOccurrence to disambiguate.',
+    ),
+  )
+})
+
+test('materializes excerpt-backed answer sources when sourceOccurrence disambiguates a repeated excerpt', () => {
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceKey: 'auth-strategy-answer',
+        },
+      ],
+      'Use Bun-native auth. Use Bun-native auth.',
+      [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          sourceExcerpt: 'Use Bun-native auth.',
+          sourceOccurrence: 2,
+        },
+      ],
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: undefined,
+      matchHints: undefined,
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+  ])
+})
+
 test('rejects excerpt-backed answer sources when sourceResponse is missing', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
@@ -9960,6 +10016,26 @@ test('rejects excerpt-backed answer sources when sourceResponse is missing', () 
   )
 })
 
+test('rejects direct item source excerpts when the excerpt matches more than once without sourceOccurrence', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          sourceExcerpt: 'Use Bun-native auth.',
+        },
+      ],
+      'Use Bun-native auth. Use Bun-native auth.',
+      [],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'sourceExcerpt for decision answer auth-strategy matched 2 occurrences in sourceResponse. Provide sourceOccurrence to disambiguate.',
+    ),
+  )
+})
+
 test('rejects direct item source excerpts when sourceResponse is missing', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
@@ -9976,6 +10052,27 @@ test('rejects direct item source excerpts when sourceResponse is missing', () =>
   ).toThrowError(
     new AnswerInterpretationError(
       'sourceExcerpt for decision answer auth-strategy requires sourceResponse.',
+    ),
+  )
+})
+
+test('rejects direct item source excerpts when sourceOccurrence exceeds the available matches', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          sourceExcerpt: 'Use Bun-native auth.',
+          sourceOccurrence: 3,
+        },
+      ],
+      'Use Bun-native auth. Use Bun-native auth.',
+      [],
+    ),
+  ).toThrowError(
+    new AnswerInterpretationError(
+      'sourceExcerpt for decision answer auth-strategy requested sourceOccurrence 3 but only 2 occurrences were found in sourceResponse.',
     ),
   )
 })
