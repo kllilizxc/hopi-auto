@@ -5032,6 +5032,106 @@ function findLabeledSourceResponseSection(
   return undefined
 }
 
+function resolveContiguousMatchingIndexes(
+  matchingIndexes: number[],
+  multipleMatchErrorMessage: string,
+) {
+  for (let index = 1; index < matchingIndexes.length; index += 1) {
+    const previousMatch = matchingIndexes[index - 1]
+    const currentMatch = matchingIndexes[index]
+    if (
+      previousMatch === undefined ||
+      currentMatch === undefined ||
+      currentMatch !== previousMatch + 1
+    ) {
+      throw new AnswerInterpretationError(multipleMatchErrorMessage)
+    }
+  }
+
+  return matchingIndexes
+}
+
+function markConsumedMatchingIndexes(
+  consumedIndexes: Set<number> | undefined,
+  matchingIndexes: number[],
+) {
+  if (!consumedIndexes) {
+    return
+  }
+
+  for (const matchingIndex of matchingIndexes) {
+    consumedIndexes.add(matchingIndex)
+  }
+}
+
+function consumeContiguousQuestionSourceResponseMatch<
+  T extends {
+    question: string
+    normalizedQuestionText: string
+    normalizedQuestionCoreText: string
+    answer: string
+  },
+>(
+  matches: T[],
+  matchingIndexes: number[],
+  multipleMatchErrorMessage: string,
+  consumedIndexes: Set<number> | undefined,
+  joiner: string,
+) {
+  const contiguousMatchingIndexes = resolveContiguousMatchingIndexes(
+    matchingIndexes,
+    multipleMatchErrorMessage,
+  )
+  const firstMatchIndex = contiguousMatchingIndexes[0]
+  if (firstMatchIndex === undefined) {
+    return undefined
+  }
+
+  markConsumedMatchingIndexes(consumedIndexes, contiguousMatchingIndexes)
+  const firstMatch = matches[firstMatchIndex]
+  if (!firstMatch) {
+    return undefined
+  }
+  if (contiguousMatchingIndexes.length === 1) {
+    return firstMatch
+  }
+
+  return {
+    ...firstMatch,
+    answer: contiguousMatchingIndexes
+      .map((matchingIndex) => matches[matchingIndex]?.answer)
+      .filter((answer): answer is string => answer !== undefined)
+      .join(joiner),
+  }
+}
+
+function consumeContiguousTopicSourceResponseText(
+  matches: Array<{ text: string }>,
+  matchingIndexes: number[],
+  multipleMatchErrorMessage: string,
+  consumedIndexes: Set<number> | undefined,
+  joiner: string,
+) {
+  const contiguousMatchingIndexes = resolveContiguousMatchingIndexes(
+    matchingIndexes,
+    multipleMatchErrorMessage,
+  )
+  const firstMatchIndex = contiguousMatchingIndexes[0]
+  if (firstMatchIndex === undefined) {
+    return undefined
+  }
+
+  markConsumedMatchingIndexes(consumedIndexes, contiguousMatchingIndexes)
+  if (contiguousMatchingIndexes.length === 1) {
+    return matches[firstMatchIndex]?.text
+  }
+
+  return contiguousMatchingIndexes
+    .map((matchingIndex) => matches[matchingIndex]?.text)
+    .filter((text): text is string => text !== undefined)
+    .join(joiner)
+}
+
 function consumeQuestionBlockSourceResponseMatch(
   sourceResponse: string | undefined,
   candidates: string[],
@@ -5053,20 +5153,13 @@ function consumeQuestionBlockSourceResponseMatch(
     }
     throw new AnswerInterpretationError(`No question block matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question blocks matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    blocks,
+    matchingIndexes,
+    `Multiple question blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionBlockIndexes,
+    '\n\n',
+  )
 }
 
 function consumeQuestionClauseSourceResponseMatch(
@@ -5090,20 +5183,13 @@ function consumeQuestionClauseSourceResponseMatch(
     }
     throw new AnswerInterpretationError(`No question clause matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question clauses matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const clauseIndex = matchingIndexes[0]
-  if (clauseIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionClauseIndexes.add(clauseIndex)
-  }
-  return clauses[clauseIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    clauses,
+    matchingIndexes,
+    `Multiple question clauses matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionClauseIndexes,
+    ' ',
+  )
 }
 
 function consumeQuestionSpanSourceResponseMatch(
@@ -5123,20 +5209,13 @@ function consumeQuestionSpanSourceResponseMatch(
     }
     throw new AnswerInterpretationError(`No question span matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question spans matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    spans,
+    matchingIndexes,
+    `Multiple question spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeQuestionMiddleSpanSourceResponseMatch(
@@ -5163,20 +5242,13 @@ function consumeQuestionMiddleSpanSourceResponseMatch(
       `No question middle span matched ${label} in sourceResponse.`,
     )
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question middle spans matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionMiddleSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    spans,
+    matchingIndexes,
+    `Multiple question middle spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionMiddleSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeQuestionClosingSpanSourceResponseMatch(
@@ -5203,20 +5275,13 @@ function consumeQuestionClosingSpanSourceResponseMatch(
       `No question closing span matched ${label} in sourceResponse.`,
     )
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question closing spans matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionClosingSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    spans,
+    matchingIndexes,
+    `Multiple question closing spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionClosingSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeQuestionClosingBlockSourceResponseMatch(
@@ -5247,20 +5312,13 @@ function consumeQuestionClosingBlockSourceResponseMatch(
       `No question closing block matched ${label} in sourceResponse.`,
     )
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question closing blocks matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionClosingBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    blocks,
+    matchingIndexes,
+    `Multiple question closing blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionClosingBlockIndexes,
+    '\n\n',
+  )
 }
 
 function consumeQuestionMiddleBlockSourceResponseMatch(
@@ -5287,20 +5345,13 @@ function consumeQuestionMiddleBlockSourceResponseMatch(
       `No question middle block matched ${label} in sourceResponse.`,
     )
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple question middle blocks matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedQuestionMiddleBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]
+  return consumeContiguousQuestionSourceResponseMatch(
+    blocks,
+    matchingIndexes,
+    `Multiple question middle blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedQuestionMiddleBlockIndexes,
+    '\n\n',
+  )
 }
 
 function consumeQuestionBlockSourceResponseSection(
@@ -5443,20 +5494,13 @@ function consumeTopicSentenceSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic sentences matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const sentenceIndex = matchingIndexes[0]
-  if (sentenceIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicSentenceIndexes.add(sentenceIndex)
-  }
-  return sentences[sentenceIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    sentences,
+    matchingIndexes,
+    `Multiple topic sentences matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicSentenceIndexes,
+    ' ',
+  )
 }
 
 function consumeTopicClauseSourceResponseSection(
@@ -5480,20 +5524,13 @@ function consumeTopicClauseSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic clause matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic clauses matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const clauseIndex = matchingIndexes[0]
-  if (clauseIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicClauseIndexes.add(clauseIndex)
-  }
-  return clauses[clauseIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    clauses,
+    matchingIndexes,
+    `Multiple topic clauses matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicClauseIndexes,
+    ' ',
+  )
 }
 
 function consumeTopicSpanSourceResponseSection(
@@ -5514,18 +5551,13 @@ function consumeTopicSpanSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic span matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(`Multiple topic spans matched ${label} in sourceResponse.`)
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    spans,
+    matchingIndexes,
+    `Multiple topic spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeTopicMiddleSpanSourceResponseSection(
@@ -5550,20 +5582,13 @@ function consumeTopicMiddleSpanSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic middle span matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic middle spans matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicMiddleSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    spans,
+    matchingIndexes,
+    `Multiple topic middle spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicMiddleSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeTopicClosingSpanSourceResponseSection(
@@ -5588,20 +5613,13 @@ function consumeTopicClosingSpanSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic closing span matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic closing spans matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const spanIndex = matchingIndexes[0]
-  if (spanIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicClosingSpanIndexes.add(spanIndex)
-  }
-  return spans[spanIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    spans,
+    matchingIndexes,
+    `Multiple topic closing spans matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicClosingSpanIndexes,
+    ' ',
+  )
 }
 
 function consumeTopicClosingBlockSourceResponseSection(
@@ -5628,20 +5646,13 @@ function consumeTopicClosingBlockSourceResponseSection(
       `No topic closing block matched ${label} in sourceResponse.`,
     )
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic closing blocks matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicClosingBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    blocks,
+    matchingIndexes,
+    `Multiple topic closing blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicClosingBlockIndexes,
+    '\n\n',
+  )
 }
 
 function consumeTopicParagraphSourceResponseSection(
@@ -5665,20 +5676,13 @@ function consumeTopicParagraphSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic paragraphs matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const paragraphIndex = matchingIndexes[0]
-  if (paragraphIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicParagraphIndexes.add(paragraphIndex)
-  }
-  return paragraphs[paragraphIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    paragraphs,
+    matchingIndexes,
+    `Multiple topic paragraphs matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicParagraphIndexes,
+    '\n\n',
+  )
 }
 
 function consumeTopicMiddleBlockSourceResponseSection(
@@ -5703,20 +5707,13 @@ function consumeTopicMiddleBlockSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic middle block matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(
-      `Multiple topic middle blocks matched ${label} in sourceResponse.`,
-    )
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicMiddleBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    blocks,
+    matchingIndexes,
+    `Multiple topic middle blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicMiddleBlockIndexes,
+    '\n\n',
+  )
 }
 
 function consumeTopicBlockSourceResponseSection(
@@ -5737,18 +5734,13 @@ function consumeTopicBlockSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
   }
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(`Multiple topic blocks matched ${label} in sourceResponse.`)
-  }
-
-  const blockIndex = matchingIndexes[0]
-  if (blockIndex === undefined) {
-    return undefined
-  }
-  if (sourceResponseState) {
-    sourceResponseState.consumedTopicBlockIndexes.add(blockIndex)
-  }
-  return blocks[blockIndex]?.text
+  return consumeContiguousTopicSourceResponseText(
+    blocks,
+    matchingIndexes,
+    `Multiple topic blocks matched ${label} in sourceResponse.`,
+    sourceResponseState?.consumedTopicBlockIndexes,
+    '\n\n',
+  )
 }
 
 function resolveOrderedSourceResponseItem(
@@ -7273,11 +7265,13 @@ function reserveMatchedQuestionBlock(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingQuestionBlockIndexes(blocks, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingQuestionBlockIndexes(blocks, candidates, reservedIndexes),
+      `Multiple question blocks matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedQuestionSpan(
@@ -7285,11 +7279,13 @@ function reserveMatchedQuestionSpan(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingQuestionSpanIndexes(spans, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingQuestionSpanIndexes(spans, candidates, reservedIndexes),
+      `Multiple question spans matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedQuestionClosingSpan(
@@ -7297,11 +7293,13 @@ function reserveMatchedQuestionClosingSpan(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingQuestionClosingSpanIndexes(spans, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingQuestionClosingSpanIndexes(spans, candidates, reservedIndexes),
+      `Multiple question closing spans matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedQuestionClosingBlock(
@@ -7309,15 +7307,13 @@ function reserveMatchedQuestionClosingBlock(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingQuestionClosingBlockIndexes(
-    blocks,
-    candidates,
+  markConsumedMatchingIndexes(
     reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingQuestionClosingBlockIndexes(blocks, candidates, reservedIndexes),
+      `Multiple question closing blocks matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
   )
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
 }
 
 function reserveMatchedTopicSentence(
@@ -7325,11 +7321,13 @@ function reserveMatchedTopicSentence(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicSentenceIndexes(sentences, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicSentenceIndexes(sentences, candidates, reservedIndexes),
+      `Multiple topic sentences matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicClause(
@@ -7337,11 +7335,13 @@ function reserveMatchedTopicClause(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicClauseIndexes(clauses, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicClauseIndexes(clauses, candidates, reservedIndexes),
+      `Multiple topic clauses matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicSpan(
@@ -7349,11 +7349,13 @@ function reserveMatchedTopicSpan(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicSpanIndexes(spans, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicSpanIndexes(spans, candidates, reservedIndexes),
+      `Multiple topic spans matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicClosingSpan(
@@ -7361,11 +7363,13 @@ function reserveMatchedTopicClosingSpan(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicClosingSpanIndexes(spans, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicClosingSpanIndexes(spans, candidates, reservedIndexes),
+      `Multiple topic closing spans matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicClosingBlock(
@@ -7373,11 +7377,13 @@ function reserveMatchedTopicClosingBlock(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicClosingBlockIndexes(blocks, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicClosingBlockIndexes(blocks, candidates, reservedIndexes),
+      `Multiple topic closing blocks matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicParagraph(
@@ -7385,11 +7391,13 @@ function reserveMatchedTopicParagraph(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicParagraphIndexes(paragraphs, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicParagraphIndexes(paragraphs, candidates, reservedIndexes),
+      `Multiple topic paragraphs matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function reserveMatchedTopicBlock(
@@ -7397,11 +7405,13 @@ function reserveMatchedTopicBlock(
   candidates: string[],
   reservedIndexes: Set<number>,
 ) {
-  const matchingIndexes = findMatchingTopicBlockIndexes(blocks, candidates, reservedIndexes)
-  const firstMatch = matchingIndexes[0]
-  if (firstMatch !== undefined) {
-    reservedIndexes.add(firstMatch)
-  }
+  markConsumedMatchingIndexes(
+    reservedIndexes,
+    resolveContiguousMatchingIndexes(
+      findMatchingTopicBlockIndexes(blocks, candidates, reservedIndexes),
+      `Multiple topic blocks matched reserved candidates ${candidates.join(', ')} in sourceResponse.`,
+    ),
+  )
 }
 
 function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownDecision[]) {

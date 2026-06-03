@@ -8083,9 +8083,42 @@ test('rejects inline-topic interpretation when one requested topic is missing', 
   )
 })
 
-test('rejects topic-sentence interpretation when one requested topic matches more than one sentence', () => {
+test('materializes topic-sentence interpretation when one requested topic matches contiguous sentences', () => {
   const sourceResponse = [
     'Use Bun-native auth for auth strategy.',
+    'Document Bun-native fallback decisions for auth strategy.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'topic_sentences',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: undefined,
+      taskRef: undefined,
+      answer: [
+        'Use Bun-native auth for auth strategy.',
+        'Document Bun-native fallback decisions for auth strategy.',
+      ].join(' '),
+    },
+  ])
+})
+
+test('rejects topic-sentence interpretation when one requested topic matches non-contiguous sentences', () => {
+  const sourceResponse = [
+    'Use Bun-native auth for auth strategy.',
+    'Use a staged rollout for rollout strategy.',
     'Document Bun-native fallback decisions for auth strategy.',
   ].join(' ')
 
@@ -8108,10 +8141,12 @@ test('rejects topic-sentence interpretation when one requested topic matches mor
   )
 })
 
-test('rejects topic-span interpretation when one requested topic matches more than one span', () => {
+test('rejects topic-span interpretation when one requested topic matches non-contiguous spans', () => {
   const sourceResponse = [
     'Use Bun-native auth for auth strategy.',
     'That keeps the runtime simple.',
+    'Use a staged rollout for rollout strategy.',
+    'That keeps the launch reversible.',
     'Document Bun-native fallback decisions for auth strategy.',
     'That keeps incident recovery explicit.',
   ].join(' ')
@@ -8135,10 +8170,46 @@ test('rejects topic-span interpretation when one requested topic matches more th
   )
 })
 
-test('rejects topic-closing-span interpretation when one requested topic matches more than one span', () => {
+test('materializes topic-closing-span interpretation when one requested topic matches contiguous spans', () => {
   const sourceResponse = [
     'Use Bun-native auth.',
     'That keeps the runtime simple for auth strategy.',
+    'Document Bun-native fallback decisions.',
+    'That keeps incident recovery explicit for auth strategy.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'topic_closing_spans',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: undefined,
+      taskRef: undefined,
+      answer: [
+        'Use Bun-native auth. That keeps the runtime simple for auth strategy.',
+        'Document Bun-native fallback decisions. That keeps incident recovery explicit for auth strategy.',
+      ].join(' '),
+    },
+  ])
+})
+
+test('rejects topic-closing-span interpretation when one requested topic matches non-contiguous spans', () => {
+  const sourceResponse = [
+    'Use Bun-native auth.',
+    'That keeps the runtime simple for auth strategy.',
+    'Use a staged rollout.',
+    'That keeps the launch reversible for rollout strategy.',
     'Document Bun-native fallback decisions.',
     'That keeps incident recovery explicit for auth strategy.',
   ].join(' ')
@@ -8162,11 +8233,15 @@ test('rejects topic-closing-span interpretation when one requested topic matches
   )
 })
 
-test('rejects topic-closing-block interpretation when one requested topic matches more than one block', () => {
+test('rejects topic-closing-block interpretation when one requested topic matches non-contiguous blocks', () => {
   const sourceResponse = [
     'Use Bun-native auth.',
     '',
     'That keeps the runtime simple for auth strategy.',
+    '',
+    'Use a staged rollout.',
+    '',
+    'That keeps the launch reversible for rollout strategy.',
     '',
     'Document Bun-native fallback decisions.',
     '',
@@ -8192,9 +8267,44 @@ test('rejects topic-closing-block interpretation when one requested topic matche
   )
 })
 
-test('rejects topic-paragraph interpretation when one requested topic matches more than one paragraph', () => {
+test('materializes topic-paragraph interpretation when one requested topic matches contiguous paragraphs', () => {
   const sourceResponse = [
     'Use Bun-native auth for auth strategy. That keeps the runtime simple.',
+    '',
+    'Document Bun-native fallback decisions for auth strategy. That keeps incident recovery explicit.',
+  ].join('\n')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      sourceResponse,
+      [],
+      'topic_paragraphs',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: undefined,
+      taskRef: undefined,
+      answer: [
+        'Use Bun-native auth for auth strategy. That keeps the runtime simple.',
+        'Document Bun-native fallback decisions for auth strategy. That keeps incident recovery explicit.',
+      ].join('\n\n'),
+    },
+  ])
+})
+
+test('rejects topic-paragraph interpretation when one requested topic matches non-contiguous paragraphs', () => {
+  const sourceResponse = [
+    'Use Bun-native auth for auth strategy. That keeps the runtime simple.',
+    '',
+    'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
     '',
     'Document Bun-native fallback decisions for auth strategy. That keeps incident recovery explicit.',
   ].join('\n')
@@ -8218,11 +8328,15 @@ test('rejects topic-paragraph interpretation when one requested topic matches mo
   )
 })
 
-test('rejects topic-block interpretation when one requested topic matches more than one anchored block', () => {
+test('rejects topic-block interpretation when one requested topic matches non-contiguous anchored blocks', () => {
   const sourceResponse = [
     'Use Bun-native auth for auth strategy.',
     '',
     'That keeps the runtime simple.',
+    '',
+    'Use a staged rollout for rollout strategy.',
+    '',
+    'That keeps the launch reversible.',
     '',
     'Document Bun-native fallback decisions for auth strategy.',
     '',
@@ -8312,8 +8426,8 @@ test('rejects question-span interpretation when a matched question omits its ans
   )
 })
 
-test('rejects question-closing-span interpretation when one requested topic matches more than one span', () => {
-  expect(() =>
+test('materializes question-closing-span interpretation when one requested topic matches contiguous spans', () => {
+  expect(
     materializeInterpretedDecisionAnswers(
       [
         {
@@ -8325,6 +8439,37 @@ test('rejects question-closing-span interpretation when one requested topic matc
       [],
       'question_closing_spans',
     ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Auth strategy?',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'Use external auth.'].join(' '),
+    },
+  ])
+})
+
+test('rejects question-closing-span interpretation when one requested topic matches non-contiguous spans', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      [
+        'Use Bun-native auth.',
+        'Auth strategy?',
+        'Use a staged rollout.',
+        'Rollout strategy?',
+        'Use external auth.',
+        'Auth strategy?',
+      ].join(' '),
+      [],
+      'question_closing_spans',
+    ),
   ).toThrowError(
     new AnswerInterpretationError(
       'Multiple question closing spans matched decision answer auth-strategy in sourceResponse.',
@@ -8332,7 +8477,7 @@ test('rejects question-closing-span interpretation when one requested topic matc
   )
 })
 
-test('rejects question-closing-block interpretation when one requested topic matches more than one block', () => {
+test('rejects question-closing-block interpretation when one requested topic matches non-contiguous blocks', () => {
   expect(() =>
     materializeInterpretedDecisionAnswers(
       [
@@ -8345,6 +8490,10 @@ test('rejects question-closing-block interpretation when one requested topic mat
         'Use Bun-native auth.',
         '',
         'Auth strategy?',
+        '',
+        'Use a staged rollout.',
+        '',
+        'Rollout strategy?',
         '',
         'Use external auth.',
         '',

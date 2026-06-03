@@ -718,6 +718,7 @@ Current non-UI Goal assistant substrate:
 - planning reviewer/merger follow-through policy grounded in planning requests and durable planning write traces
 - scheduler hard guards that retry planning review/merge work when explicit requested updates still lack durable trace coverage
 - grouped-planning blocker propagation that keeps engineering waiting on the current open grouped leaves instead of stale earlier grouped tasks
+- contiguous explicit anchor-run merging that lets `question_*` and `topic_*` answer surfaces merge one known consumer across adjacent repeated matching units while still failing closed on non-contiguous repeats
 
 What is still missing:
 

@@ -9523,7 +9523,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when topic-sentence interpretation matches one requested topic more than once', async () => {
+  test('records one durable answer through the API from contiguous topic sentences for the same requested topic', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9541,13 +9541,48 @@ describe('createServer', () => {
       ],
     })
 
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['auth-strategy'],
+      resolvedSourceResponseFormat: 'topic_sentences',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: [
+            'Use Bun-native auth for auth strategy.',
+            'Document Bun-native fallback decisions for auth strategy.',
+          ].join(' '),
+        }),
+      ],
+    })
+  })
+
+  test('returns HTTP 400 when topic-sentence interpretation matches one requested topic non-contiguously', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Use Bun-native auth for auth strategy.',
+        'Use a staged rollout for rollout strategy.',
+        'Document Bun-native fallback decisions for auth strategy.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_sentences',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+    })
+
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error: 'Multiple topic sentences matched decision answer auth-strategy in sourceResponse.',
     })
   })
 
-  test('returns HTTP 400 when topic-span interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when topic-span interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9555,6 +9590,8 @@ describe('createServer', () => {
       sourceResponse: [
         'Use Bun-native auth for auth strategy.',
         'That keeps the runtime simple.',
+        'Use a staged rollout for rollout strategy.',
+        'That keeps the launch reversible.',
         'Document Bun-native fallback decisions for auth strategy.',
         'That keeps incident recovery explicit.',
       ].join(' '),
@@ -9573,7 +9610,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when topic-closing-span interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when topic-closing-span interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9581,6 +9618,8 @@ describe('createServer', () => {
       sourceResponse: [
         'Use Bun-native auth.',
         'That keeps the runtime simple for auth strategy.',
+        'Use a staged rollout.',
+        'That keeps the launch reversible for rollout strategy.',
         'Document Bun-native fallback decisions.',
         'That keeps incident recovery explicit for auth strategy.',
       ].join(' '),
@@ -9600,7 +9639,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when topic-closing-block interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when topic-closing-block interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9609,6 +9648,10 @@ describe('createServer', () => {
         'Use Bun-native auth.',
         '',
         'That keeps the runtime simple for auth strategy.',
+        '',
+        'Use a staged rollout.',
+        '',
+        'That keeps the launch reversible for rollout strategy.',
         '',
         'Document Bun-native fallback decisions.',
         '',
@@ -9630,13 +9673,15 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when topic-paragraph interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when topic-paragraph interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
     const response = await postJson(server, '/api/goals/test/decisions/answers', {
       sourceResponse: [
         'Use Bun-native auth for auth strategy. That keeps the runtime simple.',
+        '',
+        'Use a staged rollout for rollout strategy. That keeps the launch reversible.',
         '',
         'Document Bun-native fallback decisions for auth strategy. That keeps incident recovery explicit.',
       ].join('\n'),
@@ -9655,7 +9700,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when topic-block interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when topic-block interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9664,6 +9709,10 @@ describe('createServer', () => {
         'Use Bun-native auth for auth strategy.',
         '',
         'That keeps the runtime simple.',
+        '',
+        'Use a staged rollout for rollout strategy.',
+        '',
+        'That keeps the launch reversible.',
         '',
         'Document Bun-native fallback decisions for auth strategy.',
         '',
@@ -9772,7 +9821,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when question-closing-span interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when question-closing-span interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9780,6 +9829,8 @@ describe('createServer', () => {
       sourceResponse: [
         'Use Bun-native auth.',
         'Auth strategy?',
+        'Use a staged rollout.',
+        'Rollout strategy?',
         'Use external auth.',
         'Auth strategy?',
       ].join(' '),
@@ -9799,7 +9850,7 @@ describe('createServer', () => {
     })
   })
 
-  test('returns HTTP 400 when question-closing-block interpretation matches one requested topic more than once', async () => {
+  test('returns HTTP 400 when question-closing-block interpretation matches one requested topic non-contiguously', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
 
@@ -9808,6 +9859,10 @@ describe('createServer', () => {
         'Use Bun-native auth.',
         '',
         'Auth strategy?',
+        '',
+        'Use a staged rollout.',
+        '',
+        'Rollout strategy?',
         '',
         'Use external auth.',
         '',
