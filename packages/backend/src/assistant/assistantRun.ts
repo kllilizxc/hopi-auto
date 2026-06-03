@@ -68,6 +68,7 @@ const assistantRuntimeEventSchema = z.discriminatedUnion('kind', [
     entryKind: z.enum(['status', 'assistant', 'tool_call', 'tool_result', 'error']),
     summary: z.string().min(1),
     toolName: z.string().min(1).optional(),
+    toolInvocationKey: z.string().min(1).optional(),
     vendorEventType: z.string().min(1).optional(),
   }),
   z.object({

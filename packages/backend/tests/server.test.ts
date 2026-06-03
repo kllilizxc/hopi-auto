@@ -13073,6 +13073,126 @@ preferences:
     })
   })
 
+  test('runs the configured Goal assistant and preserves transcript tool invocation keys on assistant run readback', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    const mockCodexPath = join(workspaceRoot, 'mock-assistant-codex')
+    await writeFile(
+      mockCodexPath,
+      `#!/usr/bin/env bun
+console.log(JSON.stringify({
+  method: 'item/completed',
+  params: { item: { type: 'agent_message', text: 'Captured the rollout patch.' } },
+}))
+console.log(JSON.stringify({
+  method: 'item/completed',
+  params: {
+    item: {
+      type: 'local_shell_call',
+      tool_name: 'Bash',
+      call_id: 'shell-1',
+      command: 'bun test packages/backend/tests/server.test.ts',
+    },
+  },
+}))
+console.log(JSON.stringify({
+  method: 'item/completed',
+  params: {
+    item: {
+      type: 'local_shell_call_output',
+      tool_name: 'Bash',
+      call_id: 'shell-1',
+      content: 'Command completed successfully.',
+    },
+  },
+}))
+await Bun.write(
+  process.env.HOPI_OUTCOME_FILE!,
+  JSON.stringify({ message: 'Captured rollout authority.', actions: [] }),
+)
+`,
+      'utf8',
+    )
+    await chmod(mockCodexPath, 0o755)
+
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        transport: 'codex',
+        binary: mockCodexPath,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content: 'Capture rollout authority.',
+    })
+
+    expect(response.status).toBe(200)
+    const result = await readJson<{
+      assistantRunId: string
+      message: string
+      events: Array<{
+        kind: string
+        transport?: string
+        entryKind?: string
+        toolName?: string
+        toolInvocationKey?: string
+        vendorEventType?: string
+      }>
+    }>(response)
+    expect(result.message).toBe('Captured rollout authority.')
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_call',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        }),
+        expect.objectContaining({
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_result',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        }),
+      ]),
+    )
+
+    const detailResponse = await fetch(
+      apiUrl(server, `/api/goals/test/assistant/runs/${result.assistantRunId}`),
+    )
+    expect(detailResponse.status).toBe(200)
+    await expect(detailResponse.json()).resolves.toMatchObject({
+      assistantRunId: result.assistantRunId,
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_call',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        }),
+        expect.objectContaining({
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_result',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        }),
+      ]),
+    })
+  })
+
   test('runs the configured Goal assistant and follows through with a visible decision request', async () => {
     const workspaceRoot = await initGitRepo(rootDir())
     await seedBoard(workspaceRoot, [

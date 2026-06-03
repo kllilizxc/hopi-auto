@@ -41,7 +41,18 @@ describe('createAssistantRunStore', () => {
       message: 'Second reply.',
       actions: [{ kind: 'update_preference', content: '# Preferences\n' }],
       actionResults: [{ kind: 'update_preference', summary: 'Updated durable preferences.' }],
-      events: [{ kind: 'message', level: 'info', role: 'assistant', content: 'finished' }],
+      events: [
+        { kind: 'message', level: 'info', role: 'assistant', content: 'finished' },
+        {
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_call',
+          summary: 'Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        },
+      ],
       status: 'completed',
     })
     await Bun.write(
@@ -83,6 +94,16 @@ describe('createAssistantRunStore', () => {
       requestContent: 'Second request.',
       message: 'Second reply.',
       status: 'completed',
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'tool_call',
+          toolName: 'Bash',
+          toolInvocationKey: 'shell-1',
+          vendorEventType: 'item/completed',
+        }),
+      ]),
       actionResults: [{ kind: 'update_preference', summary: 'Updated durable preferences.' }],
     })
     await expect(store.readBundle(goalKey, 'assistant-run-2')).resolves.toMatchObject({
