@@ -208,6 +208,104 @@ describe('formatAssistantActionResultDetails', () => {
     })
   })
 
+  test('surfaces grouped planning request authority for assistant run inspection', () => {
+    expect(
+      formatAssistantActionPresentation({
+        kind: 'request_planning_batch',
+        groupKey: 'auth-follow-through',
+        decisionRefs: ['auth-strategy'],
+        answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
+        answerSources: [
+          {
+            answerSourceKey: 'source-1',
+            answerKey: 'pilot-scope',
+            answer: 'Start with five enterprise customers before broader launch.',
+            matchHints: [],
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Clarify auth goal context',
+            description: 'Refresh durable Goal context before decomposition.',
+            acceptanceCriteria: ['Goal context captures the auth direction.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+            blockedBy: [],
+            blockedByTaskKeys: [],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth task graph',
+            description: 'Reshape todo.yml after the goal context is stable.',
+            acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedBy: [],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      }),
+    ).toEqual({
+      body: 'request_planning_batch | Request grouped planning: auth-follow-through',
+      details: [
+        'Planning group key: auth-follow-through',
+        'Grouped requests: 2',
+        'Linked decisions: auth-strategy',
+        'Shared planner answers: 1',
+        'Reusable answer sources: 1',
+        'Grouped request: goal-docs -> updates goal.md, design.md',
+        'Grouped request: task-graph -> updates todo.yml',
+        'Grouped request task-graph depends on: goal-docs',
+      ],
+    })
+  })
+
+  test('surfaces grouped planning follow-through request authority for assistant run inspection', () => {
+    expect(
+      formatAssistantActionPresentation({
+        kind: 'record_answer',
+        summary: 'Choose the auth strategy',
+        answer: 'Use Bun-native auth.',
+        matchHints: [],
+        answerSources: [],
+        followThrough: {
+          kind: 'planning_batch',
+          groupKey: 'auth-follow-through',
+          answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
+          requests: [
+            {
+              taskKey: 'goal-docs',
+              title: 'Clarify auth goal context',
+              description: 'Refresh durable Goal context before decomposition.',
+              acceptanceCriteria: ['Goal context captures the auth direction.'],
+              requestedUpdates: ['goal.md', 'design.md'],
+              blockedBy: [],
+              blockedByTaskKeys: [],
+            },
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedBy: [],
+              blockedByTaskKeys: ['goal-docs'],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      body: 'record_answer | Record answer with grouped planning follow-through auth-follow-through.',
+      details: [
+        'Follow-through kind: planning_batch',
+        'Follow-through group key: auth-follow-through',
+        'Follow-through grouped request: goal-docs -> updates goal.md, design.md',
+        'Follow-through grouped request: task-graph -> updates todo.yml',
+        'Follow-through grouped request task-graph depends on: goal-docs',
+        'Follow-through shared planner answers: 1',
+      ],
+    })
+  })
+
   test('surfaces structured runtime-event authority for assistant run inspection', () => {
     expect(
       formatAssistantEventPresentation({

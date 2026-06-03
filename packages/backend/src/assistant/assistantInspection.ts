@@ -390,6 +390,9 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.answerSources.length > 0) {
       lines.push(`Reusable answer sources: ${action.answerSources.length}`)
     }
+    for (const request of action.requests) {
+      lines.push(...formatGroupedPlanningRequestDetails(request))
+    }
     if (action.inferRemainingAnswers) {
       lines.push('Infer remaining answers: yes')
     }
@@ -585,6 +588,9 @@ function appendFollowThroughDetails(
 
   if (followThrough.kind === 'planning_batch') {
     lines.push(`Follow-through group key: ${followThrough.groupKey}`)
+    for (const request of followThrough.requests) {
+      lines.push(...formatFollowThroughGroupedPlanningRequestDetails(request))
+    }
     if (followThrough.answers.length > 0) {
       lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
     }
@@ -706,6 +712,38 @@ function summarizeWorkflowFollowThroughChild(
   }
 
   return workflow.groupKey
+}
+
+function formatGroupedPlanningRequestDetails(
+  request: Extract<GoalAssistantAction, { kind: 'request_planning_batch' }>['requests'][number],
+) {
+  return [
+    `Grouped request: ${request.taskKey} -> updates ${request.requestedUpdates.join(', ')}`,
+    ...(request.blockedByTaskKeys.length > 0
+      ? [`Grouped request ${request.taskKey} depends on: ${request.blockedByTaskKeys.join(', ')}`]
+      : []),
+  ]
+}
+
+function formatFollowThroughGroupedPlanningRequestDetails(
+  request: Extract<
+    NonNullable<
+      Extract<
+        GoalAssistantAction,
+        { kind: 'record_answer' | 'record_answers' | 'resolve_decision' }
+      >['followThrough']
+    >,
+    { kind: 'planning_batch' }
+  >['requests'][number],
+) {
+  return [
+    `Follow-through grouped request: ${request.taskKey} -> updates ${request.requestedUpdates.join(', ')}`,
+    ...(request.blockedByTaskKeys.length > 0
+      ? [
+          `Follow-through grouped request ${request.taskKey} depends on: ${request.blockedByTaskKeys.join(', ')}`,
+        ]
+      : []),
+  ]
 }
 
 export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {
