@@ -3613,6 +3613,187 @@ test('materializes matching middle runs across decision and planner answers with
   })
 })
 
+test('materializes matching opening runs across decision and planner answers without explicit topic or question anchors', () => {
+  const sourceResponse = [
+    'Adopt the auth provider for the Bun-first product path.',
+    'Use Bun-native auth.',
+    'That keeps the runtime simple.',
+    'Rollout should happen in stages or all at once.',
+    'Use a staged rollout.',
+    'That keeps rollback simple.',
+    'The customers in the pilot before broader launch should be five enterprise customers.',
+    'That keeps support load manageable.',
+  ].join(' ')
+  const state = createInterpretedSourceResponseState(sourceResponse, 'matching_opening_runs')
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      sourceResponse,
+      [],
+      'matching_opening_runs',
+      state,
+      [['Pilot scope', 'Which customers should be in the pilot before broader launch?']],
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      matchHints: undefined,
+      taskRef: undefined,
+      answer:
+        'Adopt the auth provider for the Bun-first product path. Use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should rollout happen in stages or all at once?',
+      matchHints: undefined,
+      taskRef: undefined,
+      answer:
+        'Rollout should happen in stages or all at once. Use a staged rollout. That keeps rollback simple.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which customers should be in the pilot before broader launch?',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md'],
+          },
+        ],
+      },
+      sourceResponse,
+      [],
+      'matching_opening_runs',
+      state,
+    ),
+  ).toEqual({
+    kind: 'planning_batch',
+    groupKey: 'auth-rollout-follow-through',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        prompt: 'Which customers should be in the pilot before broader launch?',
+        answer:
+          'The customers in the pilot before broader launch should be five enterprise customers. That keeps support load manageable.',
+      },
+    ],
+    requests: [
+      {
+        taskKey: 'goal-docs',
+        title: 'Capture auth rollout goal context',
+        description: 'Record the auth and rollout answers across Goal docs.',
+        acceptanceCriteria: ['The auth and rollout answers are durable.'],
+        requestedUpdates: ['goal.md', 'design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes matching open decisions from matching opening runs by durable prompt keyword anchors', () => {
+  const sourceResponse = [
+    'Adopt the auth provider for the Bun-first product path.',
+    'Use Bun-native auth.',
+    'That keeps the runtime simple.',
+    'Rollout should happen in stages or all at once.',
+    'Use a staged rollout.',
+    'That keeps rollback simple.',
+  ].join(' ')
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'matching_opening_runs',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer:
+        'Adopt the auth provider for the Bun-first product path. Use Bun-native auth. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer:
+        'Rollout should happen in stages or all at once. Use a staged rollout. That keeps rollback simple.',
+    },
+  ])
+})
+
+test('rejects matching opening run interpretation when adjacent anchors do not leave trailing sentences', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      [
+        'Adopt the auth provider for the Bun-first product path.',
+        'Rollout should happen in stages or all at once.',
+        'Use a staged rollout.',
+      ].join(' '),
+      [],
+      'matching_opening_runs',
+    ),
+  ).toThrow(
+    'sourceResponseFormat matching_opening_runs requires at least one trailing sentence before the next matched anchor.',
+  )
+})
+
 test('materializes matching open decisions from matching middle runs by durable prompt keyword anchors', () => {
   const sourceResponse = [
     'Keep the runtime simple.',
@@ -10016,7 +10197,7 @@ test('rejects inferOpenDecisions when labeled-section interpretation is not enab
     ),
   ).toThrowError(
     new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     ),
   )
 })

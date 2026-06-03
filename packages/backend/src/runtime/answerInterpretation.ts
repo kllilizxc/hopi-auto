@@ -19,6 +19,7 @@ export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'pending_answer_sources',
   'matching_answer_sources',
   'matching_runs',
+  'matching_opening_runs',
   'matching_middle_runs',
   'ordered_items',
   'ordered_blocks',
@@ -71,6 +72,7 @@ export interface InterpretedSourceResponseState {
   matchingRunCandidateGroups?: string[][]
   matchingRunCandidateLookup?: Map<string, number>
   matchingRuns?: MatchingSourceResponseRun[]
+  matchingOpeningRuns?: MatchingSourceResponseRun[]
   matchingMiddleRuns?: MatchingSourceResponseRun[]
   orderedItems?: string[]
   orderedBlocks?: string[]
@@ -89,6 +91,7 @@ export interface InterpretedSourceResponseState {
   nextPendingConjunctionIndex: number
   nextPendingAnswerSourceIndex: number
   consumedMatchingRunIndexes: Set<number>
+  consumedMatchingOpeningRunIndexes: Set<number>
   consumedMatchingMiddleRunIndexes: Set<number>
   consumedMatchingAnswerSourceIndexes: Set<number>
   consumedLabeledSectionLabels: Set<string>
@@ -452,6 +455,7 @@ const INFER_OPEN_DECISION_FORMATS = new Set<ConcreteInterpretableSourceResponseF
   'pending_answer_sources',
   'matching_answer_sources',
   'matching_runs',
+  'matching_opening_runs',
   'matching_middle_runs',
   'ordered_items',
   'ordered_blocks',
@@ -690,6 +694,7 @@ export function createInterpretedSourceResponseState(
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
     consumedMatchingRunIndexes: new Set<number>(),
+    consumedMatchingOpeningRunIndexes: new Set<number>(),
     consumedMatchingMiddleRunIndexes: new Set<number>(),
     consumedMatchingAnswerSourceIndexes: new Set<number>(),
     consumedLabeledSectionLabels: new Set<string>(),
@@ -2627,6 +2632,17 @@ function resolveAnswerContent(
     }
   }
 
+  if (sourceResponseFormat === 'matching_opening_runs') {
+    return {
+      answer: resolveMatchingOpeningRunSourceResponseValue(
+        sourceResponse,
+        sourceResponseCandidates,
+        label,
+        sourceResponseState,
+      ),
+    }
+  }
+
   if (sourceResponseFormat === 'matching_middle_runs') {
     return {
       answer: resolveMatchingMiddleRunSourceResponseValue(
@@ -3876,6 +3892,52 @@ function resolveMatchingRunSourceResponseValue(
   return matchingRun.text
 }
 
+function resolveMatchingOpeningRunSourceResponseValue(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const runs = parseMatchingOpeningSourceResponseRuns(sourceResponse, label, sourceResponseState)
+  const candidateGroupIndex = resolveMatchingRunCandidateGroupIndex(
+    candidates,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes =
+    sourceResponseState?.consumedMatchingOpeningRunIndexes ?? new Set<number>()
+  const matchingIndexes = runs.flatMap((run, index) => {
+    if (consumedIndexes.has(index)) {
+      return []
+    }
+    return run.candidateGroupIndex === candidateGroupIndex ? [index] : []
+  })
+
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(`Multiple matching opening runs matched ${label}.`)
+  }
+
+  const matchingIndex = matchingIndexes[0]
+  if (matchingIndex === undefined) {
+    throw new AnswerInterpretationError(
+      `No matching opening run matched ${label} in sourceResponse.`,
+    )
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.consumedMatchingOpeningRunIndexes.add(matchingIndex)
+  }
+
+  const matchingRun = runs[matchingIndex]
+  if (!matchingRun) {
+    throw new AnswerInterpretationError(
+      `No matching opening run matched ${label} in sourceResponse.`,
+    )
+  }
+
+  return matchingRun.text
+}
+
 function resolveMatchingMiddleRunSourceResponseValue(
   sourceResponse: string | undefined,
   candidates: string[],
@@ -4125,6 +4187,108 @@ function parseMatchingSourceResponseRuns(
   return runs
 }
 
+function parseMatchingOpeningSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const cachedRuns = sourceResponseState?.matchingOpeningRuns
+  if (cachedRuns) {
+    return cachedRuns
+  }
+
+  const candidateGroups = sourceResponseState?.matchingRunCandidateGroups ?? []
+  if (candidateGroups.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_opening_runs requires registered candidate groups for ${label}.`,
+    )
+  }
+
+  const { units, joiner, unitLabel } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  const runs: MatchingSourceResponseRun[] = []
+  const leadingTexts: string[] = []
+  let currentMatchedTexts: string[] = []
+  let currentCandidateGroupIndex: number | undefined
+  let trailingTexts: string[] = []
+
+  for (const unit of units) {
+    const matchingGroupIndexes = findMatchingRunGroupIndexes(unit, candidateGroups)
+    if (matchingGroupIndexes.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple matching opening runs matched unit "${unit.text}" in sourceResponse.`,
+      )
+    }
+
+    const matchingGroupIndex = matchingGroupIndexes[0]
+    if (matchingGroupIndex === undefined) {
+      if (currentCandidateGroupIndex === undefined) {
+        leadingTexts.push(unit.text)
+      } else {
+        trailingTexts.push(unit.text)
+      }
+      continue
+    }
+
+    if (currentCandidateGroupIndex === undefined) {
+      if (leadingTexts.length > 0) {
+        throw new AnswerInterpretationError(
+          `sourceResponseFormat matching_opening_runs requires each run to start with a matched anchor before any leading ${unitLabel}.`,
+        )
+      }
+      currentCandidateGroupIndex = matchingGroupIndex
+      currentMatchedTexts = [unit.text]
+      trailingTexts = []
+      continue
+    }
+
+    if (trailingTexts.length === 0) {
+      if (currentCandidateGroupIndex === matchingGroupIndex) {
+        currentMatchedTexts.push(unit.text)
+        continue
+      }
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat matching_opening_runs requires at least one trailing ${unitLabel} before the next matched anchor.`,
+      )
+    }
+
+    if (currentCandidateGroupIndex === matchingGroupIndex) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat matching_opening_runs does not allow a matched anchor for the same consumer after trailing ${unitLabel} has started.`,
+      )
+    }
+
+    runs.push({
+      text: [...currentMatchedTexts, ...trailingTexts].join(joiner),
+      candidateGroupIndex: currentCandidateGroupIndex,
+    })
+    currentCandidateGroupIndex = matchingGroupIndex
+    currentMatchedTexts = [unit.text]
+    trailingTexts = []
+  }
+
+  if (currentCandidateGroupIndex === undefined) {
+    throw new AnswerInterpretationError(
+      `No matching opening run matched any candidate group for ${label} in sourceResponse.`,
+    )
+  }
+
+  if (trailingTexts.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_opening_runs requires each run to end with at least one trailing ${unitLabel} after the matched anchor.`,
+    )
+  }
+
+  runs.push({
+    text: [...currentMatchedTexts, ...trailingTexts].join(joiner),
+    candidateGroupIndex: currentCandidateGroupIndex,
+  })
+
+  if (sourceResponseState) {
+    sourceResponseState.matchingOpeningRuns = runs
+  }
+  return runs
+}
+
 function parseMatchingMiddleSourceResponseRuns(
   sourceResponse: string | undefined,
   label: string,
@@ -4337,6 +4501,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'pending_answer_sources' &&
     sourceResponseFormat !== 'matching_answer_sources' &&
     sourceResponseFormat !== 'matching_runs' &&
+    sourceResponseFormat !== 'matching_opening_runs' &&
     sourceResponseFormat !== 'matching_middle_runs' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
@@ -4359,7 +4524,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
@@ -4451,6 +4616,13 @@ function materializeMatchingOpenDecisionAnswers(
       )
     } else if (sourceResponseFormat === 'matching_runs') {
       match = resolveMatchingRunSourceResponseValue(
+        sourceResponse,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+      )
+    } else if (sourceResponseFormat === 'matching_opening_runs') {
+      match = resolveMatchingOpeningRunSourceResponseValue(
         sourceResponse,
         buildOpenDecisionSourceResponseCandidates(decision),
         `decision answer ${decision.decisionKey}`,
@@ -8410,6 +8582,7 @@ function registerMatchingRunCandidateGroups(
   if (
     !sourceResponseState ||
     (sourceResponseState.sourceResponseFormat !== 'matching_runs' &&
+      sourceResponseState.sourceResponseFormat !== 'matching_opening_runs' &&
       sourceResponseState.sourceResponseFormat !== 'matching_middle_runs')
   ) {
     return
@@ -8439,6 +8612,7 @@ function registerMatchingRunCandidateGroups(
   sourceResponseState.matchingRunCandidateLookup = lookup
   if (changed) {
     sourceResponseState.matchingRuns = undefined
+    sourceResponseState.matchingOpeningRuns = undefined
     sourceResponseState.matchingMiddleRuns = undefined
   }
 }
