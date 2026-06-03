@@ -305,8 +305,14 @@ describe('createServer', () => {
       description: 'Record rollout details before more planning work continues.',
       acceptanceCriteria: ['Rollout notes are durable.'],
       sourceResponse: [
-        'Pilot scope should start with five enterprise customers, that keeps support manageable, rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
-      ].join(' '),
+        'Pilot scope should start with five enterprise customers.',
+        '',
+        'The pilot scope should stay supportable for one onboarding wave.',
+        '',
+        'Rollback trigger should be two regressions in one hour.',
+        '',
+        'The rollback trigger should stay explicit for the launch team.',
+      ].join('\n'),
       sourceResponseFormat: 'matching_runs',
       answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
       requestedUpdates: ['goal.md', 'notes/rollout.md'],
@@ -320,14 +326,18 @@ describe('createServer', () => {
         {
           summary: 'Pilot scope',
           prompt: 'What should the pilot scope be?',
-          answer:
-            'Pilot scope should start with five enterprise customers, that keeps support manageable',
+          answer: [
+            'Pilot scope should start with five enterprise customers.',
+            'The pilot scope should stay supportable for one onboarding wave.',
+          ].join('\n\n'),
         },
         {
           summary: 'Rollback trigger',
           prompt: 'What should the rollback trigger be?',
-          answer:
-            'rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
+          answer: [
+            'Rollback trigger should be two regressions in one hour.',
+            'The rollback trigger should stay explicit for the launch team.',
+          ].join('\n\n'),
         },
       ],
     })
@@ -342,18 +352,50 @@ describe('createServer', () => {
             expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
-              answer:
-                'Pilot scope should start with five enterprise customers, that keeps support manageable',
+              answer: [
+                'Pilot scope should start with five enterprise customers.',
+                'The pilot scope should stay supportable for one onboarding wave.',
+              ].join('\n\n'),
             }),
             expect.objectContaining({
               summary: 'Rollback trigger',
               prompt: 'What should the rollback trigger be?',
-              answer:
-                'rollback trigger should be two regressions in one hour, that keeps the rollback boundary explicit.',
+              answer: [
+                'Rollback trigger should be two regressions in one hour.',
+                'The rollback trigger should stay explicit for the launch team.',
+              ].join('\n\n'),
             }),
           ],
         }),
       ],
+    })
+  })
+
+  test('rejects matching_runs through the direct planning-request API when unmatched prose sits between different consumers', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      sourceResponse: [
+        'Pilot scope should start with five enterprise customers.',
+        '',
+        'Release codename stays Aurora.',
+        '',
+        'Rollback trigger should be two regressions in one hour.',
+      ].join('\n'),
+      sourceResponseFormat: 'matching_runs',
+      answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat matching_runs found unmatched prose between different matched consumers.',
+      ),
     })
   })
 

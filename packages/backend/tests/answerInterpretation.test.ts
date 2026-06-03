@@ -4681,6 +4681,106 @@ test('materializes matching open decisions from repeated matching runs without s
   ])
 })
 
+test('rejects matching_runs when unmatched prose appears before the first matched consumer', () => {
+  const sourceResponse = [
+    'Release codename stays Aurora.',
+    '',
+    'Auth strategy should use Bun-native auth.',
+    '',
+    'Rollout strategy should use a staged rollout.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'matching_runs',
+    ),
+  ).toThrow(
+    'sourceResponseFormat matching_runs found unmatched prose before the first matched run.',
+  )
+})
+
+test('rejects matching_runs when unmatched prose appears between different matched consumers', () => {
+  const sourceResponse = [
+    'Auth strategy should use Bun-native auth.',
+    '',
+    'Release codename stays Aurora.',
+    '',
+    'Rollout strategy should use a staged rollout.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'matching_runs',
+    ),
+  ).toThrow(
+    'sourceResponseFormat matching_runs found unmatched prose between different matched consumers.',
+  )
+})
+
+test('rejects matching_runs when unmatched prose appears after the last matched consumer', () => {
+  const sourceResponse = [
+    'Auth strategy should use Bun-native auth.',
+    '',
+    'Rollout strategy should use a staged rollout.',
+    '',
+    'Release codename stays Aurora.',
+  ].join('\n')
+
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      sourceResponse,
+      [],
+      'matching_runs',
+    ),
+  ).toThrow('sourceResponseFormat matching_runs found unmatched prose after the last matched run.')
+})
+
 test('materializes multiple pending open decisions from one pending-sentence shared reply without anchors', () => {
   const sourceResponse = 'Use Bun-native auth. Use a staged rollout.'
 

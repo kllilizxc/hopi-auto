@@ -2989,6 +2989,7 @@ function parseMatchingSourceResponseRuns(
   const { units, joiner } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
   const runs: MatchingSourceResponseRun[] = []
   let leadingTexts: string[] = []
+  let pendingGapTexts: string[] = []
   let currentRun: MatchingSourceResponseRun | undefined
 
   for (const unit of units) {
@@ -3002,7 +3003,7 @@ function parseMatchingSourceResponseRuns(
     const matchingGroupIndex = matchingGroupIndexes[0]
     if (matchingGroupIndex === undefined) {
       if (currentRun) {
-        currentRun.text = `${currentRun.text}${joiner}${unit.text}`
+        pendingGapTexts.push(unit.text)
       } else {
         leadingTexts.push(unit.text)
       }
@@ -3010,8 +3011,13 @@ function parseMatchingSourceResponseRuns(
     }
 
     if (!currentRun) {
+      if (leadingTexts.length > 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_runs found unmatched prose before the first matched run.',
+        )
+      }
       currentRun = {
-        text: [...leadingTexts, unit.text].join(joiner),
+        text: unit.text,
         candidateGroupIndex: matchingGroupIndex,
       }
       leadingTexts = []
@@ -3019,8 +3025,18 @@ function parseMatchingSourceResponseRuns(
     }
 
     if (currentRun.candidateGroupIndex === matchingGroupIndex) {
-      currentRun.text = `${currentRun.text}${joiner}${unit.text}`
+      currentRun.text =
+        pendingGapTexts.length > 0
+          ? `${currentRun.text}${joiner}${pendingGapTexts.join(joiner)}${joiner}${unit.text}`
+          : `${currentRun.text}${joiner}${unit.text}`
+      pendingGapTexts = []
       continue
+    }
+
+    if (pendingGapTexts.length > 0) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_runs found unmatched prose between different matched consumers.',
+      )
     }
 
     runs.push(currentRun)
@@ -3033,6 +3049,12 @@ function parseMatchingSourceResponseRuns(
   if (!currentRun) {
     throw new AnswerInterpretationError(
       `No matching run matched any candidate group for ${label} in sourceResponse.`,
+    )
+  }
+
+  if (pendingGapTexts.length > 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat matching_runs found unmatched prose after the last matched run.',
     )
   }
 

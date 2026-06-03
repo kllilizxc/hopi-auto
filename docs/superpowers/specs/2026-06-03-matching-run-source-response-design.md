@@ -55,8 +55,9 @@ Shared runtime now:
    - otherwise the whole reply
 3. walks those units in order
 4. merges contiguous units into one run when they keep matching the same consumer
-5. appends unmatched continuation units onto the current run instead of discarding them
-6. starts a new run only when the matched consumer changes
+5. allows unmatched continuation units to stay attached only while the next matched unit still belongs to that same consumer
+6. fails closed when unmatched prose appears before the first matched run, between different matched consumers, or after the last matched run
+7. starts a new run only when the matched consumer changes
 
 ### Materialization Rules
 
@@ -65,6 +66,7 @@ Shared runtime now:
 - `inferOpenDecisions` may reuse one merged matching run for the current open durable decision
 - a unit that matches more than one consumer fails closed
 - a consumer that would need more than one non-consumed run fails closed
+- orphan prose that does not stay inside one consumer's repeated run fails closed instead of being silently absorbed into the nearest known consumer
 
 ### Auto Interaction
 
