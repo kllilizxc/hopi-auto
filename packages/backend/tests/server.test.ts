@@ -19251,6 +19251,7 @@ preferences:
 
     expect(response.status).toBe(200)
     const result = await readJson<{
+      assistantRunId: string
       message: string
       actionResults: Array<{
         kind: string
@@ -19262,6 +19263,7 @@ preferences:
     expect(result.message).toBe(
       'I captured rollout notes from matching reusable answer sources by durable answerKey.',
     )
+    expect(result.assistantRunId).toBeString()
     expect(result.actionResults).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -19272,6 +19274,22 @@ preferences:
         }),
       ]),
     )
+
+    const detailResponse = await fetch(
+      apiUrl(server, `/api/goals/test/assistant/runs/${result.assistantRunId}`),
+    )
+    expect(detailResponse.status).toBe(200)
+    await expect(detailResponse.json()).resolves.toMatchObject({
+      assistantRunId: result.assistantRunId,
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_planning',
+          requestKey: 'PR-1',
+          taskRef: 'P-1',
+          resolvedSourceResponseFormat: 'matching_answer_sources',
+        }),
+      ]),
+    })
 
     await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
