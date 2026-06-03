@@ -137,6 +137,24 @@ describe('formatAssistantActionResultDetails', () => {
     ])
   })
 
+  test('surfaces structured request-decision result authority', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'request_decision',
+        decisionKey: 'auth-strategy',
+        created: true,
+        blockerAdded: true,
+        decisionStatus: 'open',
+        summary: 'Requested decision auth-strategy and linked it to P-7.',
+      }),
+    ).toEqual([
+      'Decision key: auth-strategy',
+      'Created decision topic: yes',
+      'Decision blocker added: yes',
+      'Decision status: open',
+    ])
+  })
+
   test('surfaces structured action authority for assistant run inspection', () => {
     expect(
       formatAssistantActionPresentation({

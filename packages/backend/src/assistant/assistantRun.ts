@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { BLOCKER_KINDS, TASK_STATUSES } from '../domain/board'
 import { INTERPRETABLE_SOURCE_RESPONSE_FORMATS } from '../runtime/answerInterpretation'
+import { DECISION_STATUSES } from '../storage/decisionStore'
 import {
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
@@ -427,6 +428,9 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('request_decision'),
     decisionKey: z.string().min(1),
+    created: z.boolean(),
+    blockerAdded: z.boolean(),
+    decisionStatus: z.enum(DECISION_STATUSES),
     summary: z.string().min(1),
   }),
   z.object({

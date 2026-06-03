@@ -22,11 +22,13 @@ export interface AssistantActionResultDetailsInput {
   status?: string
   decisionKey?: string
   decisionKeys?: string[]
+  decisionStatus?: string
   preferenceKey?: string
   retiredPreferenceKeys?: string[]
   summary?: string
   created?: boolean
   createdDecisionKeys?: string[]
+  blockerAdded?: boolean
   blockerRemoved?: boolean
   resolvedSourceResponseFormat?: string
   followThrough?: {
@@ -134,6 +136,12 @@ export function formatAssistantActionResultDetails(
   }
   if (typeof result.created === 'boolean') {
     lines.push(`Created decision topic: ${result.created ? 'yes' : 'no'}`)
+  }
+  if (typeof result.blockerAdded === 'boolean') {
+    lines.push(`Decision blocker added: ${result.blockerAdded ? 'yes' : 'no'}`)
+  }
+  if (result.decisionStatus) {
+    lines.push(`Decision status: ${result.decisionStatus}`)
   }
   if (result.kind === 'record_answer' || result.kind === 'resolve_decision') {
     if (result.decisionKey) {

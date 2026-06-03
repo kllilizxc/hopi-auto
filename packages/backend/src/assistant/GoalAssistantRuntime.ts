@@ -411,6 +411,9 @@ async function applyAssistantAction(
       return {
         kind: 'request_decision',
         decisionKey: result.decision.decisionKey,
+        created: result.created,
+        blockerAdded: result.blockerAdded,
+        decisionStatus: result.decision.status,
         summary: `Decision ${result.decision.decisionKey} is already resolved.`,
       }
     }
@@ -418,6 +421,9 @@ async function applyAssistantAction(
     return {
       kind: 'request_decision',
       decisionKey: result.decision.decisionKey,
+      created: result.created,
+      blockerAdded: result.blockerAdded,
+      decisionStatus: result.decision.status,
       summary: result.blockerAdded
         ? `Requested decision ${result.decision.decisionKey} and linked it to ${action.taskRef}.`
         : result.created

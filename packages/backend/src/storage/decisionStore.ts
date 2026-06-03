@@ -7,7 +7,7 @@ import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
-const DECISION_STATUSES = ['open', 'resolved'] as const
+export const DECISION_STATUSES = ['open', 'resolved'] as const
 
 export type GoalDecisionStatus = (typeof DECISION_STATUSES)[number]
 

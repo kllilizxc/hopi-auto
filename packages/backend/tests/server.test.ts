@@ -13237,6 +13237,9 @@ await Bun.write(
         expect.objectContaining({
           kind: 'request_decision',
           decisionKey: 'auth-strategy',
+          created: true,
+          blockerAdded: true,
+          decisionStatus: 'open',
         }),
       ]),
     })
@@ -13283,6 +13286,13 @@ await Bun.write(
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_decision',
+          result: expect.objectContaining({
+            kind: 'request_decision',
+            decisionKey: 'auth-strategy',
+            created: true,
+            blockerAdded: true,
+            decisionStatus: 'open',
+          }),
         }),
       ]),
     )
