@@ -1,9 +1,10 @@
 # HOPI Docs
 
-Start with `docs/agent-handoff.md`.
+Start with `docs/zero-context-continuation.md`.
 
 ## Active
 
+- `docs/zero-context-continuation.md`: curated start-here continuation guide for a zero-context AI that needs to take over and keep shipping along the current authority route.
 - `docs/agent-handoff.md`: current handoff state for a zero-context agent.
 - `docs/hopi-phase-1-authority.md`: canonical Phase 1 schema and backend boundaries.
 - `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`: completed Phase 1 implementation plan and rationale.

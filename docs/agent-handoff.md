@@ -2,7 +2,9 @@
 
 Status date: 2026-06-03
 
-This document is the handoff entry point for an agent with no prior chat context.
+This document is the exhaustive handoff ledger for an agent with no prior chat context.
+
+Read [docs/zero-context-continuation.md](/Users/realizer/Code/hopi-claude/docs/zero-context-continuation.md) first if you need the curated start-here guide. This file remains the exhaustive ledger.
 
 ## Current State
 

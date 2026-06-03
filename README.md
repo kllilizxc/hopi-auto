@@ -6,6 +6,10 @@ HOPI is a file-native autonomous goal orchestration prototype being rebuilt arou
 
 For a zero-context handoff, read:
 
+`docs/zero-context-continuation.md`
+
+Then read:
+
 `docs/agent-handoff.md`
 
 The docs index is:
