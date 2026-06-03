@@ -2579,6 +2579,45 @@ test('auto sourceResponseFormat rejects weaker fallback when question clauses le
   )
 })
 
+test('auto sourceResponseFormat falls through to ordered items when question and topic surfaces never match any consumer', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    sourceResponse: ['1. Use Bun-native auth', '2. Use a staged rollout'].join('\n'),
+    sourceResponseFormat: 'auto',
+    answers: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+      },
+      {
+        decisionKey: 'rollout-strategy',
+        summary: 'Choose the rollout strategy',
+      },
+    ],
+    openDecisions: [],
+    inferOpenDecisions: false,
+  })
+
+  expect(materialized.sourceResponseFormat).toBe('ordered_items')
+  expect(materialized.answers).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      prompt: undefined,
+      matchHints: undefined,
+      answer: 'Use Bun-native auth',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      prompt: undefined,
+      matchHints: undefined,
+      answer: 'Use a staged rollout',
+    },
+  ])
+})
+
 test('auto sourceResponseFormat rejects labeled sections that leave unmatched labels unconsumed', () => {
   const sourceResponse = [
     'Auth strategy: Use Bun-native auth',

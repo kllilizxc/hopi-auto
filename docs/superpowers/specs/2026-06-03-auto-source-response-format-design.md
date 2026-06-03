@@ -65,7 +65,7 @@ It does this by:
 - selecting the first candidate that materializes successfully and fully consumes its own structured units when that candidate has unit-level completeness checks
 - failing closed instead of falling through when a higher-priority label surface has already established explicit label authority but still leaves some labels unconsumed
 - failing closed instead of falling through to weaker raw-reply surfaces once explicit reusable-source authority has already progressed through the answer-source family and still remains incomplete
-- failing closed instead of falling through to weaker generic surfaces once explicit `question_*` or `topic_*` anchor surfaces have already parsed anchored units and still remain incomplete
+- failing closed instead of falling through to weaker generic surfaces once explicit `question_*` or `topic_*` anchor surfaces have already matched at least one consumer-specific unit and still remain incomplete
 - failing closed if no candidate succeeds
 
 `auto` therefore remains a meta-surface over existing deterministic interpreters, not a new parser family. Later authority slices may strengthen the completeness checks for more existing surfaces, but `auto` still never invents a new parser family of its own.
@@ -129,7 +129,7 @@ That means:
 - `auto` rejects partially successful existing surfaces once they leave their own structured units unconsumed and a later existing surface can fully capture the reply
 - `auto` does not let weaker later surfaces reinterpret a reply once higher-priority explicit label authority has already been established and then left incomplete
 - `auto` does not let weaker raw reply surfaces reinterpret a call once explicit reusable-source authority has already advanced through the answer-source family and still remains incomplete
-- `auto` does not let weaker generic surfaces reinterpret a call once explicit `question_*` or `topic_*` anchor authority has already parsed anchored units and still remains incomplete
+- `auto` does not let weaker generic surfaces reinterpret a call once explicit `question_*` or `topic_*` anchor authority has already matched at least one consumer-specific unit and still remains incomplete
 - richer context-preserving surfaces outrank weaker clause-only or pending-order fallbacks
 - runtime fails closed when no existing deterministic surface fits
 - explicit concrete `sourceResponseFormat` still bypasses `auto` selection

@@ -1086,52 +1086,52 @@ function shouldAutoSourceResponseProbeFailClosed(
     return (sourceResponseState?.inlineTopics?.size ?? 0) > 1
   }
   if (sourceResponseFormat === 'question_blocks') {
-    return (sourceResponseState?.questionBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_clauses') {
-    return (sourceResponseState?.questionClauses?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionClauseIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_spans') {
-    return (sourceResponseState?.questionSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_middle_spans') {
-    return (sourceResponseState?.questionMiddleSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionMiddleSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_closing_spans') {
-    return (sourceResponseState?.questionClosingSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionClosingSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_closing_blocks') {
-    return (sourceResponseState?.questionClosingBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionClosingBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'question_middle_blocks') {
-    return (sourceResponseState?.questionMiddleBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedQuestionMiddleBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_clauses') {
-    return (sourceResponseState?.topicClauses?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicClauseIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_sentences') {
-    return (sourceResponseState?.topicSentences?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicSentenceIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_spans') {
-    return (sourceResponseState?.topicSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_middle_spans') {
-    return (sourceResponseState?.topicMiddleSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicMiddleSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_closing_spans') {
-    return (sourceResponseState?.topicClosingSpans?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicClosingSpanIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_closing_blocks') {
-    return (sourceResponseState?.topicClosingBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicClosingBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_paragraphs') {
-    return (sourceResponseState?.topicParagraphs?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicParagraphIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_middle_blocks') {
-    return (sourceResponseState?.topicMiddleBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicMiddleBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_blocks') {
-    return (sourceResponseState?.topicBlocks?.length ?? 0) > 0
+    return (sourceResponseState?.consumedTopicBlockIndexes.size ?? 0) > 0
   }
   return false
 }

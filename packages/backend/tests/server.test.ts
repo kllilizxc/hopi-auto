@@ -258,6 +258,44 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes durable answers through the API from auto-detected ordered items when question and topic surfaces never match any consumer', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: ['1. Use Bun-native auth', '2. Use a staged rollout'].join('\n'),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+      blockerRemoved: false,
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answer: 'Use Bun-native auth',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          answer: 'Use a staged rollout',
+        }),
+      ],
+    })
+  })
+
   test('materializes planner answers through the direct planning-request API from explicit matching runs', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
