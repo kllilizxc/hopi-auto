@@ -9350,6 +9350,120 @@ describe('createServer', () => {
     })
   })
 
+  test('routes matching answer sources to overlapping decision and planner consumers through the API by explicit route metadata', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      summaryKey: 'shared-slot',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          summaryKey: 'shared-slot',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'decision-source',
+          route: 'decision',
+          summaryKey: 'shared-slot',
+          answer: 'Use Bun-native auth.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+      followThrough: {
+        kind: 'planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope', summaryKey: 'shared-slot' }],
+      },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: [],
+      resolvedSourceResponseFormat: 'matching_answer_sources',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          summaryKey: 'shared-slot',
+          answer: 'Use Bun-native auth.',
+        }),
+      ],
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+      },
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              summaryKey: 'shared-slot',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('returns HTTP 400 when pending answer-source route metadata conflicts with current consumer family order', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'decision-source',
+          route: 'decision',
+          answer: 'Use Bun-native auth.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      inferOpenDecisions: true,
+      followThrough: {
+        kind: 'planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope' }],
+      },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'sourceResponseFormat pending_answer_sources found explicit route "planning" before decision answer auth-strategy.',
+    })
+  })
+
   test('records matching open decisions through the API from matching answer sources by durable summaryKey', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -16439,6 +16553,68 @@ preferences:
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',
               ),
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and routes matching answer sources to overlapping decision and planner consumers by explicit route metadata', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Resolve the open auth decision and capture one shared-slot planner answer from matching reusable answer sources that explicitly route each snippet to its consumer family.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the open auth decision and captured the shared-slot planner answer from matching reusable answer sources with explicit route metadata.', actions: [{ kind: 'record_answers', answerSources: [{ answerSourceKey: 'planning-source', route: 'planning', summaryKey: 'shared-slot', answer: 'Start with five enterprise customers before broader launch.' }, { answerSourceKey: 'decision-source', route: 'decision', summaryKey: 'shared-slot', answer: 'Use Bun-native auth.' }], sourceResponseFormat: 'matching_answer_sources', inferOpenDecisions: true, followThrough: { kind: 'planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], answers: [{ summary: 'Pilot scope', summaryKey: 'shared-slot' }], requestedUpdates: ['goal.md', 'notes/rollout.md'] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      summaryKey: 'shared-slot',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Resolve the open auth decision and capture one shared-slot planner answer from matching reusable answer sources that explicitly route each snippet to its consumer family.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I resolved the open auth decision and captured the shared-slot planner answer from matching reusable answer sources with explicit route metadata.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy'],
+          createdDecisionKeys: [],
+          followThrough: expect.objectContaining({
+            kind: 'planning',
+          }),
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              summaryKey: 'shared-slot',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers before broader launch.',
             },
           ],
         }),

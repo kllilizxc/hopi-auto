@@ -220,6 +220,7 @@ interface RoutedGroupedAnswerSourceEntry extends GroupedAnswerSourceEntry {
 }
 
 interface PendingAnswerSourceConsumerDescriptor {
+  family: RemainingAnswerSourceRoute
   keys: string[]
 }
 
@@ -2471,6 +2472,7 @@ function resolveAnswerContent(
         sourceResponseCandidates,
         label,
         sourceResponseState,
+        pendingAnswerSourceConsumerDescriptor?.family,
       ),
     }
   }
@@ -3026,6 +3028,7 @@ function resolvePendingAnswerSourceValue(
     throw new AnswerInterpretationError(`No pending answer source remained for ${label}.`)
   }
   const firstExplicitAuthorities = listPendingAnswerSourceEntryAuthorities(nextEntry)
+  const firstHasGroupingAuthority = entryHasPendingAnswerSourceGroupingAuthority(nextEntry)
 
   if (firstExplicitAuthorities.length === 0) {
     if (consumerDescriptor) {
@@ -3058,6 +3061,13 @@ function resolvePendingAnswerSourceValue(
     )
   }
 
+  if (!firstHasGroupingAuthority) {
+    if (sourceResponseState) {
+      sourceResponseState.nextPendingAnswerSourceIndex = nextIndex + 1
+    }
+    return nextEntry.answer
+  }
+
   let endIndex = nextIndex + 1
   while (endIndex < entries.length) {
     const candidateEntry = entries[endIndex]
@@ -3066,6 +3076,9 @@ function resolvePendingAnswerSourceValue(
     }
     const candidateAuthorities = listPendingAnswerSourceEntryAuthorities(candidateEntry)
     if (candidateAuthorities.length === 0) {
+      break
+    }
+    if (!entryHasPendingAnswerSourceGroupingAuthority(candidateEntry)) {
       break
     }
     if (!entryMatchesPendingAnswerSourceConsumer(candidateEntry, consumerDescriptor)) {
@@ -3119,36 +3132,41 @@ function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
 function buildDecisionPendingAnswerSourceConsumerDescriptor(input: {
   decisionKey?: string
   summaryKey?: string
-}): PendingAnswerSourceConsumerDescriptor | undefined {
+}): PendingAnswerSourceConsumerDescriptor {
   const keys = [
     input.decisionKey?.trim() ? `decisionKey:${input.decisionKey.trim()}` : undefined,
     input.summaryKey?.trim() ? `summaryKey:${input.summaryKey.trim()}` : undefined,
   ].filter((key): key is string => Boolean(key))
 
-  return keys.length > 0 ? { keys } : undefined
+  return { family: 'decision', keys }
 }
 
 function buildPlanningPendingAnswerSourceConsumerDescriptor(input: {
   answerKey?: string
   summaryKey?: string
-}): PendingAnswerSourceConsumerDescriptor | undefined {
+}): PendingAnswerSourceConsumerDescriptor {
   const keys = [
     input.answerKey?.trim() ? `answerKey:${input.answerKey.trim()}` : undefined,
     input.summaryKey?.trim() ? `summaryKey:${input.summaryKey.trim()}` : undefined,
   ].filter((key): key is string => Boolean(key))
 
-  return keys.length > 0 ? { keys } : undefined
+  return { family: 'planning', keys }
+}
+
+function formatAnswerSourceRouteLabel(route: RemainingAnswerSourceRoute | undefined) {
+  return route ? `route "${route}"` : undefined
 }
 
 function listPendingAnswerSourceEntryAuthorities(entry: ResolvedAnswerSourceEntry) {
   return [
+    formatAnswerSourceRouteLabel(entry.route),
     entry.decisionKey?.trim() ? `decisionKey "${entry.decisionKey.trim()}"` : undefined,
     entry.answerKey?.trim() ? `answerKey "${entry.answerKey.trim()}"` : undefined,
     entry.summaryKey?.trim() ? `summaryKey "${entry.summaryKey.trim()}"` : undefined,
   ].filter((authority): authority is string => Boolean(authority))
 }
 
-function listPendingAnswerSourceEntryAuthorityKeys(entry: ResolvedAnswerSourceEntry) {
+function listPendingAnswerSourceEntryGroupingAuthorityKeys(entry: ResolvedAnswerSourceEntry) {
   return [
     entry.decisionKey?.trim() ? `decisionKey:${entry.decisionKey.trim()}` : undefined,
     entry.answerKey?.trim() ? `answerKey:${entry.answerKey.trim()}` : undefined,
@@ -3170,10 +3188,23 @@ function entryMatchesPendingAnswerSourceConsumer(
   entry: ResolvedAnswerSourceEntry,
   consumerDescriptor: PendingAnswerSourceConsumerDescriptor,
 ) {
-  const authorityKeys = listPendingAnswerSourceEntryAuthorityKeys(entry)
+  if (entry.route && entry.route !== consumerDescriptor.family) {
+    return false
+  }
+
+  const authorityKeys = listPendingAnswerSourceEntryGroupingAuthorityKeys(entry)
+  if (authorityKeys.length === 0) {
+    return true
+  }
+
   return (
-    authorityKeys.length > 0 && authorityKeys.every((key) => consumerDescriptor.keys.includes(key))
+    consumerDescriptor.keys.length > 0 &&
+    authorityKeys.every((key) => consumerDescriptor.keys.includes(key))
   )
+}
+
+function entryHasPendingAnswerSourceGroupingAuthority(entry: ResolvedAnswerSourceEntry) {
+  return listPendingAnswerSourceEntryGroupingAuthorityKeys(entry).length > 0
 }
 
 function findNonContiguousPendingAnswerSourceAuthority(
@@ -3186,7 +3217,10 @@ function findNonContiguousPendingAnswerSourceAuthority(
     if (!entry) {
       continue
     }
-    if (entryMatchesPendingAnswerSourceConsumer(entry, consumerDescriptor)) {
+    if (
+      entryHasPendingAnswerSourceGroupingAuthority(entry) &&
+      entryMatchesPendingAnswerSourceConsumer(entry, consumerDescriptor)
+    ) {
       return formatPendingAnswerSourceAuthorityLabels(
         listPendingAnswerSourceEntryAuthorities(entry),
       )
@@ -3522,12 +3556,14 @@ function resolveMatchingAnswerSourceValue(
   candidates: string[],
   label: string,
   sourceResponseState?: InterpretedSourceResponseState,
+  consumerFamily?: RemainingAnswerSourceRoute,
 ) {
   const matchingEntries = resolveMatchingAnswerSourceEntries(
     matchingAnswerSourceEntries,
     candidates,
     label,
     sourceResponseState,
+    consumerFamily,
   )
   return matchingEntries.map((entry) => entry.answer).join('\n\n')
 }
@@ -3537,6 +3573,7 @@ function resolveMatchingAnswerSourceEntries(
   candidates: string[],
   label: string,
   sourceResponseState?: InterpretedSourceResponseState,
+  consumerFamily?: RemainingAnswerSourceRoute,
 ) {
   const entries = parseRequiredMatchingAnswerSourceEntries(
     matchingAnswerSourceEntries,
@@ -3544,7 +3581,12 @@ function resolveMatchingAnswerSourceEntries(
     sourceResponseState,
   )
   const consumedIndexes = sourceResponseState?.consumedMatchingAnswerSourceIndexes ?? new Set()
-  const matchingIndexes = findMatchingAnswerSourceEntryIndexes(entries, candidates, consumedIndexes)
+  const matchingIndexes = findMatchingAnswerSourceEntryIndexes(
+    entries,
+    candidates,
+    consumedIndexes,
+    consumerFamily,
+  )
 
   const contiguousIndexes = resolveContiguousMatchingAnswerSourceIndexes(matchingIndexes, label)
   if (contiguousIndexes.length === 0) {
@@ -4043,6 +4085,7 @@ function materializeMatchingOpenDecisionAnswers(
         buildOpenDecisionSourceResponseCandidates(decision),
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+        'decision',
       )
     } else if (sourceResponseFormat === 'matching_runs') {
       match = resolveMatchingRunSourceResponseValue(
@@ -8967,12 +9010,16 @@ function findMatchingAnswerSourceEntryIndexes(
   entries: ResolvedAnswerSourceEntry[],
   candidates: string[],
   consumedIndexes: Set<number>,
+  consumerFamily?: RemainingAnswerSourceRoute,
 ) {
   const normalizedCandidates = new Set(
     candidates.map((candidate) => normalizeSourceResponseLabel(candidate)).filter(Boolean),
   )
   return entries.flatMap((entry, index) => {
     if (consumedIndexes.has(index)) {
+      return []
+    }
+    if (consumerFamily && entry.route && entry.route !== consumerFamily) {
       return []
     }
     const hasMatch = entry.candidates.some((candidate) =>
