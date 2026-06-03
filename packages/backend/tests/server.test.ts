@@ -298,6 +298,54 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes durable answers through the API from an auto-detected deterministic closing-run surface', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Keep the runtime simple.',
+        'Adopt Bun-native auth as the provider for the Bun-first product path.',
+        'Keep rollback simple.',
+        'Have rollout happen in stages, not all at once.',
+      ].join(' '),
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(201)
+    const responseBody = await response.json()
+    expect(['topic_closing_spans', 'matching_closing_runs']).toContain(
+      responseBody.resolvedSourceResponseFormat,
+    )
+    expect(responseBody).toMatchObject({
+      createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
+      blockerRemoved: false,
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer:
+            'Keep the runtime simple. Adopt Bun-native auth as the provider for the Bun-first product path.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer: 'Keep rollback simple. Have rollout happen in stages, not all at once.',
+        }),
+      ],
+    })
+  })
+
   test('materializes planner answers through the direct planning-request API from explicit matching runs', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)

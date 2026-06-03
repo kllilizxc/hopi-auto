@@ -2750,6 +2750,90 @@ test('auto sourceResponseFormat falls through to ordered items when question and
   ])
 })
 
+test('auto sourceResponseFormat selects a deterministic opening-run surface across decision answers', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    sourceResponse: [
+      'Adopt Bun-native auth as the provider for the Bun-first product path.',
+      'That keeps the runtime simple.',
+      'Have rollout happen in stages, not all at once.',
+      'That keeps rollback simple.',
+    ].join(' '),
+    sourceResponseFormat: 'auto',
+    answers: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+      {
+        decisionKey: 'rollout-strategy',
+        summary: 'Choose the rollout strategy',
+        prompt: 'Should rollout happen in stages or all at once?',
+      },
+    ],
+    openDecisions: [],
+    inferOpenDecisions: false,
+  })
+
+  expect(materialized.sourceResponseFormat).toBeDefined()
+  expect(['topic_spans', 'matching_opening_runs']).toContain(
+    materialized.sourceResponseFormat as string,
+  )
+  expect(materialized.answers).toMatchObject([
+    {
+      decisionKey: 'auth-strategy',
+      answer:
+        'Adopt Bun-native auth as the provider for the Bun-first product path. That keeps the runtime simple.',
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      answer: 'Have rollout happen in stages, not all at once. That keeps rollback simple.',
+    },
+  ])
+})
+
+test('auto sourceResponseFormat selects a deterministic closing-run surface across decision answers', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    sourceResponse: [
+      'Keep the runtime simple.',
+      'Adopt Bun-native auth as the provider for the Bun-first product path.',
+      'Keep rollback simple.',
+      'Have rollout happen in stages, not all at once.',
+    ].join(' '),
+    sourceResponseFormat: 'auto',
+    answers: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+      {
+        decisionKey: 'rollout-strategy',
+        summary: 'Choose the rollout strategy',
+        prompt: 'Should rollout happen in stages or all at once?',
+      },
+    ],
+    openDecisions: [],
+    inferOpenDecisions: false,
+  })
+
+  expect(materialized.sourceResponseFormat).toBeDefined()
+  expect(['topic_closing_spans', 'matching_closing_runs']).toContain(
+    materialized.sourceResponseFormat as string,
+  )
+  expect(materialized.answers).toEqual([
+    expect.objectContaining({
+      decisionKey: 'auth-strategy',
+      answer:
+        'Keep the runtime simple. Adopt Bun-native auth as the provider for the Bun-first product path.',
+    }),
+    expect.objectContaining({
+      decisionKey: 'rollout-strategy',
+      answer: 'Keep rollback simple. Have rollout happen in stages, not all at once.',
+    }),
+  ])
+})
+
 test('auto sourceResponseFormat rejects labeled sections that leave unmatched labels unconsumed', () => {
   const sourceResponse = [
     'Auth strategy: Use Bun-native auth',

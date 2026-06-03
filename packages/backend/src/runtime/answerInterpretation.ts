@@ -436,6 +436,8 @@ const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseF
   'ordered_blocks',
   'ordered_items',
   'matching_runs',
+  'matching_opening_runs',
+  'matching_closing_runs',
   'single_pending',
   'pending_paragraphs',
   'pending_sentences',
@@ -836,6 +838,30 @@ function assertAutoSourceResponseFormatCompleteness(input: {
           .length,
       )
       return
+    case 'matching_opening_runs':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'matching opening runs',
+        state.consumedMatchingOpeningRunIndexes.size,
+        parseMatchingOpeningSourceResponseRuns(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
+    case 'matching_closing_runs':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'matching closing runs',
+        state.consumedMatchingClosingRunIndexes.size,
+        parseMatchingClosingSourceResponseRuns(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
     case 'ordered_items':
       assertAutoSourceResponseUnitCompleteness(
         input.sourceResponseFormat,
@@ -1188,6 +1214,80 @@ function assertNoUnusedExplicitlyRoutedAnswerSources(input: {
   }
 }
 
+function textHasExplicitTopicAuthority(text: string) {
+  return dedupeNonEmptyStrings(extractTopicAnchorCandidateSummariesFromText(text)).length > 0
+}
+
+function autoTopicSurfaceEstablishedExplicitAuthority(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (!sourceResponseState) {
+    return false
+  }
+
+  const hasConsumedExplicitText = (
+    texts: string[] | undefined,
+    consumedIndexes: Set<number> | undefined,
+  ) =>
+    Boolean(
+      texts?.some(
+        (text, index) =>
+          (consumedIndexes?.has(index) ?? false) && textHasExplicitTopicAuthority(text),
+      ),
+    )
+
+  switch (sourceResponseFormat) {
+    case 'topic_clauses':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicClauses?.map((clause) => clause.text),
+        sourceResponseState.consumedTopicClauseIndexes,
+      )
+    case 'topic_sentences':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicSentences?.map((sentence) => sentence.text),
+        sourceResponseState.consumedTopicSentenceIndexes,
+      )
+    case 'topic_paragraphs':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicParagraphs?.map((paragraph) => paragraph.text),
+        sourceResponseState.consumedTopicParagraphIndexes,
+      )
+    case 'topic_spans':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicSpans?.map((span) => span.anchorText),
+        sourceResponseState.consumedTopicSpanIndexes,
+      )
+    case 'topic_middle_spans':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicMiddleSpans?.map((span) => span.anchorText),
+        sourceResponseState.consumedTopicMiddleSpanIndexes,
+      )
+    case 'topic_closing_spans':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicClosingSpans?.map((span) => span.closingText),
+        sourceResponseState.consumedTopicClosingSpanIndexes,
+      )
+    case 'topic_closing_blocks':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicClosingBlocks?.map((block) => block.closingText),
+        sourceResponseState.consumedTopicClosingBlockIndexes,
+      )
+    case 'topic_middle_blocks':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicMiddleBlocks?.map((block) => block.anchorText),
+        sourceResponseState.consumedTopicMiddleBlockIndexes,
+      )
+    case 'topic_blocks':
+      return hasConsumedExplicitText(
+        sourceResponseState.topicBlocks?.map((block) => block.anchorText),
+        sourceResponseState.consumedTopicBlockIndexes,
+      )
+    default:
+      return false
+  }
+}
+
 function shouldAutoSourceResponseProbeFailClosed(
   sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
   sourceResponseState: InterpretedSourceResponseState | undefined,
@@ -1223,31 +1323,37 @@ function shouldAutoSourceResponseProbeFailClosed(
     return (sourceResponseState?.consumedQuestionMiddleBlockIndexes.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'topic_clauses') {
-    return (sourceResponseState?.consumedTopicClauseIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_sentences') {
-    return (sourceResponseState?.consumedTopicSentenceIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_spans') {
-    return (sourceResponseState?.consumedTopicSpanIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_middle_spans') {
-    return (sourceResponseState?.consumedTopicMiddleSpanIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_closing_spans') {
-    return (sourceResponseState?.consumedTopicClosingSpanIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_closing_blocks') {
-    return (sourceResponseState?.consumedTopicClosingBlockIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_paragraphs') {
-    return (sourceResponseState?.consumedTopicParagraphIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_middle_blocks') {
-    return (sourceResponseState?.consumedTopicMiddleBlockIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
   }
   if (sourceResponseFormat === 'topic_blocks') {
-    return (sourceResponseState?.consumedTopicBlockIndexes.size ?? 0) > 0
+    return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
+  }
+  if (sourceResponseFormat === 'matching_opening_runs') {
+    return (sourceResponseState?.consumedMatchingOpeningRunIndexes.size ?? 0) > 0
+  }
+  if (sourceResponseFormat === 'matching_closing_runs') {
+    return (sourceResponseState?.consumedMatchingClosingRunIndexes.size ?? 0) > 0
   }
   return false
 }
