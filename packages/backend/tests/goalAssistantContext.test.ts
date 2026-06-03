@@ -77,7 +77,13 @@ describe('createGoalAssistantContextBuilder', () => {
               title: 'Review rollout readiness',
               description: 'Inspect rollout notes before final handoff.',
               acceptanceCriteria: ['The rollout handoff review is visible.'],
-              answers: [],
+              answers: [
+                {
+                  summary: 'Rollback trigger',
+                  answerKey: 'rollback-trigger',
+                  matchHints: [],
+                },
+              ],
               requestedUpdates: ['design.md'],
             },
           ],
@@ -105,6 +111,7 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(context).toContain(
       'Follow-through workflow child handoff-review depends on: rollout-notes',
     )
+    expect(context).toContain('Follow-through workflow child handoff-review planner answers: 1')
     expect(context).toContain('Follow-through infers remaining answers: yes')
   })
 

@@ -113,7 +113,13 @@ describe('assistant thread presentation', () => {
                 title: 'Review rollout readiness',
                 description: 'Inspect rollout notes before final handoff.',
                 acceptanceCriteria: ['The rollout handoff review is visible.'],
-                answers: [],
+                answers: [
+                  {
+                    summary: 'Rollback trigger',
+                    answerKey: 'rollback-trigger',
+                    matchHints: [],
+                  },
+                ],
                 requestedUpdates: ['design.md'],
               },
             ],
@@ -134,6 +140,7 @@ describe('assistant thread presentation', () => {
         'Follow-through workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
         'Follow-through workflow child: handoff-review -> updates design.md',
         'Follow-through workflow child handoff-review depends on: rollout-notes',
+        'Follow-through workflow child handoff-review planner answers: 1',
         'Follow-through shared planner answers: 1',
         'Follow-through infers remaining answers: yes',
       ],
@@ -179,8 +186,14 @@ describe('assistant thread presentation', () => {
               kind: 'planning_batch',
               groupKey: 'auth-follow-through',
               blockedByWorkflowKeys: ['rollout-notes'],
-              decisionRefs: ['auth-strategy'],
-              answers: [],
+              decisionRefs: ['rollout-strategy'],
+              answers: [
+                {
+                  summary: 'Rollback trigger',
+                  answerKey: 'rollback-trigger',
+                  matchHints: [],
+                },
+              ],
               requests: [
                 {
                   taskKey: 'goal-docs',
@@ -217,6 +230,8 @@ describe('assistant thread presentation', () => {
         'Workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
         'Workflow child: auth-follow-through -> requests goal-docs, task-graph',
         'Workflow child auth-follow-through depends on: rollout-notes',
+        'Workflow child auth-follow-through decisions: rollout-strategy',
+        'Workflow child auth-follow-through planner answers: 1',
       ],
     })
   })

@@ -615,6 +615,12 @@ function formatWorkflowActionChildDetails(
       ...(workflow.blockedByWorkflowKeys.length > 0
         ? [`Workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`]
         : []),
+      ...(workflow.decisionRefs.length > 0
+        ? [`Workflow child ${childKey} decisions: ${workflow.decisionRefs.join(', ')}`]
+        : []),
+      ...(workflow.answers.length > 0
+        ? [`Workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+        : []),
     ]
   }
 
@@ -622,6 +628,12 @@ function formatWorkflowActionChildDetails(
     `Workflow child: ${childKey} -> requests ${workflow.requests.map((request) => request.taskKey).join(', ')}`,
     ...(workflow.blockedByWorkflowKeys.length > 0
       ? [`Workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`]
+      : []),
+    ...(workflow.decisionRefs.length > 0
+      ? [`Workflow child ${childKey} decisions: ${workflow.decisionRefs.join(', ')}`]
+      : []),
+    ...(workflow.answers.length > 0
+      ? [`Workflow child ${childKey} planner answers: ${workflow.answers.length}`]
       : []),
   ]
 }
@@ -646,6 +658,9 @@ function formatFollowThroughWorkflowChildDetails(
             `Follow-through workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`,
           ]
         : []),
+      ...(workflow.answers.length > 0
+        ? [`Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+        : []),
     ]
   }
 
@@ -655,6 +670,9 @@ function formatFollowThroughWorkflowChildDetails(
       ? [
           `Follow-through workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`,
         ]
+      : []),
+    ...(workflow.answers.length > 0
+      ? [`Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`]
       : []),
   ]
 }
