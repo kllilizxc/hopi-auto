@@ -39,8 +39,90 @@ describe('assistant thread presentation', () => {
       body: 'request_planning | Request planning: Capture rollout notes',
       details: [
         'Planning title: Capture rollout notes',
+        'Captured planner answers: 1',
+        'Reusable answer sources: 1',
         'Requested durable updates: goal.md, notes/rollout.md',
         'Action source-response format: matching_answer_sources',
+      ],
+    })
+  })
+
+  test('surfaces richer workflow and inferred-answer authority in thread presentation', () => {
+    expect(
+      formatAssistantThreadEntryPresentation({
+        entryId: 'entry-2',
+        createdAt: '2026-06-03T00:00:00.000Z',
+        kind: 'action',
+        actionType: 'record_answers',
+        summary: 'Capture shared rollout answers',
+        action: {
+          kind: 'record_answers',
+          sourceResponseFormat: 'matching_answer_sources',
+          inferOpenDecisions: true,
+          inferDecisionTopics: true,
+          answers: [
+            {
+              summary: 'Auth strategy',
+              decisionKey: 'auth-strategy',
+              matchHints: [],
+            },
+          ],
+          answerSources: [
+            {
+              answerSourceKey: 'source-1',
+              route: 'decision',
+              decisionKey: 'rollout-strategy',
+              answer: 'Use Bun-native auth for the first rollout.',
+              matchHints: [],
+            },
+            {
+              answerSourceKey: 'source-2',
+              route: 'planning',
+              answerKey: 'pilot-scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+              matchHints: [],
+            },
+          ],
+          followThrough: {
+            kind: 'workflow_batch',
+            workflowKey: 'auth-rollout-follow-through',
+            reuseGroupKey: 'auth-follow-through',
+            inferRemainingAnswers: true,
+            answers: [
+              {
+                summary: 'Pilot scope',
+                answerKey: 'pilot-scope',
+                matchHints: [],
+              },
+            ],
+            workflows: [
+              {
+                kind: 'planning',
+                workflowTaskKey: 'rollout-notes',
+                blockedByWorkflowKeys: [],
+                title: 'Capture rollout notes',
+                description: 'Record rollout decisions.',
+                acceptanceCriteria: ['Rollout notes are durable.'],
+                answers: [],
+                requestedUpdates: ['goal.md', 'notes/rollout.md'],
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      body: 'record_answers | Capture shared rollout answers',
+      details: [
+        'Explicit answers: 1',
+        'Infer open decisions: yes',
+        'Infer decision topics: yes',
+        'Reusable answer sources: 2',
+        'Action source-response format: matching_answer_sources',
+        'Follow-through kind: workflow_batch',
+        'Follow-through workflow key: auth-rollout-follow-through',
+        'Follow-through reusable group key: auth-follow-through',
+        'Follow-through shared planner answers: 1',
+        'Follow-through infers remaining answers: yes',
       ],
     })
   })

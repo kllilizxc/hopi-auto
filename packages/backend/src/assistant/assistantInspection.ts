@@ -61,14 +61,33 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
   if (action.kind === 'move_task') {
     lines.push(`Target task: ${action.taskRef}`)
     lines.push(`Target status: ${action.status}`)
+    lines.push(`Move reason: ${action.reason}`)
     return lines
   }
   if (action.kind === 'create_planning_task') {
     lines.push(`Planning title: ${action.title}`)
+    if (action.blockedBy.length > 0) {
+      lines.push(`Initial blockers: ${action.blockedBy.map((blocker) => blocker.ref).join(', ')}`)
+    }
     return lines
   }
   if (action.kind === 'request_planning') {
     lines.push(`Planning title: ${action.title}`)
+    if (action.groupKey) {
+      lines.push(`Planning group key: ${action.groupKey}`)
+    }
+    if (action.decisionRefs.length > 0) {
+      lines.push(`Linked decisions: ${action.decisionRefs.join(', ')}`)
+    }
+    if (action.answers.length > 0) {
+      lines.push(`Captured planner answers: ${action.answers.length}`)
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
+    if (action.inferRemainingAnswers) {
+      lines.push('Infer remaining answers: yes')
+    }
     if (action.requestedUpdates.length > 0) {
       lines.push(`Requested durable updates: ${action.requestedUpdates.join(', ')}`)
     }
@@ -80,6 +99,18 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
   if (action.kind === 'request_planning_batch') {
     lines.push(`Planning group key: ${action.groupKey}`)
     lines.push(`Grouped requests: ${action.requests.length}`)
+    if (action.decisionRefs.length > 0) {
+      lines.push(`Linked decisions: ${action.decisionRefs.join(', ')}`)
+    }
+    if (action.answers.length > 0) {
+      lines.push(`Shared planner answers: ${action.answers.length}`)
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
+    if (action.inferRemainingAnswers) {
+      lines.push('Infer remaining answers: yes')
+    }
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
@@ -90,6 +121,24 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.workflowKey) {
       lines.push(`Workflow key: ${action.workflowKey}`)
     }
+    if (action.reuseTaskRef) {
+      lines.push(`Reuse task ref: ${action.reuseTaskRef}`)
+    }
+    if (action.reuseGroupKey) {
+      lines.push(`Reuse group key: ${action.reuseGroupKey}`)
+    }
+    if (action.decisionRefs.length > 0) {
+      lines.push(`Linked decisions: ${action.decisionRefs.join(', ')}`)
+    }
+    if (action.answers.length > 0) {
+      lines.push(`Shared planner answers: ${action.answers.length}`)
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
+    if (action.inferRemainingAnswers) {
+      lines.push('Infer remaining answers: yes')
+    }
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
@@ -97,6 +146,15 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
   }
   if (action.kind === 'request_decision') {
     lines.push(`Decision key: ${action.decisionKey}`)
+    if (action.summaryKey) {
+      lines.push(`Summary key: ${action.summaryKey}`)
+    }
+    if (action.prompt) {
+      lines.push(`Decision prompt: ${action.prompt}`)
+    }
+    if (action.matchHints.length > 0) {
+      lines.push(`Match hints: ${action.matchHints.join(', ')}`)
+    }
     if (action.taskRef) {
       lines.push(`Linked task: ${action.taskRef}`)
     }
@@ -106,44 +164,141 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.decisionKey) {
       lines.push(`Decision key: ${action.decisionKey}`)
     }
+    if (action.summaryKey) {
+      lines.push(`Summary key: ${action.summaryKey}`)
+    }
+    if (action.prompt) {
+      lines.push(`Decision prompt: ${action.prompt}`)
+    }
+    if (action.matchHints.length > 0) {
+      lines.push(`Match hints: ${action.matchHints.join(', ')}`)
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
     if (action.followThrough) {
-      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+      appendFollowThroughDetails(lines, action.followThrough)
     }
     return lines
   }
   if (action.kind === 'record_answers') {
     lines.push(`Explicit answers: ${action.answers.length}`)
+    if (action.inferOpenDecisions) {
+      lines.push('Infer open decisions: yes')
+    }
+    if (action.inferDecisionTopics) {
+      lines.push('Infer decision topics: yes')
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
     if (action.followThrough) {
-      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+      appendFollowThroughDetails(lines, action.followThrough)
     }
     return lines
   }
   if (action.kind === 'resolve_decision') {
     lines.push(`Decision key: ${action.decisionKey}`)
+    if (action.summaryKey) {
+      lines.push(`Summary key: ${action.summaryKey}`)
+    }
+    if (action.prompt) {
+      lines.push(`Decision prompt: ${action.prompt}`)
+    }
+    if (action.matchHints.length > 0) {
+      lines.push(`Match hints: ${action.matchHints.join(', ')}`)
+    }
+    if (action.answerSources.length > 0) {
+      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    }
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
     if (action.followThrough) {
-      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+      appendFollowThroughDetails(lines, action.followThrough)
     }
     return lines
   }
   if (action.kind === 'record_preference') {
     lines.push(`Preference key: ${action.preferenceKey ?? '(generated)'}`)
+    if (action.supersedes.length > 0) {
+      lines.push(`Supersedes: ${action.supersedes.join(', ')}`)
+    }
+    if (action.rationale) {
+      lines.push('Rationale captured: yes')
+    }
     return lines
   }
   if (action.kind === 'retire_preference') {
     lines.push(`Preference key: ${action.preferenceKey}`)
+    if (action.supersededBy) {
+      lines.push(`Superseded by: ${action.supersededBy}`)
+    }
+    lines.push(`Retirement reason: ${action.reason}`)
+    return lines
+  }
+  if (action.kind === 'update_preference') {
+    lines.push('Preference document replaced: yes')
     return lines
   }
 
   return lines
+}
+
+function appendFollowThroughDetails(
+  lines: string[],
+  followThrough: Extract<
+    GoalAssistantAction,
+    { kind: 'record_answer' | 'record_answers' | 'resolve_decision' }
+  >['followThrough'],
+) {
+  if (!followThrough) {
+    return
+  }
+
+  lines.push(`Follow-through kind: ${followThrough.kind}`)
+  if (followThrough.kind === 'workflow_batch') {
+    if (followThrough.workflowKey) {
+      lines.push(`Follow-through workflow key: ${followThrough.workflowKey}`)
+    }
+    if (followThrough.reuseTaskRef) {
+      lines.push(`Follow-through reusable task ref: ${followThrough.reuseTaskRef}`)
+    }
+    if (followThrough.reuseGroupKey) {
+      lines.push(`Follow-through reusable group key: ${followThrough.reuseGroupKey}`)
+    }
+    if (followThrough.answers.length > 0) {
+      lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
+    }
+    if (followThrough.inferRemainingAnswers) {
+      lines.push('Follow-through infers remaining answers: yes')
+    }
+    return
+  }
+
+  if (followThrough.kind === 'planning_batch') {
+    lines.push(`Follow-through group key: ${followThrough.groupKey}`)
+    if (followThrough.answers.length > 0) {
+      lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
+    }
+    if (followThrough.inferRemainingAnswers) {
+      lines.push('Follow-through infers remaining answers: yes')
+    }
+    return
+  }
+
+  if (followThrough.answers.length > 0) {
+    lines.push(`Follow-through captured planner answers: ${followThrough.answers.length}`)
+  }
+  if (followThrough.inferRemainingAnswers) {
+    lines.push('Follow-through infers remaining answers: yes')
+  }
 }
 
 export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {
