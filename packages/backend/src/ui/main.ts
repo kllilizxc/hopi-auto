@@ -1,8 +1,10 @@
 import './index.css'
 import {
+  formatAssistantActionPresentation,
   formatAssistantActionResultDetails,
   formatAssistantThreadEntryPresentation,
 } from '../assistant/assistantInspection'
+import type { GoalAssistantAction } from '../assistant/assistantRun'
 import type { AssistantThreadEntry as RuntimeAssistantThreadEntry } from '../runtime/assistantThreadStore'
 
 type TaskStatus = 'planned' | 'in_progress' | 'in_review' | 'merging' | 'done'
@@ -252,62 +254,7 @@ interface AssistantRunSummary {
   actionCount: number
 }
 
-interface AssistantAction {
-  kind:
-    | 'move_task'
-    | 'create_planning_task'
-    | 'request_planning'
-    | 'request_planning_batch'
-    | 'request_planning_workflows'
-    | 'request_decision'
-    | 'record_answer'
-    | 'record_answers'
-    | 'resolve_decision'
-    | 'record_preference'
-    | 'retire_preference'
-    | 'update_preference'
-  taskRef?: string
-  status?: TaskStatus
-  reason?: string
-  title?: string
-  description?: string
-  acceptanceCriteria?: string[]
-  decisionRefs?: string[]
-  requestedUpdates?: string[]
-  groupKey?: string
-  groupTaskKey?: string
-  workflowTaskKey?: string
-  blockedByWorkflowKeys?: string[]
-  requests?: Array<{
-    taskKey: string
-    requestKey?: string
-    title: string
-    description: string
-    acceptanceCriteria: string[]
-    requestedUpdates?: string[]
-    blockedByTaskKeys?: string[]
-  }>
-  workflowKey?: string
-  followThrough?: unknown
-  decisionKey?: string
-  decisionKeys?: string[]
-  answers?: Array<{
-    summary: string
-    decisionKey?: string
-    taskRef?: string
-    answer?: string
-  }>
-  sourceResponse?: string
-  summary?: string
-  answer?: string
-  content?: string
-  reuseTaskRef?: string
-  reuseGroupKey?: string
-  preferenceKey?: string
-  rationale?: string
-  supersedes?: string[]
-  supersededBy?: string
-}
+type AssistantAction = GoalAssistantAction
 
 interface AssistantActionResult {
   kind:
@@ -1881,6 +1828,14 @@ function renderAssistantRunDetail(run: AssistantRunDetail, bundle: AssistantRunB
         ${renderAssistantBundleFile('outcome.json', bundle?.outcome)}
         ${renderAssistantBundleFile('result.json', bundle?.result)}
       </div>
+      <h4>Actions</h4>
+      <div class="assistant-list">
+        ${
+          run.actions.length === 0
+            ? '<div class="ghost-card">No structured actions recorded</div>'
+            : run.actions.map(renderAssistantRunAction).join('')
+        }
+      </div>
       <h4>Action Results</h4>
       <div class="assistant-list">
         ${
@@ -1910,6 +1865,20 @@ function renderAssistantRunDetail(run: AssistantRunDetail, bundle: AssistantRunB
         }
       </div>
     </div>
+  `
+}
+
+function renderAssistantRunAction(action: AssistantAction) {
+  const { body, details } = formatAssistantActionPresentation(action)
+
+  return `
+    <article class="assistant-entry">
+      <div class="assistant-entry-top">
+        <span class="assistant-kind kind-${escapeAttribute(action.kind)}">${escapeHtml(action.kind)}</span>
+      </div>
+      <p>${escapeHtml(body)}</p>
+      ${details.map((detail) => `<div class="assistant-summary">${escapeHtml(detail)}</div>`).join('')}
+    </article>
   `
 }
 

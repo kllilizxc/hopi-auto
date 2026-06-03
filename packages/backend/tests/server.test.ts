@@ -12987,6 +12987,29 @@ preferences:
       requestContent: 'Use Postgres and create planning work.',
       status: 'completed',
       message: 'Use Postgres and create visible planning work.',
+      actions: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'resolve_decision',
+          decisionKey: 'db-provider',
+          answer: 'Use Postgres.',
+        }),
+        expect.objectContaining({
+          kind: 'request_planning',
+          title: 'Plan database integration',
+          decisionRefs: ['db-provider'],
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+        expect.objectContaining({
+          kind: 'record_preference',
+          preferenceKey: 'prefer-bun-native-services',
+          rationale: 'The runtime boundary is Bun-first.',
+        }),
+        expect.objectContaining({
+          kind: 'retire_preference',
+          preferenceKey: 'prefer-deterministic-workflows',
+          reason: 'Structured workflow authority now governs deterministic execution.',
+        }),
+      ]),
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'resolve_decision',
