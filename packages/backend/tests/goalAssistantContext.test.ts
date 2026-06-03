@@ -137,6 +137,12 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(context).toContain('Opened auth rollout workflows.')
     expect(context).toContain('Workflow key: auth-rollout-follow-through')
     expect(context).toContain('Workflow group keys: auth-follow-through, rollout-follow-through')
+    expect(context).toContain(
+      'Workflow child detail: rollout-notes -> requests PR-1 -> tasks P-1 -> blockers P-1',
+    )
+    expect(context).toContain(
+      'Workflow child detail: auth-follow-through -> requests PR-2, PR-3 -> tasks P-2, P-3 -> blockers P-3',
+    )
     expect(context).toContain('Request keys: PR-1, PR-2, PR-3')
     expect(context).toContain('Task refs: P-1, P-2, P-3')
     expect(context).toContain('Blocker task refs: P-1, P-3')

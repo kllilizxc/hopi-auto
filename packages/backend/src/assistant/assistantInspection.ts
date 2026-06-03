@@ -34,6 +34,14 @@ export interface AssistantActionResultDetailsInput {
     workflowKey?: string
     groupKey?: string
     groupKeys?: string[]
+    workflows?: Array<{
+      kind: 'planning' | 'planning_batch'
+      workflowTaskKey?: string
+      groupKey?: string
+      requestKeys: string[]
+      taskRefs: string[]
+      blockerTaskRefs: string[]
+    }>
     requestKeys: string[]
     taskRefs: string[]
     blockerTaskRefs: string[]
@@ -105,6 +113,11 @@ export function formatAssistantActionResultDetails(
     }
     if (result.workflows && result.workflows.length > 0) {
       lines.push(`Workflow children: ${result.workflows.length}`)
+      for (const workflow of result.workflows) {
+        lines.push(
+          `Workflow child detail: ${summarizeWorkflowResultChild(workflow)} -> requests ${workflow.requestKeys.join(', ')} -> tasks ${workflow.taskRefs.join(', ')} -> blockers ${workflow.blockerTaskRefs.join(', ')}`,
+        )
+      }
     }
     if (result.requestKeys && result.requestKeys.length > 0) {
       lines.push(`Request keys: ${result.requestKeys.join(', ')}`)
@@ -150,6 +163,14 @@ export function formatAssistantActionResultDetails(
     if (result.followThrough.groupKeys && result.followThrough.groupKeys.length > 0) {
       lines.push(`Follow-through group keys: ${result.followThrough.groupKeys.join(', ')}`)
     }
+    if (result.followThrough.workflows && result.followThrough.workflows.length > 0) {
+      lines.push(`Follow-through workflow children: ${result.followThrough.workflows.length}`)
+      for (const workflow of result.followThrough.workflows) {
+        lines.push(
+          `Follow-through child detail: ${summarizeWorkflowResultChild(workflow)} -> requests ${workflow.requestKeys.join(', ')} -> tasks ${workflow.taskRefs.join(', ')} -> blockers ${workflow.blockerTaskRefs.join(', ')}`,
+        )
+      }
+    }
     lines.push(`Follow-through requests: ${result.followThrough.requestKeys.join(', ')}`)
     lines.push(`Follow-through tasks: ${result.followThrough.taskRefs.join(', ')}`)
     lines.push(`Follow-through blockers: ${result.followThrough.blockerTaskRefs.join(', ')}`)
@@ -168,6 +189,17 @@ export function formatAssistantActionResultDetails(
   }
 
   return lines
+}
+
+function summarizeWorkflowResultChild(workflow: {
+  kind: 'planning' | 'planning_batch'
+  workflowTaskKey?: string
+  groupKey?: string
+}) {
+  if (workflow.kind === 'planning') {
+    return workflow.workflowTaskKey ?? 'planning'
+  }
+  return workflow.groupKey ?? 'planning_batch'
 }
 
 export function summarizeAssistantEvent(event: AssistantEventPresentationInput) {

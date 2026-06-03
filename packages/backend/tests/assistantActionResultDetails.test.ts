@@ -66,10 +66,59 @@ describe('formatAssistantActionResultDetails', () => {
       'Workflow key: auth-rollout-follow-through',
       'Workflow group keys: auth-follow-through, rollout-follow-through',
       'Workflow children: 2',
+      'Workflow child detail: rollout-notes -> requests PR-1 -> tasks P-1 -> blockers P-1',
+      'Workflow child detail: auth-follow-through -> requests PR-2, PR-3 -> tasks P-2, P-3 -> blockers P-3',
       'Request keys: PR-1, PR-2, PR-3',
       'Task refs: P-1, P-2, P-3',
       'Blocker task refs: P-1, P-3',
       'Resolved source-response format: matching_answer_sources',
+    ])
+  })
+
+  test('surfaces child-level follow-through workflow metadata for structured decision results', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'record_answer',
+        decisionKey: 'auth-strategy',
+        blockerRemoved: true,
+        summary: 'Recorded answer in decision auth-strategy and opened planner workflows.',
+        followThrough: {
+          kind: 'workflow_batch',
+          workflowKey: 'auth-rollout-follow-through',
+          groupKeys: ['auth-follow-through'],
+          workflows: [
+            {
+              kind: 'planning',
+              workflowTaskKey: 'rollout-notes',
+              requestKeys: ['PR-1'],
+              taskRefs: ['P-1'],
+              blockerTaskRefs: ['P-1'],
+            },
+            {
+              kind: 'planning_batch',
+              groupKey: 'auth-follow-through',
+              requestKeys: ['PR-2', 'PR-3'],
+              taskRefs: ['P-2', 'P-3'],
+              blockerTaskRefs: ['P-3'],
+            },
+          ],
+          requestKeys: ['PR-1', 'PR-2', 'PR-3'],
+          taskRefs: ['P-1', 'P-2', 'P-3'],
+          blockerTaskRefs: ['P-1', 'P-3'],
+        },
+      }),
+    ).toEqual([
+      'Decision key: auth-strategy',
+      'Decision blocker removed: yes',
+      'Follow-through kind: workflow_batch',
+      'Follow-through workflow key: auth-rollout-follow-through',
+      'Follow-through group keys: auth-follow-through',
+      'Follow-through workflow children: 2',
+      'Follow-through child detail: rollout-notes -> requests PR-1 -> tasks P-1 -> blockers P-1',
+      'Follow-through child detail: auth-follow-through -> requests PR-2, PR-3 -> tasks P-2, P-3 -> blockers P-3',
+      'Follow-through requests: PR-1, PR-2, PR-3',
+      'Follow-through tasks: P-1, P-2, P-3',
+      'Follow-through blockers: P-1, P-3',
     ])
   })
 
