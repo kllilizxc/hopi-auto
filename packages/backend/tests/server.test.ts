@@ -461,6 +461,32 @@ describe('createServer', () => {
     })
   })
 
+  test('rejects direct decision answers through the API when auto-detected topic-closing blocks imply more than one inferred topic summary', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Keep the runtime simple. We should use Bun-native auth for auth strategy and use a staged rollout for rollout strategy. That keeps rollback simple.',
+      ].join(''),
+      sourceResponseFormat: 'auto',
+      inferDecisionTopics: true,
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat.',
+      ),
+    })
+  })
+
   test('rejects direct decision answers through the API when incomplete answer sources would otherwise fall back to raw sourceResponse surfaces', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)

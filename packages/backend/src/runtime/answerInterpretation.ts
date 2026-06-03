@@ -1244,6 +1244,7 @@ export function materializeInterpretedDecisionAnswers(
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
   additionalSourceResponseCandidates: string[][] = [],
+  rejectMultipleInferredTopicSummariesInTopicUnits = false,
 ): MaterializedInterpretedDecisionAnswer[] {
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
@@ -1279,6 +1280,7 @@ export function materializeInterpretedDecisionAnswers(
       buildDecisionAnswerSourceResponseCandidates(answer),
       interpretationState,
       buildDecisionPendingAnswerSourceConsumerDescriptor(answer),
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     return {
       summary: answer.summary,
@@ -1339,6 +1341,7 @@ export function materializeInterpretedDecisionAnswerBatch(
       ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
       ...reservedAnswerCandidateGroups,
     ],
+    inferDecisionTopics,
   )
   const explicitDecisionKeys = new Set(
     materializedExplicitAnswers.flatMap((answer) =>
@@ -1352,6 +1355,7 @@ export function materializeInterpretedDecisionAnswerBatch(
         sourceResponse,
         answerSources,
         sourceResponseFormat,
+        inferDecisionTopics,
         interpretationState,
       )
     : []
@@ -2022,6 +2026,7 @@ function materializeInterpretedPlanningAnswers(
         buildPlanningAnswerSourceResponseCandidates(answer),
         interpretationState,
         buildPlanningPendingAnswerSourceConsumerDescriptor(answer),
+        inferRemainingAnswers,
       )
       return {
         ...(answer.prompt?.trim()
@@ -2504,6 +2509,7 @@ function resolveAnswerContent(
   sourceResponseCandidates: string[] = [],
   sourceResponseState?: InterpretedSourceResponseState,
   pendingAnswerSourceConsumerDescriptor?: PendingAnswerSourceConsumerDescriptor,
+  rejectMultipleInferredTopicSummariesInTopicUnits = false,
 ): ResolvedAnswerContent {
   const explicit = answer?.trim()
   if (explicit) {
@@ -2773,6 +2779,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicClause) {
       throw new AnswerInterpretationError(`No topic clause matched ${label} in sourceResponse.`)
@@ -2787,6 +2794,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicSentence) {
       throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
@@ -2863,6 +2871,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicParagraph) {
       throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
@@ -4155,6 +4164,7 @@ function materializeMatchingOpenDecisionAnswers(
   sourceResponse: string | undefined,
   answerSources: InterpretableAnswerSource[] | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  inferDecisionTopics = false,
   sourceResponseState?: InterpretedSourceResponseState,
 ) {
   if (
@@ -4354,6 +4364,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
+        inferDecisionTopics,
       )
     } else if (sourceResponseFormat === 'topic_sentences') {
       match = consumeTopicSentenceSourceResponseSection(
@@ -4362,6 +4373,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
+        inferDecisionTopics,
       )
     } else if (sourceResponseFormat === 'topic_spans') {
       match = consumeTopicSpanSourceResponseSection(
@@ -4402,6 +4414,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
+        inferDecisionTopics,
       )
     } else if (sourceResponseFormat === 'topic_middle_blocks') {
       match = consumeTopicMiddleBlockSourceResponseSection(
@@ -6134,6 +6147,7 @@ function consumeContiguousTopicSourceResponseText(
   multipleMatchErrorMessage: string,
   consumedIndexes: Set<number> | undefined,
   joiner: string,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   const contiguousMatchingIndexes = resolveContiguousMatchingIndexes(
     matchingIndexes,
@@ -6142,6 +6156,15 @@ function consumeContiguousTopicSourceResponseText(
   const firstMatchIndex = contiguousMatchingIndexes[0]
   if (firstMatchIndex === undefined) {
     return undefined
+  }
+
+  if (rejectMultipleInferredTopicSummaries) {
+    for (const matchingIndex of contiguousMatchingIndexes) {
+      const text = matches[matchingIndex]?.text
+      if (text && extractTopicAnchorCandidateSummariesFromText(text).length > 1) {
+        throw new AnswerInterpretationError(multipleMatchErrorMessage)
+      }
+    }
   }
 
   markConsumedMatchingIndexes(consumedIndexes, contiguousMatchingIndexes)
@@ -6502,6 +6525,7 @@ function consumeTopicSentenceSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   const sentences = parseRequiredTopicSourceResponseSentences(
     sourceResponse,
@@ -6523,6 +6547,7 @@ function consumeTopicSentenceSourceResponseSection(
     `Multiple topic sentences matched ${label} in sourceResponse.`,
     sourceResponseState?.consumedTopicSentenceIndexes,
     ' ',
+    rejectMultipleInferredTopicSummaries,
   )
 }
 
@@ -6532,6 +6557,7 @@ function consumeTopicClauseSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   const clauses = parseRequiredTopicSourceResponseClauses(
     sourceResponse,
@@ -6553,6 +6579,7 @@ function consumeTopicClauseSourceResponseSection(
     `Multiple topic clauses matched ${label} in sourceResponse.`,
     sourceResponseState?.consumedTopicClauseIndexes,
     ' ',
+    rejectMultipleInferredTopicSummaries,
   )
 }
 
@@ -6684,6 +6711,7 @@ function consumeTopicParagraphSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   const paragraphs = parseRequiredTopicSourceResponseParagraphs(
     sourceResponse,
@@ -6705,6 +6733,7 @@ function consumeTopicParagraphSourceResponseSection(
     `Multiple topic paragraphs matched ${label} in sourceResponse.`,
     sourceResponseState?.consumedTopicParagraphIndexes,
     '\n\n',
+    rejectMultipleInferredTopicSummaries,
   )
 }
 
@@ -7410,13 +7439,12 @@ function parseTopicSourceResponseSpans(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic span anchors matched sentence "${sentence.text}" in sourceResponse.`,
-      )
-    }
-
-    const anchorLabel = matchingLabels[0] ?? inferTopicSpanAnchorLabelFromSentence(sentence.text)
+    const anchorLabel = resolveSingleTopicAnchorLabel(
+      sentence.text,
+      matchingLabels,
+      `Multiple topic span anchors matched sentence "${sentence.text}" in sourceResponse.`,
+      inferTopicSpanAnchorLabelsFromSentence,
+    )
     if (anchorLabel) {
       if (currentSpan) {
         spans.push(currentSpan)
@@ -7464,13 +7492,12 @@ function parseTopicSourceResponseMiddleSpans(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic middle span anchors matched sentence "${sentence.text}" in sourceResponse.`,
-      )
-    }
-
-    const anchorLabel = matchingLabels[0] ?? inferTopicSpanAnchorLabelFromSentence(sentence.text)
+    const anchorLabel = resolveSingleTopicAnchorLabel(
+      sentence.text,
+      matchingLabels,
+      `Multiple topic middle span anchors matched sentence "${sentence.text}" in sourceResponse.`,
+      inferTopicSpanAnchorLabelsFromSentence,
+    )
     if (!anchorLabel) {
       if (!currentAnchor) {
         currentLeadingSentences.push(sentence.text)
@@ -7546,13 +7573,12 @@ function parseTopicSourceResponseClosingSpans(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic closing span anchors matched sentence "${sentence.text}" in sourceResponse.`,
-      )
-    }
-
-    const closingLabel = matchingLabels[0] ?? inferTopicClosingSpanLabelFromSentence(sentence.text)
+    const closingLabel = resolveSingleTopicAnchorLabel(
+      sentence.text,
+      matchingLabels,
+      `Multiple topic closing span anchors matched sentence "${sentence.text}" in sourceResponse.`,
+      inferTopicClosingSpanLabelsFromSentence,
+    )
     if (!closingLabel) {
       continue
     }
@@ -7588,14 +7614,12 @@ function parseTopicSourceResponseClosingBlocks(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic closing block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
-      )
-    }
-
-    const closingLabel =
-      matchingLabels[0] ?? inferTopicClosingBlockLabelFromParagraph(paragraph.text)
+    const closingLabel = resolveSingleTopicAnchorLabel(
+      paragraph.text,
+      matchingLabels,
+      `Multiple topic closing block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
+      inferTopicClosingBlockLabelsFromParagraph,
+    )
     if (!closingLabel) {
       continue
     }
@@ -7630,13 +7654,12 @@ function parseTopicSourceResponseBlocks(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
-      )
-    }
-
-    const anchorLabel = matchingLabels[0] ?? inferTopicBlockAnchorLabelFromParagraph(paragraph.text)
+    const anchorLabel = resolveSingleTopicAnchorLabel(
+      paragraph.text,
+      matchingLabels,
+      `Multiple topic block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
+      inferTopicBlockAnchorLabelsFromParagraph,
+    )
     if (anchorLabel) {
       if (currentBlock) {
         blocks.push(currentBlock)
@@ -7680,13 +7703,12 @@ function parseTopicSourceResponseMiddleBlocks(
       normalizedCandidateLabels,
     )
 
-    if (matchingLabels.length > 1) {
-      throw new AnswerInterpretationError(
-        `Multiple topic middle block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
-      )
-    }
-
-    const anchorLabel = matchingLabels[0] ?? inferTopicBlockAnchorLabelFromParagraph(paragraph.text)
+    const anchorLabel = resolveSingleTopicAnchorLabel(
+      paragraph.text,
+      matchingLabels,
+      `Multiple topic middle block anchors matched paragraph "${paragraph.text}" in sourceResponse.`,
+      inferTopicBlockAnchorLabelsFromParagraph,
+    )
     if (!anchorLabel) {
       if (!currentAnchor) {
         currentLeadingParagraphs.push(paragraph.text)
@@ -8811,40 +8833,48 @@ function topicTextMatchesCandidate(
   return keywordAnchorSetsMatch(normalizedText, normalizedCandidate)
 }
 
-function inferTopicSpanAnchorLabelFromSentence(sentence: string) {
-  const summary = extractInferredTopicSummaries(sentence)[0]
-  if (!summary) {
-    return undefined
+function resolveSingleTopicAnchorLabel(
+  text: string,
+  matchingLabels: string[],
+  multipleMatchMessage: string,
+  inferLabels: (text: string) => string[],
+) {
+  if (matchingLabels.length > 1) {
+    throw new AnswerInterpretationError(multipleMatchMessage)
   }
-  return normalizeSourceResponseLabel(summary)
+
+  const inferredLabels = dedupeNonEmptyStrings(inferLabels(text))
+  if (inferredLabels.length > 1) {
+    throw new AnswerInterpretationError(multipleMatchMessage)
+  }
+
+  return matchingLabels[0] ?? inferredLabels[0]
 }
 
-function inferTopicClosingSpanLabelFromSentence(sentence: string) {
-  const summary = extractInferredTopicSummaries(sentence)[0]
-  if (!summary) {
-    return undefined
-  }
-  return normalizeSourceResponseLabel(summary)
+function inferTopicSpanAnchorLabelsFromSentence(sentence: string) {
+  return inferNormalizedTopicAnchorLabelsFromText(sentence)
 }
 
-function inferTopicClosingBlockLabelFromParagraph(paragraph: string) {
-  const summary = extractInferredTopicSummaries(paragraph)[0]
-  if (!summary) {
-    return undefined
-  }
-  return normalizeSourceResponseLabel(summary)
+function inferTopicClosingSpanLabelsFromSentence(sentence: string) {
+  return inferNormalizedTopicAnchorLabelsFromText(sentence)
 }
 
-function inferTopicBlockAnchorLabelFromParagraph(paragraph: string) {
-  const summary = extractInferredTopicSummaries(paragraph)[0]
-  if (!summary) {
-    return undefined
-  }
-  return normalizeSourceResponseLabel(summary)
+function inferTopicClosingBlockLabelsFromParagraph(paragraph: string) {
+  return inferNormalizedTopicAnchorLabelsFromText(paragraph)
+}
+
+function inferTopicBlockAnchorLabelsFromParagraph(paragraph: string) {
+  return inferNormalizedTopicAnchorLabelsFromText(paragraph)
+}
+
+function inferNormalizedTopicAnchorLabelsFromText(text: string) {
+  return extractTopicAnchorCandidateSummariesFromText(text)
+    .map((summary) => normalizeSourceResponseLabel(summary))
+    .filter(Boolean)
 }
 
 function inferTopicSummaryFromTopicSentence(sentence: string) {
-  const summaries = extractInferredTopicSummaries(sentence)
+  const summaries = extractTopicAnchorCandidateSummariesFromText(sentence)
   if (summaries.length === 0) {
     throw new AnswerInterpretationError(
       `Could not infer a decision summary from topic sentence "${sentence}".`,
@@ -8861,7 +8891,7 @@ function inferTopicSummaryFromTopicSentence(sentence: string) {
 function inferTopicSummaryFromTopicParagraph(paragraph: string) {
   const summaries = dedupeNonEmptyStrings(
     parseTopicSourceResponseSentences(paragraph).flatMap((sentence) =>
-      extractInferredTopicSummaries(sentence.text),
+      extractTopicAnchorCandidateSummariesFromText(sentence.text),
     ),
   )
   if (summaries.length === 0) {
@@ -8875,6 +8905,17 @@ function inferTopicSummaryFromTopicParagraph(paragraph: string) {
     )
   }
   return summaries[0] as string
+}
+
+function extractTopicAnchorCandidateSummariesFromText(text: string) {
+  const conjunctionSegments = parsePendingSourceResponseConjunctions(text)
+  if (conjunctionSegments.length <= 1) {
+    return extractInferredTopicSummaries(text)
+  }
+
+  return dedupeNonEmptyStrings(
+    conjunctionSegments.flatMap((segment) => extractInferredTopicSummaries(segment)),
+  )
 }
 
 function inferTopicSummaryFromTopicSpan(span: TopicSourceResponseSpan) {
@@ -9106,6 +9147,7 @@ const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
   'this',
   'those',
   'us',
+  'we',
   'you',
   'your',
   'regarding',

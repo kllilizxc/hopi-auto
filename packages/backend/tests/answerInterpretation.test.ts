@@ -2821,6 +2821,109 @@ test('auto sourceResponseFormat keeps labeled sections when inferDecisionTopics 
   expect(materialized.followThrough).toBeUndefined()
 })
 
+test('topic middle spans reject anchor sentences that imply more than one inferred topic summary', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse: [
+        'Keep the runtime simple.',
+        'We should use Bun-native auth for auth strategy and use a staged rollout for rollout strategy.',
+        'That keeps rollback simple.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_middle_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+      inferDecisionTopics: true,
+      knownDecisions: [],
+    }),
+  ).toThrow(
+    'Multiple topic middle span anchors matched sentence "We should use Bun-native auth for auth strategy and use a staged rollout for rollout strategy." in sourceResponse.',
+  )
+})
+
+test('topic closing spans reject closing sentences that imply more than one inferred topic summary', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse: [
+        'Use Bun-native auth.',
+        'That keeps the runtime simple for auth strategy and keeps rollout reversible for rollout strategy.',
+      ].join(' '),
+      sourceResponseFormat: 'topic_closing_spans',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+      inferDecisionTopics: true,
+      knownDecisions: [],
+    }),
+  ).toThrow(
+    'Multiple topic closing span anchors matched sentence "That keeps the runtime simple for auth strategy and keeps rollout reversible for rollout strategy." in sourceResponse.',
+  )
+})
+
+test('topic closing blocks reject closing paragraphs that imply more than one inferred topic summary', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      sourceResponse: [
+        'We should use Bun-native auth.',
+        '',
+        'That keeps the runtime simple for auth strategy and use a staged rollout for rollout strategy.',
+      ].join('\n\n'),
+      sourceResponseFormat: 'topic_closing_blocks',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+        },
+      ],
+      openDecisions: [],
+      inferOpenDecisions: false,
+      inferDecisionTopics: true,
+      knownDecisions: [],
+    }),
+  ).toThrow(
+    'Multiple topic closing block anchors matched paragraph "That keeps the runtime simple for auth strategy and use a staged rollout for rollout strategy." in sourceResponse.',
+  )
+})
+
+test('topic paragraphs reject explicit planner answers when inferRemainingAnswers would leave another inferred topic summary inside the same paragraph', () => {
+  expect(() =>
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        inferRemainingAnswers: true,
+        answers: [
+          {
+            summary: 'Auth strategy',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md'],
+          },
+        ],
+      },
+      'Keep the runtime simple. We should use Bun-native auth for auth strategy and use a staged rollout for rollout strategy. That keeps rollback simple.',
+      [],
+      'topic_paragraphs',
+    ),
+  ).toThrow('Multiple topic paragraphs matched planner answer Auth strategy in sourceResponse.')
+})
+
 test('auto sourceResponseFormat falls through from matching answer sources to pending answer sources before leaving source-based authority', () => {
   const materialized = materializeInterpretedDecisionBundle({
     sourceResponseFormat: 'auto',

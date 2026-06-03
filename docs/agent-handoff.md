@@ -747,6 +747,7 @@ Current non-UI Goal assistant substrate:
 - repeated source-excerpt occurrence authority that makes direct item excerpts and reusable answer-source excerpts fail closed unless a repeated exact substring is disambiguated by explicit `sourceOccurrence`, so excerpt grounding no longer silently picks the first repeated match
 - explicit answer-source group-key authority that lets reusable `answerSources` merge one materialized decision or planner answer across non-contiguous source entries through stable `sourceGroupKey`, while keeping consumer selection on existing `decisionKey`, `answerKey`, `summaryKey`, prompt, hint, or route authority instead of weaker regrouping heuristics
 - explicit grouped answer-source references that let one decision answer or planner answer consume that already-merged grouped reusable answer through stable `answerSourceGroupKey`, without overloading single-fragment `answerSourceKey` semantics
+- topic-unit ambiguity fail-closed semantics that keep `topic_clauses`, `topic_sentences`, `topic_paragraphs`, and the explicit `topic_*` anchor families from silently swallowing a second inferable topic summary once one decision or planner consumer has already matched the same reply unit, so leftover `inferDecisionTopics`, `inferRemainingAnswers`, and `auto` no longer succeed through over-consumed topic units
 
 What is still missing:
 
