@@ -8,6 +8,7 @@ import {
   materializeInterpretedDecisionAnswers,
   materializeInterpretedDecisionBundle,
   materializeInterpretedDecisionFollowThrough,
+  materializeInterpretedPlanningInput,
   resolveAutoSourceResponseFormat,
 } from '../src/runtime/answerInterpretation'
 
@@ -6515,6 +6516,68 @@ test('rejects pending answer sources when explicit route metadata conflicts with
     }),
   ).toThrow(
     'sourceResponseFormat pending_answer_sources found explicit route "planning" before decision answer auth-strategy.',
+  )
+})
+
+test('rejects decision answer bundles that leave an explicitly routed planner answerSource unused', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      answers: undefined,
+      openDecisions: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      inferOpenDecisions: true,
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          summaryKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+    }),
+  ).toThrow(
+    'sourceResponseFormat matching_answer_sources left explicit route "planning" on answerSource "planning-source" unused after materializing decision answer bundle.',
+  )
+})
+
+test('rejects planning inputs that leave an explicitly routed decision answerSource unused', () => {
+  expect(() =>
+    materializeInterpretedPlanningInput(
+      {
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope', summaryKey: 'shared-slot' }],
+      },
+      undefined,
+      [
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          summaryKey: 'shared-slot',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'decision-source',
+          route: 'decision',
+          summaryKey: 'shared-slot',
+          answer: 'Use Bun-native auth.',
+        },
+      ] as InterpretableAnswerSource[],
+      'matching_answer_sources',
+    ),
+  ).toThrow(
+    'sourceResponseFormat matching_answer_sources left explicit route "decision" on answerSource "decision-source" unused after materializing planning input "Capture rollout notes".',
   )
 })
 

@@ -1116,6 +1116,54 @@ function assertAutoSourceResponseUnitCompleteness(
   )
 }
 
+function assertNoUnusedExplicitlyRoutedAnswerSources(input: {
+  sourceResponse?: string
+  answerSources?: InterpretableAnswerSource[]
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  const state = input.sourceResponseState
+  if (!state) {
+    return
+  }
+
+  if (input.sourceResponseFormat === 'pending_answer_sources') {
+    const entries = parseRequiredPendingAnswerSourceEntries(
+      createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+      input.label,
+      state,
+    )
+    const unusedEntry = entries
+      .slice(state.nextPendingAnswerSourceIndex)
+      .find((entry) => entry.route !== undefined)
+    if (!unusedEntry?.route) {
+      return
+    }
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_answer_sources left explicit route "${unusedEntry.route}" on answerSource "${unusedEntry.key}" unused after materializing ${input.label}.`,
+    )
+  }
+
+  if (input.sourceResponseFormat === 'matching_answer_sources') {
+    const entries = parseRequiredMatchingAnswerSourceEntries(
+      createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+      input.label,
+      state,
+    )
+    const unusedEntry = entries.find(
+      (entry, index) =>
+        entry.route !== undefined && !state.consumedMatchingAnswerSourceIndexes.has(index),
+    )
+    if (!unusedEntry?.route) {
+      return
+    }
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_answer_sources left explicit route "${unusedEntry.route}" on answerSource "${unusedEntry.key}" unused after materializing ${input.label}.`,
+    )
+  }
+}
+
 function shouldAutoSourceResponseProbeFailClosed(
   sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
   sourceResponseState: InterpretedSourceResponseState | undefined,
@@ -1500,6 +1548,14 @@ export function materializeInterpretedDecisionBundle(input: {
             }
           : explicitFollowThrough
 
+    assertNoUnusedExplicitlyRoutedAnswerSources({
+      sourceResponse: input.sourceResponse,
+      answerSources: input.answerSources,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+
     return {
       sourceResponseFormat: resolvedSourceResponseFormat,
       sourceResponseState: state,
@@ -1508,28 +1564,38 @@ export function materializeInterpretedDecisionBundle(input: {
     }
   }
 
+  const answers = materializeInterpretedDecisionAnswerBatch(
+    input.answers,
+    input.openDecisions,
+    input.inferOpenDecisions,
+    input.sourceResponse,
+    input.answerSources,
+    resolvedSourceResponseFormat,
+    state,
+    input.inferDecisionTopics ?? false,
+    input.knownDecisions ?? [],
+    input.reservedAnswerCandidates ?? [],
+  )
+  const followThrough = materializeInterpretedDecisionFollowThrough(
+    input.followThrough,
+    input.sourceResponse,
+    input.answerSources,
+    resolvedSourceResponseFormat,
+    state,
+  )
+  assertNoUnusedExplicitlyRoutedAnswerSources({
+    sourceResponse: input.sourceResponse,
+    answerSources: input.answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+
   return {
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: state,
-    answers: materializeInterpretedDecisionAnswerBatch(
-      input.answers,
-      input.openDecisions,
-      input.inferOpenDecisions,
-      input.sourceResponse,
-      input.answerSources,
-      resolvedSourceResponseFormat,
-      state,
-      input.inferDecisionTopics ?? false,
-      input.knownDecisions ?? [],
-      input.reservedAnswerCandidates ?? [],
-    ),
-    followThrough: materializeInterpretedDecisionFollowThrough(
-      input.followThrough,
-      input.sourceResponse,
-      input.answerSources,
-      resolvedSourceResponseFormat,
-      state,
-    ),
+    answers,
+    followThrough,
   }
 }
 
@@ -1749,6 +1815,13 @@ export function materializeInterpretedPlanningInput<
   if (!materialized || materialized.kind !== 'planning') {
     throw new Error(`Expected materialized planning input for ${input.title}.`)
   }
+  assertNoUnusedExplicitlyRoutedAnswerSources({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
 
   return {
     ...input,
@@ -1797,6 +1870,13 @@ export function materializeInterpretedPlanningBatchInput<
   if (!materialized || materialized.kind !== 'planning_batch') {
     throw new Error(`Expected materialized planning batch input for ${input.groupKey}.`)
   }
+  assertNoUnusedExplicitlyRoutedAnswerSources({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
 
   return {
     ...input,
@@ -1851,6 +1931,13 @@ export function materializeInterpretedPlanningWorkflowBatchInput<
       `Expected materialized planning workflow batch for ${input.workflowKey ?? 'workflow_batch'}.`,
     )
   }
+  assertNoUnusedExplicitlyRoutedAnswerSources({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
 
   return {
     ...input,

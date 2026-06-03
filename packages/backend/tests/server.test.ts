@@ -858,6 +858,40 @@ describe('createServer', () => {
     })
   })
 
+  test('returns HTTP 400 when matching answer sources leave an explicitly routed decision answerSource unused on the direct planning-request API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          summaryKey: 'shared-slot',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'decision-source',
+          route: 'decision',
+          summaryKey: 'shared-slot',
+          answer: 'Use Bun-native auth.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      answers: [{ summary: 'Pilot scope', summaryKey: 'shared-slot' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(400)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      error:
+        'sourceResponseFormat matching_answer_sources left explicit route "decision" on answerSource "decision-source" unused after materializing planning input "Capture rollout notes".',
+    })
+  })
+
   test('materializes planner answers through the direct planning-request API from contiguous matching answer sources by durable answerKey', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -9461,6 +9495,40 @@ describe('createServer', () => {
     await expect(response.json()).resolves.toMatchObject({
       error:
         'sourceResponseFormat pending_answer_sources found explicit route "planning" before decision answer auth-strategy.',
+    })
+  })
+
+  test('returns HTTP 400 when matching answer sources leave an explicitly routed planner answerSource unused on the decision API', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'planning-source',
+          route: 'planning',
+          summaryKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        'sourceResponseFormat matching_answer_sources left explicit route "planning" on answerSource "planning-source" unused after materializing decision answer bundle.',
     })
   })
 
