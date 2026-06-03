@@ -1,4 +1,5 @@
 import type { AssistantThreadEntry } from '../runtime/assistantThreadStore'
+import type { GoalAssistantAction } from './assistantRun'
 
 export interface AssistantActionResultDetailsInput {
   kind?: string
@@ -54,6 +55,97 @@ export function formatAssistantActionResultDetails(
   return lines
 }
 
+export function formatAssistantActionDetails(action: GoalAssistantAction): string[] {
+  const lines: string[] = []
+
+  if (action.kind === 'move_task') {
+    lines.push(`Target task: ${action.taskRef}`)
+    lines.push(`Target status: ${action.status}`)
+    return lines
+  }
+  if (action.kind === 'create_planning_task') {
+    lines.push(`Planning title: ${action.title}`)
+    return lines
+  }
+  if (action.kind === 'request_planning') {
+    lines.push(`Planning title: ${action.title}`)
+    if (action.requestedUpdates.length > 0) {
+      lines.push(`Requested durable updates: ${action.requestedUpdates.join(', ')}`)
+    }
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    return lines
+  }
+  if (action.kind === 'request_planning_batch') {
+    lines.push(`Planning group key: ${action.groupKey}`)
+    lines.push(`Grouped requests: ${action.requests.length}`)
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    return lines
+  }
+  if (action.kind === 'request_planning_workflows') {
+    lines.push(`Workflow count: ${action.workflows.length}`)
+    if (action.workflowKey) {
+      lines.push(`Workflow key: ${action.workflowKey}`)
+    }
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    return lines
+  }
+  if (action.kind === 'request_decision') {
+    lines.push(`Decision key: ${action.decisionKey}`)
+    if (action.taskRef) {
+      lines.push(`Linked task: ${action.taskRef}`)
+    }
+    return lines
+  }
+  if (action.kind === 'record_answer') {
+    if (action.decisionKey) {
+      lines.push(`Decision key: ${action.decisionKey}`)
+    }
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    if (action.followThrough) {
+      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+    }
+    return lines
+  }
+  if (action.kind === 'record_answers') {
+    lines.push(`Explicit answers: ${action.answers.length}`)
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    if (action.followThrough) {
+      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+    }
+    return lines
+  }
+  if (action.kind === 'resolve_decision') {
+    lines.push(`Decision key: ${action.decisionKey}`)
+    if (action.sourceResponseFormat) {
+      lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
+    }
+    if (action.followThrough) {
+      lines.push(`Follow-through kind: ${action.followThrough.kind}`)
+    }
+    return lines
+  }
+  if (action.kind === 'record_preference') {
+    lines.push(`Preference key: ${action.preferenceKey ?? '(generated)'}`)
+    return lines
+  }
+  if (action.kind === 'retire_preference') {
+    lines.push(`Preference key: ${action.preferenceKey}`)
+    return lines
+  }
+
+  return lines
+}
+
 export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {
   body: string
   details: string[]
@@ -75,7 +167,7 @@ export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEnt
   if (entry.kind === 'action') {
     return {
       body: `${entry.actionType} | ${entry.summary}`,
-      details: [],
+      details: entry.action ? formatAssistantActionDetails(entry.action) : [],
     }
   }
 

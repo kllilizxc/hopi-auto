@@ -124,6 +124,7 @@ export function createGoalAssistantRuntime(
             kind: 'action',
             actionType: action.kind,
             summary: summarizeAssistantAction(action),
+            action,
           })
           const result = await applyAssistantAction(input.goalKey, action, {
             boardStore,

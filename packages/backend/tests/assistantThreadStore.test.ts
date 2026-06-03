@@ -75,6 +75,54 @@ describe('createAssistantThreadStore', () => {
       ],
     })
   })
+
+  test('persists structured assistant action authority in the assistant thread', async () => {
+    const store = createAssistantThreadStore(testRoot())
+
+    await store.appendEntry(goalKey, {
+      kind: 'action',
+      actionType: 'request_planning',
+      summary: 'Request planning: Capture rollout notes',
+      action: {
+        kind: 'request_planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        decisionRefs: [],
+        sourceResponseFormat: 'matching_answer_sources',
+        answers: [
+          { summary: 'Early access cohort plan', answerKey: 'pilot-scope', matchHints: [] },
+        ],
+        requestedUpdates: ['goal.md', 'notes/rollout.md'],
+        blockedBy: [],
+        answerSources: [
+          {
+            answerSourceKey: 'source-1',
+            answerKey: 'pilot-scope',
+            answer: 'Start with five enterprise customers before broader launch.',
+            matchHints: [],
+          },
+        ],
+      },
+    })
+
+    await expect(store.readThread(goalKey)).resolves.toMatchObject({
+      goalKey,
+      entries: [
+        {
+          kind: 'action',
+          actionType: 'request_planning',
+          summary: 'Request planning: Capture rollout notes',
+          action: {
+            kind: 'request_planning',
+            title: 'Capture rollout notes',
+            sourceResponseFormat: 'matching_answer_sources',
+            requestedUpdates: ['goal.md', 'notes/rollout.md'],
+          },
+        },
+      ],
+    })
+  })
 })
 
 function testRoot() {

@@ -2,8 +2,10 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import {
+  type GoalAssistantAction,
   type GoalAssistantActionResult,
   assistantActionResultSchema,
+  assistantActionSchema,
 } from '../assistant/assistantRun'
 import { withFileLock } from '../storage/lock'
 import { createProjectPaths } from '../storage/paths'
@@ -20,7 +22,7 @@ export type AssistantThreadEntryKind = (typeof ASSISTANT_THREAD_ENTRY_KINDS)[num
 export type AssistantThreadEntryInput =
   | { kind: 'user_message'; content: string }
   | { kind: 'assistant_message'; content: string }
-  | { kind: 'action'; actionType: string; summary: string }
+  | { kind: 'action'; actionType: string; summary: string; action?: GoalAssistantAction }
   | {
       kind: 'action_result'
       actionType: string
@@ -41,6 +43,7 @@ export type AssistantThreadEntry =
       kind: 'action'
       actionType: string
       summary: string
+      action?: GoalAssistantAction
     }
   | {
       entryId: string
@@ -75,6 +78,7 @@ const AssistantThreadEntrySchema = z.discriminatedUnion('kind', [
     kind: z.literal('action'),
     actionType: z.string().min(1),
     summary: z.string().min(1),
+    action: assistantActionSchema.optional(),
   }),
   z.object({
     entryId: z.string().min(1),
@@ -137,6 +141,7 @@ function createThreadEntry(input: AssistantThreadEntryInput): AssistantThreadEnt
     kind: input.kind,
     actionType: input.actionType,
     summary: input.summary,
+    ...(input.kind === 'action' && input.action ? { action: input.action } : {}),
     ...(input.kind === 'action_result' && input.result ? { result: input.result } : {}),
   }
 }

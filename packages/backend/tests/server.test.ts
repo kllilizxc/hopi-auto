@@ -19281,6 +19281,17 @@ preferences:
       goalKey: 'test',
       entries: expect.arrayContaining([
         expect.objectContaining({
+          kind: 'action',
+          actionType: 'request_planning',
+          summary: 'Request planning: Capture rollout notes',
+          action: expect.objectContaining({
+            kind: 'request_planning',
+            title: 'Capture rollout notes',
+            sourceResponseFormat: 'matching_answer_sources',
+            requestedUpdates: ['goal.md', 'notes/rollout.md'],
+          }),
+        }),
+        expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning',
           summary: 'Requested planning follow-through in PR-1 for P-1.',
