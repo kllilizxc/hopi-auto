@@ -28,6 +28,7 @@ const interpretablePlanningAnswerArraySchema = z
 
 const interpretableAnswerSourceMetadataSchema = {
   answerSourceKey: z.string().min(1),
+  sourceGroupKey: z.string().min(1).optional(),
   route: z.enum(['decision', 'planning']).optional(),
   decisionKey: z.string().min(1).optional(),
   answerKey: z.string().min(1).optional(),

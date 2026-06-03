@@ -5200,6 +5200,65 @@ test('materializes matching open decisions from contiguous matching answer sourc
   ])
 })
 
+test('materializes matching open decisions from grouped matching answer sources by explicit sourceGroupKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-part-1',
+      sourceGroupKey: 'auth-answer',
+      decisionKey: 'auth-strategy',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'rollout-part-1',
+      decisionKey: 'rollout-strategy',
+      answer: 'Use a staged rollout.',
+    },
+    {
+      answerSourceKey: 'auth-part-2',
+      sourceGroupKey: 'auth-answer',
+      answer: 'Add SSO for enterprise customers after the initial launch.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: [
+        'Use Bun-native auth.',
+        'Add SSO for enterprise customers after the initial launch.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes planner answers from matching answer sources by durable answerKey', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -5305,6 +5364,68 @@ test('rejects non-contiguous matching answer sources for the same durable decisi
       'matching_answer_sources',
     ),
   ).toThrow('Multiple answerSources matched decision answer launch-sequencing.')
+})
+
+test('materializes pending open decisions from grouped pending answer sources by explicit sourceGroupKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-part-1',
+      sourceGroupKey: 'auth-answer',
+      decisionKey: 'auth-strategy',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'rollout-part-1',
+      sourceGroupKey: 'rollout-answer',
+      decisionKey: 'rollout-strategy',
+      answer: 'Use a staged rollout.',
+    },
+    {
+      answerSourceKey: 'auth-part-2',
+      sourceGroupKey: 'auth-answer',
+      answer: 'Keep the runtime simple.',
+    },
+    {
+      answerSourceKey: 'rollout-part-2',
+      sourceGroupKey: 'rollout-answer',
+      answer: 'Gate the wider release on pilot stability.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'pending_answer_sources',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'Keep the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'Gate the wider release on pilot stability.'].join('\n\n'),
+    },
+  ])
 })
 
 test('materializes new decision topics from remaining matching answer sources without explicit answer mapping', () => {
@@ -5645,6 +5766,73 @@ test('materializes new decision topics from remaining matching answer sources by
   ])
 })
 
+test('materializes new decision topics from grouped remaining matching answer sources by explicit sourceGroupKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-strategy-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'launch-sequencing-part-1',
+      sourceGroupKey: 'launch-sequencing-answer',
+      decisionKey: 'launch-sequencing',
+      answer: 'Use a staged rollout.',
+    },
+    {
+      answerSourceKey: 'pilot-scope-answer',
+      summary: 'Pilot scope',
+      prompt: 'What should the pilot scope be?',
+      answer: 'Start with five enterprise customers before broader launch.',
+    },
+    {
+      answerSourceKey: 'launch-sequencing-part-2',
+      sourceGroupKey: 'launch-sequencing-answer',
+      answer: 'Keep the launch reversible.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'launch-sequencing',
+      summary: 'Launch sequencing',
+      summaryKey: 'launch-sequencing',
+      prompt: 'What should the launch sequencing be?',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Pilot scope',
+      prompt: 'What should the pilot scope be?',
+      taskRef: undefined,
+      answer: 'Start with five enterprise customers before broader launch.',
+    },
+  ])
+})
+
 test('materializes new decision topics from contiguous remaining matching answer sources by explicit decisionKey', () => {
   const answerSources = [
     {
@@ -5835,6 +6023,57 @@ test('rejects non-contiguous remaining matching answer sources for the same expl
   ).toThrow(
     'Non-contiguous matching answerSources repeated decisionKey "launch-sequencing" for inferDecisionTopics.',
   )
+})
+
+test('materializes inferred planner answers from grouped remaining matching answer sources by durable answerKey', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+      inferRemainingAnswers: true,
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'rollback-trigger-part-1',
+        sourceGroupKey: 'rollback-trigger-answer',
+        answerKey: 'rollback-trigger',
+        summary: 'Rollback trigger',
+        answer: 'Abort after two regressions.',
+      },
+      {
+        answerSourceKey: 'pilot-scope-answer',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'rollback-trigger-part-2',
+        sourceGroupKey: 'rollback-trigger-answer',
+        answer: 'Pause launch until fixes ship.',
+      },
+    ],
+    'matching_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Rollback trigger',
+        answerKey: 'rollback-trigger',
+        prompt: 'What should the rollback trigger be?',
+        answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join('\n\n'),
+      },
+    ],
+  })
 })
 
 test('materializes inferred planner answers from contiguous remaining matching answer sources by durable answerKey', () => {

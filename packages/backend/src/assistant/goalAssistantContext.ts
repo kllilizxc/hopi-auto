@@ -342,6 +342,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "sourceGroupKey": "optional stable grouping key like auth-answer when more than one reusable source entry should merge into one materialized answer even across non-contiguous positions",
           "route": "optional literal decision or planning when leftover reusable sources should be routed explicitly during mixed inferDecisionTopics plus inferRemainingAnswers materialization",
           "decisionKey": "optional stable decision key like auth-strategy when this reusable source should target a known durable decision by row identity",
           "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
@@ -430,6 +431,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "sourceGroupKey": "optional stable grouping key like auth-answer when more than one reusable source entry should merge into one materialized answer even across non-contiguous positions",
           "route": "optional literal decision or planning when leftover reusable sources should be routed explicitly during mixed inferDecisionTopics plus inferRemainingAnswers materialization",
           "decisionKey": "optional stable decision key like auth-strategy when this reusable source should target a known durable decision by row identity",
           "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
@@ -650,6 +652,7 @@ Rules:
 - When one reply is already written as topic-specific multi-paragraph blocks where one middle paragraph names the topic and there is still at least one leading paragraph before it plus one trailing paragraph after it, prefer root "sourceResponseFormat": "topic_middle_blocks" so runtime can deterministically split adjacent blocks by letting the paragraph immediately before the next topic anchor paragraph become the leading paragraph of the next block.
 - When one reply is already written as topic-specific blocks where the first paragraph names the topic and later continuation paragraphs stay on that same topic until the next anchor paragraph appears, prefer root "sourceResponseFormat": "topic_blocks" so runtime can reuse the whole anchored block whether that first paragraph uses a leading topic phrase, a prefixed topic phrase, a copular phrase like "Five enterprise customers should be the pilot scope.", an "as <topic>" phrase, or a trailing topic mention.
 - Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, explicit "summaryKey" when a reusable source may later need to materialize directly without repeating summary text, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
+- When one reusable answer should merge more than one extracted "answerSources[*]" entry even though those entries are not adjacent, give every fragment the same explicit "sourceGroupKey" and keep consumer authority on existing "decisionKey", "answerKey", "summaryKey", prompt, hint, or route fields instead of relying on weaker parser regrouping.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.

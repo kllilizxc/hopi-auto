@@ -187,6 +187,8 @@ interface ResolvedAnswerContent {
 
 interface ResolvedAnswerSourceEntry {
   key: string
+  sourceKeys: string[]
+  sourceGroupKey?: string
   answer: string
   route?: RemainingAnswerSourceRoute
   decisionKey?: string
@@ -230,6 +232,7 @@ const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 type InterpretableAnswerSourceMetadata = {
   answerSourceKey: string
+  sourceGroupKey?: string
   route?: RemainingAnswerSourceRoute
   decisionKey?: string
   answerKey?: string
@@ -3386,23 +3389,24 @@ function mergeAnswerSourceMetadataValue(
   }
   if (!areEqual(current, next)) {
     throw new AnswerInterpretationError(
-      `Conflicting ${fieldLabel} values in contiguous answerSources for ${label}.`,
+      `Conflicting ${fieldLabel} values in answerSources for ${label}.`,
     )
   }
   return current
 }
 
-function mergeContiguousAnswerSourceEntries(
+function mergeAnswerSourceEntries(
   entries: ResolvedAnswerSourceEntry[],
   label: string,
 ): ResolvedAnswerSourceEntry {
   const [firstEntry, ...restEntries] = entries
   if (!firstEntry) {
-    throw new AnswerInterpretationError(`No contiguous answerSources remained for ${label}.`)
+    throw new AnswerInterpretationError(`No answerSources remained for ${label}.`)
   }
 
   let mergedEntry: ResolvedAnswerSourceEntry = {
     ...firstEntry,
+    sourceKeys: [...firstEntry.sourceKeys],
     ...(firstEntry.matchHints?.length
       ? { matchHints: [...firstEntry.matchHints] }
       : { matchHints: undefined }),
@@ -3414,6 +3418,12 @@ function mergeContiguousAnswerSourceEntries(
     answers.push(entry.answer)
     mergedEntry = {
       ...mergedEntry,
+      sourceGroupKey: mergeAnswerSourceMetadataValue(
+        mergedEntry.sourceGroupKey,
+        entry.sourceGroupKey,
+        'sourceGroupKey',
+        label,
+      ),
       route: mergeAnswerSourceMetadataValue(mergedEntry.route, entry.route, 'route', label) as
         | RemainingAnswerSourceRoute
         | undefined,
@@ -3447,12 +3457,14 @@ function mergeContiguousAnswerSourceEntries(
         ...(mergedEntry.matchHints ?? []),
         ...(entry.matchHints ?? []),
       ]),
+      sourceKeys: dedupeNonEmptyStrings([...mergedEntry.sourceKeys, ...entry.sourceKeys]),
       candidates: dedupeNonEmptyStrings([...mergedEntry.candidates, ...entry.candidates]),
     }
   }
 
   return {
     ...mergedEntry,
+    key: mergedEntry.sourceGroupKey ?? mergedEntry.key,
     answer: answers.join('\n\n'),
   }
 }
@@ -3560,7 +3572,7 @@ function groupRemainingAnswerSourceEntries(
     entry:
       group.entries.length === 1 && group.entries[0]
         ? group.entries[0]
-        : mergeContiguousAnswerSourceEntries(group.entries, label),
+        : mergeAnswerSourceEntries(group.entries, label),
   }))
 }
 
@@ -3684,7 +3696,7 @@ function groupMixedRemainingAnswerSourceEntries(
     entry:
       group.entries.length === 1 && group.entries[0]
         ? group.entries[0]
-        : mergeContiguousAnswerSourceEntries(
+        : mergeAnswerSourceEntries(
             group.entries,
             'inferDecisionTopics + followThrough.inferRemainingAnswers',
           ),
@@ -4056,6 +4068,13 @@ function findMatchingRunGroupIndexes(
   )
 }
 
+function inferSummaryFromStableAnswerSourceEntryKey(entry: ResolvedAnswerSourceEntry) {
+  if (entry.sourceKeys.length !== 1) {
+    return undefined
+  }
+  return inferSummaryFromStableAnswerSourceKey(entry.sourceKeys[0])
+}
+
 function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, label: string) {
   const summary = entry.summary?.trim()
   if (summary) {
@@ -4088,7 +4107,7 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     )
   }
 
-  const summaryFromAnswerSourceKey = inferSummaryFromStableAnswerSourceKey(entry.key)
+  const summaryFromAnswerSourceKey = inferSummaryFromStableAnswerSourceEntryKey(entry)
   if (summaryFromAnswerSourceKey) {
     return summaryFromAnswerSourceKey
   }
@@ -9179,6 +9198,7 @@ function createResolvedAnswerSources(
 
   const answerSourcesByKey = new Map<string, string>()
   const entries: ResolvedAnswerSourceEntry[] = []
+  const groupedEntryIndexBySourceGroupKey = new Map<string, number>()
   for (const source of answerSources) {
     const key = source.answerSourceKey.trim()
     if (answerSourcesByKey.has(key)) {
@@ -9198,13 +9218,16 @@ function createResolvedAnswerSources(
     const decisionKey = source.decisionKey?.trim() || undefined
     const summaryKey = source.summaryKey?.trim() || undefined
     const answerKey = source.answerKey?.trim() || undefined
+    const sourceGroupKey = source.sourceGroupKey?.trim() || undefined
     const route = source.route
     const summary = source.summary?.trim() || undefined
     const prompt = source.prompt?.trim() || undefined
     const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
     answerSourcesByKey.set(key, resolved)
-    entries.push({
-      key,
+    const entry: ResolvedAnswerSourceEntry = {
+      key: sourceGroupKey ?? key,
+      sourceKeys: [key],
+      sourceGroupKey,
       answer: resolved,
       route,
       decisionKey,
@@ -9214,7 +9237,27 @@ function createResolvedAnswerSources(
       prompt,
       ...(matchHints.length ? { matchHints } : {}),
       candidates: buildAnswerSourceResponseCandidates(source),
-    })
+    }
+    if (!sourceGroupKey) {
+      entries.push(entry)
+      continue
+    }
+    const existingIndex = groupedEntryIndexBySourceGroupKey.get(sourceGroupKey)
+    if (existingIndex === undefined) {
+      groupedEntryIndexBySourceGroupKey.set(sourceGroupKey, entries.length)
+      entries.push(entry)
+      continue
+    }
+    const existingEntry = entries[existingIndex]
+    if (!existingEntry) {
+      throw new AnswerInterpretationError(
+        `Missing grouped answerSource entry for sourceGroupKey "${sourceGroupKey}".`,
+      )
+    }
+    entries[existingIndex] = mergeAnswerSourceEntries(
+      [existingEntry, entry],
+      `sourceGroupKey "${sourceGroupKey}"`,
+    )
   }
   return {
     byKey: answerSourcesByKey,
