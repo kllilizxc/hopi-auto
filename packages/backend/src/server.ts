@@ -589,7 +589,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result, result.created ? 201 : 200)
+          return jsonResponse(
+            {
+              ...result,
+              ...(materialized.sourceResponseFormat
+                ? { resolvedSourceResponseFormat: materialized.sourceResponseFormat }
+                : {}),
+            },
+            result.created ? 201 : 200,
+          )
         }
 
         if (
@@ -661,7 +669,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result, result.createdDecisionKeys.length > 0 ? 201 : 200)
+          return jsonResponse(
+            {
+              ...result,
+              ...(materialized.sourceResponseFormat
+                ? { resolvedSourceResponseFormat: materialized.sourceResponseFormat }
+                : {}),
+            },
+            result.createdDecisionKeys.length > 0 ? 201 : 200,
+          )
         }
 
         if (
@@ -731,7 +747,12 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.blockerRemoved || result.followThrough) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result)
+          return jsonResponse({
+            ...result,
+            ...(materialized.sourceResponseFormat
+              ? { resolvedSourceResponseFormat: materialized.sourceResponseFormat }
+              : {}),
+          })
         }
 
         if (
@@ -776,7 +797,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           )
           broadcast({ type: 'planning_requests_changed', goalKey: currentGoalKey })
           broadcast({ type: 'board_changed', goalKey: currentGoalKey })
-          return jsonResponse(result, result.createdRequestKeys.length > 0 ? 201 : 200)
+          return jsonResponse(
+            {
+              ...result,
+              ...(materialized.resolvedSourceResponseFormat
+                ? { resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat }
+                : {}),
+            },
+            result.createdRequestKeys.length > 0 ? 201 : 200,
+          )
         }
 
         if (
@@ -829,7 +858,15 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
           if (result.taskCreated) {
             broadcast({ type: 'board_changed', goalKey: currentGoalKey })
           }
-          return jsonResponse(result.request, result.created ? 201 : 200)
+          return jsonResponse(
+            {
+              ...result.request,
+              ...(materialized.resolvedSourceResponseFormat
+                ? { resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat }
+                : {}),
+            },
+            result.created ? 201 : 200,
+          )
         }
 
         if (

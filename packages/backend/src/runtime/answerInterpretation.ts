@@ -343,6 +343,7 @@ type MaterializedPlanningAnswerCarrier<T extends InterpretablePlanningAnswerCarr
   'answers'
 > & {
   answers: GoalPlanningRequestAnswer[] | undefined
+  resolvedSourceResponseFormat?: ConcreteInterpretableSourceResponseFormat
 }
 
 type InterpretablePlanningWorkflowLeafCarrier = {
@@ -362,6 +363,7 @@ type MaterializedPlanningWorkflowBatchCarrier<
   },
 > = Omit<T, 'answers' | 'workflows'> & {
   answers: GoalPlanningRequestAnswer[] | undefined
+  resolvedSourceResponseFormat?: ConcreteInterpretableSourceResponseFormat
   workflows: {
     [K in keyof T['workflows']]: T['workflows'][K] extends InterpretablePlanningWorkflowLeafCarrier
       ? MaterializedPlanningWorkflowLeafCarrier<T['workflows'][K]>
@@ -1594,6 +1596,7 @@ export function materializeInterpretedPlanningInput<
   return {
     ...input,
     answers: materialized.answers,
+    resolvedSourceResponseFormat,
   }
 }
 
@@ -1641,6 +1644,7 @@ export function materializeInterpretedPlanningBatchInput<
   return {
     ...input,
     answers: materialized.answers,
+    resolvedSourceResponseFormat,
   }
 }
 
@@ -1694,6 +1698,7 @@ export function materializeInterpretedPlanningWorkflowBatchInput<
   return {
     ...input,
     answers: materialized.answers,
+    resolvedSourceResponseFormat,
     workflows: input.workflows.map((workflow, index) => ({
       ...workflow,
       answers: materialized.workflows[index]?.answers,

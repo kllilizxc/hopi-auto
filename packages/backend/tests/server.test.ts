@@ -229,6 +229,7 @@ describe('createServer', () => {
     await expect(createResponse.json()).resolves.toMatchObject({
       requestKey: 'PR-1',
       taskRef: 'P-1',
+      resolvedSourceResponseFormat: 'question_spans',
       answers: [
         {
           summary: 'Pilot scope',
@@ -279,6 +280,7 @@ describe('createServer', () => {
 
     expect(response.status).toBe(201)
     await expect(response.json()).resolves.toMatchObject({
+      resolvedSourceResponseFormat: 'ordered_items',
       createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
       blockerRemoved: false,
       decisions: [
@@ -16071,6 +16073,7 @@ preferences:
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',
+          resolvedSourceResponseFormat: 'topic_closing_blocks',
           decisionKeys: ['auth-strategy', 'rollout-strategy'],
           createdDecisionKeys: ['auth-strategy', 'rollout-strategy'],
         }),
@@ -16968,7 +16971,12 @@ preferences:
     expect(response.status).toBe(200)
     const result = await readJson<{
       message: string
-      actionResults: Array<{ kind: string; requestKey?: string; taskRef?: string }>
+      actionResults: Array<{
+        kind: string
+        requestKey?: string
+        taskRef?: string
+        resolvedSourceResponseFormat?: string
+      }>
     }>(response)
     expect(result.message).toBe(
       'I captured rollout notes from matching reusable answer sources by durable answerKey.',
@@ -16979,6 +16987,7 @@ preferences:
           kind: 'request_planning',
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          resolvedSourceResponseFormat: 'matching_answer_sources',
         }),
       ]),
     )

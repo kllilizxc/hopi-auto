@@ -387,6 +387,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request_planning'),
     requestKey: z.string().min(1).optional(),
     taskRef: z.string().min(1),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
@@ -395,6 +396,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
@@ -405,6 +407,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
@@ -417,6 +420,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     decisionKey: z.string().min(1),
     created: z.boolean(),
     blockerRemoved: z.boolean(),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),
@@ -425,6 +429,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     decisionKeys: z.array(z.string().min(1)).min(1),
     createdDecisionKeys: z.array(z.string().min(1)),
     blockerRemoved: z.boolean(),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),
@@ -432,6 +437,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
     blockerRemoved: z.boolean(),
+    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     followThrough: assistantDecisionFollowThroughResultSchema.optional(),
     summary: z.string().min(1),
   }),

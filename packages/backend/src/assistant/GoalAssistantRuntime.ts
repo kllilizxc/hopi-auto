@@ -279,6 +279,7 @@ async function applyAssistantAction(
       kind: 'request_planning',
       requestKey: result.request.requestKey,
       taskRef: result.request.taskRef,
+      resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: result.created
         ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
         : `Planning request already open in ${result.request.requestKey} for ${result.request.taskRef}.`,
@@ -329,6 +330,7 @@ async function applyAssistantAction(
           groupKey: result.groupKey,
         },
       ),
+      resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: `Requested grouped planning follow-through ${result.groupKey} across ${result.entries.map((entry) => entry.taskRef).join(', ')}.`,
     }
   }
@@ -376,6 +378,7 @@ async function applyAssistantAction(
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
       blockerTaskRefs: result.blockerTaskRefs,
+      resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: result.workflowKey
         ? `Updated planning workflow ${result.workflowKey} across ${result.taskRefs.join(', ')}.`
         : `Requested planning workflows across ${result.taskRefs.join(', ')}.`,
@@ -475,6 +478,7 @@ async function applyAssistantAction(
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
       blockerRemoved: result.blockerRemoved,
+      resolvedSourceResponseFormat: materialized.sourceResponseFormat,
       followThrough: result.followThrough,
       summary: summarizeResolvedDecisionResult(action.decisionKey, result),
     }
@@ -535,6 +539,7 @@ async function applyAssistantAction(
       decisionKey: result.decision.decisionKey,
       created: result.created,
       blockerRemoved: result.blockerRemoved,
+      resolvedSourceResponseFormat: materialized.sourceResponseFormat,
       followThrough: result.followThrough,
       summary: summarizeRecordedAnswerResult(result.decision.decisionKey, result),
     }
@@ -599,6 +604,7 @@ async function applyAssistantAction(
       decisionKeys: result.decisions.map((decision) => decision.decisionKey),
       createdDecisionKeys: result.createdDecisionKeys,
       blockerRemoved: result.blockerRemoved,
+      resolvedSourceResponseFormat: materialized.sourceResponseFormat,
       followThrough: result.followThrough,
       summary: summarizeRecordedAnswersResult(result),
     }
