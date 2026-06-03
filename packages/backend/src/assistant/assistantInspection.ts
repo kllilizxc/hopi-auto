@@ -3,6 +3,27 @@ import type { GoalAssistantAction } from './assistantRun'
 
 export interface AssistantActionResultDetailsInput {
   kind?: string
+  taskRef?: string
+  requestKey?: string
+  taskRefs?: string[]
+  requestKeys?: string[]
+  groupKeys?: string[]
+  workflowKey?: string
+  workflows?: Array<{
+    kind: 'planning' | 'planning_batch'
+    workflowTaskKey?: string
+    groupKey?: string
+    requestKeys: string[]
+    taskRefs: string[]
+    blockerTaskRefs: string[]
+  }>
+  blockerTaskRefs?: string[]
+  groupKey?: string
+  status?: string
+  decisionKey?: string
+  decisionKeys?: string[]
+  preferenceKey?: string
+  retiredPreferenceKeys?: string[]
   summary?: string
   created?: boolean
   createdDecisionKeys?: string[]
@@ -24,8 +45,72 @@ export function formatAssistantActionResultDetails(
 ): string[] {
   const lines: string[] = []
 
+  if (result.kind === 'move_task') {
+    if (result.taskRef) {
+      lines.push(`Task ref: ${result.taskRef}`)
+    }
+    if (result.status) {
+      lines.push(`Result status: ${result.status}`)
+    }
+  }
+  if (result.kind === 'create_planning_task' && result.taskRef) {
+    lines.push(`Task ref: ${result.taskRef}`)
+  }
+  if (result.kind === 'request_planning') {
+    if (result.requestKey) {
+      lines.push(`Request key: ${result.requestKey}`)
+    }
+    if (result.taskRef) {
+      lines.push(`Task ref: ${result.taskRef}`)
+    }
+  }
+  if (result.kind === 'request_planning_batch') {
+    if (result.groupKey) {
+      lines.push(`Group key: ${result.groupKey}`)
+    }
+    if (result.requestKeys && result.requestKeys.length > 0) {
+      lines.push(`Request keys: ${result.requestKeys.join(', ')}`)
+    }
+    if (result.taskRefs && result.taskRefs.length > 0) {
+      lines.push(`Task refs: ${result.taskRefs.join(', ')}`)
+    }
+    if (result.blockerTaskRefs && result.blockerTaskRefs.length > 0) {
+      lines.push(`Blocker task refs: ${result.blockerTaskRefs.join(', ')}`)
+    }
+  }
+  if (result.kind === 'request_planning_workflows') {
+    if (result.workflowKey) {
+      lines.push(`Workflow key: ${result.workflowKey}`)
+    }
+    if (result.groupKeys && result.groupKeys.length > 0) {
+      lines.push(`Workflow group keys: ${result.groupKeys.join(', ')}`)
+    }
+    if (result.workflows && result.workflows.length > 0) {
+      lines.push(`Workflow children: ${result.workflows.length}`)
+    }
+    if (result.requestKeys && result.requestKeys.length > 0) {
+      lines.push(`Request keys: ${result.requestKeys.join(', ')}`)
+    }
+    if (result.taskRefs && result.taskRefs.length > 0) {
+      lines.push(`Task refs: ${result.taskRefs.join(', ')}`)
+    }
+    if (result.blockerTaskRefs && result.blockerTaskRefs.length > 0) {
+      lines.push(`Blocker task refs: ${result.blockerTaskRefs.join(', ')}`)
+    }
+  }
+  if (result.kind === 'request_decision' && result.decisionKey) {
+    lines.push(`Decision key: ${result.decisionKey}`)
+  }
   if (typeof result.created === 'boolean') {
     lines.push(`Created decision topic: ${result.created ? 'yes' : 'no'}`)
+  }
+  if (result.kind === 'record_answer' || result.kind === 'resolve_decision') {
+    if (result.decisionKey) {
+      lines.push(`Decision key: ${result.decisionKey}`)
+    }
+  }
+  if (result.kind === 'record_answers' && result.decisionKeys && result.decisionKeys.length > 0) {
+    lines.push(`Decision keys: ${result.decisionKeys.join(', ')}`)
   }
   if (result.createdDecisionKeys && result.createdDecisionKeys.length > 0) {
     lines.push(`Created decision keys: ${result.createdDecisionKeys.join(', ')}`)
@@ -50,6 +135,18 @@ export function formatAssistantActionResultDetails(
     lines.push(`Follow-through requests: ${result.followThrough.requestKeys.join(', ')}`)
     lines.push(`Follow-through tasks: ${result.followThrough.taskRefs.join(', ')}`)
     lines.push(`Follow-through blockers: ${result.followThrough.blockerTaskRefs.join(', ')}`)
+  }
+  if (result.kind === 'record_preference' || result.kind === 'retire_preference') {
+    if (result.preferenceKey) {
+      lines.push(`Preference key: ${result.preferenceKey}`)
+    }
+  }
+  if (
+    result.kind === 'record_preference' &&
+    result.retiredPreferenceKeys &&
+    result.retiredPreferenceKeys.length > 0
+  ) {
+    lines.push(`Retired preference keys: ${result.retiredPreferenceKeys.join(', ')}`)
   }
 
   return lines

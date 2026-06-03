@@ -145,7 +145,11 @@ describe('assistant thread presentation', () => {
       }),
     ).toEqual({
       body: 'request_planning | Requested planning follow-through in PR-1 for P-1.',
-      details: ['Resolved source-response format: matching_answer_sources'],
+      details: [
+        'Request key: PR-1',
+        'Task ref: P-1',
+        'Resolved source-response format: matching_answer_sources',
+      ],
     })
   })
 
@@ -167,7 +171,7 @@ describe('assistant thread presentation', () => {
           },
         },
       ]),
-    ).toContain('Resolved source-response format: matching_answer_sources')
+    ).toContain('Request key: PR-1')
   })
 
   test('renders structured action details in recent assistant thread markdown', () => {
