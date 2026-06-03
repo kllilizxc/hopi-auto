@@ -204,6 +204,16 @@ interface ResolvedAnswerSources {
   entries: ResolvedAnswerSourceEntry[]
 }
 
+interface RemainingMatchingAnswerSourceGroupDescriptor {
+  key: string
+  label: string
+}
+
+interface GroupedMatchingAnswerSourceEntry {
+  indexes: number[]
+  entry: ResolvedAnswerSourceEntry
+}
+
 const TOPIC_SUMMARY_VERB_PATTERN =
   '(?:should|will|must|can|could|would|is|are|was|were|uses|use|means|requires|starts)'
 const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
@@ -1850,17 +1860,22 @@ function materializeRemainingInterpretedPlanningAnswers(
       interpretationState,
     )
     const consumedIndexes = interpretationState?.consumedMatchingAnswerSourceIndexes ?? new Set()
+    const groupedEntries = groupRemainingMatchingAnswerSourceEntries(
+      entries,
+      consumedIndexes,
+      'followThrough.inferRemainingAnswers',
+      resolveRemainingMatchingPlanningAnswerSourceGroupDescriptor,
+    )
     const answers: GoalPlanningRequestAnswer[] = []
-    for (const [index, entry] of entries.entries()) {
-      if (consumedIndexes.has(index)) {
-        continue
-      }
+    for (const groupedEntry of groupedEntries) {
       if (interpretationState) {
-        interpretationState.consumedMatchingAnswerSourceIndexes.add(index)
+        for (const index of groupedEntry.indexes) {
+          interpretationState.consumedMatchingAnswerSourceIndexes.add(index)
+        }
       }
       answers.push(
         materializeRemainingPlanningAnswerFromAnswerSourceEntry(
-          entry,
+          groupedEntry.entry,
           'followThrough.inferRemainingAnswers',
         ),
       )
@@ -2885,6 +2900,195 @@ function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
   }
 }
 
+function mergeMatchingAnswerSourceMetadataValue(
+  currentValue: string | undefined,
+  nextValue: string | undefined,
+  fieldLabel: string,
+  label: string,
+  areEqual: (left: string, right: string) => boolean = (left, right) => left === right,
+) {
+  const current = currentValue?.trim() || undefined
+  const next = nextValue?.trim() || undefined
+  if (!current) {
+    return next
+  }
+  if (!next) {
+    return current
+  }
+  if (!areEqual(current, next)) {
+    throw new AnswerInterpretationError(
+      `Conflicting ${fieldLabel} values in contiguous matching answerSources for ${label}.`,
+    )
+  }
+  return current
+}
+
+function mergeContiguousMatchingAnswerSourceEntries(
+  entries: ResolvedAnswerSourceEntry[],
+  label: string,
+): ResolvedAnswerSourceEntry {
+  const [firstEntry, ...restEntries] = entries
+  if (!firstEntry) {
+    throw new AnswerInterpretationError(
+      `No contiguous matching answerSources remained for ${label}.`,
+    )
+  }
+
+  let mergedEntry: ResolvedAnswerSourceEntry = {
+    ...firstEntry,
+    ...(firstEntry.matchHints?.length
+      ? { matchHints: [...firstEntry.matchHints] }
+      : { matchHints: undefined }),
+    candidates: [...firstEntry.candidates],
+  }
+  const answers = [firstEntry.answer]
+
+  for (const entry of restEntries) {
+    answers.push(entry.answer)
+    mergedEntry = {
+      ...mergedEntry,
+      decisionKey: mergeMatchingAnswerSourceMetadataValue(
+        mergedEntry.decisionKey,
+        entry.decisionKey,
+        'decisionKey',
+        label,
+      ),
+      answerKey: mergeMatchingAnswerSourceMetadataValue(
+        mergedEntry.answerKey,
+        entry.answerKey,
+        'answerKey',
+        label,
+      ),
+      summaryKey: mergeMatchingAnswerSourceMetadataValue(
+        mergedEntry.summaryKey,
+        entry.summaryKey,
+        'summaryKey',
+        label,
+      ),
+      summary: mergeMatchingAnswerSourceMetadataValue(
+        mergedEntry.summary,
+        entry.summary,
+        'summary',
+        label,
+        (left, right) => normalizeSourceResponseLabel(left) === normalizeSourceResponseLabel(right),
+      ),
+      prompt: mergeMatchingAnswerSourceMetadataValue(
+        mergedEntry.prompt,
+        entry.prompt,
+        'prompt',
+        label,
+      ),
+      matchHints: dedupeNonEmptyStrings([
+        ...(mergedEntry.matchHints ?? []),
+        ...(entry.matchHints ?? []),
+      ]),
+      candidates: dedupeNonEmptyStrings([...mergedEntry.candidates, ...entry.candidates]),
+    }
+  }
+
+  return {
+    ...mergedEntry,
+    answer: answers.join('\n\n'),
+  }
+}
+
+function resolveRemainingMatchingDecisionAnswerSourceGroupDescriptor(
+  entry: ResolvedAnswerSourceEntry,
+): RemainingMatchingAnswerSourceGroupDescriptor | undefined {
+  const decisionKey = entry.decisionKey?.trim()
+  if (decisionKey) {
+    return {
+      key: `decisionKey:${decisionKey}`,
+      label: `decisionKey "${decisionKey}"`,
+    }
+  }
+
+  const summaryKey = entry.summaryKey?.trim()
+  if (summaryKey) {
+    return {
+      key: `summaryKey:${summaryKey}`,
+      label: `summaryKey "${summaryKey}"`,
+    }
+  }
+
+  return undefined
+}
+
+function resolveRemainingMatchingPlanningAnswerSourceGroupDescriptor(
+  entry: ResolvedAnswerSourceEntry,
+): RemainingMatchingAnswerSourceGroupDescriptor | undefined {
+  const answerKey = entry.answerKey?.trim()
+  if (answerKey) {
+    return {
+      key: `answerKey:${answerKey}`,
+      label: `answerKey "${answerKey}"`,
+    }
+  }
+
+  const summaryKey = entry.summaryKey?.trim()
+  if (summaryKey) {
+    return {
+      key: `summaryKey:${summaryKey}`,
+      label: `summaryKey "${summaryKey}"`,
+    }
+  }
+
+  return undefined
+}
+
+function groupRemainingMatchingAnswerSourceEntries(
+  entries: ResolvedAnswerSourceEntry[],
+  consumedIndexes: Set<number>,
+  label: string,
+  resolveGroupDescriptor: (
+    entry: ResolvedAnswerSourceEntry,
+  ) => RemainingMatchingAnswerSourceGroupDescriptor | undefined,
+): GroupedMatchingAnswerSourceEntry[] {
+  const groups: Array<{
+    descriptor?: RemainingMatchingAnswerSourceGroupDescriptor
+    indexes: number[]
+    entries: ResolvedAnswerSourceEntry[]
+  }> = []
+  const seenDescriptorKeys = new Set<string>()
+
+  for (const [index, entry] of entries.entries()) {
+    if (consumedIndexes.has(index)) {
+      continue
+    }
+
+    const descriptor = resolveGroupDescriptor(entry)
+    const currentGroup = groups.at(-1)
+    if (descriptor && currentGroup?.descriptor?.key === descriptor.key) {
+      currentGroup.indexes.push(index)
+      currentGroup.entries.push(entry)
+      continue
+    }
+
+    if (descriptor && seenDescriptorKeys.has(descriptor.key)) {
+      throw new AnswerInterpretationError(
+        `Non-contiguous matching answerSources repeated ${descriptor.label} for ${label}.`,
+      )
+    }
+
+    if (descriptor) {
+      seenDescriptorKeys.add(descriptor.key)
+    }
+    groups.push({
+      descriptor,
+      indexes: [index],
+      entries: [entry],
+    })
+  }
+
+  return groups.map((group) => ({
+    indexes: group.indexes,
+    entry:
+      group.entries.length === 1 && group.entries[0]
+        ? group.entries[0]
+        : mergeContiguousMatchingAnswerSourceEntries(group.entries, label),
+  }))
+}
+
 function resolveMatchingAnswerSourceValue(
   matchingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   candidates: string[],
@@ -3555,8 +3759,21 @@ function materializeNewDecisionTopicAnswers(
       sourceResponseState,
     )
     const consumedIndexes = sourceResponseState?.consumedMatchingAnswerSourceIndexes ?? new Set()
+    const groupedEntries = groupRemainingMatchingAnswerSourceEntries(
+      entries,
+      consumedIndexes,
+      'inferDecisionTopics',
+      resolveRemainingMatchingDecisionAnswerSourceGroupDescriptor,
+    )
+    if (sourceResponseState) {
+      for (const groupedEntry of groupedEntries) {
+        for (const index of groupedEntry.indexes) {
+          sourceResponseState.consumedMatchingAnswerSourceIndexes.add(index)
+        }
+      }
+    }
     return materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
-      entries.filter((_, index) => !consumedIndexes.has(index)),
+      groupedEntries.map((groupedEntry) => groupedEntry.entry),
       knownDecisions,
       'inferDecisionTopics',
     )
