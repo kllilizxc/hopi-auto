@@ -188,6 +188,7 @@ interface ResolvedAnswerContent {
 interface ResolvedAnswerSourceEntry {
   key: string
   answer: string
+  route?: RemainingAnswerSourceRoute
   decisionKey?: string
   answerKey?: string
   summaryKey?: string
@@ -228,6 +229,7 @@ const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 type InterpretableAnswerSourceMetadata = {
   answerSourceKey: string
+  route?: RemainingAnswerSourceRoute
   decisionKey?: string
   answerKey?: string
   summaryKey?: string
@@ -1350,7 +1352,7 @@ export function materializeInterpretedDecisionBundle(input: {
           !supportsMixedRemainingAnswerSourceInference(candidateFormat)
         ) {
           throw new AnswerInterpretationError(
-            'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+            'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
           )
         }
         if (mixedRemainingAnswerSourceInference) {
@@ -1435,7 +1437,7 @@ export function materializeInterpretedDecisionBundle(input: {
     !supportsMixedRemainingAnswerSourceInference(resolvedSourceResponseFormat)
   ) {
     throw new AnswerInterpretationError(
-      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
     )
   }
 
@@ -3238,6 +3240,9 @@ function mergeContiguousAnswerSourceEntries(
     answers.push(entry.answer)
     mergedEntry = {
       ...mergedEntry,
+      route: mergeAnswerSourceMetadataValue(mergedEntry.route, entry.route, 'route', label) as
+        | RemainingAnswerSourceRoute
+        | undefined,
       decisionKey: mergeAnswerSourceMetadataValue(
         mergedEntry.decisionKey,
         entry.decisionKey,
@@ -3275,6 +3280,15 @@ function mergeContiguousAnswerSourceEntries(
   return {
     ...mergedEntry,
     answer: answers.join('\n\n'),
+  }
+}
+
+function createFallbackAnswerSourceGroupDescriptor(
+  entry: ResolvedAnswerSourceEntry,
+): RemainingAnswerSourceGroupDescriptor {
+  return {
+    key: `answerSourceKey:${entry.key}`,
+    label: `answerSourceKey "${entry.key}"`,
   }
 }
 
@@ -3380,6 +3394,7 @@ function resolveRemainingMixedAnswerSourceRoute(entry: ResolvedAnswerSourceEntry
   route: RemainingAnswerSourceRoute
   descriptor: RemainingAnswerSourceGroupDescriptor
 } {
+  const route = entry.route
   const decisionKey = entry.decisionKey?.trim()
   const answerKey = entry.answerKey?.trim()
 
@@ -3387,6 +3402,36 @@ function resolveRemainingMixedAnswerSourceRoute(entry: ResolvedAnswerSourceEntry
     throw new AnswerInterpretationError(
       `Remaining answerSource "${entry.key}" cannot target both decisionKey "${decisionKey}" and answerKey "${answerKey}" when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
     )
+  }
+
+  if (route === 'decision' && answerKey) {
+    throw new AnswerInterpretationError(
+      `Remaining answerSource "${entry.key}" cannot combine route "decision" with answerKey "${answerKey}" when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
+    )
+  }
+
+  if (route === 'planning' && decisionKey) {
+    throw new AnswerInterpretationError(
+      `Remaining answerSource "${entry.key}" cannot combine route "planning" with decisionKey "${decisionKey}" when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
+    )
+  }
+
+  if (route === 'decision') {
+    return {
+      route,
+      descriptor:
+        resolveRemainingMatchingDecisionAnswerSourceGroupDescriptor(entry) ??
+        createFallbackAnswerSourceGroupDescriptor(entry),
+    }
+  }
+
+  if (route === 'planning') {
+    return {
+      route,
+      descriptor:
+        resolveRemainingMatchingPlanningAnswerSourceGroupDescriptor(entry) ??
+        createFallbackAnswerSourceGroupDescriptor(entry),
+    }
   }
 
   if (decisionKey) {
@@ -3410,7 +3455,7 @@ function resolveRemainingMixedAnswerSourceRoute(entry: ResolvedAnswerSourceEntry
   }
 
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires explicit decisionKey or answerKey when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
+    `Remaining answerSource "${entry.key}" requires explicit route, decisionKey, or answerKey when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
   )
 }
 
@@ -3589,7 +3634,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
 }) {
   if (!supportsMixedRemainingAnswerSourceInference(input.sourceResponseFormat)) {
     throw new AnswerInterpretationError(
-      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
     )
   }
 
@@ -8973,6 +9018,7 @@ function createResolvedAnswerSources(
     const decisionKey = source.decisionKey?.trim() || undefined
     const summaryKey = source.summaryKey?.trim() || undefined
     const answerKey = source.answerKey?.trim() || undefined
+    const route = source.route
     const summary = source.summary?.trim() || undefined
     const prompt = source.prompt?.trim() || undefined
     const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
@@ -8980,6 +9026,7 @@ function createResolvedAnswerSources(
     entries.push({
       key,
       answer: resolved,
+      route,
       decisionKey,
       answerKey,
       summaryKey,

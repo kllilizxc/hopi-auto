@@ -6223,6 +6223,206 @@ test('materializes mixed remaining matching answer sources into new decisions an
   })
 })
 
+test('materializes mixed remaining pending answer sources into new decisions and inferred planner answers when explicit route metadata is present without durable route keys', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    answers: undefined,
+    openDecisions: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+    ],
+    inferOpenDecisions: true,
+    answerSources: [
+      {
+        answerSourceKey: 'auth-strategy-answer',
+        answer: 'Use Bun-native auth.',
+      },
+      {
+        answerSourceKey: 'pilot-scope-answer',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'launch-shape-part-1',
+        route: 'decision',
+        summaryKey: 'launch-shape',
+        answer: 'Use a staged rollout.',
+      },
+      {
+        answerSourceKey: 'launch-shape-part-2',
+        route: 'decision',
+        summaryKey: 'launch-shape',
+        answer: 'Keep the launch reversible.',
+      },
+      {
+        answerSourceKey: 'rollback-trigger-part-1',
+        route: 'planning',
+        summaryKey: 'rollback-trigger',
+        summary: 'Rollback trigger',
+        answer: 'Abort after two regressions.',
+      },
+      {
+        answerSourceKey: 'rollback-trigger-part-2',
+        route: 'planning',
+        summaryKey: 'rollback-trigger',
+        answer: 'Pause launch until fixes ship.',
+      },
+    ] as never,
+    sourceResponseFormat: 'pending_answer_sources',
+    inferDecisionTopics: true,
+    followThrough: {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+      inferRemainingAnswers: true,
+    },
+    knownDecisions: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+    ],
+  })
+
+  expect(materialized.answers).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Launch shape',
+      summaryKey: 'launch-shape',
+      prompt: 'What should the launch shape be?',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+    },
+  ])
+  expect(materialized.followThrough).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Rollback trigger',
+        summaryKey: 'rollback-trigger',
+        prompt: 'What should the rollback trigger be?',
+        answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join('\n\n'),
+      },
+    ],
+  })
+})
+
+test('materializes mixed remaining matching answer sources into new decisions and inferred planner answers when explicit route metadata is present without durable route keys', () => {
+  const materialized = materializeInterpretedDecisionBundle({
+    answers: undefined,
+    openDecisions: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+    ],
+    inferOpenDecisions: true,
+    answerSources: [
+      {
+        answerSourceKey: 'rollback-trigger-part-1',
+        route: 'planning',
+        summaryKey: 'rollback-trigger',
+        summary: 'Rollback trigger',
+        answer: 'Abort after two regressions.',
+      },
+      {
+        answerSourceKey: 'rollback-trigger-part-2',
+        route: 'planning',
+        summaryKey: 'rollback-trigger',
+        answer: 'Pause launch until fixes ship.',
+      },
+      {
+        answerSourceKey: 'launch-shape-part-1',
+        route: 'decision',
+        summaryKey: 'launch-shape',
+        answer: 'Use a staged rollout.',
+      },
+      {
+        answerSourceKey: 'launch-shape-part-2',
+        route: 'decision',
+        summaryKey: 'launch-shape',
+        answer: 'Keep the launch reversible.',
+      },
+      {
+        answerSourceKey: 'pilot-scope-answer',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'auth-strategy-answer',
+        answer: 'Use Bun-native auth.',
+      },
+    ] as never,
+    sourceResponseFormat: 'matching_answer_sources',
+    inferDecisionTopics: true,
+    followThrough: {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+      inferRemainingAnswers: true,
+    },
+    knownDecisions: [
+      {
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+      },
+    ],
+  })
+
+  expect(materialized.answers).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: undefined,
+      summary: 'Launch shape',
+      summaryKey: 'launch-shape',
+      prompt: 'What should the launch shape be?',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+    },
+  ])
+  expect(materialized.followThrough).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        summary: 'Rollback trigger',
+        summaryKey: 'rollback-trigger',
+        prompt: 'What should the rollback trigger be?',
+        answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join('\n\n'),
+      },
+    ],
+  })
+})
+
 test('rejects mixed remaining answer-source inference when leftover route authority is not explicit', () => {
   expect(() =>
     materializeInterpretedDecisionBundle({
@@ -6275,7 +6475,60 @@ test('rejects mixed remaining answer-source inference when leftover route author
       ],
     }),
   ).toThrow(
-    'Remaining answerSource "source-4" requires explicit decisionKey or answerKey when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.',
+    'Remaining answerSource "source-4" requires explicit route, decisionKey, or answerKey when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.',
+  )
+})
+
+test('rejects mixed remaining answer-source inference when explicit route conflicts with a durable key', () => {
+  expect(() =>
+    materializeInterpretedDecisionBundle({
+      answers: undefined,
+      openDecisions: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      inferOpenDecisions: true,
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'launch-shape-part-1',
+          route: 'planning',
+          decisionKey: 'launch-shape',
+          summaryKey: 'launch-shape',
+          answer: 'Use a staged rollout.',
+        },
+      ] as never,
+      sourceResponseFormat: 'pending_answer_sources',
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+        inferRemainingAnswers: true,
+      },
+      knownDecisions: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+    }),
+  ).toThrow(
+    'Remaining answerSource "launch-shape-part-1" cannot combine route "planning" with decisionKey "launch-shape" when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.',
   )
 })
 

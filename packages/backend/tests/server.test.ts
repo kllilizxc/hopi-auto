@@ -9134,6 +9134,222 @@ describe('createServer', () => {
     })
   })
 
+  test('records new durable decision topics and inferred planner answers through the API from mixed remaining pending answer sources with explicit route metadata', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'launch-shape-part-1',
+          route: 'decision',
+          summaryKey: 'launch-shape',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'launch-shape-part-2',
+          route: 'decision',
+          summaryKey: 'launch-shape',
+          answer: 'Keep the launch reversible.',
+        },
+        {
+          answerSourceKey: 'rollback-trigger-part-1',
+          route: 'planning',
+          summaryKey: 'rollback-trigger',
+          summary: 'Rollback trigger',
+          answer: 'Abort after two regressions.',
+        },
+        {
+          answerSourceKey: 'rollback-trigger-part-2',
+          route: 'planning',
+          summaryKey: 'rollback-trigger',
+          answer: 'Pause launch until fixes ship.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      inferOpenDecisions: true,
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+        inferRemainingAnswers: true,
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1'],
+      resolvedSourceResponseFormat: 'pending_answer_sources',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          summary: 'Launch shape',
+          summaryKey: 'launch-shape',
+          answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+        }),
+      ],
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+      },
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answerKey: 'pilot-scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+            {
+              summary: 'Rollback trigger',
+              summaryKey: 'rollback-trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
+                '\n\n',
+              ),
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('records new durable decision topics and inferred planner answers through the API from mixed remaining matching answer sources with explicit route metadata', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'rollback-trigger-part-1',
+          route: 'planning',
+          summaryKey: 'rollback-trigger',
+          summary: 'Rollback trigger',
+          answer: 'Abort after two regressions.',
+        },
+        {
+          answerSourceKey: 'rollback-trigger-part-2',
+          route: 'planning',
+          summaryKey: 'rollback-trigger',
+          answer: 'Pause launch until fixes ship.',
+        },
+        {
+          answerSourceKey: 'launch-shape-part-1',
+          route: 'decision',
+          summaryKey: 'launch-shape',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'launch-shape-part-2',
+          route: 'decision',
+          summaryKey: 'launch-shape',
+          answer: 'Keep the launch reversible.',
+        },
+        {
+          answerSourceKey: 'pilot-scope-answer',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+      inferDecisionTopics: true,
+      followThrough: {
+        kind: 'planning',
+        title: 'Capture rollout notes',
+        description: 'Record rollout details before more planning work continues.',
+        acceptanceCriteria: ['Rollout notes are durable.'],
+        answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+        inferRemainingAnswers: true,
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['D-1'],
+      resolvedSourceResponseFormat: 'matching_answer_sources',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          summary: 'Launch shape',
+          summaryKey: 'launch-shape',
+          answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+        }),
+      ],
+      followThrough: {
+        kind: 'planning',
+        requestKeys: ['PR-1'],
+        taskRefs: ['P-1'],
+      },
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answerKey: 'pilot-scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+            {
+              summary: 'Rollback trigger',
+              summaryKey: 'rollback-trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
+                '\n\n',
+              ),
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('records matching open decisions through the API from matching answer sources by durable summaryKey', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -10103,7 +10319,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+        'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
     })
   })
 
@@ -10146,7 +10362,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+        'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
     })
   })
 
@@ -16150,6 +16366,75 @@ preferences:
             {
               summary: 'Rollback trigger',
               answerKey: 'rollback-trigger',
+              prompt: 'What should the rollback trigger be?',
+              answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
+                '\n\n',
+              ),
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
+  test('runs the configured Goal assistant and mixes new durable decision topics with inferred planner answers from explicit answer-source route metadata', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Resolve the open auth decision and route the remaining reusable answer sources by explicit route metadata into one new launch decision plus one rollback planner answer.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the open auth decision and routed the remaining reusable answer sources by explicit route metadata into one new launch decision plus one rollback planner answer.', actions: [{ kind: 'record_answers', answerSources: [{ answerSourceKey: 'auth-strategy-answer', answer: 'Use Bun-native auth.' }, { answerSourceKey: 'pilot-scope-answer', answerKey: 'pilot-scope', answer: 'Start with five enterprise customers before broader launch.' }, { answerSourceKey: 'launch-shape-part-1', route: 'decision', summaryKey: 'launch-shape', answer: 'Use a staged rollout.' }, { answerSourceKey: 'launch-shape-part-2', route: 'decision', summaryKey: 'launch-shape', answer: 'Keep the launch reversible.' }, { answerSourceKey: 'rollback-trigger-part-1', route: 'planning', summaryKey: 'rollback-trigger', summary: 'Rollback trigger', answer: 'Abort after two regressions.' }, { answerSourceKey: 'rollback-trigger-part-2', route: 'planning', summaryKey: 'rollback-trigger', answer: 'Pause launch until fixes ship.' }], sourceResponseFormat: 'pending_answer_sources', inferOpenDecisions: true, inferDecisionTopics: true, followThrough: { kind: 'planning', title: 'Capture rollout notes', description: 'Record rollout details before more planning work continues.', acceptanceCriteria: ['Rollout notes are durable.'], answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }], inferRemainingAnswers: true, requestedUpdates: ['goal.md', 'notes/rollout.md'] } }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Resolve the open auth decision and route the remaining reusable answer sources by explicit route metadata into one new launch decision plus one rollback planner answer.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I resolved the open auth decision and routed the remaining reusable answer sources by explicit route metadata into one new launch decision plus one rollback planner answer.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['auth-strategy', 'D-1'],
+          createdDecisionKeys: ['D-1'],
+          followThrough: expect.objectContaining({
+            kind: 'planning',
+          }),
+        }),
+      ]),
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answerKey: 'pilot-scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with five enterprise customers before broader launch.',
+            },
+            {
+              summary: 'Rollback trigger',
+              summaryKey: 'rollback-trigger',
               prompt: 'What should the rollback trigger be?',
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',

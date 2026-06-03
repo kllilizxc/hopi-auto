@@ -342,6 +342,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "route": "optional literal decision or planning when leftover reusable sources should be routed explicitly during mixed inferDecisionTopics plus inferRemainingAnswers materialization",
           "decisionKey": "optional stable decision key like auth-strategy when this reusable source should target a known durable decision by row identity",
           "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
           "summaryKey": "optional explicit reusable summary key like launch-shape when this source may later materialize directly without repeating summary text",
@@ -429,6 +430,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "route": "optional literal decision or planning when leftover reusable sources should be routed explicitly during mixed inferDecisionTopics plus inferRemainingAnswers materialization",
           "decisionKey": "optional stable decision key like auth-strategy when this reusable source should target a known durable decision by row identity",
           "answerKey": "optional stable planner-answer row key like pilot-scope when this reusable source should target a known planner answer by durable row identity",
           "summaryKey": "optional explicit reusable summary key like auth-strategy when this source may later materialize directly without repeating summary text",
@@ -516,6 +518,7 @@ Required outcome shape:
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
+          "route": "optional literal decision or planning when leftover reusable sources should be routed explicitly during mixed inferDecisionTopics plus inferRemainingAnswers materialization",
           "summaryKey": "optional explicit reusable summary key like launch-shape when this source may later materialize directly without repeating summary text",
           "sourceExcerpt": "exact substring to lift from sourceResponse instead of retyping the extracted snippet"
         }
@@ -619,7 +622,7 @@ Rules:
 - When those reusable answer sources should later match one already-known durable decision by row identity instead of summary wording, give the source the same explicit "decisionKey" as that durable decision.
 - When those reusable answer sources should later match an already-known durable planner answer by row identity instead of summary wording, give both the source and the planner answer the same explicit "answerKey".
 - When one root "answerSources" bundle already contains extra reusable snippets that do not need per-item mapping onto known pending consumers, give those remaining source entries either explicit "summary" authority, one explicit "decisionKey" authority, one explicit "summaryKey" authority, one stable "prompt" authority, exactly one stable "matchHint" authority, or one stable suffixed "answerSourceKey" authority like "launch-shape-answer". Stable decision keys like "launch-sequencing", canonical noun-phrase prompts like "What should the pilot scope be?", explicit question-shaped prompts like "How should rollout happen?", one explicit "summaryKey" like "launch-shape", one stable phrase hint like "launch shape", and one noun-phrase key with an explicit "-answer" or "-source" suffix now all work. Runtime still accepts the "matchHints" path only when there is exactly one stable hint, and the "answerSourceKey" path only when the key carries that explicit suffix and humanizes to one stable noun phrase, so it never has to guess between multiple hints or generic keys. Then prefer "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources" plus "inferDecisionTopics": true or "followThrough.inferRemainingAnswers": true over repeating those same summaries again inside "answers" or "followThrough.answers".
-- When one root "answerSources" bundle should simultaneously create brand-new durable decision topics and brand-new inferred planner-answer rows from the remaining reusable snippets, route the decision leftovers with explicit "decisionKey" values and the planner leftovers with explicit "answerKey" values, then combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true under "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources". Keep each repeated durable key contiguous; runtime still fails closed on non-contiguous repeats or any leftover source entry whose route is not explicit.
+- When one root "answerSources" bundle should simultaneously create brand-new durable decision topics and brand-new inferred planner-answer rows from the remaining reusable snippets, give each leftover source entry an explicit route authority: either "route": "decision", one explicit "decisionKey", or "route": "planning", one explicit "answerKey". Use matching durable keys when you need contiguous entries to merge into the same new row; otherwise a routed entry can materialize on its own. Then combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true under "sourceResponseFormat": "pending_answer_sources" or "matching_answer_sources". Keep each repeated durable key contiguous; runtime still fails closed on non-contiguous repeats, missing explicit route authority, or any route/key conflict.
 - When one reusable extracted snippet already appears verbatim inside "sourceResponse", prefer "answerSources[*].sourceExcerpt" over retyping that snippet in "answerSources[*].answer"; runtime will validate that the excerpt is grounded in the shared raw reply.
 - When one exact excerpt only needs to feed one decision answer or one planner answer, prefer direct item-level "sourceExcerpt" over introducing a one-off "answerSources" bundle.
 - When "sourceResponse" is already structured as labeled lines like "Auth strategy: ..." or "Pilot scope: ...", prefer root "sourceResponseFormat": "labeled_sections" so runtime can map those labeled sections directly without per-topic excerpts or named answer-source bundles.
