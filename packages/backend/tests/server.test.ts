@@ -689,6 +689,63 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes multiple pending planner answers through the direct planning-request API from ordered pending answer sources by durable answerKey with contiguous merge', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          answerKey: 'pilot-scope',
+          answer: 'Gate wider release on pilot support stability.',
+        },
+        {
+          answerSourceKey: 'source-3',
+          answerKey: 'rollback-trigger',
+          answer: 'Abort after two regressions.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      answers: [
+        { summary: 'Pilot scope', answerKey: 'pilot-scope' },
+        { summary: 'Rollback trigger', answerKey: 'rollback-trigger' },
+      ],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          prompt: 'What should the pilot scope be?',
+          answer: [
+            'Start with five enterprise customers before broader launch.',
+            'Gate wider release on pilot support stability.',
+          ].join('\n\n'),
+        },
+        {
+          summary: 'Rollback trigger',
+          answerKey: 'rollback-trigger',
+          prompt: 'What should the rollback trigger be?',
+          answer: 'Abort after two regressions.',
+        },
+      ],
+    })
+  })
+
   test('materializes multiple pending planner answers through the direct planning-request API from matching answer sources without per-topic mapping', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -8706,6 +8763,61 @@ describe('createServer', () => {
           prompt: 'What should the launch sequencing be?',
           answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
         }),
+      ],
+    })
+  })
+
+  test('records pending open decisions through the API from ordered pending answer sources by explicit decisionKey with contiguous merge', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      prompt: 'Should rollout happen in stages or all at once?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          decisionKey: 'auth-strategy',
+          answer: 'Keep the runtime simple.',
+        },
+        {
+          answerSourceKey: 'source-3',
+          decisionKey: 'rollout-strategy',
+          answer: 'Use a staged rollout.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      inferOpenDecisions: true,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      blockerRemoved: false,
+      createdDecisionKeys: [],
+      resolvedSourceResponseFormat: 'pending_answer_sources',
+      decisions: [
+        {
+          decisionKey: 'auth-strategy',
+          answer: ['Use Bun-native auth.', 'Keep the runtime simple.'].join('\n\n'),
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          answer: 'Use a staged rollout.',
+        },
       ],
     })
   })

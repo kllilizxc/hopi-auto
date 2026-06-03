@@ -77,7 +77,6 @@ export interface InterpretedSourceResponseState {
   pendingParagraphs?: string[]
   pendingSentences?: string[]
   pendingConjunctions?: string[]
-  pendingAnswerSourceValues?: string[]
   pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[]
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[]
   nextOrderedItemIndex: number
@@ -200,7 +199,6 @@ interface ResolvedAnswerSourceEntry {
 
 interface ResolvedAnswerSources {
   byKey: Map<string, string>
-  orderedValues: string[]
   entries: ResolvedAnswerSourceEntry[]
 }
 
@@ -212,6 +210,10 @@ interface RemainingMatchingAnswerSourceGroupDescriptor {
 interface GroupedMatchingAnswerSourceEntry {
   indexes: number[]
   entry: ResolvedAnswerSourceEntry
+}
+
+interface PendingAnswerSourceConsumerDescriptor {
+  keys: string[]
 }
 
 const TOPIC_SUMMARY_VERB_PATTERN =
@@ -1160,7 +1162,7 @@ export function materializeInterpretedDecisionAnswers(
 ): MaterializedInterpretedDecisionAnswer[] {
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
-  const orderedAnswerSourceValues = resolvedAnswerSources?.orderedValues
+  const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   const interpretationState =
     sourceResponseState ??
@@ -1182,11 +1184,12 @@ export function materializeInterpretedDecisionAnswers(
       sourceResponse,
       `decision answer ${answer.decisionKey ?? answer.summary}`,
       answerSourcesByKey,
-      orderedAnswerSourceValues,
+      pendingAnswerSourceEntries,
       matchingAnswerSourceEntries,
       sourceResponseFormat,
       buildDecisionAnswerSourceResponseCandidates(answer),
       interpretationState,
+      buildDecisionPendingAnswerSourceConsumerDescriptor(answer),
     )
     return {
       summary: answer.summary,
@@ -1407,7 +1410,6 @@ export function materializeInterpretedDecisionFollowThrough(
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
-  const orderedAnswerSourceValues = resolvedAnswerSources?.orderedValues
   const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   const interpretationState =
@@ -1424,7 +1426,6 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
-        orderedAnswerSourceValues,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1441,7 +1442,6 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
-        orderedAnswerSourceValues,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1455,7 +1455,6 @@ export function materializeInterpretedDecisionFollowThrough(
     followThrough.answers,
     sourceResponse,
     answerSourcesByKey,
-    orderedAnswerSourceValues,
     pendingAnswerSourceEntries,
     matchingAnswerSourceEntries,
     sourceResponseFormat,
@@ -1470,7 +1469,6 @@ export function materializeInterpretedDecisionFollowThrough(
           workflow.answers,
           sourceResponse,
           answerSourcesByKey,
-          orderedAnswerSourceValues,
           pendingAnswerSourceEntries,
           matchingAnswerSourceEntries,
           sourceResponseFormat,
@@ -1485,7 +1483,6 @@ export function materializeInterpretedDecisionFollowThrough(
         workflow.answers,
         sourceResponse,
         answerSourcesByKey,
-        orderedAnswerSourceValues,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1733,7 +1730,6 @@ function materializeInterpretedPlanningAnswers(
   answers: InterpretablePlanningAnswer[] | undefined,
   sourceResponse?: string,
   answerSourcesByKey?: Map<string, string>,
-  orderedAnswerSourceValues?: string[],
   pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
@@ -1762,11 +1758,12 @@ function materializeInterpretedPlanningAnswers(
         sourceResponse,
         `planner answer ${answer.summary}`,
         answerSourcesByKey,
-        orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
         buildPlanningAnswerSourceResponseCandidates(answer),
         interpretationState,
+        buildPlanningPendingAnswerSourceConsumerDescriptor(answer),
       )
       return {
         ...(answer.prompt?.trim()
@@ -2234,11 +2231,12 @@ function resolveAnswerContent(
   sourceResponse: string | undefined,
   label: string,
   answerSourcesByKey?: Map<string, string>,
-  orderedAnswerSourceValues?: string[],
+  pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseCandidates: string[] = [],
   sourceResponseState?: InterpretedSourceResponseState,
+  pendingAnswerSourceConsumerDescriptor?: PendingAnswerSourceConsumerDescriptor,
 ): ResolvedAnswerContent {
   const explicit = answer?.trim()
   if (explicit) {
@@ -2305,9 +2303,10 @@ function resolveAnswerContent(
   if (sourceResponseFormat === 'pending_answer_sources') {
     return {
       answer: resolvePendingAnswerSourceValue(
-        orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         label,
         sourceResponseState,
+        pendingAnswerSourceConsumerDescriptor,
       ),
     }
   }
@@ -2858,24 +2857,88 @@ function resolvePendingSourceResponseConjunction(
 }
 
 function resolvePendingAnswerSourceValue(
-  orderedAnswerSourceValues: string[] | undefined,
+  pendingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   label: string,
   sourceResponseState?: InterpretedSourceResponseState,
+  consumerDescriptor?: PendingAnswerSourceConsumerDescriptor,
 ) {
-  const values = parseRequiredPendingAnswerSourceValues(
-    orderedAnswerSourceValues,
+  const entries = parseRequiredPendingAnswerSourceEntries(
+    pendingAnswerSourceEntries,
     label,
     sourceResponseState,
   )
   const nextIndex = sourceResponseState?.nextPendingAnswerSourceIndex ?? 0
-  const nextValue = values[nextIndex]
-  if (!nextValue) {
+  const nextEntry = entries[nextIndex]
+  if (!nextEntry) {
     throw new AnswerInterpretationError(`No pending answer source remained for ${label}.`)
   }
-  if (sourceResponseState) {
-    sourceResponseState.nextPendingAnswerSourceIndex = nextIndex + 1
+  const firstExplicitAuthorities = listPendingAnswerSourceEntryAuthorities(nextEntry)
+
+  if (firstExplicitAuthorities.length === 0) {
+    if (consumerDescriptor) {
+      const laterAuthority = findNonContiguousPendingAnswerSourceAuthority(
+        entries,
+        nextIndex + 1,
+        consumerDescriptor,
+      )
+      if (laterAuthority) {
+        throw new AnswerInterpretationError(
+          `sourceResponseFormat pending_answer_sources found non-contiguous explicit ${laterAuthority} for ${label}.`,
+        )
+      }
+    }
+    if (sourceResponseState) {
+      sourceResponseState.nextPendingAnswerSourceIndex = nextIndex + 1
+    }
+    return nextEntry.answer
   }
-  return nextValue
+
+  if (!consumerDescriptor) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_answer_sources found explicit ${formatPendingAnswerSourceAuthorityLabels(firstExplicitAuthorities)} before ${label}.`,
+    )
+  }
+
+  if (!entryMatchesPendingAnswerSourceConsumer(nextEntry, consumerDescriptor)) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_answer_sources found explicit ${formatPendingAnswerSourceAuthorityLabels(firstExplicitAuthorities)} before ${label}.`,
+    )
+  }
+
+  let endIndex = nextIndex + 1
+  while (endIndex < entries.length) {
+    const candidateEntry = entries[endIndex]
+    if (!candidateEntry) {
+      break
+    }
+    const candidateAuthorities = listPendingAnswerSourceEntryAuthorities(candidateEntry)
+    if (candidateAuthorities.length === 0) {
+      break
+    }
+    if (!entryMatchesPendingAnswerSourceConsumer(candidateEntry, consumerDescriptor)) {
+      break
+    }
+    endIndex += 1
+  }
+
+  const laterAuthority = findNonContiguousPendingAnswerSourceAuthority(
+    entries,
+    endIndex,
+    consumerDescriptor,
+  )
+  if (laterAuthority) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat pending_answer_sources found non-contiguous explicit ${laterAuthority} for ${label}.`,
+    )
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.nextPendingAnswerSourceIndex = endIndex
+  }
+  return entries
+    .slice(nextIndex, endIndex)
+    .map((entry) => entry.answer)
+    .join('\n\n')
 }
 
 function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
@@ -2898,6 +2961,85 @@ function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
     ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
     answer: entry.answer,
   }
+}
+
+function buildDecisionPendingAnswerSourceConsumerDescriptor(input: {
+  decisionKey?: string
+  summaryKey?: string
+}): PendingAnswerSourceConsumerDescriptor | undefined {
+  const keys = [
+    input.decisionKey?.trim() ? `decisionKey:${input.decisionKey.trim()}` : undefined,
+    input.summaryKey?.trim() ? `summaryKey:${input.summaryKey.trim()}` : undefined,
+  ].filter((key): key is string => Boolean(key))
+
+  return keys.length > 0 ? { keys } : undefined
+}
+
+function buildPlanningPendingAnswerSourceConsumerDescriptor(input: {
+  answerKey?: string
+  summaryKey?: string
+}): PendingAnswerSourceConsumerDescriptor | undefined {
+  const keys = [
+    input.answerKey?.trim() ? `answerKey:${input.answerKey.trim()}` : undefined,
+    input.summaryKey?.trim() ? `summaryKey:${input.summaryKey.trim()}` : undefined,
+  ].filter((key): key is string => Boolean(key))
+
+  return keys.length > 0 ? { keys } : undefined
+}
+
+function listPendingAnswerSourceEntryAuthorities(entry: ResolvedAnswerSourceEntry) {
+  return [
+    entry.decisionKey?.trim() ? `decisionKey "${entry.decisionKey.trim()}"` : undefined,
+    entry.answerKey?.trim() ? `answerKey "${entry.answerKey.trim()}"` : undefined,
+    entry.summaryKey?.trim() ? `summaryKey "${entry.summaryKey.trim()}"` : undefined,
+  ].filter((authority): authority is string => Boolean(authority))
+}
+
+function listPendingAnswerSourceEntryAuthorityKeys(entry: ResolvedAnswerSourceEntry) {
+  return [
+    entry.decisionKey?.trim() ? `decisionKey:${entry.decisionKey.trim()}` : undefined,
+    entry.answerKey?.trim() ? `answerKey:${entry.answerKey.trim()}` : undefined,
+    entry.summaryKey?.trim() ? `summaryKey:${entry.summaryKey.trim()}` : undefined,
+  ].filter((authority): authority is string => Boolean(authority))
+}
+
+function formatPendingAnswerSourceAuthorityLabels(authorities: string[]) {
+  if (authorities.length <= 1) {
+    return authorities[0] ?? 'authority'
+  }
+  if (authorities.length === 2) {
+    return `${authorities[0]} and ${authorities[1]}`
+  }
+  return `${authorities.slice(0, -1).join(', ')}, and ${authorities.at(-1)}`
+}
+
+function entryMatchesPendingAnswerSourceConsumer(
+  entry: ResolvedAnswerSourceEntry,
+  consumerDescriptor: PendingAnswerSourceConsumerDescriptor,
+) {
+  const authorityKeys = listPendingAnswerSourceEntryAuthorityKeys(entry)
+  return (
+    authorityKeys.length > 0 && authorityKeys.every((key) => consumerDescriptor.keys.includes(key))
+  )
+}
+
+function findNonContiguousPendingAnswerSourceAuthority(
+  entries: ResolvedAnswerSourceEntry[],
+  startIndex: number,
+  consumerDescriptor: PendingAnswerSourceConsumerDescriptor,
+) {
+  for (let index = startIndex; index < entries.length; index += 1) {
+    const entry = entries[index]
+    if (!entry) {
+      continue
+    }
+    if (entryMatchesPendingAnswerSourceConsumer(entry, consumerDescriptor)) {
+      return formatPendingAnswerSourceAuthorityLabels(
+        listPendingAnswerSourceEntryAuthorities(entry),
+      )
+    }
+  }
+  return undefined
 }
 
 function mergeMatchingAnswerSourceMetadataValue(
@@ -3443,7 +3585,7 @@ function materializeMatchingOpenDecisionAnswers(
     )
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
-  const orderedAnswerSourceValues = resolvedAnswerSources?.orderedValues
+  const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   registerMatchingRunCandidateGroups(
     sourceResponseState,
@@ -3516,9 +3658,10 @@ function materializeMatchingOpenDecisionAnswers(
       )
     } else if (sourceResponseFormat === 'pending_answer_sources') {
       match = resolvePendingAnswerSourceValue(
-        orderedAnswerSourceValues,
+        pendingAnswerSourceEntries,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+        buildDecisionPendingAnswerSourceConsumerDescriptor(decision),
       )
     } else if (sourceResponseFormat === 'matching_answer_sources') {
       match = resolveMatchingAnswerSourceValue(
@@ -6157,27 +6300,6 @@ function parseRequiredPendingSourceResponseConjunctions(
   return conjunctions
 }
 
-function parseRequiredPendingAnswerSourceValues(
-  orderedAnswerSourceValues: string[] | undefined,
-  label: string,
-  sourceResponseState?: InterpretedSourceResponseState,
-) {
-  if (sourceResponseState?.pendingAnswerSourceValues) {
-    return sourceResponseState.pendingAnswerSourceValues
-  }
-
-  if (!orderedAnswerSourceValues || orderedAnswerSourceValues.length === 0) {
-    throw new AnswerInterpretationError(
-      `sourceResponseFormat pending_answer_sources requires answerSources for ${label}.`,
-    )
-  }
-
-  if (sourceResponseState) {
-    sourceResponseState.pendingAnswerSourceValues = orderedAnswerSourceValues
-  }
-  return orderedAnswerSourceValues
-}
-
 function parseRequiredPendingAnswerSourceEntries(
   pendingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   label: string,
@@ -8484,7 +8606,6 @@ function createResolvedAnswerSources(
   }
 
   const answerSourcesByKey = new Map<string, string>()
-  const orderedValues: string[] = []
   const entries: ResolvedAnswerSourceEntry[] = []
   for (const source of answerSources) {
     const key = source.answerSourceKey.trim()
@@ -8516,7 +8637,6 @@ function createResolvedAnswerSources(
     const prompt = source.prompt?.trim() || undefined
     const matchHints = dedupeNonEmptyStrings(source.matchHints ?? [])
     answerSourcesByKey.set(key, resolved)
-    orderedValues.push(resolved)
     entries.push({
       key,
       answer: resolved,
@@ -8531,7 +8651,6 @@ function createResolvedAnswerSources(
   }
   return {
     byKey: answerSourcesByKey,
-    orderedValues,
     entries,
   } satisfies ResolvedAnswerSources
 }

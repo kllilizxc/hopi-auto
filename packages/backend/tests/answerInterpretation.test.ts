@@ -4908,6 +4908,140 @@ test('materializes multiple pending open decisions from ordered pending answer s
   ])
 })
 
+test('materializes multiple pending open decisions from ordered pending answer sources by explicit decisionKey with contiguous merge', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'source-1',
+      decisionKey: 'auth-strategy',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'source-2',
+      decisionKey: 'auth-strategy',
+      answer: 'Keep the runtime simple.',
+    },
+    {
+      answerSourceKey: 'source-3',
+      decisionKey: 'rollout-strategy',
+      answer: 'Use a staged rollout.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'pending_answer_sources' as never,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: ['Use Bun-native auth.', 'Keep the runtime simple.'].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
+test('rejects ordered pending answer sources when explicit decisionKey order conflicts with the next open decision', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      undefined,
+      [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'rollout-strategy',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        },
+      ] as unknown as InterpretableAnswerSource[],
+      'pending_answer_sources' as never,
+    ),
+  ).toThrow(
+    'sourceResponseFormat pending_answer_sources found explicit decisionKey "rollout-strategy" before decision answer auth-strategy.',
+  )
+})
+
+test('rejects non-contiguous ordered pending answer sources for the same explicit decisionKey', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      true,
+      undefined,
+      [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          decisionKey: 'rollout-strategy',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'source-3',
+          decisionKey: 'auth-strategy',
+          answer: 'Keep the runtime simple.',
+        },
+      ] as unknown as InterpretableAnswerSource[],
+      'pending_answer_sources' as never,
+    ),
+  ).toThrow(
+    'sourceResponseFormat pending_answer_sources found non-contiguous explicit decisionKey "auth-strategy" for decision answer auth-strategy.',
+  )
+})
+
 test('materializes multiple pending open decisions from matching answer sources without per-topic mapping', () => {
   const answerSources = [
     {
@@ -5651,6 +5785,59 @@ test('materializes inferred planner answers from contiguous remaining matching a
         answerKey: 'rollback-trigger',
         prompt: 'What should the rollback trigger be?',
         answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join('\n\n'),
+      },
+    ],
+  })
+})
+
+test('materializes explicit planner answers from ordered pending answer sources by durable answerKey with contiguous merge', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [
+        { summary: 'Pilot scope', answerKey: 'pilot-scope' },
+        { summary: 'Rollback trigger', answerKey: 'rollback-trigger' },
+      ],
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        answerKey: 'pilot-scope',
+        answer: 'Gate wider release on pilot support stability.',
+      },
+      {
+        answerSourceKey: 'source-3',
+        answerKey: 'rollback-trigger',
+        answer: 'Abort after two regressions.',
+      },
+    ],
+    'pending_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        answer: [
+          'Start with five enterprise customers before broader launch.',
+          'Gate wider release on pilot support stability.',
+        ].join('\n\n'),
+      },
+      {
+        summary: 'Rollback trigger',
+        answerKey: 'rollback-trigger',
+        answer: 'Abort after two regressions.',
       },
     ],
   })
