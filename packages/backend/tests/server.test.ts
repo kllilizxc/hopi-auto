@@ -801,6 +801,49 @@ describe('createServer', () => {
     })
   })
 
+  test('materializes planner answers through the direct planning-request API from contiguous matching answer sources by durable answerKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          answerKey: 'pilot-scope',
+          answer: 'Gate wider release on pilot support stability.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      answers: [{ summary: 'Early access cohort plan', answerKey: 'pilot-scope' }],
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Early access cohort plan',
+          answerKey: 'pilot-scope',
+          prompt: 'What should the early access cohort plan be?',
+          answer: [
+            'Start with five enterprise customers before broader launch.',
+            'Gate wider release on pilot support stability.',
+          ].join('\n\n'),
+        },
+      ],
+    })
+  })
+
   test('infers remaining planner answers through the direct planning-request API from remaining pending answer sources without explicit summaries', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -8640,6 +8683,50 @@ describe('createServer', () => {
           prompt: 'How should we phase the launch to users?',
           status: 'resolved',
           answer: 'Use a staged rollout.',
+        }),
+      ],
+    })
+  })
+
+  test('records matching open decisions through the API from contiguous matching answer sources by durable decisionKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const decisionResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      prompt: 'How should we phase the launch to users?',
+    })
+    expect(decisionResponse.status).toBe(201)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'launch-sequencing',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          decisionKey: 'launch-sequencing',
+          answer: 'Keep the launch reversible.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          prompt: 'How should we phase the launch to users?',
+          status: 'resolved',
+          answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
         }),
       ],
     })

@@ -5026,6 +5026,45 @@ test('materializes matching open decisions from matching answer sources by durab
   ])
 })
 
+test('materializes matching open decisions from contiguous matching answer sources by durable decisionKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'source-1',
+      decisionKey: 'launch-sequencing',
+      answer: 'Use a staged rollout.',
+    },
+    {
+      answerSourceKey: 'source-2',
+      decisionKey: 'launch-sequencing',
+      answer: 'Keep the launch reversible.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          prompt: 'How should we phase the launch to users?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      taskRef: undefined,
+      answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+    },
+  ])
+})
+
 test('materializes planner answers from matching answer sources by durable answerKey', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -5056,6 +5095,81 @@ test('materializes planner answers from matching answer sources by durable answe
       },
     ],
   })
+})
+
+test('materializes planner answers from contiguous matching answer sources by durable answerKey', () => {
+  const materialized = materializeInterpretedDecisionFollowThrough(
+    {
+      kind: 'planning',
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answers: [{ summary: 'Early access cohort plan', answerKey: 'pilot-scope' }],
+    },
+    undefined,
+    [
+      {
+        answerSourceKey: 'source-1',
+        answerKey: 'pilot-scope',
+        answer: 'Start with five enterprise customers before broader launch.',
+      },
+      {
+        answerSourceKey: 'source-2',
+        answerKey: 'pilot-scope',
+        answer: 'Gate wider release on pilot support stability.',
+      },
+    ],
+    'matching_answer_sources',
+  )
+
+  expect(materialized).toMatchObject({
+    kind: 'planning',
+    answers: [
+      {
+        summary: 'Early access cohort plan',
+        answerKey: 'pilot-scope',
+        answer: [
+          'Start with five enterprise customers before broader launch.',
+          'Gate wider release on pilot support stability.',
+        ].join('\n\n'),
+      },
+    ],
+  })
+})
+
+test('rejects non-contiguous matching answer sources for the same durable decision', () => {
+  expect(() =>
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          prompt: 'How should we phase the launch to users?',
+        },
+      ],
+      true,
+      undefined,
+      [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'launch-sequencing',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          decisionKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'source-3',
+          decisionKey: 'launch-sequencing',
+          answer: 'Keep the launch reversible.',
+        },
+      ] as unknown as InterpretableAnswerSource[],
+      'matching_answer_sources',
+    ),
+  ).toThrow('Multiple answerSources matched decision answer launch-sequencing.')
 })
 
 test('materializes new decision topics from remaining matching answer sources without explicit answer mapping', () => {

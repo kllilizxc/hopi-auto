@@ -2891,6 +2891,21 @@ function resolveMatchingAnswerSourceValue(
   label: string,
   sourceResponseState?: InterpretedSourceResponseState,
 ) {
+  const matchingEntries = resolveMatchingAnswerSourceEntries(
+    matchingAnswerSourceEntries,
+    candidates,
+    label,
+    sourceResponseState,
+  )
+  return matchingEntries.map((entry) => entry.answer).join('\n\n')
+}
+
+function resolveMatchingAnswerSourceEntries(
+  matchingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
   const entries = parseRequiredMatchingAnswerSourceEntries(
     matchingAnswerSourceEntries,
     label,
@@ -2898,22 +2913,43 @@ function resolveMatchingAnswerSourceValue(
   )
   const consumedIndexes = sourceResponseState?.consumedMatchingAnswerSourceIndexes ?? new Set()
   const matchingIndexes = findMatchingAnswerSourceEntryIndexes(entries, candidates, consumedIndexes)
-  if (matchingIndexes.length > 1) {
-    throw new AnswerInterpretationError(`Multiple answerSources matched ${label}.`)
+
+  const contiguousIndexes = resolveContiguousMatchingAnswerSourceIndexes(matchingIndexes, label)
+  if (contiguousIndexes.length === 0) {
+    throw new AnswerInterpretationError(`No answerSource matched ${label}.`)
   }
 
-  const matchingIndex = matchingIndexes[0]
-  if (matchingIndex === undefined) {
-    throw new AnswerInterpretationError(`No answerSource matched ${label}.`)
-  }
   if (sourceResponseState) {
-    sourceResponseState.consumedMatchingAnswerSourceIndexes.add(matchingIndex)
+    for (const index of contiguousIndexes) {
+      sourceResponseState.consumedMatchingAnswerSourceIndexes.add(index)
+    }
   }
-  const matchingEntry = entries[matchingIndex]
-  if (!matchingEntry) {
-    throw new AnswerInterpretationError(`No answerSource matched ${label}.`)
+  return contiguousIndexes.map((index) => {
+    const matchingEntry = entries[index]
+    if (!matchingEntry) {
+      throw new AnswerInterpretationError(`No answerSource matched ${label}.`)
+    }
+    return matchingEntry
+  })
+}
+
+function resolveContiguousMatchingAnswerSourceIndexes(matchingIndexes: number[], label: string) {
+  if (matchingIndexes.length <= 1) {
+    return matchingIndexes
   }
-  return matchingEntry.answer
+
+  for (let index = 1; index < matchingIndexes.length; index += 1) {
+    const previousIndex = matchingIndexes[index - 1]
+    const currentIndex = matchingIndexes[index]
+    if (previousIndex === undefined || currentIndex === undefined) {
+      throw new AnswerInterpretationError(`Multiple answerSources matched ${label}.`)
+    }
+    if (currentIndex !== previousIndex + 1) {
+      throw new AnswerInterpretationError(`Multiple answerSources matched ${label}.`)
+    }
+  }
+
+  return matchingIndexes
 }
 
 function resolveMatchingRunSourceResponseValue(
