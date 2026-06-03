@@ -948,6 +948,59 @@ describe('createServer', () => {
     })
   })
 
+  test('infers remaining planner answers through the direct planning-request API from contiguous remaining pending answer sources by durable answerKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests', {
+      title: 'Capture rollout notes',
+      description: 'Record rollout details before more planning work continues.',
+      acceptanceCriteria: ['Rollout notes are durable.'],
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          answerSourceKey: 'source-2',
+          answerKey: 'rollback-trigger',
+          summary: 'Rollback trigger',
+          answer: 'Abort after two regressions.',
+        },
+        {
+          answerSourceKey: 'source-3',
+          answerKey: 'rollback-trigger',
+          answer: 'Pause launch until fixes ship.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope' }],
+      inferRemainingAnswers: true,
+      requestedUpdates: ['goal.md', 'notes/rollout.md'],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      requestKey: 'PR-1',
+      taskRef: 'P-1',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          prompt: 'What should the pilot scope be?',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+        {
+          summary: 'Rollback trigger',
+          answerKey: 'rollback-trigger',
+          prompt: 'What should the rollback trigger be?',
+          answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join('\n\n'),
+        },
+      ],
+    })
+  })
+
   test('infers remaining planner answers through the direct planning-request API from canonical-prompt answer sources without explicit summaries', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -8818,6 +8871,57 @@ describe('createServer', () => {
           decisionKey: 'rollout-strategy',
           answer: 'Use a staged rollout.',
         },
+      ],
+    })
+  })
+
+  test('records new durable decision topics through the API from contiguous remaining pending answer sources by explicit decisionKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+    })
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'auth-strategy-answer',
+          answer: 'Use Bun-native auth.',
+        },
+        {
+          answerSourceKey: 'launch-sequencing-part-1',
+          decisionKey: 'launch-sequencing',
+          answer: 'Use a staged rollout.',
+        },
+        {
+          answerSourceKey: 'launch-sequencing-part-2',
+          decisionKey: 'launch-sequencing',
+          answer: 'Keep the launch reversible.',
+        },
+      ],
+      sourceResponseFormat: 'pending_answer_sources',
+      inferOpenDecisions: true,
+      inferDecisionTopics: true,
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      createdDecisionKeys: ['launch-sequencing'],
+      resolvedSourceResponseFormat: 'pending_answer_sources',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer: 'Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'launch-sequencing',
+          summary: 'Launch sequencing',
+          prompt: 'What should the launch sequencing be?',
+          answer: ['Use a staged rollout.', 'Keep the launch reversible.'].join('\n\n'),
+        }),
       ],
     })
   })
