@@ -13,7 +13,6 @@ import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from './domain/board'
 import {
   AnswerInterpretationError,
   INTERPRETABLE_SOURCE_RESPONSE_FORMATS,
-  followThroughInfersRemainingAnswers,
   listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionBundle,
   materializeInterpretedPlanningInput,
@@ -609,12 +608,6 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
         ) {
           const currentGoalKey = requireGoalKey(parts)
           const body = await parseJsonBody(request, answerDecisionBatchSchema)
-          if (body.inferDecisionTopics && followThroughInfersRemainingAnswers(body.followThrough)) {
-            throw new HttpError(
-              400,
-              'followThrough.inferRemainingAnswers cannot be combined with inferDecisionTopics. Pick one authority for the remaining sourceResponse items.',
-            )
-          }
           const current = await decisions.readGoalDecisions(currentGoalKey)
           const materialized = materializeInterpretedDecisionBundle({
             answers: body.answers,

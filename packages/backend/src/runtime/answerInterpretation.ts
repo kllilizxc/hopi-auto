@@ -212,6 +212,12 @@ interface GroupedAnswerSourceEntry {
   entry: ResolvedAnswerSourceEntry
 }
 
+type RemainingAnswerSourceRoute = 'decision' | 'planning'
+
+interface RoutedGroupedAnswerSourceEntry extends GroupedAnswerSourceEntry {
+  route: RemainingAnswerSourceRoute
+}
+
 interface PendingAnswerSourceConsumerDescriptor {
   keys: string[]
 }
@@ -625,6 +631,24 @@ export function followThroughInfersRemainingAnswers(
   return followThrough.inferRemainingAnswers === true
 }
 
+function supportsMixedRemainingAnswerSourceInference(
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+) {
+  return (
+    sourceResponseFormat === 'pending_answer_sources' ||
+    sourceResponseFormat === 'matching_answer_sources'
+  )
+}
+
+function hasMixedRemainingAnswerSourceInference(input: {
+  inferDecisionTopics?: boolean
+  followThrough?: InterpretableDecisionFollowThroughInput
+}) {
+  return Boolean(
+    input.inferDecisionTopics && followThroughInfersRemainingAnswers(input.followThrough),
+  )
+}
+
 export function createInterpretedSourceResponseState(
   sourceResponse: string | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
@@ -678,6 +702,7 @@ function assertAutoSourceResponseFormatCompleteness(input: {
   sourceResponseFormat: ConcreteInterpretableSourceResponseFormat
   sourceResponseState: InterpretedSourceResponseState | undefined
   inferDecisionTopics?: boolean
+  inferRemainingAnswers?: boolean
 }) {
   const state = input.sourceResponseState
   if (!state) {
@@ -742,7 +767,7 @@ function assertAutoSourceResponseFormatCompleteness(input: {
       )
       return
     case 'pending_answer_sources': {
-      if (input.inferDecisionTopics) {
+      if (input.inferDecisionTopics && !input.inferRemainingAnswers) {
         return
       }
       const entries = parseRequiredPendingAnswerSourceEntries(
@@ -759,7 +784,7 @@ function assertAutoSourceResponseFormatCompleteness(input: {
       return
     }
     case 'matching_answer_sources': {
-      if (input.inferDecisionTopics) {
+      if (input.inferDecisionTopics && !input.inferRemainingAnswers) {
         return
       }
       const entries = parseRequiredMatchingAnswerSourceEntries(
@@ -1318,32 +1343,76 @@ export function materializeInterpretedDecisionBundle(input: {
     }),
     (candidateFormat) => {
       const state = createInterpretedSourceResponseState(input.sourceResponse, candidateFormat)
+      const mixedRemainingAnswerSourceInference = hasMixedRemainingAnswerSourceInference(input)
       try {
-        materializeInterpretedDecisionAnswerBatch(
-          input.answers,
-          input.openDecisions,
-          input.inferOpenDecisions,
-          input.sourceResponse,
-          input.answerSources,
-          candidateFormat,
-          state,
-          input.inferDecisionTopics ?? false,
-          input.knownDecisions ?? [],
-          input.reservedAnswerCandidates ?? [],
-        )
-        materializeInterpretedDecisionFollowThrough(
-          input.followThrough,
-          input.sourceResponse,
-          input.answerSources,
-          candidateFormat,
-          state,
-        )
+        if (
+          mixedRemainingAnswerSourceInference &&
+          !supportsMixedRemainingAnswerSourceInference(candidateFormat)
+        ) {
+          throw new AnswerInterpretationError(
+            'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+          )
+        }
+        if (mixedRemainingAnswerSourceInference) {
+          materializeInterpretedDecisionAnswerBatch(
+            input.answers,
+            input.openDecisions,
+            input.inferOpenDecisions,
+            input.sourceResponse,
+            input.answerSources,
+            candidateFormat,
+            state,
+            false,
+            input.knownDecisions ?? [],
+            input.reservedAnswerCandidates ?? [],
+          )
+          materializeInterpretedDecisionFollowThrough(
+            input.followThrough
+              ? {
+                  ...input.followThrough,
+                  inferRemainingAnswers: false,
+                }
+              : undefined,
+            input.sourceResponse,
+            input.answerSources,
+            candidateFormat,
+            state,
+          )
+          materializeMixedRemainingAnswerSourceInference({
+            sourceResponse: input.sourceResponse,
+            answerSources: input.answerSources,
+            sourceResponseFormat: candidateFormat,
+            sourceResponseState: state,
+            knownDecisions: input.knownDecisions ?? [],
+          })
+        } else {
+          materializeInterpretedDecisionAnswerBatch(
+            input.answers,
+            input.openDecisions,
+            input.inferOpenDecisions,
+            input.sourceResponse,
+            input.answerSources,
+            candidateFormat,
+            state,
+            input.inferDecisionTopics ?? false,
+            input.knownDecisions ?? [],
+            input.reservedAnswerCandidates ?? [],
+          )
+          materializeInterpretedDecisionFollowThrough(
+            input.followThrough,
+            input.sourceResponse,
+            input.answerSources,
+            candidateFormat,
+            state,
+          )
+        }
         assertAutoSourceResponseFormatCompleteness({
           sourceResponse: input.sourceResponse,
           answerSources: input.answerSources,
           sourceResponseFormat: candidateFormat,
           sourceResponseState: state,
           inferDecisionTopics: input.inferDecisionTopics ?? false,
+          inferRemainingAnswers: followThroughInfersRemainingAnswers(input.followThrough),
         })
       } catch (error) {
         if (shouldAutoSourceResponseProbeFailClosed(candidateFormat, state)) {
@@ -1360,6 +1429,82 @@ export function materializeInterpretedDecisionBundle(input: {
     input.sourceResponse,
     resolvedSourceResponseFormat,
   )
+  const mixedRemainingAnswerSourceInference = hasMixedRemainingAnswerSourceInference(input)
+  if (
+    mixedRemainingAnswerSourceInference &&
+    !supportsMixedRemainingAnswerSourceInference(resolvedSourceResponseFormat)
+  ) {
+    throw new AnswerInterpretationError(
+      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+    )
+  }
+
+  if (mixedRemainingAnswerSourceInference) {
+    const explicitAnswers = materializeInterpretedDecisionAnswerBatch(
+      input.answers,
+      input.openDecisions,
+      input.inferOpenDecisions,
+      input.sourceResponse,
+      input.answerSources,
+      resolvedSourceResponseFormat,
+      state,
+      false,
+      input.knownDecisions ?? [],
+      input.reservedAnswerCandidates ?? [],
+    )
+    const explicitFollowThrough = materializeInterpretedDecisionFollowThrough(
+      input.followThrough
+        ? {
+            ...input.followThrough,
+            inferRemainingAnswers: false,
+          }
+        : undefined,
+      input.sourceResponse,
+      input.answerSources,
+      resolvedSourceResponseFormat,
+      state,
+    )
+    const inferred = materializeMixedRemainingAnswerSourceInference({
+      sourceResponse: input.sourceResponse,
+      answerSources: input.answerSources,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      knownDecisions: input.knownDecisions ?? [],
+    })
+    const followThrough =
+      explicitFollowThrough && inferred.planningAnswers.length > 0
+        ? explicitFollowThrough.kind === 'workflow_batch'
+          ? {
+              ...explicitFollowThrough,
+              inferRemainingAnswers: true,
+              answers: mergeMaterializedPlanningAnswers(
+                explicitFollowThrough.answers,
+                inferred.planningAnswers,
+              ),
+            }
+          : {
+              ...explicitFollowThrough,
+              inferRemainingAnswers: true,
+              answers: mergeMaterializedPlanningAnswers(
+                explicitFollowThrough.answers,
+                inferred.planningAnswers,
+              ),
+            }
+        : explicitFollowThrough && input.followThrough
+          ? {
+              ...explicitFollowThrough,
+              inferRemainingAnswers: input.followThrough.inferRemainingAnswers,
+            }
+          : explicitFollowThrough
+
+    return {
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      answers: [...explicitAnswers, ...inferred.decisionAnswers],
+      followThrough,
+    }
+  }
+
   return {
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: state,
@@ -3231,6 +3376,102 @@ function groupRemainingAnswerSourceEntries(
   }))
 }
 
+function resolveRemainingMixedAnswerSourceRoute(entry: ResolvedAnswerSourceEntry): {
+  route: RemainingAnswerSourceRoute
+  descriptor: RemainingAnswerSourceGroupDescriptor
+} {
+  const decisionKey = entry.decisionKey?.trim()
+  const answerKey = entry.answerKey?.trim()
+
+  if (decisionKey && answerKey) {
+    throw new AnswerInterpretationError(
+      `Remaining answerSource "${entry.key}" cannot target both decisionKey "${decisionKey}" and answerKey "${answerKey}" when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
+    )
+  }
+
+  if (decisionKey) {
+    return {
+      route: 'decision',
+      descriptor: {
+        key: `decisionKey:${decisionKey}`,
+        label: `decisionKey "${decisionKey}"`,
+      },
+    }
+  }
+
+  if (answerKey) {
+    return {
+      route: 'planning',
+      descriptor: {
+        key: `answerKey:${answerKey}`,
+        label: `answerKey "${answerKey}"`,
+      },
+    }
+  }
+
+  throw new AnswerInterpretationError(
+    `Remaining answerSource "${entry.key}" requires explicit decisionKey or answerKey when inferDecisionTopics is combined with followThrough.inferRemainingAnswers.`,
+  )
+}
+
+function groupMixedRemainingAnswerSourceEntries(
+  entries: ResolvedAnswerSourceEntry[],
+  consumedIndexes: Set<number>,
+  sourceFamilyLabel: 'matching' | 'pending',
+): RoutedGroupedAnswerSourceEntry[] {
+  const groups: Array<{
+    route: RemainingAnswerSourceRoute
+    descriptor: RemainingAnswerSourceGroupDescriptor
+    indexes: number[]
+    entries: ResolvedAnswerSourceEntry[]
+  }> = []
+  const seenDescriptorKeys = new Set<string>()
+
+  for (const [index, entry] of entries.entries()) {
+    if (consumedIndexes.has(index)) {
+      continue
+    }
+
+    const { route, descriptor } = resolveRemainingMixedAnswerSourceRoute(entry)
+    const currentGroup = groups.at(-1)
+    if (
+      currentGroup &&
+      currentGroup.route === route &&
+      currentGroup.descriptor.key === descriptor.key
+    ) {
+      currentGroup.indexes.push(index)
+      currentGroup.entries.push(entry)
+      continue
+    }
+
+    if (seenDescriptorKeys.has(descriptor.key)) {
+      throw new AnswerInterpretationError(
+        `Non-contiguous ${sourceFamilyLabel} answerSources repeated ${descriptor.label} for mixed remaining answer inference.`,
+      )
+    }
+
+    seenDescriptorKeys.add(descriptor.key)
+    groups.push({
+      route,
+      descriptor,
+      indexes: [index],
+      entries: [entry],
+    })
+  }
+
+  return groups.map((group) => ({
+    route: group.route,
+    indexes: group.indexes,
+    entry:
+      group.entries.length === 1 && group.entries[0]
+        ? group.entries[0]
+        : mergeContiguousAnswerSourceEntries(
+            group.entries,
+            'inferDecisionTopics + followThrough.inferRemainingAnswers',
+          ),
+  }))
+}
+
 function resolveMatchingAnswerSourceValue(
   matchingAnswerSourceEntries: ResolvedAnswerSourceEntry[] | undefined,
   candidates: string[],
@@ -3337,6 +3578,94 @@ function resolveMatchingRunSourceResponseValue(
   }
 
   return matchingRun.text
+}
+
+function materializeMixedRemainingAnswerSourceInference(input: {
+  sourceResponse?: string
+  answerSources?: InterpretableAnswerSource[]
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined
+  sourceResponseState: InterpretedSourceResponseState | undefined
+  knownDecisions: InterpretableKnownDecision[]
+}) {
+  if (!supportsMixedRemainingAnswerSourceInference(input.sourceResponseFormat)) {
+    throw new AnswerInterpretationError(
+      'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by decisionKey or answerKey.',
+    )
+  }
+
+  const resolvedAnswerSources = createResolvedAnswerSources(
+    input.answerSources,
+    input.sourceResponse,
+  )
+  const interpretationState =
+    input.sourceResponseState ??
+    createInterpretedSourceResponseState(input.sourceResponse, input.sourceResponseFormat)
+
+  if (input.sourceResponseFormat === 'pending_answer_sources') {
+    const entries = parseRequiredPendingAnswerSourceEntries(
+      resolvedAnswerSources?.entries,
+      'inferDecisionTopics + followThrough.inferRemainingAnswers',
+      interpretationState,
+    )
+    const nextIndex = interpretationState?.nextPendingAnswerSourceIndex ?? 0
+    const groupedEntries = groupMixedRemainingAnswerSourceEntries(
+      entries.slice(nextIndex),
+      new Set<number>(),
+      'pending',
+    )
+    if (interpretationState) {
+      interpretationState.nextPendingAnswerSourceIndex = entries.length
+    }
+    return {
+      decisionAnswers: materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
+        groupedEntries.filter((entry) => entry.route === 'decision').map((entry) => entry.entry),
+        input.knownDecisions,
+        'inferDecisionTopics',
+      ),
+      planningAnswers: groupedEntries
+        .filter((entry) => entry.route === 'planning')
+        .map((entry) =>
+          materializeRemainingPlanningAnswerFromAnswerSourceEntry(
+            entry.entry,
+            'followThrough.inferRemainingAnswers',
+          ),
+        ),
+    }
+  }
+
+  const entries = parseRequiredMatchingAnswerSourceEntries(
+    resolvedAnswerSources?.entries,
+    'inferDecisionTopics + followThrough.inferRemainingAnswers',
+    interpretationState,
+  )
+  const consumedIndexes = interpretationState?.consumedMatchingAnswerSourceIndexes ?? new Set()
+  const groupedEntries = groupMixedRemainingAnswerSourceEntries(
+    entries,
+    consumedIndexes,
+    'matching',
+  )
+  if (interpretationState) {
+    for (const groupedEntry of groupedEntries) {
+      for (const index of groupedEntry.indexes) {
+        interpretationState.consumedMatchingAnswerSourceIndexes.add(index)
+      }
+    }
+  }
+  return {
+    decisionAnswers: materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
+      groupedEntries.filter((entry) => entry.route === 'decision').map((entry) => entry.entry),
+      input.knownDecisions,
+      'inferDecisionTopics',
+    ),
+    planningAnswers: groupedEntries
+      .filter((entry) => entry.route === 'planning')
+      .map((entry) =>
+        materializeRemainingPlanningAnswerFromAnswerSourceEntry(
+          entry.entry,
+          'followThrough.inferRemainingAnswers',
+        ),
+      ),
+  }
 }
 
 function resolveMatchingRunCandidateGroupIndex(
