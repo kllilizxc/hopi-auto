@@ -22,6 +22,7 @@ const interpretablePlanningAnswerArraySchema = z
       sourceExcerpt: z.string().min(1).optional(),
       sourceOccurrence: sourceOccurrenceSchema.optional(),
       answerSourceKey: z.string().min(1).optional(),
+      answerSourceGroupKey: z.string().min(1).optional(),
     }),
   )
   .default([])
@@ -187,6 +188,7 @@ const assistantDecisionAnswerSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
 })
 
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
@@ -329,6 +331,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     sourceOccurrence: sourceOccurrenceSchema.optional(),
     answerSourceKey: z.string().min(1).optional(),
+    answerSourceGroupKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),
@@ -356,6 +359,7 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     sourceExcerpt: z.string().min(1).optional(),
     sourceOccurrence: sourceOccurrenceSchema.optional(),
     answerSourceKey: z.string().min(1).optional(),
+    answerSourceGroupKey: z.string().min(1).optional(),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),

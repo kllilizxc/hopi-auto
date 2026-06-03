@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test'
 import {
   AnswerInterpretationError,
   type InterpretableAnswerSource,
+  type InterpretableDecisionAnswerEntryInput,
+  type InterpretablePlanningAnswer,
   createInterpretedSourceResponseState,
   listAutoSourceResponseFormatCandidates,
   materializeInterpretedDecisionAnswerBatch,
@@ -100,6 +102,134 @@ test('materializes decision and planner answers from named answer sources', () =
       {
         summary: 'Pilot scope',
         answer: 'Start with five enterprise customers before broader rollout.',
+      },
+    ],
+    workflows: [
+      {
+        kind: 'planning',
+        workflowTaskKey: 'rollout-review',
+        title: 'Review rollout readiness',
+        description: 'Capture the rollout readiness review.',
+        acceptanceCriteria: ['The rollout review is visible.'],
+        answers: [
+          {
+            summary: 'Rollout decision',
+            answer: 'Use a staged rollout.',
+          },
+        ],
+        requestedUpdates: ['design.md'],
+      },
+    ],
+  })
+})
+
+test('materializes decision and planner answers from grouped named answer sources', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-part-1',
+      sourceGroupKey: 'auth-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'rollout-part-1',
+      sourceGroupKey: 'rollout-answer',
+      answer: 'Use a staged rollout.',
+    },
+    {
+      answerSourceKey: 'auth-part-2',
+      sourceGroupKey: 'auth-answer',
+      answer: 'Add SSO for enterprise customers after the initial launch.',
+    },
+    {
+      answerSourceKey: 'pilot-part-1',
+      sourceGroupKey: 'pilot-scope-answer',
+      answer: 'Start with five enterprise customers before broader rollout.',
+    },
+    {
+      answerSourceKey: 'pilot-part-2',
+      sourceGroupKey: 'pilot-scope-answer',
+      answer: 'Keep early support manageable.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswers(
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          answerSourceGroupKey: 'auth-answer',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          answerSourceGroupKey: 'rollout-answer',
+        },
+      ] satisfies InterpretableDecisionAnswerEntryInput[],
+      undefined,
+      answerSources,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: [
+        'Use Bun-native auth.',
+        'Add SSO for enterprise customers after the initial launch.',
+      ].join('\n\n'),
+    },
+    {
+      decisionKey: 'rollout-strategy',
+      summary: 'Choose the rollout strategy',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+
+  expect(
+    materializeInterpretedDecisionFollowThrough(
+      {
+        kind: 'workflow_batch',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            answerSourceGroupKey: 'pilot-scope-answer',
+          },
+        ] satisfies InterpretablePlanningAnswer[],
+        workflows: [
+          {
+            kind: 'planning',
+            workflowTaskKey: 'rollout-review',
+            title: 'Review rollout readiness',
+            description: 'Capture the rollout readiness review.',
+            acceptanceCriteria: ['The rollout review is visible.'],
+            answers: [
+              {
+                summary: 'Rollout decision',
+                answerSourceGroupKey: 'rollout-answer',
+              },
+            ] satisfies InterpretablePlanningAnswer[],
+            requestedUpdates: ['design.md'],
+          },
+        ],
+      },
+      undefined,
+      answerSources,
+    ),
+  ).toEqual({
+    kind: 'workflow_batch',
+    workflowKey: undefined,
+    reuseTaskRef: undefined,
+    reuseGroupKey: undefined,
+    inferRemainingAnswers: undefined,
+    answers: [
+      {
+        summary: 'Pilot scope',
+        answer: [
+          'Start with five enterprise customers before broader rollout.',
+          'Keep early support manageable.',
+        ].join('\n\n'),
       },
     ],
     workflows: [

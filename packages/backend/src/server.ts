@@ -76,6 +76,7 @@ const interpretablePlanningAnswerArraySchema = z
       sourceExcerpt: z.string().min(1).optional(),
       sourceOccurrence: sourceOccurrenceSchema.optional(),
       answerSourceKey: z.string().min(1).optional(),
+      answerSourceGroupKey: z.string().min(1).optional(),
     }),
   )
   .default([])
@@ -264,6 +265,7 @@ const resolveDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
   sourceResponse: z.string().min(1).optional(),
@@ -281,6 +283,7 @@ const answerDecisionSchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
   answerSources: interpretableAnswerSourceArraySchema,
   sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
   sourceResponse: z.string().min(1).optional(),
@@ -298,6 +301,7 @@ const answerDecisionBatchEntrySchema = z.object({
   sourceExcerpt: z.string().min(1).optional(),
   sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
 })
 
 const answerDecisionBatchSchema = z.object({
@@ -554,6 +558,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 sourceExcerpt: body.sourceExcerpt,
                 sourceOccurrence: body.sourceOccurrence,
                 answerSourceKey: body.answerSourceKey,
+                answerSourceGroupKey: body.answerSourceGroupKey,
               },
             ],
             openDecisions: [],
@@ -709,6 +714,7 @@ export function createServer(options: ServerOptions = {}): Bun.Server<undefined>
                 sourceExcerpt: body.sourceExcerpt,
                 sourceOccurrence: body.sourceOccurrence,
                 answerSourceKey: body.answerSourceKey,
+                answerSourceGroupKey: body.answerSourceGroupKey,
               },
             ],
             openDecisions: [],

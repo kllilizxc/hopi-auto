@@ -339,6 +339,7 @@ Required outcome shape:
       "answer": "explicit user answer",
       "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
       "answerSourceKey": "optional reusable extracted answer source key for this decision",
+      "answerSourceGroupKey": "optional reusable extracted answer source group key when this decision should consume one merged grouped reusable answer instead of one single source entry",
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
@@ -366,7 +367,8 @@ Required outcome shape:
             "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should shape every child in this decision-backed workflow graph",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
-            "answerSourceKey": "optional reusable extracted answer source key"
+            "answerSourceKey": "optional reusable extracted answer source key",
+            "answerSourceGroupKey": "optional reusable extracted answer source group key when this shared planner answer should consume one merged grouped reusable answer instead of one single source entry"
           }
         ],
         "workflows": [
@@ -385,7 +387,8 @@ Required outcome shape:
                 "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
                 "answer": "explicit user answer that should shape this planner workflow without becoming a decision topic",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
-                "answerSourceKey": "optional reusable extracted answer source key"
+                "answerSourceKey": "optional reusable extracted answer source key",
+                "answerSourceGroupKey": "optional reusable extracted answer source group key when this planner answer should consume one merged grouped reusable answer instead of one single source entry"
               }
             ],
             "requestedUpdates": ["goal.md", "design.md"]
@@ -401,7 +404,8 @@ Required outcome shape:
                 "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
                 "answer": "explicit user answer that should shape every task in this grouped workflow",
                 "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
-                "answerSourceKey": "optional reusable extracted answer source key"
+                "answerSourceKey": "optional reusable extracted answer source key",
+                "answerSourceGroupKey": "optional reusable extracted answer source group key when this grouped planner answer should consume one merged grouped reusable answer instead of one single source entry"
               }
             ],
             "requests": [
@@ -458,7 +462,8 @@ Required outcome shape:
           "taskRef": "optional linked task ref",
           "answer": "first explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
-          "answerSourceKey": "optional reusable extracted answer source key"
+          "answerSourceKey": "optional reusable extracted answer source key",
+          "answerSourceGroupKey": "optional reusable extracted answer source group key when this decision should consume one merged grouped reusable answer instead of one single source entry"
         },
         {
           "summary": "second durable decision topic",
@@ -468,7 +473,8 @@ Required outcome shape:
           "matchHints": ["optional stable phrasing that later replies may reuse for this decision topic"],
           "answer": "second explicit user answer",
           "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
-          "answerSourceKey": "optional reusable extracted answer source key"
+          "answerSourceKey": "optional reusable extracted answer source key",
+          "answerSourceGroupKey": "optional reusable extracted answer source group key when this decision should consume one merged grouped reusable answer instead of one single source entry"
         }
       ],
       "followThrough": {
@@ -483,7 +489,8 @@ Required outcome shape:
             "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should stay on planner follow-through instead of becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
-            "answerSourceKey": "optional reusable extracted answer source key"
+            "answerSourceKey": "optional reusable extracted answer source key",
+            "answerSourceGroupKey": "optional reusable extracted answer source group key when this planner answer should consume one merged grouped reusable answer instead of one single source entry"
           }
         ],
         "requests": [
@@ -517,6 +524,7 @@ Required outcome shape:
       "answer": "explicit user answer",
       "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one decision",
       "answerSourceKey": "optional reusable extracted answer source key for this decision",
+      "answerSourceGroupKey": "optional reusable extracted answer source group key when this decision should consume one merged grouped reusable answer instead of one single source entry",
       "answerSources": [
         {
           "answerSourceKey": "auth-strategy-answer",
@@ -538,7 +546,8 @@ Required outcome shape:
             "matchHints": ["optional stable phrasing that later replies may reuse for this planner answer"],
             "answer": "explicit user answer that should shape this planner follow-through without becoming a decision topic",
             "sourceExcerpt": "optional exact substring to lift directly from sourceResponse for this one planner answer",
-            "answerSourceKey": "optional reusable extracted answer source key"
+            "answerSourceKey": "optional reusable extracted answer source key",
+            "answerSourceGroupKey": "optional reusable extracted answer source group key when this planner answer should consume one merged grouped reusable answer instead of one single source entry"
           }
         ],
         "requests": [
@@ -620,6 +629,7 @@ Rules:
 - Only combine "inferDecisionTopics": true with "followThrough.inferRemainingAnswers": true when root "sourceResponseFormat" is "pending_answer_sources" or "matching_answer_sources" and every remaining reusable source entry is explicitly routed by "route", one durable "decisionKey", or one durable "answerKey". Any weaker leftover authority like bare "summary", "summaryKey", "prompt", "matchHints", or suffix-only "answerSourceKey" still has to pick one side instead of mixing both.
 - When one less-structured raw reply should feed more than one decision topic or followThrough answer, prefer one root "sourceResponse" and omit per-item "answer" only where reusing that shared raw reply is intentional.
 - When one reply contains more than one reusable extracted durable fact, prefer one root "answerSources" bundle plus per-item "answerSourceKey" over repeating the same extracted snippets across multiple decision or followThrough answers.
+- When one explicit decision or planner answer should consume a reusable answer that has already been merged from more than one "answerSources[*]" fragment, prefer per-item "answerSourceGroupKey" over reusing one single-fragment "answerSourceKey" or repeating the merged text inline.
 - When those reusable answer sources should later match already-known durable decisions or planner answers without per-topic mapping, give both sides the same explicit "summaryKey" whenever summary/prompt wording is not the stable matching authority.
 - When those reusable answer sources should later match one already-known durable decision by row identity instead of summary wording, give the source the same explicit "decisionKey" as that durable decision.
 - When those reusable answer sources should later match an already-known durable planner answer by row identity instead of summary wording, give both the source and the planner answer the same explicit "answerKey".
@@ -653,6 +663,7 @@ Rules:
 - When one reply is already written as topic-specific blocks where the first paragraph names the topic and later continuation paragraphs stay on that same topic until the next anchor paragraph appears, prefer root "sourceResponseFormat": "topic_blocks" so runtime can reuse the whole anchored block whether that first paragraph uses a leading topic phrase, a prefixed topic phrase, a copular phrase like "Five enterprise customers should be the pilot scope.", an "as <topic>" phrase, or a trailing topic mention.
 - Use "answerSources[*].answer" when the durable snippet should be cleaned up or condensed beyond an exact excerpt, explicit per-item "answer" when only one item needs that text, "answerSourceKey" when a reusable extracted snippet should feed more than one item, explicit "summaryKey" when a reusable source may later need to materialize directly without repeating summary text, and root "sourceResponse" only when intentionally reusing the whole raw reply as-is.
 - When one reusable answer should merge more than one extracted "answerSources[*]" entry even though those entries are not adjacent, give every fragment the same explicit "sourceGroupKey" and keep consumer authority on existing "decisionKey", "answerKey", "summaryKey", prompt, hint, or route fields instead of relying on weaker parser regrouping.
+- When one explicit consumer should reuse that already-merged grouped answer directly, keep "sourceGroupKey" on the reusable source entries and reference the merged materialized answer from the consumer with "answerSourceGroupKey"; do not overload "answerSourceKey" to mean either one fragment or one grouped answer.
 - When one reply resolves real decision topics but also contains other durable answers that should stay on planner follow-through, keep the real decision topics in "record_answer" or "record_answers" and put the non-decision answers inside followThrough.answers.
 - Prefer "workflow_batch" follow-through when one answer should open more than one independent durable planner workflow under the same durable decision answer.
 - When the same non-decision captured answer should shape every child inside one answer-driven "workflow_batch", put it once on the root "followThrough.answers" array and add child-level answers only where one child needs extra context beyond that shared baseline.

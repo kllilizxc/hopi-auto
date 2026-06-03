@@ -202,6 +202,7 @@ interface ResolvedAnswerSourceEntry {
 
 interface ResolvedAnswerSources {
   byKey: Map<string, string>
+  byGroupKey: Map<string, string>
   entries: ResolvedAnswerSourceEntry[]
 }
 
@@ -261,6 +262,7 @@ export interface InterpretablePlanningAnswer {
   sourceExcerpt?: string
   sourceOccurrence?: number
   answerSourceKey?: string
+  answerSourceGroupKey?: string
 }
 
 export interface InterpretableDecisionAnswerEntryInput {
@@ -274,6 +276,7 @@ export interface InterpretableDecisionAnswerEntryInput {
   sourceExcerpt?: string
   sourceOccurrence?: number
   answerSourceKey?: string
+  answerSourceGroupKey?: string
 }
 
 export interface InterpretableOpenDecision {
@@ -1244,6 +1247,7 @@ export function materializeInterpretedDecisionAnswers(
 ): MaterializedInterpretedDecisionAnswer[] {
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
+  const answerSourceGroupsByKey = resolvedAnswerSources?.byGroupKey
   const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   const interpretationState =
@@ -1264,9 +1268,11 @@ export function materializeInterpretedDecisionAnswers(
       answer.sourceExcerpt,
       answer.sourceOccurrence,
       answer.answerSourceKey,
+      answer.answerSourceGroupKey,
       sourceResponse,
       `decision answer ${answer.decisionKey ?? answer.summary}`,
       answerSourcesByKey,
+      answerSourceGroupsByKey,
       pendingAnswerSourceEntries,
       matchingAnswerSourceEntries,
       sourceResponseFormat,
@@ -1631,6 +1637,7 @@ export function materializeInterpretedDecisionFollowThrough(
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
   const answerSourcesByKey = resolvedAnswerSources?.byKey
+  const answerSourceGroupsByKey = resolvedAnswerSources?.byGroupKey
   const pendingAnswerSourceEntries = resolvedAnswerSources?.entries
   const matchingAnswerSourceEntries = resolvedAnswerSources?.entries
   const interpretationState =
@@ -1647,6 +1654,7 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
+        answerSourceGroupsByKey,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1663,6 +1671,7 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.answers,
         sourceResponse,
         answerSourcesByKey,
+        answerSourceGroupsByKey,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1676,6 +1685,7 @@ export function materializeInterpretedDecisionFollowThrough(
     followThrough.answers,
     sourceResponse,
     answerSourcesByKey,
+    answerSourceGroupsByKey,
     pendingAnswerSourceEntries,
     matchingAnswerSourceEntries,
     sourceResponseFormat,
@@ -1690,6 +1700,7 @@ export function materializeInterpretedDecisionFollowThrough(
           workflow.answers,
           sourceResponse,
           answerSourcesByKey,
+          answerSourceGroupsByKey,
           pendingAnswerSourceEntries,
           matchingAnswerSourceEntries,
           sourceResponseFormat,
@@ -1704,6 +1715,7 @@ export function materializeInterpretedDecisionFollowThrough(
         workflow.answers,
         sourceResponse,
         answerSourcesByKey,
+        answerSourceGroupsByKey,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -1972,6 +1984,7 @@ function materializeInterpretedPlanningAnswers(
   answers: InterpretablePlanningAnswer[] | undefined,
   sourceResponse?: string,
   answerSourcesByKey?: Map<string, string>,
+  answerSourceGroupsByKey?: Map<string, string>,
   pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
@@ -1998,9 +2011,11 @@ function materializeInterpretedPlanningAnswers(
         answer.sourceExcerpt,
         answer.sourceOccurrence,
         answer.answerSourceKey,
+        answer.answerSourceGroupKey,
         sourceResponse,
         `planner answer ${answer.summary}`,
         answerSourcesByKey,
+        answerSourceGroupsByKey,
         pendingAnswerSourceEntries,
         matchingAnswerSourceEntries,
         sourceResponseFormat,
@@ -2478,9 +2493,11 @@ function resolveAnswerContent(
   sourceExcerpt: string | undefined,
   sourceOccurrence: number | undefined,
   answerSourceKey: string | undefined,
+  answerSourceGroupKey: string | undefined,
   sourceResponse: string | undefined,
   label: string,
   answerSourcesByKey?: Map<string, string>,
+  answerSourceGroupsByKey?: Map<string, string>,
   pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
@@ -2499,11 +2516,26 @@ function resolveAnswerContent(
   }
 
   const referencedSourceKey = answerSourceKey?.trim()
+  const referencedSourceGroupKey = answerSourceGroupKey?.trim()
+  if (referencedSourceKey && referencedSourceGroupKey) {
+    throw new AnswerInterpretationError(
+      `Provide only answerSourceKey or answerSourceGroupKey for ${label}.`,
+    )
+  }
   if (referencedSourceKey) {
     const sourced = answerSourcesByKey?.get(referencedSourceKey)
     if (!sourced) {
       throw new AnswerInterpretationError(
         `Unknown answerSourceKey "${referencedSourceKey}" for ${label}.`,
+      )
+    }
+    return { answer: sourced }
+  }
+  if (referencedSourceGroupKey) {
+    const sourced = answerSourceGroupsByKey?.get(referencedSourceGroupKey)
+    if (!sourced) {
+      throw new AnswerInterpretationError(
+        `Unknown answerSourceGroupKey "${referencedSourceGroupKey}" for ${label}.`,
       )
     }
     return { answer: sourced }
@@ -2874,7 +2906,7 @@ function resolveAnswerContent(
   }
 
   throw new AnswerInterpretationError(
-    `Missing answer text for ${label}. Provide item.answer, answerSourceKey, or sourceResponse.`,
+    `Missing answer text for ${label}. Provide item.answer, answerSourceKey, answerSourceGroupKey, or sourceResponse.`,
   )
 }
 
@@ -9197,6 +9229,7 @@ function createResolvedAnswerSources(
   }
 
   const answerSourcesByKey = new Map<string, string>()
+  const answerSourceGroupsByKey = new Map<string, string>()
   const entries: ResolvedAnswerSourceEntry[] = []
   const groupedEntryIndexBySourceGroupKey = new Map<string, number>()
   for (const source of answerSources) {
@@ -9246,6 +9279,7 @@ function createResolvedAnswerSources(
     if (existingIndex === undefined) {
       groupedEntryIndexBySourceGroupKey.set(sourceGroupKey, entries.length)
       entries.push(entry)
+      answerSourceGroupsByKey.set(sourceGroupKey, resolved)
       continue
     }
     const existingEntry = entries[existingIndex]
@@ -9254,13 +9288,16 @@ function createResolvedAnswerSources(
         `Missing grouped answerSource entry for sourceGroupKey "${sourceGroupKey}".`,
       )
     }
-    entries[existingIndex] = mergeAnswerSourceEntries(
+    const mergedEntry = mergeAnswerSourceEntries(
       [existingEntry, entry],
       `sourceGroupKey "${sourceGroupKey}"`,
     )
+    entries[existingIndex] = mergedEntry
+    answerSourceGroupsByKey.set(sourceGroupKey, mergedEntry.answer)
   }
   return {
     byKey: answerSourcesByKey,
+    byGroupKey: answerSourceGroupsByKey,
     entries,
   } satisfies ResolvedAnswerSources
 }
