@@ -40,6 +40,24 @@ export interface AssistantActionResultDetailsInput {
   }
 }
 
+export interface AssistantEventPresentationInput {
+  kind: 'message' | 'transcript' | 'worktree_prepared' | 'artifact'
+  level?: 'info' | 'error'
+  role?: string
+  content?: string
+  summary?: string
+  transport?: 'process' | 'codex' | 'claude' | 'opencode'
+  entryKind?: 'status' | 'assistant' | 'tool_call' | 'tool_result' | 'error'
+  toolName?: string
+  toolInvocationKey?: string
+  vendorEventType?: string
+  path?: string
+  branch?: string
+  baseBranch?: string
+  ref?: string
+  label?: string
+}
+
 export function formatAssistantActionResultDetails(
   result: AssistantActionResultDetailsInput,
 ): string[] {
@@ -150,6 +168,75 @@ export function formatAssistantActionResultDetails(
   }
 
   return lines
+}
+
+export function summarizeAssistantEvent(event: AssistantEventPresentationInput) {
+  if (event.kind === 'message') {
+    return `${event.role ?? 'assistant'}: ${event.content ?? ''}`.trim()
+  }
+
+  if (event.kind === 'transcript') {
+    const prefix = event.transport ? `${event.transport} ${event.entryKind ?? 'event'}` : 'event'
+    return `${prefix}: ${event.summary ?? ''}`.trim()
+  }
+
+  if (event.kind === 'worktree_prepared') {
+    return `Worktree prepared: ${event.path ?? ''}`.trim()
+  }
+
+  return `${event.label ?? 'artifact'}: ${event.ref ?? ''}`.trim()
+}
+
+export function formatAssistantEventDetails(event: AssistantEventPresentationInput): string[] {
+  const lines: string[] = []
+
+  if (event.kind === 'message') {
+    if (event.level) {
+      lines.push(`Message level: ${event.level}`)
+    }
+    return lines
+  }
+
+  if (event.kind === 'transcript') {
+    if (event.toolName) {
+      lines.push(`Tool name: ${event.toolName}`)
+    }
+    if (event.toolInvocationKey) {
+      lines.push(`Tool invocation key: ${event.toolInvocationKey}`)
+    }
+    if (event.vendorEventType) {
+      lines.push(`Vendor event type: ${event.vendorEventType}`)
+    }
+    return lines
+  }
+
+  if (event.kind === 'worktree_prepared') {
+    if (event.branch) {
+      lines.push(`Worktree branch: ${event.branch}`)
+    }
+    if (event.baseBranch) {
+      lines.push(`Worktree base branch: ${event.baseBranch}`)
+    }
+    return lines
+  }
+
+  if (event.label) {
+    lines.push(`Artifact label: ${event.label}`)
+  }
+  if (event.ref) {
+    lines.push(`Artifact ref: ${event.ref}`)
+  }
+  return lines
+}
+
+export function formatAssistantEventPresentation(event: AssistantEventPresentationInput): {
+  body: string
+  details: string[]
+} {
+  return {
+    body: summarizeAssistantEvent(event),
+    details: formatAssistantEventDetails(event),
+  }
 }
 
 export function summarizeAssistantAction(action: GoalAssistantAction) {

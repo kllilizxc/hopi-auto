@@ -2,6 +2,7 @@ import './index.css'
 import {
   formatAssistantActionPresentation,
   formatAssistantActionResultDetails,
+  formatAssistantEventPresentation,
   formatAssistantThreadEntryPresentation,
 } from '../assistant/assistantInspection'
 import type { GoalAssistantAction } from '../assistant/assistantRun'
@@ -1911,12 +1912,15 @@ function renderAssistantBundleFile(label: string, file?: AssistantRunBundleFile)
 }
 
 function renderAssistantEvent(event: AssistantEvent) {
+  const { body, details } = formatAssistantEventPresentation(event)
+
   return `
     <article class="assistant-entry">
       <div class="assistant-entry-top">
         <span class="assistant-kind kind-${escapeAttribute(event.kind)}">${escapeHtml(event.kind)}</span>
       </div>
-      <p>${escapeHtml(summarizeAssistantEvent(event))}</p>
+      <p>${escapeHtml(body)}</p>
+      ${details.map((detail) => `<div class="assistant-summary">${escapeHtml(detail)}</div>`).join('')}
     </article>
   `
 }
@@ -2099,23 +2103,6 @@ function renderStepTranscript(step: RunStep) {
 
 function selectedStep() {
   return state.selectedRun?.steps.find((step) => step.stepId === state.selectedStepId) ?? null
-}
-
-function summarizeAssistantEvent(event: AssistantEvent) {
-  if (event.kind === 'message') {
-    return `${event.role ?? 'assistant'}: ${event.content ?? ''}`.trim()
-  }
-
-  if (event.kind === 'transcript') {
-    const prefix = event.transport ? `${event.transport} ${event.entryKind ?? 'event'}` : 'event'
-    return `${prefix}: ${event.summary ?? ''}`.trim()
-  }
-
-  if (event.kind === 'worktree_prepared') {
-    return `Worktree prepared: ${event.path ?? ''}`.trim()
-  }
-
-  return `${event.label ?? 'artifact'}: ${event.ref ?? ''}`.trim()
 }
 
 function formatTimestamp(value: string) {

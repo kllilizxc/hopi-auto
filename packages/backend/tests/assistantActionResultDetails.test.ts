@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   formatAssistantActionPresentation,
   formatAssistantActionResultDetails,
+  formatAssistantEventPresentation,
 } from '../src/assistant/assistantInspection'
 
 describe('formatAssistantActionResultDetails', () => {
@@ -132,6 +133,41 @@ describe('formatAssistantActionResultDetails', () => {
         'Infer remaining answers: yes',
         'Action source-response format: matching_answer_sources',
       ],
+    })
+  })
+
+  test('surfaces structured runtime-event authority for assistant run inspection', () => {
+    expect(
+      formatAssistantEventPresentation({
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_call',
+        summary: 'Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
+        toolName: 'Bash',
+        toolInvocationKey: 'shell-1',
+        vendorEventType: 'item/completed',
+      }),
+    ).toEqual({
+      body: 'codex tool_call: Tool call: Bash (bun test packages/backend/tests/server.test.ts)',
+      details: [
+        'Tool name: Bash',
+        'Tool invocation key: shell-1',
+        'Vendor event type: item/completed',
+      ],
+    })
+  })
+
+  test('surfaces worktree-prepared event authority for assistant run inspection', () => {
+    expect(
+      formatAssistantEventPresentation({
+        kind: 'worktree_prepared',
+        path: '.hopi/worktrees/test/T-1',
+        branch: 'task/T-1',
+        baseBranch: 'main',
+      }),
+    ).toEqual({
+      body: 'Worktree prepared: .hopi/worktrees/test/T-1',
+      details: ['Worktree branch: task/T-1', 'Worktree base branch: main'],
     })
   })
 })
