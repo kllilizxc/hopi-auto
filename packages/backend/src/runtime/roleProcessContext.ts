@@ -4,7 +4,11 @@ import type { AgentRole } from '../agent/AgentRunner'
 import type { TaskItem } from '../domain/board'
 import { stringifyBoardYaml } from '../domain/validation'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
-import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
+import {
+  type DecisionStore,
+  type GoalDecision,
+  createDecisionStore,
+} from '../storage/decisionStore'
 import { createProjectPaths } from '../storage/paths'
 import {
   type GoalPlanningRequest,
@@ -51,11 +55,13 @@ interface PlannerContextInputs {
   todoContent: string
   decisionsFile: string
   decisionsContent: string
+  decisionEntries: GoalDecision[]
   planningRequestsFile: string
   planningRequestsContent: string
   relevantPlanningRequests: Array<{
     requestKey: string
     workflowKey?: string
+    workflowSharedAnswers: GoalPlanningRequestAnswer[]
     workflowTaskKey?: string
     blockedByWorkflowKeys: string[]
     groupKey?: string
@@ -74,6 +80,7 @@ interface PlannerContextInputs {
       taskRef: string
       title: string
       decisionRefs: string[]
+      workflowSharedAnswers: GoalPlanningRequestAnswer[]
       answers: GoalPlanningRequestAnswer[]
       requestedUpdates: GoalPlanningRequestUpdateTarget[]
     }>
@@ -342,6 +349,8 @@ ${inputs.todoContent.trim()}
 ${inputs.decisionsContent.trim()}
 \`\`\`
 
+${renderDecisionEntries(inputs.decisionEntries)}
+
 ### Current planning-requests.yml
 
 \`\`\`yaml
@@ -379,6 +388,32 @@ ${entries
     const supersededBy = entry.supersededBy ? ` | supersededBy: ${entry.supersededBy}` : ''
     return `- ${entry.status} | ${entry.preferenceKey} | ${entry.summary}${rationale}${retiredReason}${supersededBy}`
   })
+  .join('\n')}
+`
+}
+
+function renderDecisionEntries(entries: GoalDecision[]) {
+  if (entries.length === 0) {
+    return `### Parsed Decisions
+
+- No durable decision topics recorded yet.
+`
+  }
+
+  return `### Parsed Decisions
+
+${entries
+  .map((entry) =>
+    [
+      `- ${entry.status} | ${entry.decisionKey} | ${entry.summary}`,
+      entry.prompt ? `  Prompt: ${entry.prompt}` : null,
+      entry.taskRef ? `  Task: ${entry.taskRef}` : null,
+      entry.captureFormat ? `  Answer capture format: ${entry.captureFormat}` : null,
+      entry.answer ? `  Answer: ${entry.answer}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  )
   .join('\n')}
 `
 }
@@ -445,7 +480,7 @@ async function loadPlannerContextInputs(
   relevantTraces: GoalWriteTraceEntry[],
 ): Promise<PlannerContextInputs> {
   const board = await boardStore.readBoard(goalKey)
-  await decisions.ensureGoalDecisions(goalKey)
+  const decisionSet = await decisions.ensureGoalDecisions(goalKey)
   const planningRequestSet = await planningRequests.ensureGoalPlanningRequests(goalKey)
   const preferenceDocument = await preferences.readPreferences()
   const relevantPlanningRequests = planningRequestSet.requests
@@ -453,6 +488,7 @@ async function loadPlannerContextInputs(
     .map((request) => ({
       requestKey: request.requestKey,
       workflowKey: request.workflowKey,
+      workflowSharedAnswers: request.workflowSharedAnswers,
       workflowTaskKey: request.workflowTaskKey,
       blockedByWorkflowKeys: request.blockedByWorkflowKeys,
       groupKey: request.groupKey,
@@ -477,6 +513,7 @@ async function loadPlannerContextInputs(
     todoContent: stringifyBoardYaml(board),
     decisionsFile: paths.decisionsPath(goalKey),
     decisionsContent: await Bun.file(paths.decisionsPath(goalKey)).text(),
+    decisionEntries: decisionSet.decisions,
     planningRequestsFile: paths.planningRequestsPath(goalKey),
     planningRequestsContent: await Bun.file(paths.planningRequestsPath(goalKey)).text(),
     relevantPlanningRequests,
@@ -577,6 +614,7 @@ ${requests
     [
       `- ${request.requestKey} | ${request.title} | ${request.taskRef}`,
       request.workflowKey ? `  Workflow key: ${request.workflowKey}` : null,
+      renderPlanningRequestAnswers(request.workflowSharedAnswers, '  ', 'Workflow-shared answers'),
       request.workflowTaskKey ? `  Workflow task key: ${request.workflowTaskKey}` : null,
       request.blockedByWorkflowKeys.length > 0
         ? `  Workflow dependencies: ${request.blockedByWorkflowKeys.join(', ')}`
@@ -586,7 +624,7 @@ ${requests
       request.decisionRefs.length > 0
         ? `  Linked decisions: ${request.decisionRefs.join(', ')}`
         : null,
-      renderPlanningRequestAnswers(request.answers, '  '),
+      renderPlanningRequestAnswers(request.answers, '  ', 'Captured answers'),
       request.requestedUpdates.length > 0
         ? `  Requested durable updates: ${request.requestedUpdates.join(', ')}`
         : null,
@@ -616,7 +654,12 @@ ${groups
           request.decisionRefs.length > 0
             ? `    Linked decisions: ${request.decisionRefs.join(', ')}`
             : null,
-          renderPlanningRequestAnswers(request.answers, '    '),
+          renderPlanningRequestAnswers(
+            request.workflowSharedAnswers,
+            '    ',
+            'Workflow-shared answers',
+          ),
+          renderPlanningRequestAnswers(request.answers, '    ', 'Captured answers'),
           request.requestedUpdates.length > 0
             ? `    Requested durable updates: ${request.requestedUpdates.join(', ')}`
             : null,
@@ -645,16 +688,26 @@ function renderPlanningUpdateCoverage(
 `
 }
 
-function renderPlanningRequestAnswers(answers: GoalPlanningRequestAnswer[], indent: string) {
+function renderPlanningRequestAnswers(
+  answers: GoalPlanningRequestAnswer[],
+  indent: string,
+  heading: string,
+) {
   if (answers.length === 0) {
     return null
   }
 
   const bulletIndent = indent.length > 2 ? `${indent}  - ` : `${indent}- `
   return [
-    `${indent}Captured answers:`,
-    ...answers.map((entry) => `${bulletIndent}${entry.summary}: ${entry.answer}`),
+    `${indent}${heading}:`,
+    ...answers.map((entry) => `${bulletIndent}${formatPlanningRequestAnswer(entry)}`),
   ].join('\n')
+}
+
+function formatPlanningRequestAnswer(entry: GoalPlanningRequestAnswer) {
+  const prefix = entry.prompt ? `${entry.summary} [${entry.prompt}]` : entry.summary
+  const capture = entry.captureFormat ? ` [captureFormat=${entry.captureFormat}]` : ''
+  return `${prefix}${capture}: ${entry.answer}`
 }
 
 function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef: string) {
@@ -681,6 +734,7 @@ function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef
           taskRef: request.taskRef,
           title: request.title,
           decisionRefs: request.decisionRefs,
+          workflowSharedAnswers: request.workflowSharedAnswers,
           answers: request.answers,
           requestedUpdates: request.requestedUpdates,
         })),

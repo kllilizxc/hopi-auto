@@ -373,6 +373,22 @@ describe('createServer', () => {
         }),
       ],
     })
+
+    const decisionsResponse = await fetch(apiUrl(server, '/api/goals/test/decisions'))
+
+    expect(decisionsResponse.status).toBe(200)
+    await expect(decisionsResponse.json()).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          captureFormat: responseBody.resolvedSourceResponseFormat,
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          captureFormat: responseBody.resolvedSourceResponseFormat,
+        }),
+      ],
+    })
   })
 
   test('materializes planner answers through the direct planning-request API from explicit matching runs', async () => {
@@ -446,6 +462,29 @@ describe('createServer', () => {
                 'Rollback trigger should be two regressions in one hour.',
                 'The rollback trigger should stay explicit for the launch team.',
               ].join('\n\n'),
+            }),
+          ],
+        }),
+      ],
+    })
+
+    const planningRequestsResponse = await fetch(
+      apiUrl(server, '/api/goals/test/planning-requests'),
+    )
+
+    expect(planningRequestsResponse.status).toBe(200)
+    await expect(planningRequestsResponse.json()).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          answers: [
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              captureFormat: 'matching_runs',
+            }),
+            expect.objectContaining({
+              summary: 'Rollback trigger',
+              captureFormat: 'matching_runs',
             }),
           ],
         }),
@@ -14680,6 +14719,98 @@ preferences:
               answer: 'Start with five enterprise customers before broader rollout.',
             }),
           ]),
+        }),
+      ],
+    })
+  })
+
+  test('surfaces durable interpreted-answer provenance on workflow graph inspection APIs', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const createResponse = await postJson(server, '/api/goals/test/planning-requests/workflows', {
+      workflowKey: 'auth-rollout-follow-through',
+      sourceResponse: [
+        'Pilot scope?',
+        '',
+        'Start with five enterprise customers before broader rollout.',
+        '',
+        'That keeps early support manageable.',
+      ].join('\n'),
+      sourceResponseFormat: 'question_blocks',
+      inferRemainingAnswers: true,
+      workflows: [
+        {
+          kind: 'planning',
+          workflowTaskKey: 'rollout-notes',
+          title: 'Capture rollout notes',
+          description: 'Record the durable rollout follow-through.',
+          acceptanceCriteria: ['The rollout notes are durable.'],
+          requestedUpdates: ['goal.md'],
+        },
+      ],
+    })
+
+    expect(createResponse.status).toBe(201)
+    await expect(createResponse.json()).resolves.toMatchObject({
+      workflowKey: 'auth-rollout-follow-through',
+      resolvedSourceResponseFormat: 'question_blocks',
+    })
+
+    const listResponse = await fetch(apiUrl(server, '/api/goals/test/planning-requests/workflows'))
+
+    expect(listResponse.status).toBe(200)
+    await expect(listResponse.json()).resolves.toMatchObject({
+      workflows: [
+        expect.objectContaining({
+          workflowKey: 'auth-rollout-follow-through',
+          workflowSharedAnswers: [
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              captureFormat: 'question_blocks',
+            }),
+          ],
+          workflows: [
+            expect.objectContaining({
+              kind: 'planning',
+              request: expect.objectContaining({
+                answers: [
+                  expect.objectContaining({
+                    summary: 'Pilot scope',
+                    captureFormat: 'question_blocks',
+                  }),
+                ],
+              }),
+            }),
+          ],
+        }),
+      ],
+    })
+
+    const detailResponse = await fetch(
+      apiUrl(server, '/api/goals/test/planning-requests/workflows/auth-rollout-follow-through'),
+    )
+
+    expect(detailResponse.status).toBe(200)
+    await expect(detailResponse.json()).resolves.toMatchObject({
+      workflowKey: 'auth-rollout-follow-through',
+      workflowSharedAnswers: [
+        expect.objectContaining({
+          summary: 'Pilot scope',
+          captureFormat: 'question_blocks',
+        }),
+      ],
+      workflows: [
+        expect.objectContaining({
+          kind: 'planning',
+          request: expect.objectContaining({
+            answers: [
+              expect.objectContaining({
+                summary: 'Pilot scope',
+                captureFormat: 'question_blocks',
+              }),
+            ],
+          }),
         }),
       ],
     })

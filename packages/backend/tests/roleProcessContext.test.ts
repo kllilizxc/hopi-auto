@@ -5,6 +5,7 @@ import { createRoleProcessContextBuilder } from '../src/runtime/roleProcessConte
 import { createRunHistoryStore } from '../src/runtime/runHistoryStore'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
+import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
 import { createPreferenceStore } from '../src/storage/preferenceStore'
 
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'role-process-context')
@@ -133,7 +134,7 @@ requests:
     expect(context).toContain('Linked decisions: rollout-strategy')
     expect(context).toContain('Captured answers:')
     expect(context).toContain(
-      'Rollout guardrail: Start with five enterprise pilots before broad rollout.',
+      'Rollout guardrail [What should the rollout guardrail be?]: Start with five enterprise pilots before broad rollout.',
     )
     expect(context).toContain('Requested durable updates: goal.md, design.md, todo.yml')
     expect(context).toContain('Prefer incremental rollouts.')
@@ -155,6 +156,75 @@ requests:
     expect(prompt).toContain(
       'If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.',
     )
+  })
+
+  test('surfaces durable interpreted-answer provenance in parsed planner context', async () => {
+    const rootDir = testRoot()
+    const decisionStore = createDecisionStore(rootDir)
+    await decisionStore.createDecision('goal-2b', {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: 'P-2',
+    })
+    await decisionStore.resolveDecision('goal-2b', 'auth-strategy', {
+      answer: 'Use Bun-native auth for the first rollout.',
+      captureFormat: 'matching_runs',
+    })
+
+    await createPlanningRequestStore(rootDir).createRequest('goal-2b', {
+      requestKey: 'PR-1',
+      workflowKey: 'auth-follow-through',
+      title: 'Capture auth rollout notes',
+      description: 'Record the durable auth rollout follow-through.',
+      acceptanceCriteria: ['The auth rollout notes are durable.'],
+      taskRef: 'P-2',
+      decisionRefs: ['auth-strategy'],
+      workflowSharedAnswers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'What should the pilot scope be?',
+          captureFormat: 'question_blocks',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      answers: [
+        {
+          summary: 'Pilot scope',
+          prompt: 'What should the pilot scope be?',
+          captureFormat: 'question_blocks',
+          answer: 'Start with five enterprise customers before broader launch.',
+        },
+      ],
+      requestedUpdates: ['design.md', 'todo.yml'],
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-2b',
+      goalTitle: 'Goal Two B',
+      runId: 'run-2b',
+      stepId: 'step-2b',
+      role: 'planner',
+      task: {
+        ref: 'P-2',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Capture auth rollout notes',
+        description: 'Record durable auth rollout context.',
+        acceptanceCriteria: ['Durable interpreted-answer provenance is visible in context.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    expect(context).toContain('### Parsed Decisions')
+    expect(context).toContain('resolved | auth-strategy | Choose the auth strategy')
+    expect(context).toContain('Answer capture format: matching_runs')
+    expect(context).toContain('Workflow-shared answers:')
+    expect(context).toContain(
+      'Pilot scope [What should the pilot scope be?] [captureFormat=question_blocks]: Start with five enterprise customers before broader launch.',
+    )
+    expect(context).toContain('Captured answers:')
   })
 
   test('shows Goal-local requested update roots and generic planner guidance for extra doc paths', async () => {

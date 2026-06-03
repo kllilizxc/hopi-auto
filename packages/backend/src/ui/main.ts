@@ -40,6 +40,7 @@ interface GoalDecision {
   summary: string
   summaryKey?: string
   prompt?: string
+  captureFormat?: string
   status: 'open' | 'resolved'
   taskRef?: string
   answer?: string
@@ -47,16 +48,20 @@ interface GoalDecision {
   resolvedAt?: string
 }
 
+interface CapturedAnswer {
+  summary: string
+  answerKey?: string
+  summaryKey?: string
+  prompt?: string
+  captureFormat?: string
+  answer: string
+}
+
 interface GoalPlanningRequest {
   requestKey: string
   workflowKey?: string
   workflowSharedDecisionRefs?: string[]
-  workflowSharedAnswers?: Array<{
-    summary: string
-    answerKey?: string
-    summaryKey?: string
-    answer: string
-  }>
+  workflowSharedAnswers?: CapturedAnswer[]
   workflowTaskKey?: string
   blockedByWorkflowKeys: string[]
   groupKey?: string
@@ -66,12 +71,7 @@ interface GoalPlanningRequest {
   acceptanceCriteria: string[]
   taskRef: string
   decisionRefs: string[]
-  answers: Array<{
-    summary: string
-    answerKey?: string
-    summaryKey?: string
-    answer: string
-  }>
+  answers: CapturedAnswer[]
   requestedUpdates: string[]
   status: 'open' | 'resolved'
   createdAt: string
@@ -104,10 +104,7 @@ interface GoalPlanningWorkflowState {
   kind: 'workflow_batch'
   workflowKey: string
   workflowSharedDecisionRefs: string[]
-  workflowSharedAnswers: Array<{
-    summary: string
-    answer: string
-  }>
+  workflowSharedAnswers: CapturedAnswer[]
   workflows: GoalPlanningWorkflowLeafState[]
   groupKeys: string[]
   requestKeys: string[]
@@ -1656,6 +1653,11 @@ function renderDecision(decision: GoalDecision) {
           ? `<div class="assistant-summary">Prompt: ${escapeHtml(decision.prompt)}</div>`
           : ''
       }
+      ${
+        decision.captureFormat
+          ? `<div class="assistant-summary">Answer capture format: ${escapeHtml(decision.captureFormat)}</div>`
+          : ''
+      }
       ${decision.taskRef ? `<div class="assistant-summary">Task: ${escapeHtml(decision.taskRef)}</div>` : ''}
       ${
         decision.answer
@@ -1673,13 +1675,10 @@ function renderDecision(decision: GoalDecision) {
   `
 }
 
-function formatPlanningAnswerSummary(entry: {
-  summary: string
-  prompt?: string
-  answer: string
-}) {
+function formatPlanningAnswerSummary(entry: CapturedAnswer) {
   const prefix = entry.prompt ? `${entry.summary} [${entry.prompt}]` : entry.summary
-  return `${prefix}: ${entry.answer}`
+  const capture = entry.captureFormat ? ` [captureFormat=${entry.captureFormat}]` : ''
+  return `${prefix}${capture}: ${entry.answer}`
 }
 
 function renderPlanningRequest(request: GoalPlanningRequest) {
