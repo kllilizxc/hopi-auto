@@ -19,6 +19,7 @@ export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
   'pending_answer_sources',
   'matching_answer_sources',
   'matching_runs',
+  'matching_middle_runs',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -70,6 +71,7 @@ export interface InterpretedSourceResponseState {
   matchingRunCandidateGroups?: string[][]
   matchingRunCandidateLookup?: Map<string, number>
   matchingRuns?: MatchingSourceResponseRun[]
+  matchingMiddleRuns?: MatchingSourceResponseRun[]
   orderedItems?: string[]
   orderedBlocks?: string[]
   singlePendingConsumed: boolean
@@ -87,6 +89,7 @@ export interface InterpretedSourceResponseState {
   nextPendingConjunctionIndex: number
   nextPendingAnswerSourceIndex: number
   consumedMatchingRunIndexes: Set<number>
+  consumedMatchingMiddleRunIndexes: Set<number>
   consumedMatchingAnswerSourceIndexes: Set<number>
   consumedLabeledSectionLabels: Set<string>
   consumedInlineTopicLabels: Set<string>
@@ -449,6 +452,7 @@ const INFER_OPEN_DECISION_FORMATS = new Set<ConcreteInterpretableSourceResponseF
   'pending_answer_sources',
   'matching_answer_sources',
   'matching_runs',
+  'matching_middle_runs',
   'ordered_items',
   'ordered_blocks',
   'question_blocks',
@@ -686,6 +690,7 @@ export function createInterpretedSourceResponseState(
     nextOrderedItemIndex: 0,
     nextOrderedBlockIndex: 0,
     consumedMatchingRunIndexes: new Set<number>(),
+    consumedMatchingMiddleRunIndexes: new Set<number>(),
     consumedMatchingAnswerSourceIndexes: new Set<number>(),
     consumedLabeledSectionLabels: new Set<string>(),
     consumedInlineTopicLabels: new Set<string>(),
@@ -2622,6 +2627,17 @@ function resolveAnswerContent(
     }
   }
 
+  if (sourceResponseFormat === 'matching_middle_runs') {
+    return {
+      answer: resolveMatchingMiddleRunSourceResponseValue(
+        sourceResponse,
+        sourceResponseCandidates,
+        label,
+        sourceResponseState,
+      ),
+    }
+  }
+
   if (sourceResponseFormat === 'ordered_items') {
     return {
       answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
@@ -3860,6 +3876,51 @@ function resolveMatchingRunSourceResponseValue(
   return matchingRun.text
 }
 
+function resolveMatchingMiddleRunSourceResponseValue(
+  sourceResponse: string | undefined,
+  candidates: string[],
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const runs = parseMatchingMiddleSourceResponseRuns(sourceResponse, label, sourceResponseState)
+  const candidateGroupIndex = resolveMatchingRunCandidateGroupIndex(
+    candidates,
+    label,
+    sourceResponseState,
+  )
+  const consumedIndexes = sourceResponseState?.consumedMatchingMiddleRunIndexes ?? new Set<number>()
+  const matchingIndexes = runs.flatMap((run, index) => {
+    if (consumedIndexes.has(index)) {
+      return []
+    }
+    return run.candidateGroupIndex === candidateGroupIndex ? [index] : []
+  })
+
+  if (matchingIndexes.length > 1) {
+    throw new AnswerInterpretationError(`Multiple matching middle runs matched ${label}.`)
+  }
+
+  const matchingIndex = matchingIndexes[0]
+  if (matchingIndex === undefined) {
+    throw new AnswerInterpretationError(
+      `No matching middle run matched ${label} in sourceResponse.`,
+    )
+  }
+
+  if (sourceResponseState) {
+    sourceResponseState.consumedMatchingMiddleRunIndexes.add(matchingIndex)
+  }
+
+  const matchingRun = runs[matchingIndex]
+  if (!matchingRun) {
+    throw new AnswerInterpretationError(
+      `No matching middle run matched ${label} in sourceResponse.`,
+    )
+  }
+
+  return matchingRun.text
+}
+
 function materializeMixedRemainingAnswerSourceInference(input: {
   sourceResponse?: string
   answerSources?: InterpretableAnswerSource[]
@@ -4064,6 +4125,104 @@ function parseMatchingSourceResponseRuns(
   return runs
 }
 
+function parseMatchingMiddleSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const cachedRuns = sourceResponseState?.matchingMiddleRuns
+  if (cachedRuns) {
+    return cachedRuns
+  }
+
+  const candidateGroups = sourceResponseState?.matchingRunCandidateGroups ?? []
+  if (candidateGroups.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_middle_runs requires registered candidate groups for ${label}.`,
+    )
+  }
+
+  const { units, joiner, unitLabel } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  const runs: MatchingSourceResponseRun[] = []
+  let currentLeadingTexts: string[] = []
+  let currentAnchor: { text: string; candidateGroupIndex: number } | undefined
+  let trailingTexts: string[] = []
+
+  for (const unit of units) {
+    const matchingGroupIndexes = findMatchingRunGroupIndexes(unit, candidateGroups)
+    if (matchingGroupIndexes.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple matching middle runs matched unit "${unit.text}" in sourceResponse.`,
+      )
+    }
+
+    const matchingGroupIndex = matchingGroupIndexes[0]
+    if (matchingGroupIndex === undefined) {
+      if (!currentAnchor) {
+        currentLeadingTexts.push(unit.text)
+      } else {
+        trailingTexts.push(unit.text)
+      }
+      continue
+    }
+
+    if (!currentAnchor) {
+      if (currentLeadingTexts.length === 0) {
+        throw new AnswerInterpretationError(
+          `sourceResponseFormat matching_middle_runs requires each run to start with at least one leading ${unitLabel} before the matched anchor.`,
+        )
+      }
+      currentAnchor = {
+        text: unit.text,
+        candidateGroupIndex: matchingGroupIndex,
+      }
+      trailingTexts = []
+      continue
+    }
+
+    if (trailingTexts.length < 2) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat matching_middle_runs requires at least one trailing ${unitLabel} before the next matched anchor and at least one leading ${unitLabel} for that next run.`,
+      )
+    }
+
+    runs.push({
+      text: [...currentLeadingTexts, currentAnchor.text, ...trailingTexts.slice(0, -1)].join(
+        joiner,
+      ),
+      candidateGroupIndex: currentAnchor.candidateGroupIndex,
+    })
+    currentLeadingTexts = [trailingTexts[trailingTexts.length - 1] as string]
+    currentAnchor = {
+      text: unit.text,
+      candidateGroupIndex: matchingGroupIndex,
+    }
+    trailingTexts = []
+  }
+
+  if (!currentAnchor) {
+    throw new AnswerInterpretationError(
+      `No matching middle run matched any candidate group for ${label} in sourceResponse.`,
+    )
+  }
+
+  if (trailingTexts.length === 0) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_middle_runs requires each run to end with at least one trailing ${unitLabel} after the matched anchor.`,
+    )
+  }
+
+  runs.push({
+    text: [...currentLeadingTexts, currentAnchor.text, ...trailingTexts].join(joiner),
+    candidateGroupIndex: currentAnchor.candidateGroupIndex,
+  })
+
+  if (sourceResponseState) {
+    sourceResponseState.matchingMiddleRuns = runs
+  }
+  return runs
+}
+
 function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined, label: string) {
   const shared = sourceResponse?.trim()
   if (!shared) {
@@ -4074,17 +4233,17 @@ function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined,
 
   const paragraphs = parseTopicSourceResponseParagraphs(shared)
   if (paragraphs.length > 1) {
-    return { units: paragraphs, joiner: '\n\n' }
+    return { units: paragraphs, joiner: '\n\n', unitLabel: 'paragraph' }
   }
 
   const sentences = parseTopicSourceResponseSentences(shared)
   if (sentences.length > 1) {
-    return { units: sentences, joiner: ' ' }
+    return { units: sentences, joiner: ' ', unitLabel: 'sentence' }
   }
 
   const clauses = parseTopicSourceResponseClauses(shared)
   if (clauses.length > 1) {
-    return { units: clauses, joiner: ', ' }
+    return { units: clauses, joiner: ', ', unitLabel: 'clause' }
   }
 
   return {
@@ -4095,6 +4254,7 @@ function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined,
       },
     ],
     joiner: ' ',
+    unitLabel: 'sentence',
   }
 }
 
@@ -4177,6 +4337,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'pending_answer_sources' &&
     sourceResponseFormat !== 'matching_answer_sources' &&
     sourceResponseFormat !== 'matching_runs' &&
+    sourceResponseFormat !== 'matching_middle_runs' &&
     sourceResponseFormat !== 'ordered_items' &&
     sourceResponseFormat !== 'ordered_blocks' &&
     sourceResponseFormat !== 'question_blocks' &&
@@ -4290,6 +4451,13 @@ function materializeMatchingOpenDecisionAnswers(
       )
     } else if (sourceResponseFormat === 'matching_runs') {
       match = resolveMatchingRunSourceResponseValue(
+        sourceResponse,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `decision answer ${decision.decisionKey}`,
+        sourceResponseState,
+      )
+    } else if (sourceResponseFormat === 'matching_middle_runs') {
+      match = resolveMatchingMiddleRunSourceResponseValue(
         sourceResponse,
         buildOpenDecisionSourceResponseCandidates(decision),
         `decision answer ${decision.decisionKey}`,
@@ -8239,7 +8407,11 @@ function registerMatchingRunCandidateGroups(
   sourceResponseState: InterpretedSourceResponseState | undefined,
   candidateGroups: string[][],
 ) {
-  if (!sourceResponseState || sourceResponseState.sourceResponseFormat !== 'matching_runs') {
+  if (
+    !sourceResponseState ||
+    (sourceResponseState.sourceResponseFormat !== 'matching_runs' &&
+      sourceResponseState.sourceResponseFormat !== 'matching_middle_runs')
+  ) {
     return
   }
 
@@ -8267,6 +8439,7 @@ function registerMatchingRunCandidateGroups(
   sourceResponseState.matchingRunCandidateLookup = lookup
   if (changed) {
     sourceResponseState.matchingRuns = undefined
+    sourceResponseState.matchingMiddleRuns = undefined
   }
 }
 

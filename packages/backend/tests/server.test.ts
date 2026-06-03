@@ -6781,6 +6781,107 @@ describe('createServer', () => {
     })
   })
 
+  test('records multiple durable answers through the API from matching middle runs without explicit topic or question anchors', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse: [
+        'Keep the runtime simple.',
+        'Adopt the auth provider for the Bun-first product path.',
+        'Use Bun-native auth.',
+        'Launch in phases.',
+        'Rollout should happen in stages, not once.',
+        'Use a staged rollout.',
+        'Keep support load manageable.',
+        'The customers in the pilot before broader launch should be five enterprise customers.',
+        'That keeps the pilot focused.',
+      ].join(' '),
+      sourceResponseFormat: 'matching_middle_runs',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which customers should be in the pilot before broader launch?',
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer:
+            'Keep the runtime simple. Adopt the auth provider for the Bun-first product path. Use Bun-native auth.',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer:
+            'Launch in phases. Rollout should happen in stages, not once. Use a staged rollout.',
+        }),
+      ],
+    })
+    await expect(
+      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
+    ).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'Keep support load manageable. The customers in the pilot before broader launch should be five enterprise customers. That keeps the pilot focused.',
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'Keep support load manageable. The customers in the pilot before broader launch should be five enterprise customers. That keeps the pilot focused.',
+            }),
+          ]),
+        }),
+      ],
+    })
+  })
+
   test('records matching open decisions through the API from topic paragraphs by durable prompt keyword anchors', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
