@@ -1,5 +1,9 @@
 import './index.css'
-import { formatAssistantActionResultDetails } from './assistantActionResultDetails'
+import {
+  formatAssistantActionResultDetails,
+  formatAssistantThreadEntryPresentation,
+} from '../assistant/assistantInspection'
+import type { AssistantThreadEntry as RuntimeAssistantThreadEntry } from '../runtime/assistantThreadStore'
 
 type TaskStatus = 'planned' | 'in_progress' | 'in_review' | 'merging' | 'done'
 type RunStatus = 'active' | 'retryable' | 'completed' | 'blocked' | 'system_error'
@@ -237,14 +241,7 @@ interface RunDetail {
   steps: RunStep[]
 }
 
-interface AssistantThreadEntry {
-  entryId: string
-  createdAt: string
-  kind: 'user_message' | 'assistant_message' | 'action' | 'action_result'
-  content?: string
-  actionType?: string
-  summary?: string
-}
+type AssistantThreadEntry = RuntimeAssistantThreadEntry
 
 interface AssistantRunSummary {
   assistantRunId: string
@@ -1833,10 +1830,7 @@ function renderPlanningWorkflowLeaf(workflow: GoalPlanningWorkflowLeafState) {
 }
 
 function renderAssistantThreadEntry(entry: AssistantThreadEntry) {
-  const body =
-    entry.kind === 'user_message' || entry.kind === 'assistant_message'
-      ? (entry.content ?? '')
-      : `${entry.actionType ?? 'action'} | ${entry.summary ?? ''}`
+  const { body, details } = formatAssistantThreadEntryPresentation(entry)
 
   return `
     <article class="assistant-entry">
@@ -1845,6 +1839,7 @@ function renderAssistantThreadEntry(entry: AssistantThreadEntry) {
         <time>${escapeHtml(formatTimestamp(entry.createdAt))}</time>
       </div>
       <p>${escapeHtml(body)}</p>
+      ${details.map((detail) => `<div class="assistant-summary">${escapeHtml(detail)}</div>`).join('')}
     </article>
   `
 }

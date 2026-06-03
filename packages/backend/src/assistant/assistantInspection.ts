@@ -1,3 +1,5 @@
+import type { AssistantThreadEntry } from '../runtime/assistantThreadStore'
+
 export interface AssistantActionResultDetailsInput {
   kind?: string
   summary?: string
@@ -50,4 +52,55 @@ export function formatAssistantActionResultDetails(
   }
 
   return lines
+}
+
+export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {
+  body: string
+  details: string[]
+} {
+  if (entry.kind === 'user_message' || entry.kind === 'assistant_message') {
+    return {
+      body: entry.content,
+      details: [],
+    }
+  }
+
+  if (entry.kind === 'action_result') {
+    return {
+      body: `${entry.actionType ?? 'action'} | ${entry.summary ?? ''}`,
+      details: entry.result ? formatAssistantActionResultDetails(entry.result) : [],
+    }
+  }
+
+  if (entry.kind === 'action') {
+    return {
+      body: `${entry.actionType} | ${entry.summary}`,
+      details: [],
+    }
+  }
+
+  return {
+    body: '',
+    details: [],
+  }
+}
+
+export function renderRecentAssistantThreadMarkdown(entries: AssistantThreadEntry[]) {
+  if (entries.length === 0) {
+    return '## Recent Assistant Thread\n\n- No assistant thread entries recorded yet.\n'
+  }
+
+  return `## Recent Assistant Thread
+
+${entries
+  .map((entry) => {
+    const { body, details } = formatAssistantThreadEntryPresentation(entry)
+    const base = `- ${entry.createdAt} | ${entry.kind} | ${body}`
+    if (details.length === 0) {
+      return base
+    }
+    return `${base}\n${details.map((detail) => `  ${detail}`).join('\n')}`
+  })
+  .join('\n')}
+`
 }

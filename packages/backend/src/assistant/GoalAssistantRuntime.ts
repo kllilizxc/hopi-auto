@@ -136,6 +136,7 @@ export function createGoalAssistantRuntime(
             kind: 'action_result',
             actionType: action.kind,
             summary: result.summary,
+            result,
           })
         }
 

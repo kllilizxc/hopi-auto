@@ -1,6 +1,10 @@
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
+import {
+  type GoalAssistantActionResult,
+  assistantActionResultSchema,
+} from '../assistant/assistantRun'
 import { withFileLock } from '../storage/lock'
 import { createProjectPaths } from '../storage/paths'
 
@@ -17,7 +21,12 @@ export type AssistantThreadEntryInput =
   | { kind: 'user_message'; content: string }
   | { kind: 'assistant_message'; content: string }
   | { kind: 'action'; actionType: string; summary: string }
-  | { kind: 'action_result'; actionType: string; summary: string }
+  | {
+      kind: 'action_result'
+      actionType: string
+      summary: string
+      result?: GoalAssistantActionResult
+    }
 
 export type AssistantThreadEntry =
   | {
@@ -29,9 +38,17 @@ export type AssistantThreadEntry =
   | {
       entryId: string
       createdAt: string
-      kind: 'action' | 'action_result'
+      kind: 'action'
       actionType: string
       summary: string
+    }
+  | {
+      entryId: string
+      createdAt: string
+      kind: 'action_result'
+      actionType: string
+      summary: string
+      result?: GoalAssistantActionResult
     }
 
 export interface GoalAssistantThread {
@@ -55,9 +72,17 @@ const AssistantThreadEntrySchema = z.discriminatedUnion('kind', [
   z.object({
     entryId: z.string().min(1),
     createdAt: z.string().datetime(),
-    kind: z.enum(['action', 'action_result']),
+    kind: z.literal('action'),
     actionType: z.string().min(1),
     summary: z.string().min(1),
+  }),
+  z.object({
+    entryId: z.string().min(1),
+    createdAt: z.string().datetime(),
+    kind: z.literal('action_result'),
+    actionType: z.string().min(1),
+    summary: z.string().min(1),
+    result: assistantActionResultSchema.optional(),
   }),
 ])
 
@@ -112,6 +137,7 @@ function createThreadEntry(input: AssistantThreadEntryInput): AssistantThreadEnt
     kind: input.kind,
     actionType: input.actionType,
     summary: input.summary,
+    ...(input.kind === 'action_result' && input.result ? { result: input.result } : {}),
   }
 }
 

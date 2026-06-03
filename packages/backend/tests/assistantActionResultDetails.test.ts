@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { formatAssistantActionResultDetails } from '../src/ui/assistantActionResultDetails'
+import { formatAssistantActionResultDetails } from '../src/assistant/assistantInspection'
 
 describe('formatAssistantActionResultDetails', () => {
   test('surfaces the resolved source-response format for interpreted assistant actions', () => {

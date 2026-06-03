@@ -21,6 +21,7 @@ import {
   type PreferenceStore,
   createPreferenceStore,
 } from '../storage/preferenceStore'
+import { renderRecentAssistantThreadMarkdown } from './assistantInspection'
 
 export interface PrepareGoalAssistantBundleOptions {
   goalKey: string
@@ -696,24 +697,7 @@ ${options.context}
 function renderRecentThread(
   entries: Awaited<ReturnType<AssistantThreadStore['readThread']>>['entries'],
 ) {
-  if (entries.length === 0) {
-    return '## Recent Assistant Thread\n\n- No assistant thread entries recorded yet.\n'
-  }
-
-  return `## Recent Assistant Thread
-
-${entries
-  .map((entry) => {
-    if (entry.kind === 'user_message' || entry.kind === 'assistant_message') {
-      return `- ${entry.createdAt} | ${entry.kind} | ${entry.content}`
-    }
-    if (entry.kind === 'action' || entry.kind === 'action_result') {
-      return `- ${entry.createdAt} | ${entry.kind} | ${entry.actionType} | ${entry.summary}`
-    }
-    return `- ${entry.createdAt} | ${entry.kind}`
-  })
-  .join('\n')}
-`
+  return renderRecentAssistantThreadMarkdown(entries)
 }
 
 function renderRecentRuns(runs: Awaited<ReturnType<RunHistoryStore['listRuns']>>) {

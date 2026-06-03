@@ -40,6 +40,41 @@ describe('createAssistantThreadStore', () => {
       ],
     })
   })
+
+  test('persists structured assistant action-result authority in the assistant thread', async () => {
+    const store = createAssistantThreadStore(testRoot())
+
+    await store.appendEntry(goalKey, {
+      kind: 'action_result',
+      actionType: 'request_planning',
+      summary: 'Requested planning follow-through in PR-1 for P-1.',
+      result: {
+        kind: 'request_planning',
+        requestKey: 'PR-1',
+        taskRef: 'P-1',
+        resolvedSourceResponseFormat: 'matching_answer_sources',
+        summary: 'Requested planning follow-through in PR-1 for P-1.',
+      },
+    })
+
+    await expect(store.readThread(goalKey)).resolves.toMatchObject({
+      goalKey,
+      entries: [
+        {
+          kind: 'action_result',
+          actionType: 'request_planning',
+          summary: 'Requested planning follow-through in PR-1 for P-1.',
+          result: {
+            kind: 'request_planning',
+            requestKey: 'PR-1',
+            taskRef: 'P-1',
+            resolvedSourceResponseFormat: 'matching_answer_sources',
+            summary: 'Requested planning follow-through in PR-1 for P-1.',
+          },
+        },
+      ],
+    })
+  })
 })
 
 function testRoot() {

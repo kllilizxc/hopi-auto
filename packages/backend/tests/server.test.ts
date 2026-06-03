@@ -19275,6 +19275,25 @@ preferences:
       ]),
     )
 
+    const threadResponse = await fetch(apiUrl(server, '/api/goals/test/assistant/thread'))
+    expect(threadResponse.status).toBe(200)
+    await expect(threadResponse.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_planning',
+          summary: 'Requested planning follow-through in PR-1 for P-1.',
+          result: expect.objectContaining({
+            kind: 'request_planning',
+            requestKey: 'PR-1',
+            taskRef: 'P-1',
+            resolvedSourceResponseFormat: 'matching_answer_sources',
+          }),
+        }),
+      ]),
+    })
+
     const detailResponse = await fetch(
       apiUrl(server, `/api/goals/test/assistant/runs/${result.assistantRunId}`),
     )
