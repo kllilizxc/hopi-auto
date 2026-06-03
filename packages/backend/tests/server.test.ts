@@ -28,6 +28,25 @@ afterEach(async () => {
   await rm(tmpBase, { recursive: true, force: true })
 })
 
+function stripPlanningAnswerCaptureFormat<T extends { captureFormat?: string }>(
+  answer: T,
+): Omit<T, 'captureFormat'> {
+  const { captureFormat: _captureFormat, ...rest } = answer
+  return rest
+}
+
+async function readGoalPlanningRequestsForAssertion(workspaceRoot: string) {
+  const state = await createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test')
+  return {
+    ...state,
+    requests: state.requests.map((request) => ({
+      ...request,
+      answers: request.answers.map(stripPlanningAnswerCaptureFormat),
+      workflowSharedAnswers: request.workflowSharedAnswers.map(stripPlanningAnswerCaptureFormat),
+    })),
+  }
+}
+
 describe('createServer', () => {
   test('serves the Bun UI shell at root', async () => {
     const server = startServer()
@@ -184,9 +203,7 @@ describe('createServer', () => {
       ],
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -240,9 +257,7 @@ describe('createServer', () => {
       ],
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -344,6 +359,20 @@ describe('createServer', () => {
         }),
       ],
     })
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          captureFormat: responseBody.resolvedSourceResponseFormat,
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          captureFormat: responseBody.resolvedSourceResponseFormat,
+        }),
+      ],
+    })
   })
 
   test('materializes planner answers through the direct planning-request API from explicit matching runs', async () => {
@@ -369,7 +398,8 @@ describe('createServer', () => {
     })
 
     expect(createResponse.status).toBe(201)
-    await expect(createResponse.json()).resolves.toMatchObject({
+    const responseBody = await createResponse.json()
+    expect(responseBody).toMatchObject({
       requestKey: 'PR-1',
       taskRef: 'P-1',
       answers: [
@@ -401,6 +431,7 @@ describe('createServer', () => {
           answers: [
             expect.objectContaining({
               summary: 'Pilot scope',
+              captureFormat: 'matching_runs',
               prompt: 'What should the pilot scope be?',
               answer: [
                 'Pilot scope should start with five enterprise customers.',
@@ -409,6 +440,7 @@ describe('createServer', () => {
             }),
             expect.objectContaining({
               summary: 'Rollback trigger',
+              captureFormat: 'matching_runs',
               prompt: 'What should the rollback trigger be?',
               answer: [
                 'Rollback trigger should be two regressions in one hour.',
@@ -1459,9 +1491,7 @@ describe('createServer', () => {
       requestedUpdates: ['goal.md', 'design.md'],
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -1489,9 +1519,7 @@ describe('createServer', () => {
       requestedUpdates: ['goal.md', 'notes/rollout.md', 'research.md'],
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -1521,9 +1549,7 @@ describe('createServer', () => {
       groupTaskKey: 'goal-docs',
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -1586,9 +1612,7 @@ describe('createServer', () => {
       createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
       createdTaskRefs: ['P-1', 'P-2', 'P-3'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -1683,9 +1707,7 @@ describe('createServer', () => {
       requestKeys: ['PR-1', 'PR-2', 'PR-3'],
       taskRefs: ['P-1', 'P-2', 'P-3'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -1783,9 +1805,7 @@ describe('createServer', () => {
       createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
       createdTaskRefs: ['P-1', 'P-2', 'P-3'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -2114,9 +2134,7 @@ describe('createServer', () => {
       createdRequestKeys: ['PR-2', 'PR-3'],
       createdTaskRefs: ['P-2', 'P-3'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -2242,9 +2260,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           workflowSharedAnswers: [
@@ -2414,9 +2430,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -2594,9 +2608,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -2769,9 +2781,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -2967,9 +2977,7 @@ describe('createServer', () => {
       createdRequestKeys: ['PR-4'],
       createdTaskRefs: ['P-4'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3106,9 +3114,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3257,9 +3263,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-3',
@@ -3572,9 +3576,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3652,9 +3654,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3723,9 +3723,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3771,9 +3769,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3846,9 +3842,7 @@ describe('createServer', () => {
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -3971,9 +3965,7 @@ describe('createServer', () => {
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4061,9 +4053,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(201)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4156,9 +4146,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4257,9 +4245,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4374,9 +4360,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4484,9 +4468,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4574,9 +4556,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4665,9 +4645,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -4785,9 +4763,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -5518,9 +5494,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -5630,9 +5604,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -5742,9 +5714,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -5834,9 +5804,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -5989,9 +5957,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6135,9 +6101,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6321,9 +6285,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6412,9 +6374,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6510,9 +6470,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6603,9 +6561,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6707,9 +6663,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6803,9 +6757,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -6904,9 +6856,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7004,9 +6954,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7104,9 +7052,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7307,9 +7253,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -7387,9 +7331,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(201)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -7532,9 +7474,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7617,9 +7557,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7713,9 +7651,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -7819,26 +7755,28 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'topic_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'topic_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
       ],
@@ -7915,9 +7853,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -8017,9 +7953,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -8119,9 +8053,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -8221,9 +8153,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -8337,26 +8267,28 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'topic_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'topic_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch for pilot scope.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
       ],
@@ -8539,26 +8471,28 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'ordered_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'ordered_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
       ],
@@ -8649,26 +8583,28 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
       ],
@@ -8747,20 +8683,22 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_clauses',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_clauses',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
+            }),
           ],
         }),
       ],
@@ -8864,26 +8802,28 @@ describe('createServer', () => {
       requests: [
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
         expect.objectContaining({
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               prompt: 'Pilot scope?',
+              captureFormat: 'question_blocks',
               answer: [
                 'Start with five enterprise customers before broader launch.',
                 'That keeps early support manageable.',
               ].join('\n\n'),
-            },
+            }),
           ],
         }),
       ],
@@ -9724,20 +9664,22 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               answerKey: 'pilot-scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'pending_answer_sources',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answerKey: 'rollback-trigger',
               prompt: 'What should the rollback trigger be?',
+              captureFormat: 'pending_answer_sources',
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',
               ),
-            },
+            }),
           ],
         }),
       ],
@@ -9828,20 +9770,22 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               answerKey: 'pilot-scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'matching_answer_sources',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               answerKey: 'rollback-trigger',
               prompt: 'What should the rollback trigger be?',
+              captureFormat: 'matching_answer_sources',
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',
               ),
-            },
+            }),
           ],
         }),
       ],
@@ -9936,20 +9880,22 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               answerKey: 'pilot-scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'pending_answer_sources',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               summaryKey: 'rollback-trigger',
               prompt: 'What should the rollback trigger be?',
+              captureFormat: 'pending_answer_sources',
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',
               ),
-            },
+            }),
           ],
         }),
       ],
@@ -10044,20 +9990,22 @@ describe('createServer', () => {
         expect.objectContaining({
           requestKey: 'PR-1',
           answers: [
-            {
+            expect.objectContaining({
               summary: 'Pilot scope',
               answerKey: 'pilot-scope',
               prompt: 'What should the pilot scope be?',
+              captureFormat: 'matching_answer_sources',
               answer: 'Start with five enterprise customers before broader launch.',
-            },
-            {
+            }),
+            expect.objectContaining({
               summary: 'Rollback trigger',
               summaryKey: 'rollback-trigger',
               prompt: 'What should the rollback trigger be?',
+              captureFormat: 'matching_answer_sources',
               answer: ['Abort after two regressions.', 'Pause launch until fixes ship.'].join(
                 '\n\n',
               ),
-            },
+            }),
           ],
         }),
       ],
@@ -10118,9 +10066,7 @@ describe('createServer', () => {
         taskRefs: ['P-1'],
       },
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -10403,9 +10349,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -10506,9 +10450,7 @@ describe('createServer', () => {
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -10608,9 +10550,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -10708,9 +10648,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -10816,9 +10754,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -10912,9 +10848,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -11807,9 +11741,7 @@ describe('createServer', () => {
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -11907,9 +11839,7 @@ describe('createServer', () => {
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -12018,9 +11948,7 @@ describe('createServer', () => {
         blockerTaskRefs: ['P-2', 'P-3'],
       },
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -12157,9 +12085,7 @@ describe('createServer', () => {
       createdRequestKeys: ['PR-3'],
       createdTaskRefs: ['P-3'],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -12321,9 +12247,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-3',
@@ -12411,9 +12335,7 @@ describe('createServer', () => {
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           taskRef: 'P-3',
@@ -12452,9 +12374,7 @@ describe('createServer', () => {
     })
     expect(createDecisionResponse.status).toBe(201)
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -12665,9 +12585,7 @@ preferences:
     })
 
     expect(response.status).toBe(201)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -12869,9 +12787,7 @@ preferences:
         join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'planning-requests.yml'),
       ).text(),
     ).resolves.toContain('taskRef: P-1')
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13113,9 +13029,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           taskRef: 'P-7',
@@ -13199,9 +13113,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13271,9 +13183,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13368,9 +13278,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13476,9 +13384,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13586,9 +13492,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13779,9 +13683,7 @@ preferences:
       ]),
     )
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13878,9 +13780,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -13983,9 +13883,7 @@ preferences:
       ]),
     )
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-3',
@@ -14099,9 +13997,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14208,9 +14104,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14299,9 +14193,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14378,9 +14270,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14464,9 +14354,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14574,9 +14462,7 @@ preferences:
         blockerTaskRefs: ['P-2', 'P-3'],
       },
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14678,9 +14564,7 @@ preferences:
       ]),
     )
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           requestKey: 'PR-3',
@@ -14749,9 +14633,7 @@ preferences:
       },
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -14851,9 +14733,7 @@ preferences:
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           workflowSharedAnswers: [
@@ -14983,9 +14863,7 @@ preferences:
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15113,9 +14991,7 @@ preferences:
     })
 
     expect(response.status).toBe(200)
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15284,9 +15160,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15380,9 +15254,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15481,9 +15353,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15574,9 +15444,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15668,9 +15536,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15761,9 +15627,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15854,9 +15718,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -15929,9 +15791,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: expect.arrayContaining([
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -16032,9 +15892,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -16341,9 +16199,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -16418,9 +16274,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           decisionRefs: ['D-1', 'D-2'],
@@ -16510,9 +16364,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -16596,9 +16448,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -16682,9 +16532,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -17445,9 +17293,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -17514,9 +17360,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -17584,9 +17428,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -17989,9 +17831,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -18731,9 +18571,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: [
@@ -18843,9 +18681,7 @@ preferences:
         }),
       ],
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           answers: expect.arrayContaining([
@@ -18905,9 +18741,7 @@ preferences:
       ]),
     })
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -18964,9 +18798,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -19046,9 +18878,7 @@ preferences:
         }),
       ]),
     })
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -19187,9 +19017,7 @@ preferences:
       ]),
     )
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',
@@ -19251,9 +19079,7 @@ preferences:
       ]),
     )
 
-    await expect(
-      createPlanningRequestStore(workspaceRoot).readGoalPlanningRequests('test'),
-    ).resolves.toMatchObject({
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
       requests: [
         expect.objectContaining({
           requestKey: 'PR-1',

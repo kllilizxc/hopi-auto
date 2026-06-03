@@ -1,3 +1,4 @@
+import type { AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
 import type {
@@ -47,6 +48,7 @@ export interface GoalDecisionAnswerEntryInput {
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
+  captureFormat?: AnswerCaptureFormat
   decisionKey?: string
   taskRef?: string
   answer: string
@@ -241,6 +243,7 @@ export async function resolveGoalDecision(
     summaryKey?: string
     prompt?: string
     matchHints?: string[]
+    captureFormat?: AnswerCaptureFormat
     followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
@@ -251,6 +254,7 @@ export async function resolveGoalDecision(
     summaryKey: input.summaryKey,
     prompt: input.prompt,
     matchHints: input.matchHints,
+    captureFormat: input.captureFormat,
   })
   const followThrough = await createDecisionResolutionFollowThrough(
     stores,
@@ -313,6 +317,7 @@ export async function answerGoalDecision(
     summaryKey?: string
     prompt?: string
     matchHints?: string[]
+    captureFormat?: AnswerCaptureFormat
     decisionKey?: string
     taskRef?: string
     answer: string
@@ -329,6 +334,7 @@ export async function answerGoalDecision(
         summaryKey: input.summaryKey,
         prompt: input.prompt,
         matchHints: input.matchHints,
+        captureFormat: input.captureFormat,
         decisionKey: input.decisionKey,
         taskRef: input.taskRef,
         answer: input.answer,
@@ -391,6 +397,7 @@ export async function answerGoalDecisions(
       summaryKey: answer.summaryKey,
       prompt: answer.prompt,
       matchHints: answer.matchHints,
+      captureFormat: answer.captureFormat,
     })
     if (!existing) {
       createdDecisionKeys.push(resolved.decisionKey)

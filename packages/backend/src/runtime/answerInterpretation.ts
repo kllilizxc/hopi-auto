@@ -1,3 +1,4 @@
+import { ANSWER_CAPTURE_FORMATS, type AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import { synthesizeCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import type {
   GoalPlanningRequestAnswer,
@@ -8,45 +9,12 @@ import type { GoalPlanningBatchEntryInput } from './planningRequest'
 export class AnswerInterpretationError extends Error {}
 class AutoSourceResponseTerminalError extends AnswerInterpretationError {}
 
-export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = [
-  'auto',
-  'labeled_sections',
-  'single_pending',
-  'pending_clauses',
-  'pending_paragraphs',
-  'pending_sentences',
-  'pending_conjunctions',
-  'pending_answer_sources',
-  'matching_answer_sources',
-  'matching_runs',
-  'matching_opening_runs',
-  'matching_closing_runs',
-  'matching_middle_runs',
-  'ordered_items',
-  'ordered_blocks',
-  'question_blocks',
-  'question_clauses',
-  'question_spans',
-  'question_middle_spans',
-  'question_closing_spans',
-  'question_closing_blocks',
-  'question_middle_blocks',
-  'inline_topics',
-  'topic_clauses',
-  'topic_sentences',
-  'topic_spans',
-  'topic_middle_spans',
-  'topic_closing_spans',
-  'topic_closing_blocks',
-  'topic_paragraphs',
-  'topic_middle_blocks',
-  'topic_blocks',
-] as const
+export const INTERPRETABLE_SOURCE_RESPONSE_FORMATS = ['auto', ...ANSWER_CAPTURE_FORMATS] as const
 
 export type InterpretableSourceResponseFormat =
   (typeof INTERPRETABLE_SOURCE_RESPONSE_FORMATS)[number]
 
-type ConcreteInterpretableSourceResponseFormat = Exclude<InterpretableSourceResponseFormat, 'auto'>
+type ConcreteInterpretableSourceResponseFormat = AnswerCaptureFormat
 
 export interface InterpretedSourceResponseState {
   sourceResponse?: string
@@ -192,6 +160,7 @@ interface MatchingSourceResponseRun {
 interface ResolvedAnswerContent {
   answer: string
   prompt?: string
+  captureFormat?: AnswerCaptureFormat
 }
 
 interface ResolvedAnswerSourceEntry {
@@ -311,6 +280,7 @@ export interface MaterializedInterpretedDecisionAnswer {
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
+  captureFormat?: AnswerCaptureFormat
   decisionKey?: string
   taskRef?: string
   answer: string
@@ -1403,15 +1373,18 @@ export function materializeInterpretedDecisionAnswers(
       buildDecisionPendingAnswerSourceConsumerDescriptor(answer),
       rejectMultipleInferredTopicSummariesInTopicUnits,
     )
-    return {
-      summary: answer.summary,
-      ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
-      prompt: answer.prompt?.trim() || resolved.prompt,
-      matchHints: answer.matchHints,
-      decisionKey: answer.decisionKey,
-      taskRef: answer.taskRef,
-      answer: resolved.answer,
-    }
+    return attachCaptureFormat(
+      {
+        summary: answer.summary,
+        ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
+        prompt: answer.prompt?.trim() || resolved.prompt,
+        matchHints: answer.matchHints,
+        decisionKey: answer.decisionKey,
+        taskRef: answer.taskRef,
+        answer: resolved.answer,
+      },
+      resolved.captureFormat,
+    )
   })
 }
 
@@ -2105,6 +2078,52 @@ function mergeMaterializedPlanningAnswers(
   return [...(explicitAnswers ?? []), ...inferredAnswers]
 }
 
+function toAnswerCaptureFormat(
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+): AnswerCaptureFormat | undefined {
+  if (!sourceResponseFormat || sourceResponseFormat === 'auto') {
+    return undefined
+  }
+  return sourceResponseFormat
+}
+
+function finalizeMaterializedDecisionAnswers(
+  answers: MaterializedInterpretedDecisionAnswer[],
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+) {
+  const captureFormat = toAnswerCaptureFormat(sourceResponseFormat)
+  if (!captureFormat) {
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
+  }
+  return answers.map((answer) => attachCaptureFormat(answer, captureFormat))
+}
+
+function finalizeMaterializedPlanningAnswers(
+  answers: GoalPlanningRequestAnswer[],
+  captureFormat?: AnswerCaptureFormat,
+) {
+  if (!captureFormat) {
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
+  }
+  return answers.map((answer) => attachCaptureFormat(answer, captureFormat))
+}
+
+function attachCaptureFormat<T extends object>(
+  value: T,
+  captureFormat?: AnswerCaptureFormat,
+): T & { captureFormat?: AnswerCaptureFormat } {
+  if (!captureFormat) {
+    return value as T & { captureFormat?: AnswerCaptureFormat }
+  }
+  Object.defineProperty(value, 'captureFormat', {
+    value: captureFormat,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  })
+  return value as T & { captureFormat?: AnswerCaptureFormat }
+}
+
 function materializeInterpretedPlanningAnswers(
   answers: InterpretablePlanningAnswer[] | undefined,
   sourceResponse?: string,
@@ -2126,30 +2145,31 @@ function materializeInterpretedPlanningAnswers(
   registerMatchingRunCandidateGroups(interpretationState, [
     ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
   ])
-  const materializedExplicitAnswers = explicitAnswers.map((answer) => ({
-    summary: answer.summary,
-    ...(answer.answerKey?.trim() ? { answerKey: answer.answerKey.trim() } : {}),
-    ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
-    ...(() => {
-      const resolved = resolveAnswerContent(
-        answer.answer,
-        answer.sourceExcerpt,
-        answer.sourceOccurrence,
-        answer.answerSourceKey,
-        answer.answerSourceGroupKey,
-        sourceResponse,
-        `planner answer ${answer.summary}`,
-        answerSourcesByKey,
-        answerSourceGroupsByKey,
-        pendingAnswerSourceEntries,
-        matchingAnswerSourceEntries,
-        sourceResponseFormat,
-        buildPlanningAnswerSourceResponseCandidates(answer),
-        interpretationState,
-        buildPlanningPendingAnswerSourceConsumerDescriptor(answer),
-        inferRemainingAnswers,
-      )
-      return {
+  const materializedExplicitAnswers = explicitAnswers.map((answer) => {
+    const resolved = resolveAnswerContent(
+      answer.answer,
+      answer.sourceExcerpt,
+      answer.sourceOccurrence,
+      answer.answerSourceKey,
+      answer.answerSourceGroupKey,
+      sourceResponse,
+      `planner answer ${answer.summary}`,
+      answerSourcesByKey,
+      answerSourceGroupsByKey,
+      pendingAnswerSourceEntries,
+      matchingAnswerSourceEntries,
+      sourceResponseFormat,
+      buildPlanningAnswerSourceResponseCandidates(answer),
+      interpretationState,
+      buildPlanningPendingAnswerSourceConsumerDescriptor(answer),
+      inferRemainingAnswers,
+    )
+
+    return attachCaptureFormat(
+      {
+        summary: answer.summary,
+        ...(answer.answerKey?.trim() ? { answerKey: answer.answerKey.trim() } : {}),
+        ...(answer.summaryKey?.trim() ? { summaryKey: answer.summaryKey.trim() } : {}),
         ...(answer.prompt?.trim()
           ? { prompt: answer.prompt.trim() }
           : resolved.prompt
@@ -2157,9 +2177,10 @@ function materializeInterpretedPlanningAnswers(
             : {}),
         ...(answer.matchHints?.length ? { matchHints: answer.matchHints } : {}),
         answer: resolved.answer,
-      }
-    })(),
-  }))
+      },
+      resolved.captureFormat,
+    )
+  })
   const inferredAnswers = inferRemainingAnswers
     ? materializeRemainingInterpretedPlanningAnswers(
         sourceResponse,
@@ -2184,6 +2205,7 @@ function materializeRemainingInterpretedPlanningAnswers(
   pendingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
   matchingAnswerSourceEntries?: ResolvedAnswerSourceEntry[],
 ) {
+  const captureFormat = toAnswerCaptureFormat(sourceResponseFormat)
   if (
     sourceResponseFormat !== 'pending_answer_sources' &&
     sourceResponseFormat !== 'matching_answer_sources' &&
@@ -2231,12 +2253,13 @@ function materializeRemainingInterpretedPlanningAnswers(
       materializeRemainingPlanningAnswerFromAnswerSourceEntry(
         groupedEntry.entry,
         'followThrough.inferRemainingAnswers',
+        captureFormat,
       ),
     )
     if (interpretationState) {
       interpretationState.nextPendingAnswerSourceIndex = entries.length
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'matching_answer_sources') {
@@ -2264,10 +2287,11 @@ function materializeRemainingInterpretedPlanningAnswers(
         materializeRemainingPlanningAnswerFromAnswerSourceEntry(
           groupedEntry.entry,
           'followThrough.inferRemainingAnswers',
+          captureFormat,
         ),
       )
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_blocks') {
@@ -2285,10 +2309,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(block.question),
         prompt: block.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_clauses') {
@@ -2306,10 +2331,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(clause.question),
         prompt: clause.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: clause.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_spans') {
@@ -2327,10 +2353,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(span.question),
         prompt: span.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_middle_spans') {
@@ -2348,10 +2375,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(span.question),
         prompt: span.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_closing_spans') {
@@ -2369,10 +2397,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(span.question),
         prompt: span.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_closing_blocks') {
@@ -2390,10 +2419,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(block.question),
         prompt: block.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'question_middle_blocks') {
@@ -2411,10 +2441,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary: stripQuestionBlockLabel(block.question),
         prompt: block.question,
+        ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_clauses') {
@@ -2433,10 +2464,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: clause.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_sentences') {
@@ -2455,10 +2487,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: sentence.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_spans') {
@@ -2477,10 +2510,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_middle_spans') {
@@ -2499,10 +2533,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_closing_spans') {
@@ -2521,10 +2556,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: span.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_closing_blocks') {
@@ -2543,10 +2579,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: block.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_paragraphs') {
@@ -2565,10 +2602,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: paragraph.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   if (sourceResponseFormat === 'topic_middle_blocks') {
@@ -2587,10 +2625,11 @@ function materializeRemainingInterpretedPlanningAnswers(
       answers.push({
         summary,
         prompt: synthesizeCanonicalPromptFromSummary(summary),
+        ...(captureFormat ? { captureFormat } : {}),
         answer: block.text,
       })
     }
-    return answers
+    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
   }
 
   const blocks = parseRequiredTopicSourceResponseBlocks(
@@ -2608,10 +2647,11 @@ function materializeRemainingInterpretedPlanningAnswers(
     answers.push({
       summary,
       prompt: synthesizeCanonicalPromptFromSummary(summary),
+      ...(captureFormat ? { captureFormat } : {}),
       answer: block.text,
     })
   }
-  return answers
+  return finalizeMaterializedPlanningAnswers(answers, captureFormat)
 }
 
 function resolveAnswerContent(
@@ -2642,6 +2682,10 @@ function resolveAnswerContent(
     return { answer: directExcerpt }
   }
 
+  const captureFormat = toAnswerCaptureFormat(sourceResponseFormat)
+  const interpreted = (content: ResolvedAnswerContent): ResolvedAnswerContent =>
+    captureFormat ? { ...content, captureFormat } : content
+
   const referencedSourceKey = answerSourceKey?.trim()
   const referencedSourceGroupKey = answerSourceGroupKey?.trim()
   if (referencedSourceKey && referencedSourceGroupKey) {
@@ -2656,7 +2700,7 @@ function resolveAnswerContent(
         `Unknown answerSourceKey "${referencedSourceKey}" for ${label}.`,
       )
     }
-    return { answer: sourced }
+    return interpreted({ answer: sourced })
   }
   if (referencedSourceGroupKey) {
     const sourced = answerSourceGroupsByKey?.get(referencedSourceGroupKey)
@@ -2665,63 +2709,63 @@ function resolveAnswerContent(
         `Unknown answerSourceGroupKey "${referencedSourceGroupKey}" for ${label}.`,
       )
     }
-    return { answer: sourced }
+    return interpreted({ answer: sourced })
   }
 
   if (sourceResponseFormat === 'labeled_sections') {
-    return {
+    return interpreted({
       answer: resolveLabeledSourceResponseSection(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'single_pending') {
-    return {
+    return interpreted({
       answer: consumeSinglePendingSourceResponse(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'pending_clauses') {
-    return {
+    return interpreted({
       answer: resolvePendingSourceResponseClause(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'pending_paragraphs') {
-    return {
+    return interpreted({
       answer: resolvePendingSourceResponseParagraph(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'pending_sentences') {
-    return {
+    return interpreted({
       answer: resolvePendingSourceResponseSentence(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'pending_conjunctions') {
-    return {
+    return interpreted({
       answer: resolvePendingSourceResponseConjunction(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'pending_answer_sources') {
-    return {
+    return interpreted({
       answer: resolvePendingAnswerSourceValue(
         pendingAnswerSourceEntries,
         label,
         sourceResponseState,
         pendingAnswerSourceConsumerDescriptor,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'matching_answer_sources') {
-    return {
+    return interpreted({
       answer: resolveMatchingAnswerSourceValue(
         matchingAnswerSourceEntries,
         sourceResponseCandidates,
@@ -2729,63 +2773,63 @@ function resolveAnswerContent(
         sourceResponseState,
         pendingAnswerSourceConsumerDescriptor?.family,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'matching_runs') {
-    return {
+    return interpreted({
       answer: resolveMatchingRunSourceResponseValue(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'matching_opening_runs') {
-    return {
+    return interpreted({
       answer: resolveMatchingOpeningRunSourceResponseValue(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'matching_closing_runs') {
-    return {
+    return interpreted({
       answer: resolveMatchingClosingRunSourceResponseValue(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'matching_middle_runs') {
-    return {
+    return interpreted({
       answer: resolveMatchingMiddleRunSourceResponseValue(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'ordered_items') {
-    return {
+    return interpreted({
       answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'ordered_blocks') {
-    return {
+    return interpreted({
       answer: resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_blocks') {
@@ -2799,10 +2843,10 @@ function resolveAnswerContent(
     if (!questionBlock) {
       throw new AnswerInterpretationError(`No question block matched ${label} in sourceResponse.`)
     }
-    return {
+    return interpreted({
       answer: questionBlock.answer,
       prompt: questionBlock.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_clauses') {
@@ -2816,10 +2860,10 @@ function resolveAnswerContent(
     if (!questionClause) {
       throw new AnswerInterpretationError(`No question clause matched ${label} in sourceResponse.`)
     }
-    return {
+    return interpreted({
       answer: questionClause.answer,
       prompt: questionClause.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_spans') {
@@ -2833,10 +2877,10 @@ function resolveAnswerContent(
     if (!questionSpan) {
       throw new AnswerInterpretationError(`No question span matched ${label} in sourceResponse.`)
     }
-    return {
+    return interpreted({
       answer: questionSpan.answer,
       prompt: questionSpan.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_middle_spans') {
@@ -2852,10 +2896,10 @@ function resolveAnswerContent(
         `No question middle span matched ${label} in sourceResponse.`,
       )
     }
-    return {
+    return interpreted({
       answer: questionMiddleSpan.answer,
       prompt: questionMiddleSpan.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_closing_spans') {
@@ -2871,10 +2915,10 @@ function resolveAnswerContent(
         `No question closing span matched ${label} in sourceResponse.`,
       )
     }
-    return {
+    return interpreted({
       answer: questionClosingSpan.answer,
       prompt: questionClosingSpan.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_closing_blocks') {
@@ -2890,10 +2934,10 @@ function resolveAnswerContent(
         `No question closing block matched ${label} in sourceResponse.`,
       )
     }
-    return {
+    return interpreted({
       answer: questionClosingBlock.answer,
       prompt: questionClosingBlock.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'question_middle_blocks') {
@@ -2909,21 +2953,21 @@ function resolveAnswerContent(
         `No question middle block matched ${label} in sourceResponse.`,
       )
     }
-    return {
+    return interpreted({
       answer: questionMiddleBlock.answer,
       prompt: questionMiddleBlock.question,
-    }
+    })
   }
 
   if (sourceResponseFormat === 'inline_topics') {
-    return {
+    return interpreted({
       answer: resolveInlineTopicSourceResponseSection(
         sourceResponse,
         sourceResponseCandidates,
         label,
         sourceResponseState,
       ),
-    }
+    })
   }
 
   if (sourceResponseFormat === 'topic_clauses') {
@@ -2938,7 +2982,7 @@ function resolveAnswerContent(
     if (!topicClause) {
       throw new AnswerInterpretationError(`No topic clause matched ${label} in sourceResponse.`)
     }
-    return { answer: topicClause }
+    return interpreted({ answer: topicClause })
   }
 
   if (sourceResponseFormat === 'topic_sentences') {
@@ -2953,7 +2997,7 @@ function resolveAnswerContent(
     if (!topicSentence) {
       throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
     }
-    return { answer: topicSentence }
+    return interpreted({ answer: topicSentence })
   }
 
   if (sourceResponseFormat === 'topic_spans') {
@@ -2967,7 +3011,7 @@ function resolveAnswerContent(
     if (!topicSpan) {
       throw new AnswerInterpretationError(`No topic span matched ${label} in sourceResponse.`)
     }
-    return { answer: topicSpan }
+    return interpreted({ answer: topicSpan })
   }
 
   if (sourceResponseFormat === 'topic_middle_spans') {
@@ -2983,7 +3027,7 @@ function resolveAnswerContent(
         `No topic middle span matched ${label} in sourceResponse.`,
       )
     }
-    return { answer: topicMiddleSpan }
+    return interpreted({ answer: topicMiddleSpan })
   }
 
   if (sourceResponseFormat === 'topic_closing_spans') {
@@ -2999,7 +3043,7 @@ function resolveAnswerContent(
         `No topic closing span matched ${label} in sourceResponse.`,
       )
     }
-    return { answer: topicClosingSpan }
+    return interpreted({ answer: topicClosingSpan })
   }
 
   if (sourceResponseFormat === 'topic_closing_blocks') {
@@ -3015,7 +3059,7 @@ function resolveAnswerContent(
         `No topic closing block matched ${label} in sourceResponse.`,
       )
     }
-    return { answer: topicClosingBlock }
+    return interpreted({ answer: topicClosingBlock })
   }
 
   if (sourceResponseFormat === 'topic_paragraphs') {
@@ -3030,7 +3074,7 @@ function resolveAnswerContent(
     if (!topicParagraph) {
       throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
     }
-    return { answer: topicParagraph }
+    return interpreted({ answer: topicParagraph })
   }
 
   if (sourceResponseFormat === 'topic_middle_blocks') {
@@ -3046,7 +3090,7 @@ function resolveAnswerContent(
         `No topic middle block matched ${label} in sourceResponse.`,
       )
     }
-    return { answer: topicMiddleBlock }
+    return interpreted({ answer: topicMiddleBlock })
   }
 
   if (sourceResponseFormat === 'topic_blocks') {
@@ -3060,12 +3104,12 @@ function resolveAnswerContent(
     if (!topicBlock) {
       throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
     }
-    return { answer: topicBlock }
+    return interpreted({ answer: topicBlock })
   }
 
   const shared = sourceResponse?.trim()
   if (shared) {
-    return { answer: shared }
+    return interpreted({ answer: shared })
   }
 
   throw new AnswerInterpretationError(
@@ -3448,23 +3492,27 @@ function resolvePendingAnswerSourceValue(
 function materializeRemainingPlanningAnswerFromAnswerSourceEntry(
   entry: ResolvedAnswerSourceEntry,
   label: string,
+  captureFormat?: AnswerCaptureFormat,
 ): GoalPlanningRequestAnswer {
   const summary = resolveRequiredAnswerSourceSummary(entry, label)
   const inferredSummaryKey = shouldDeriveSummaryKeyFromAnswerSourceKey(entry)
     ? inferSummaryKeyFromStableAnswerSourceKey(entry.key)
     : undefined
-  return {
-    summary,
-    ...(entry.answerKey?.trim() ? { answerKey: entry.answerKey.trim() } : {}),
-    ...(entry.summaryKey?.trim()
-      ? { summaryKey: entry.summaryKey.trim() }
-      : inferredSummaryKey
-        ? { summaryKey: inferredSummaryKey }
-        : {}),
-    prompt: entry.prompt?.trim() || synthesizeCanonicalPromptFromSummary(summary),
-    ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
-    answer: entry.answer,
-  }
+  return attachCaptureFormat(
+    {
+      summary,
+      ...(entry.answerKey?.trim() ? { answerKey: entry.answerKey.trim() } : {}),
+      ...(entry.summaryKey?.trim()
+        ? { summaryKey: entry.summaryKey.trim() }
+        : inferredSummaryKey
+          ? { summaryKey: inferredSummaryKey }
+          : {}),
+      prompt: entry.prompt?.trim() || synthesizeCanonicalPromptFromSummary(summary),
+      ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
+      answer: entry.answer,
+    },
+    captureFormat,
+  )
 }
 
 function buildDecisionPendingAnswerSourceConsumerDescriptor(input: {
@@ -4158,6 +4206,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
   sourceResponseState: InterpretedSourceResponseState | undefined
   knownDecisions: InterpretableKnownDecision[]
 }) {
+  const captureFormat = toAnswerCaptureFormat(input.sourceResponseFormat)
   if (!supportsMixedRemainingAnswerSourceInference(input.sourceResponseFormat)) {
     throw new AnswerInterpretationError(
       'followThrough.inferRemainingAnswers can only be combined with inferDecisionTopics when sourceResponseFormat is "pending_answer_sources" or "matching_answer_sources" and the remaining answerSources are explicitly routed by route, decisionKey, or answerKey.',
@@ -4192,6 +4241,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
         groupedEntries.filter((entry) => entry.route === 'decision').map((entry) => entry.entry),
         input.knownDecisions,
         'inferDecisionTopics',
+        captureFormat,
       ),
       planningAnswers: groupedEntries
         .filter((entry) => entry.route === 'planning')
@@ -4199,6 +4249,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
           materializeRemainingPlanningAnswerFromAnswerSourceEntry(
             entry.entry,
             'followThrough.inferRemainingAnswers',
+            captureFormat,
           ),
         ),
     }
@@ -4227,6 +4278,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
       groupedEntries.filter((entry) => entry.route === 'decision').map((entry) => entry.entry),
       input.knownDecisions,
       'inferDecisionTopics',
+      captureFormat,
     ),
     planningAnswers: groupedEntries
       .filter((entry) => entry.route === 'planning')
@@ -4234,6 +4286,7 @@ function materializeMixedRemainingAnswerSourceInference(input: {
         materializeRemainingPlanningAnswerFromAnswerSourceEntry(
           entry.entry,
           'followThrough.inferRemainingAnswers',
+          captureFormat,
         ),
       ),
   }
@@ -5057,7 +5110,7 @@ function materializeMatchingOpenDecisionAnswers(
     })
   }
 
-  return materializedAnswers
+  return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
 }
 
 function materializeNewDecisionTopicAnswers(
@@ -5766,7 +5819,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionClauses) {
@@ -5795,7 +5848,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionSpans) {
@@ -5821,7 +5874,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionMiddleSpans) {
@@ -5847,7 +5900,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionClosingSpans) {
@@ -5876,7 +5929,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionClosingBlocks) {
@@ -5905,7 +5958,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (questionMiddleBlocks) {
@@ -5934,7 +5987,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicClauses) {
@@ -5965,7 +6018,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicSentences) {
@@ -5996,7 +6049,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicSpans) {
@@ -6023,7 +6076,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicMiddleSpans) {
@@ -6050,7 +6103,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicClosingSpans) {
@@ -6080,7 +6133,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicClosingBlocks) {
@@ -6111,7 +6164,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicParagraphs) {
@@ -6142,7 +6195,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicMiddleBlocks) {
@@ -6169,7 +6222,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   if (topicBlocks) {
@@ -6196,7 +6249,7 @@ function materializeNewDecisionTopicAnswers(
       })
     }
 
-    return materializedAnswers
+    return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
   }
 
   const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
@@ -6224,7 +6277,7 @@ function materializeNewDecisionTopicAnswers(
     })
   }
 
-  return materializedAnswers
+  return finalizeMaterializedDecisionAnswers(materializedAnswers, sourceResponseFormat)
 }
 
 function parseRequiredLabeledSourceResponseSections(
@@ -9092,10 +9145,11 @@ function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
   entries: ResolvedAnswerSourceEntry[],
   knownDecisions: InterpretableKnownDecision[],
   label: string,
+  captureFormat?: AnswerCaptureFormat,
 ): MaterializedInterpretedDecisionAnswer[] {
   const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
   const knownDecisionsByDecisionKey = createKnownDecisionsByDecisionKeyLookup(knownDecisions)
-  return entries.map((entry) => {
+  const answers = entries.map((entry) => {
     const summary = resolveRequiredAnswerSourceSummary(entry, label)
     const matchingKnownDecisionByKey = entry.decisionKey?.trim()
       ? knownDecisionsByDecisionKey.get(entry.decisionKey.trim())
@@ -9133,6 +9187,7 @@ function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
       answer: entry.answer,
     }
   })
+  return finalizeMaterializedDecisionAnswers(answers, captureFormat)
 }
 
 function findMatchingKnownDecisionsForQuestionBlock(

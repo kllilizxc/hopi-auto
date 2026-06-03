@@ -1,3 +1,4 @@
+import type { AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import type { BlockerRef } from '../domain/board'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import type { BoardStore } from '../storage/boardStore'
@@ -2153,6 +2154,7 @@ function mergePlanningRequestAnswers(
         ...(value.summaryKey?.trim() ? { summaryKey: value.summaryKey.trim() } : {}),
         ...(value.prompt?.trim() ? { prompt: value.prompt.trim() } : {}),
         ...(value.matchHints?.length ? { matchHints: value.matchHints } : {}),
+        ...(value.captureFormat ? { captureFormat: value.captureFormat } : {}),
       })
       seenByValue.set(valueKey, merged.length - 1)
       if (nextAnswerKey) {
@@ -2189,21 +2191,28 @@ function mergePlanningRequestAnswers(
       current.matchHints,
       value.matchHints,
     )
+    const nextCaptureFormat = resolvePlanningRequestAnswerCaptureFormat(
+      current.captureFormat,
+      value.captureFormat,
+      current.answer !== value.answer,
+    )
     if (
       resolvedAnswerKey !== current.answerKey ||
       nextSummaryKey !== current.summaryKey ||
       nextPrompt !== current.prompt ||
       !sameOptionalStringArray(nextMatchHints, current.matchHints) ||
+      nextCaptureFormat !== current.captureFormat ||
       current.answer !== value.answer
     ) {
       seenByValue.delete(getPlanningRequestAnswerValueKey(current.summary, current.answer))
       merged[existingIndex] = {
-        ...current,
+        summary: current.summary,
         answer: value.answer,
         ...(resolvedAnswerKey ? { answerKey: resolvedAnswerKey } : {}),
         ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
+        ...(nextCaptureFormat ? { captureFormat: nextCaptureFormat } : {}),
       }
       seenByValue.set(
         getPlanningRequestAnswerValueKey(current.summary, value.answer),
@@ -2237,6 +2246,20 @@ function resolvePlanningRequestAnswerSummaryKey(
   throw new Error(
     `Planning request answer summaryKey conflict for "${summary}": ${existing} != ${nextSummaryKey}`,
   )
+}
+
+function resolvePlanningRequestAnswerCaptureFormat(
+  existing: AnswerCaptureFormat | undefined,
+  incoming: AnswerCaptureFormat | undefined,
+  answerChanged: boolean,
+) {
+  if (incoming) {
+    return incoming
+  }
+  if (answerChanged) {
+    return undefined
+  }
+  return existing
 }
 
 function resolvePlanningRequestAnswerKey(

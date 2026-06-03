@@ -61,6 +61,48 @@ describe('createDecisionStore', () => {
     })
   })
 
+  test('persists interpreted answer captureFormat on resolved decisions and clears it on later direct resolutions', async () => {
+    const store = createDecisionStore(testRoot())
+
+    const created = await store.createDecision(goalKey, {
+      summary: 'Choose the auth strategy',
+      taskRef: 'T-7',
+    })
+
+    const interpreted = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware.',
+      captureFormat: 'matching_closing_runs',
+    })
+    expect(interpreted).toMatchObject({
+      decisionKey: 'D-1',
+      answer: 'Use Bun-native auth middleware.',
+      captureFormat: 'matching_closing_runs',
+    })
+
+    const direct = await store.resolveDecision(goalKey, created.decisionKey, {
+      answer: 'Use Bun-native auth middleware with staged rollout support.',
+    })
+    expect(direct).toMatchObject({
+      decisionKey: 'D-1',
+      answer: 'Use Bun-native auth middleware with staged rollout support.',
+    })
+    expect(direct.captureFormat).toBeUndefined()
+
+    await expect(store.readGoalDecisions(goalKey)).resolves.toMatchObject({
+      goalKey,
+      decisions: [
+        {
+          decisionKey: 'D-1',
+          summary: 'Choose the auth strategy',
+          prompt: 'What should the auth strategy be?',
+          taskRef: 'T-7',
+          status: 'resolved',
+          answer: 'Use Bun-native auth middleware with staged rollout support.',
+        },
+      ],
+    })
+  })
+
   test('supports stable custom decision keys for explicit blocker topics', async () => {
     const store = createDecisionStore(testRoot())
 

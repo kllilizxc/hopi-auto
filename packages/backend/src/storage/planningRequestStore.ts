@@ -2,6 +2,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname, posix as pathPosix } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
+import { ANSWER_CAPTURE_FORMATS, type AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
@@ -24,6 +25,7 @@ export interface GoalPlanningRequestAnswer {
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
+  captureFormat?: AnswerCaptureFormat
   answer: string
 }
 
@@ -194,6 +196,7 @@ export const goalPlanningRequestAnswerSchema = z.object({
     .array(z.string().min(1))
     .optional()
     .transform((values) => normalizeGoalPlanningRequestMatchHints(values)),
+  captureFormat: z.enum(ANSWER_CAPTURE_FORMATS).optional(),
   answer: z.string().min(1),
 })
 
@@ -735,6 +738,7 @@ function mergePlanningRequestAnswers(
         ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
+        ...(value.captureFormat ? { captureFormat: value.captureFormat } : {}),
       })
       seenByValue.set(valueKey, merged.length - 1)
       if (nextAnswerKey) {
@@ -771,21 +775,28 @@ function mergePlanningRequestAnswers(
       current.matchHints,
       value.matchHints,
     )
+    const nextCaptureFormat = resolvePlanningRequestAnswerCaptureFormat(
+      current.captureFormat,
+      value.captureFormat,
+      current.answer !== value.answer,
+    )
     if (
       resolvedAnswerKey !== current.answerKey ||
       nextSummaryKey !== current.summaryKey ||
       nextPrompt !== current.prompt ||
       !sameOptionalStringArray(current.matchHints, nextMatchHints) ||
+      nextCaptureFormat !== current.captureFormat ||
       current.answer !== value.answer
     ) {
       seenByValue.delete(getPlanningRequestAnswerValueKey(current.summary, current.answer))
       merged[existingIndex] = {
-        ...current,
+        summary: current.summary,
         answer: value.answer,
         ...(resolvedAnswerKey ? { answerKey: resolvedAnswerKey } : {}),
         ...(nextSummaryKey ? { summaryKey: nextSummaryKey } : {}),
         ...(nextPrompt ? { prompt: nextPrompt } : {}),
         ...(nextMatchHints ? { matchHints: nextMatchHints } : {}),
+        ...(nextCaptureFormat ? { captureFormat: nextCaptureFormat } : {}),
       }
       seenByValue.set(
         getPlanningRequestAnswerValueKey(current.summary, value.answer),
@@ -812,6 +823,7 @@ function samePlanningRequestAnswerArray(
         right[index]?.summaryKey === value.summaryKey &&
         right[index]?.prompt === value.prompt &&
         sameOptionalStringArray(right[index]?.matchHints, value.matchHints) &&
+        right[index]?.captureFormat === value.captureFormat &&
         right[index]?.answer === value.answer,
     )
   )
@@ -858,6 +870,20 @@ function resolvePlanningRequestAnswerSummaryKey(
   throw new Error(
     `Planning request answer summaryKey conflict for "${summary}": ${existing} != ${nextSummaryKey}`,
   )
+}
+
+function resolvePlanningRequestAnswerCaptureFormat(
+  existing: AnswerCaptureFormat | undefined,
+  incoming: AnswerCaptureFormat | undefined,
+  answerChanged: boolean,
+) {
+  if (incoming) {
+    return incoming
+  }
+  if (answerChanged) {
+    return undefined
+  }
+  return existing
 }
 
 function resolvePlanningRequestAnswerAnswerKey(

@@ -2,6 +2,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
+import { ANSWER_CAPTURE_FORMATS, type AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
@@ -16,6 +17,7 @@ export interface GoalDecision {
   summaryKey?: string
   prompt?: string
   matchHints?: string[]
+  captureFormat?: AnswerCaptureFormat
   status: GoalDecisionStatus
   taskRef?: string
   answer?: string
@@ -51,7 +53,13 @@ export interface DecisionStore {
   resolveDecision(
     goalKey: string,
     decisionKey: string,
-    input: { answer: string; summaryKey?: string; prompt?: string; matchHints?: string[] },
+    input: {
+      answer: string
+      summaryKey?: string
+      prompt?: string
+      matchHints?: string[]
+      captureFormat?: AnswerCaptureFormat
+    },
   ): Promise<GoalDecision>
 }
 
@@ -66,6 +74,7 @@ const GoalDecisionSchema = z.object({
   summaryKey: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   matchHints: goalDecisionMatchHintsSchema,
+  captureFormat: z.enum(ANSWER_CAPTURE_FORMATS).optional(),
   status: z.enum(DECISION_STATUSES),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
@@ -159,6 +168,11 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         mergeDecisionMatchHints(decision, input.matchHints)
         decision.status = 'resolved'
         decision.answer = input.answer
+        if (input.captureFormat) {
+          decision.captureFormat = input.captureFormat
+        } else {
+          decision.captureFormat = undefined
+        }
         decision.resolvedAt = new Date().toISOString()
         await writeDecisionSet(decisionPath, current)
         return decision

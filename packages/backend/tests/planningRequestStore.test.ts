@@ -253,6 +253,69 @@ describe('createPlanningRequestStore', () => {
     })
   })
 
+  test('persists planner-answer captureFormat and clears it when a later direct answer update rewrites the same row', async () => {
+    const store = createPlanningRequestStore(testRoot())
+
+    const created = await store.createRequest(goalKey, {
+      title: 'Capture rollout guidance',
+      description: 'Turn the rollout answer bundle into durable planning work.',
+      acceptanceCriteria: ['The rollout guidance is durable.'],
+      taskRef: 'P-5',
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          answer: 'Start with five enterprise customers.',
+          captureFormat: 'matching_runs',
+        },
+      ],
+    })
+
+    expect(created.answers).toEqual([
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        prompt: 'What should the pilot scope be?',
+        answer: 'Start with five enterprise customers.',
+        captureFormat: 'matching_runs',
+      },
+    ])
+
+    const merged = await store.mergeRequestMetadata(goalKey, created.requestKey, {
+      answers: [
+        {
+          summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          answer: 'Start with ten enterprise customers.',
+        },
+      ],
+    })
+
+    expect(merged.answers).toEqual([
+      {
+        summary: 'Pilot scope',
+        answerKey: 'pilot-scope',
+        prompt: 'What should the pilot scope be?',
+        answer: 'Start with ten enterprise customers.',
+      },
+    ])
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: created.requestKey,
+          answers: [
+            {
+              summary: 'Pilot scope',
+              answerKey: 'pilot-scope',
+              prompt: 'What should the pilot scope be?',
+              answer: 'Start with ten enterprise customers.',
+            },
+          ],
+        }),
+      ],
+    })
+  })
+
   test('upgrades captured user answers with richer prompt metadata, summary keys, and match hints', async () => {
     const store = createPlanningRequestStore(testRoot())
 
