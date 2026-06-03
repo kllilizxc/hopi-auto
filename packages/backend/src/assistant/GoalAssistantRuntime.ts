@@ -281,6 +281,8 @@ async function applyAssistantAction(
       kind: 'request_planning',
       requestKey: result.request.requestKey,
       taskRef: result.request.taskRef,
+      created: result.created,
+      taskCreated: result.taskCreated,
       resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: result.created
         ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
@@ -332,6 +334,12 @@ async function applyAssistantAction(
           groupKey: result.groupKey,
         },
       ),
+      createdRequestKeys: result.entries
+        .filter((entry) => entry.created)
+        .map((entry) => entry.requestKey),
+      createdTaskRefs: result.entries
+        .filter((entry) => entry.taskCreated)
+        .map((entry) => entry.taskRef),
       resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: `Requested grouped planning follow-through ${result.groupKey} across ${result.entries.map((entry) => entry.taskRef).join(', ')}.`,
     }
@@ -380,6 +388,8 @@ async function applyAssistantAction(
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
       blockerTaskRefs: result.blockerTaskRefs,
+      createdRequestKeys: result.createdRequestKeys,
+      createdTaskRefs: result.createdTaskRefs,
       resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
       summary: result.workflowKey
         ? `Updated planning workflow ${result.workflowKey} across ${result.taskRefs.join(', ')}.`

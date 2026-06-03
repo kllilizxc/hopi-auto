@@ -4,9 +4,12 @@ import type { GoalAssistantAction } from './assistantRun'
 export interface AssistantActionResultDetailsInput {
   kind?: string
   taskRef?: string
+  taskCreated?: boolean
   requestKey?: string
   taskRefs?: string[]
   requestKeys?: string[]
+  createdRequestKeys?: string[]
+  createdTaskRefs?: string[]
   groupKeys?: string[]
   workflowKey?: string
   workflows?: Array<{
@@ -91,6 +94,12 @@ export function formatAssistantActionResultDetails(
     if (result.taskRef) {
       lines.push(`Task ref: ${result.taskRef}`)
     }
+    if (typeof result.created === 'boolean') {
+      lines.push(`Created planning request: ${result.created ? 'yes' : 'no'}`)
+    }
+    if (typeof result.taskCreated === 'boolean') {
+      lines.push(`Created planning task: ${result.taskCreated ? 'yes' : 'no'}`)
+    }
   }
   if (result.kind === 'request_planning_batch') {
     if (result.groupKey) {
@@ -104,6 +113,20 @@ export function formatAssistantActionResultDetails(
     }
     if (result.blockerTaskRefs && result.blockerTaskRefs.length > 0) {
       lines.push(`Blocker task refs: ${result.blockerTaskRefs.join(', ')}`)
+    }
+    if (result.createdRequestKeys) {
+      lines.push(
+        `Created request keys: ${
+          result.createdRequestKeys.length > 0 ? result.createdRequestKeys.join(', ') : 'none'
+        }`,
+      )
+    }
+    if (result.createdTaskRefs) {
+      lines.push(
+        `Created task refs: ${
+          result.createdTaskRefs.length > 0 ? result.createdTaskRefs.join(', ') : 'none'
+        }`,
+      )
     }
   }
   if (result.kind === 'request_planning_workflows') {
@@ -130,11 +153,23 @@ export function formatAssistantActionResultDetails(
     if (result.blockerTaskRefs && result.blockerTaskRefs.length > 0) {
       lines.push(`Blocker task refs: ${result.blockerTaskRefs.join(', ')}`)
     }
+    if (result.createdRequestKeys) {
+      lines.push(
+        `Created request keys: ${
+          result.createdRequestKeys.length > 0 ? result.createdRequestKeys.join(', ') : 'none'
+        }`,
+      )
+    }
+    if (result.createdTaskRefs) {
+      lines.push(
+        `Created task refs: ${
+          result.createdTaskRefs.length > 0 ? result.createdTaskRefs.join(', ') : 'none'
+        }`,
+      )
+    }
   }
   if (result.kind === 'request_decision' && result.decisionKey) {
     lines.push(`Decision key: ${result.decisionKey}`)
-  }
-  if (typeof result.created === 'boolean') {
     lines.push(`Created decision topic: ${result.created ? 'yes' : 'no'}`)
   }
   if (typeof result.blockerAdded === 'boolean') {

@@ -268,6 +268,8 @@ describe('createGoalAssistantContextBuilder', () => {
         requestKeys: ['PR-1', 'PR-2', 'PR-3'],
         taskRefs: ['P-1', 'P-2', 'P-3'],
         blockerTaskRefs: ['P-1', 'P-3'],
+        createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        createdTaskRefs: ['P-1', 'P-2', 'P-3'],
         resolvedSourceResponseFormat: 'matching_answer_sources',
         summary: 'Opened auth rollout workflows.',
       },
@@ -292,6 +294,8 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(context).toContain('Request keys: PR-1, PR-2, PR-3')
     expect(context).toContain('Task refs: P-1, P-2, P-3')
     expect(context).toContain('Blocker task refs: P-1, P-3')
+    expect(context).toContain('Created request keys: PR-1, PR-2, PR-3')
+    expect(context).toContain('Created task refs: P-1, P-2, P-3')
   })
 })
 

@@ -360,6 +360,8 @@ describe('assistant thread presentation', () => {
           kind: 'request_planning',
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          created: true,
+          taskCreated: true,
           resolvedSourceResponseFormat: 'matching_answer_sources',
           summary: 'Requested planning follow-through in PR-1 for P-1.',
         },
@@ -369,6 +371,8 @@ describe('assistant thread presentation', () => {
       details: [
         'Request key: PR-1',
         'Task ref: P-1',
+        'Created planning request: yes',
+        'Created planning task: yes',
         'Resolved source-response format: matching_answer_sources',
       ],
     })
@@ -387,6 +391,8 @@ describe('assistant thread presentation', () => {
             kind: 'request_planning',
             requestKey: 'PR-1',
             taskRef: 'P-1',
+            created: true,
+            taskCreated: true,
             resolvedSourceResponseFormat: 'matching_answer_sources',
             summary: 'Requested planning follow-through in PR-1 for P-1.',
           },

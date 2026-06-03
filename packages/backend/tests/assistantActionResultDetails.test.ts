@@ -59,6 +59,8 @@ describe('formatAssistantActionResultDetails', () => {
         requestKeys: ['PR-1', 'PR-2', 'PR-3'],
         taskRefs: ['P-1', 'P-2', 'P-3'],
         blockerTaskRefs: ['P-1', 'P-3'],
+        createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
+        createdTaskRefs: ['P-1', 'P-2', 'P-3'],
         resolvedSourceResponseFormat: 'matching_answer_sources',
         summary: 'Opened auth rollout workflows.',
       }),
@@ -71,7 +73,49 @@ describe('formatAssistantActionResultDetails', () => {
       'Request keys: PR-1, PR-2, PR-3',
       'Task refs: P-1, P-2, P-3',
       'Blocker task refs: P-1, P-3',
+      'Created request keys: PR-1, PR-2, PR-3',
+      'Created task refs: P-1, P-2, P-3',
       'Resolved source-response format: matching_answer_sources',
+    ])
+  })
+
+  test('surfaces structured planning-result creation authority', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'request_planning',
+        requestKey: 'PR-1',
+        taskRef: 'P-1',
+        created: true,
+        taskCreated: true,
+        summary: 'Requested planning follow-through in PR-1 for P-1.',
+      }),
+    ).toEqual([
+      'Request key: PR-1',
+      'Task ref: P-1',
+      'Created planning request: yes',
+      'Created planning task: yes',
+    ])
+  })
+
+  test('surfaces grouped planning creation authority', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'request_planning_batch',
+        groupKey: 'auth-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+        createdRequestKeys: ['PR-1', 'PR-2'],
+        createdTaskRefs: ['P-1', 'P-2'],
+        summary: 'Requested grouped planning follow-through auth-follow-through across P-1, P-2.',
+      }),
+    ).toEqual([
+      'Group key: auth-follow-through',
+      'Request keys: PR-1, PR-2',
+      'Task refs: P-1, P-2',
+      'Blocker task refs: P-2',
+      'Created request keys: PR-1, PR-2',
+      'Created task refs: P-1, P-2',
     ])
   })
 

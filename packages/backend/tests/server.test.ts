@@ -13330,6 +13330,8 @@ await Bun.write(
           groupKey: 'auth-follow-through',
           requestKeys: ['PR-1', 'PR-2'],
           taskRefs: ['P-1', 'P-2'],
+          createdRequestKeys: ['PR-1', 'PR-2'],
+          createdTaskRefs: ['P-1', 'P-2'],
         }),
       ]),
     })
@@ -13377,6 +13379,12 @@ await Bun.write(
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning_batch',
+          result: expect.objectContaining({
+            kind: 'request_planning_batch',
+            groupKey: 'auth-follow-through',
+            createdRequestKeys: ['PR-1', 'PR-2'],
+            createdTaskRefs: ['P-1', 'P-2'],
+          }),
         }),
       ]),
     )
@@ -13414,6 +13422,8 @@ await Bun.write(
           groupKeys: ['auth-follow-through'],
           requestKeys: ['PR-1', 'PR-2', 'PR-3'],
           taskRefs: ['P-1', 'P-2', 'P-3'],
+          createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
+          createdTaskRefs: ['P-1', 'P-2', 'P-3'],
         }),
       ]),
     })
@@ -13471,6 +13481,12 @@ await Bun.write(
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning_workflows',
+          result: expect.objectContaining({
+            kind: 'request_planning_workflows',
+            workflowKey: 'W-1',
+            createdRequestKeys: ['PR-1', 'PR-2', 'PR-3'],
+            createdTaskRefs: ['P-1', 'P-2', 'P-3'],
+          }),
         }),
       ]),
     )
@@ -19423,6 +19439,8 @@ await Bun.write(
           kind: 'request_planning',
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          created: true,
+          taskCreated: true,
           resolvedSourceResponseFormat: 'matching_answer_sources',
         }),
       ]),
@@ -19452,6 +19470,8 @@ await Bun.write(
             kind: 'request_planning',
             requestKey: 'PR-1',
             taskRef: 'P-1',
+            created: true,
+            taskCreated: true,
             resolvedSourceResponseFormat: 'matching_answer_sources',
           }),
         }),
@@ -19469,6 +19489,8 @@ await Bun.write(
           kind: 'request_planning',
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          created: true,
+          taskCreated: true,
           resolvedSourceResponseFormat: 'matching_answer_sources',
         }),
       ]),

@@ -764,6 +764,7 @@ Current non-UI Goal assistant substrate:
 - Goal-scoped assistant thread storage under `.hopi/runtime/**`
 - Goal-scoped assistant thread storage now also persists structured assistant `action` and `action_result` payloads instead of only lossy summary entries, and shared inspection helpers now surface the richer durable metadata already embedded in those actions
 - assistant `request_decision` result authority that preserves and surfaces structured `created`, `blockerAdded`, and `decisionStatus` metadata instead of forcing assistant run/thread inspection to recover that state from free-text summaries
+- assistant planning-result creation authority that preserves and surfaces structured `created` / `taskCreated` and `createdRequestKeys` / `createdTaskRefs` metadata for planning, grouped-planning, and planning-workflow actions instead of forcing inspection surfaces to infer “what this mutation created” from summary text
 - deterministic Goal doc bootstrap plus status inspection for `goal.md` and `design.md`
 - planner context wiring for Goal docs, decisions, planning requests, and preferences
 - explicit Goal assistant execution with constrained durable actions, including grouped planning requests, `request_decision`, decision resolution with embedded planner follow-through, and durable preferences
