@@ -418,6 +418,9 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.answerSources.length > 0) {
       lines.push(`Reusable answer sources: ${action.answerSources.length}`)
     }
+    for (const workflow of action.workflows) {
+      lines.push(formatWorkflowActionChildDetail(workflow))
+    }
     if (action.inferRemainingAnswers) {
       lines.push('Infer remaining answers: yes')
     }
@@ -568,6 +571,9 @@ function appendFollowThroughDetails(
     if (followThrough.reuseGroupKey) {
       lines.push(`Follow-through reusable group key: ${followThrough.reuseGroupKey}`)
     }
+    for (const workflow of followThrough.workflows) {
+      lines.push(formatFollowThroughWorkflowChildDetail(workflow))
+    }
     if (followThrough.answers.length > 0) {
       lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
     }
@@ -594,6 +600,37 @@ function appendFollowThroughDetails(
   if (followThrough.inferRemainingAnswers) {
     lines.push('Follow-through infers remaining answers: yes')
   }
+}
+
+function formatWorkflowActionChildDetail(
+  workflow: Extract<
+    GoalAssistantAction,
+    { kind: 'request_planning_workflows' }
+  >['workflows'][number],
+) {
+  if (workflow.kind === 'planning') {
+    return `Workflow child: ${workflow.workflowTaskKey ?? 'planning'} -> updates ${workflow.requestedUpdates.join(', ')}`
+  }
+
+  return `Workflow child: ${workflow.groupKey} -> requests ${workflow.requests.map((request) => request.taskKey).join(', ')}`
+}
+
+function formatFollowThroughWorkflowChildDetail(
+  workflow: Extract<
+    NonNullable<
+      Extract<
+        GoalAssistantAction,
+        { kind: 'record_answer' | 'record_answers' | 'resolve_decision' }
+      >['followThrough']
+    >,
+    { kind: 'workflow_batch' }
+  >['workflows'][number],
+) {
+  if (workflow.kind === 'planning') {
+    return `Follow-through workflow child: ${workflow.workflowTaskKey ?? 'planning'} -> updates ${workflow.requestedUpdates.join(', ')}`
+  }
+
+  return `Follow-through workflow child: ${workflow.groupKey} -> requests ${workflow.requests.map((request) => request.taskKey).join(', ')}`
 }
 
 export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {

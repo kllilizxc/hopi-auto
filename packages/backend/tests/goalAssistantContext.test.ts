@@ -88,6 +88,9 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(context).toContain('Reusable answer sources: 2')
     expect(context).toContain('Follow-through workflow key: auth-rollout-follow-through')
     expect(context).toContain('Follow-through reusable group key: auth-follow-through')
+    expect(context).toContain(
+      'Follow-through workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
+    )
     expect(context).toContain('Follow-through infers remaining answers: yes')
   })
 

@@ -121,8 +121,89 @@ describe('assistant thread presentation', () => {
         'Follow-through kind: workflow_batch',
         'Follow-through workflow key: auth-rollout-follow-through',
         'Follow-through reusable group key: auth-follow-through',
+        'Follow-through workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
         'Follow-through shared planner answers: 1',
         'Follow-through infers remaining answers: yes',
+      ],
+    })
+  })
+
+  test('surfaces child-level workflow action authority in thread presentation', () => {
+    expect(
+      formatAssistantThreadEntryPresentation({
+        entryId: 'entry-3',
+        createdAt: '2026-06-03T00:00:00.000Z',
+        kind: 'action',
+        actionType: 'request_planning_workflows',
+        summary: 'Update planning workflow auth-rollout-follow-through.',
+        action: {
+          kind: 'request_planning_workflows',
+          workflowKey: 'auth-rollout-follow-through',
+          reuseGroupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
+          answerSources: [
+            {
+              answerSourceKey: 'source-1',
+              answerKey: 'pilot-scope',
+              answer: 'Start with five enterprise customers before broader launch.',
+              matchHints: [],
+            },
+          ],
+          workflows: [
+            {
+              kind: 'planning',
+              workflowTaskKey: 'rollout-notes',
+              blockedByWorkflowKeys: [],
+              title: 'Capture rollout notes',
+              description: 'Record rollout details before more planning work continues.',
+              acceptanceCriteria: ['Rollout notes are durable.'],
+              decisionRefs: [],
+              answers: [],
+              requestedUpdates: ['goal.md', 'notes/rollout.md'],
+              blockedBy: [],
+            },
+            {
+              kind: 'planning_batch',
+              groupKey: 'auth-follow-through',
+              blockedByWorkflowKeys: ['rollout-notes'],
+              decisionRefs: ['auth-strategy'],
+              answers: [],
+              requests: [
+                {
+                  taskKey: 'goal-docs',
+                  title: 'Clarify auth goal context',
+                  description: 'Refresh durable Goal context before decomposition.',
+                  acceptanceCriteria: ['Goal context captures the auth direction.'],
+                  requestedUpdates: ['goal.md', 'design.md'],
+                  blockedBy: [],
+                  blockedByTaskKeys: [],
+                },
+                {
+                  taskKey: 'task-graph',
+                  title: 'Decompose auth task graph',
+                  description: 'Reshape todo.yml after the goal context is stable.',
+                  acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+                  requestedUpdates: ['todo.yml'],
+                  blockedBy: [],
+                  blockedByTaskKeys: ['goal-docs'],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      body: 'request_planning_workflows | Update planning workflow auth-rollout-follow-through.',
+      details: [
+        'Workflow count: 2',
+        'Workflow key: auth-rollout-follow-through',
+        'Reuse group key: auth-follow-through',
+        'Linked decisions: auth-strategy',
+        'Shared planner answers: 1',
+        'Reusable answer sources: 1',
+        'Workflow child: rollout-notes -> updates goal.md, notes/rollout.md',
+        'Workflow child: auth-follow-through -> requests goal-docs, task-graph',
       ],
     })
   })
