@@ -40,6 +40,7 @@ interface GoalDecision {
   summary: string
   summaryKey?: string
   prompt?: string
+  matchHints?: string[]
   captureFormat?: string
   status: 'open' | 'resolved'
   taskRef?: string
@@ -53,6 +54,7 @@ interface CapturedAnswer {
   answerKey?: string
   summaryKey?: string
   prompt?: string
+  matchHints?: string[]
   captureFormat?: string
   answer: string
 }
@@ -1649,16 +1651,26 @@ function renderDecision(decision: GoalDecision) {
       <strong>${escapeHtml(decision.decisionKey)}</strong>
       <p>${escapeHtml(decision.summary)}</p>
       ${
+        decision.summaryKey
+          ? `<div class="assistant-summary">Summary key: ${escapeHtml(decision.summaryKey)}</div>`
+          : ''
+      }
+      ${
         decision.prompt
           ? `<div class="assistant-summary">Prompt: ${escapeHtml(decision.prompt)}</div>`
           : ''
       }
       ${
+        decision.matchHints && decision.matchHints.length > 0
+          ? `<div class="assistant-summary">Match hints: ${escapeHtml(decision.matchHints.join(', '))}</div>`
+          : ''
+      }
+      ${decision.taskRef ? `<div class="assistant-summary">Task: ${escapeHtml(decision.taskRef)}</div>` : ''}
+      ${
         decision.captureFormat
           ? `<div class="assistant-summary">Answer capture format: ${escapeHtml(decision.captureFormat)}</div>`
           : ''
       }
-      ${decision.taskRef ? `<div class="assistant-summary">Task: ${escapeHtml(decision.taskRef)}</div>` : ''}
       ${
         decision.answer
           ? `<div class="assistant-summary">Answer: ${escapeHtml(decision.answer)}</div>`
@@ -1677,8 +1689,18 @@ function renderDecision(decision: GoalDecision) {
 
 function formatPlanningAnswerSummary(entry: CapturedAnswer) {
   const prefix = entry.prompt ? `${entry.summary} [${entry.prompt}]` : entry.summary
-  const capture = entry.captureFormat ? ` [captureFormat=${entry.captureFormat}]` : ''
-  return `${prefix}${capture}: ${entry.answer}`
+  const metadata = [
+    entry.summaryKey ? `summaryKey=${entry.summaryKey}` : null,
+    entry.answerKey ? `answerKey=${entry.answerKey}` : null,
+    entry.matchHints && entry.matchHints.length > 0
+      ? `matchHints=${entry.matchHints.join('|')}`
+      : null,
+    entry.captureFormat ? `captureFormat=${entry.captureFormat}` : null,
+  ]
+    .filter(Boolean)
+    .map((value) => ` [${value}]`)
+    .join('')
+  return `${prefix}${metadata}: ${entry.answer}`
 }
 
 function renderPlanningRequest(request: GoalPlanningRequest) {

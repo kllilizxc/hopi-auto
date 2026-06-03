@@ -406,7 +406,9 @@ ${entries
   .map((entry) =>
     [
       `- ${entry.status} | ${entry.decisionKey} | ${entry.summary}`,
+      entry.summaryKey ? `  Summary key: ${entry.summaryKey}` : null,
       entry.prompt ? `  Prompt: ${entry.prompt}` : null,
+      entry.matchHints?.length ? `  Match hints: ${entry.matchHints.join(', ')}` : null,
       entry.taskRef ? `  Task: ${entry.taskRef}` : null,
       entry.captureFormat ? `  Answer capture format: ${entry.captureFormat}` : null,
       entry.answer ? `  Answer: ${entry.answer}` : null,
@@ -706,8 +708,16 @@ function renderPlanningRequestAnswers(
 
 function formatPlanningRequestAnswer(entry: GoalPlanningRequestAnswer) {
   const prefix = entry.prompt ? `${entry.summary} [${entry.prompt}]` : entry.summary
-  const capture = entry.captureFormat ? ` [captureFormat=${entry.captureFormat}]` : ''
-  return `${prefix}${capture}: ${entry.answer}`
+  const metadata = [
+    entry.summaryKey ? `summaryKey=${entry.summaryKey}` : null,
+    entry.answerKey ? `answerKey=${entry.answerKey}` : null,
+    entry.matchHints?.length ? `matchHints=${entry.matchHints.join('|')}` : null,
+    entry.captureFormat ? `captureFormat=${entry.captureFormat}` : null,
+  ]
+    .filter(Boolean)
+    .map((value) => ` [${value}]`)
+    .join('')
+  return `${prefix}${metadata}: ${entry.answer}`
 }
 
 function summarizeRelatedPlanningGroups(requests: GoalPlanningRequest[], taskRef: string) {

@@ -164,6 +164,8 @@ requests:
     await decisionStore.createDecision('goal-2b', {
       decisionKey: 'auth-strategy',
       summary: 'Choose the auth strategy',
+      summaryKey: 'auth-strategy',
+      matchHints: ['login path'],
       taskRef: 'P-2',
     })
     await decisionStore.resolveDecision('goal-2b', 'auth-strategy', {
@@ -182,7 +184,10 @@ requests:
       workflowSharedAnswers: [
         {
           summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          summaryKey: 'pilot-scope',
           prompt: 'What should the pilot scope be?',
+          matchHints: ['launch cohort'],
           captureFormat: 'question_blocks',
           answer: 'Start with five enterprise customers before broader launch.',
         },
@@ -190,7 +195,10 @@ requests:
       answers: [
         {
           summary: 'Pilot scope',
+          answerKey: 'pilot-scope',
+          summaryKey: 'pilot-scope',
           prompt: 'What should the pilot scope be?',
+          matchHints: ['launch cohort'],
           captureFormat: 'question_blocks',
           answer: 'Start with five enterprise customers before broader launch.',
         },
@@ -219,10 +227,12 @@ requests:
     const context = await readFile(bundle.contextFile, 'utf8')
     expect(context).toContain('### Parsed Decisions')
     expect(context).toContain('resolved | auth-strategy | Choose the auth strategy')
+    expect(context).toContain('Summary key: auth-strategy')
+    expect(context).toContain('Match hints: login path')
     expect(context).toContain('Answer capture format: matching_runs')
     expect(context).toContain('Workflow-shared answers:')
     expect(context).toContain(
-      'Pilot scope [What should the pilot scope be?] [captureFormat=question_blocks]: Start with five enterprise customers before broader launch.',
+      'Pilot scope [What should the pilot scope be?] [summaryKey=pilot-scope] [answerKey=pilot-scope] [matchHints=launch cohort] [captureFormat=question_blocks]: Start with five enterprise customers before broader launch.',
     )
     expect(context).toContain('Captured answers:')
   })

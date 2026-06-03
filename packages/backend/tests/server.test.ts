@@ -329,12 +329,16 @@ describe('createServer', () => {
         {
           decisionKey: 'auth-strategy',
           summary: 'Choose the auth strategy',
+          summaryKey: 'auth-strategy',
           prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+          matchHints: ['login path'],
         },
         {
           decisionKey: 'rollout-strategy',
           summary: 'Choose the rollout strategy',
+          summaryKey: 'rollout-strategy',
           prompt: 'Should rollout happen in stages or all at once?',
+          matchHints: ['launch shape'],
         },
       ],
     })
@@ -365,10 +369,14 @@ describe('createServer', () => {
       decisions: [
         expect.objectContaining({
           decisionKey: 'auth-strategy',
+          summaryKey: 'auth-strategy',
+          matchHints: ['login path'],
           captureFormat: responseBody.resolvedSourceResponseFormat,
         }),
         expect.objectContaining({
           decisionKey: 'rollout-strategy',
+          summaryKey: 'rollout-strategy',
+          matchHints: ['launch shape'],
           captureFormat: responseBody.resolvedSourceResponseFormat,
         }),
       ],
@@ -381,10 +389,14 @@ describe('createServer', () => {
       decisions: [
         expect.objectContaining({
           decisionKey: 'auth-strategy',
+          summaryKey: 'auth-strategy',
+          matchHints: ['login path'],
           captureFormat: responseBody.resolvedSourceResponseFormat,
         }),
         expect.objectContaining({
           decisionKey: 'rollout-strategy',
+          summaryKey: 'rollout-strategy',
+          matchHints: ['launch shape'],
           captureFormat: responseBody.resolvedSourceResponseFormat,
         }),
       ],
@@ -409,7 +421,20 @@ describe('createServer', () => {
         'The rollback trigger should stay explicit for the launch team.',
       ].join('\n'),
       sourceResponseFormat: 'matching_runs',
-      answers: [{ summary: 'Pilot scope' }, { summary: 'Rollback trigger' }],
+      answers: [
+        {
+          summary: 'Pilot scope',
+          summaryKey: 'pilot-scope',
+          answerKey: 'pilot-scope',
+          matchHints: ['launch cohort'],
+        },
+        {
+          summary: 'Rollback trigger',
+          summaryKey: 'rollback-trigger',
+          answerKey: 'rollback-trigger',
+          matchHints: ['revert point'],
+        },
+      ],
       requestedUpdates: ['goal.md', 'notes/rollout.md'],
     })
 
@@ -421,7 +446,10 @@ describe('createServer', () => {
       answers: [
         {
           summary: 'Pilot scope',
+          summaryKey: 'pilot-scope',
+          answerKey: 'pilot-scope',
           prompt: 'What should the pilot scope be?',
+          matchHints: ['launch cohort'],
           answer: [
             'Pilot scope should start with five enterprise customers.',
             'The pilot scope should stay supportable for one onboarding wave.',
@@ -429,7 +457,10 @@ describe('createServer', () => {
         },
         {
           summary: 'Rollback trigger',
+          summaryKey: 'rollback-trigger',
+          answerKey: 'rollback-trigger',
           prompt: 'What should the rollback trigger be?',
+          matchHints: ['revert point'],
           answer: [
             'Rollback trigger should be two regressions in one hour.',
             'The rollback trigger should stay explicit for the launch team.',
@@ -447,6 +478,9 @@ describe('createServer', () => {
           answers: [
             expect.objectContaining({
               summary: 'Pilot scope',
+              summaryKey: 'pilot-scope',
+              answerKey: 'pilot-scope',
+              matchHints: ['launch cohort'],
               captureFormat: 'matching_runs',
               prompt: 'What should the pilot scope be?',
               answer: [
@@ -456,6 +490,9 @@ describe('createServer', () => {
             }),
             expect.objectContaining({
               summary: 'Rollback trigger',
+              summaryKey: 'rollback-trigger',
+              answerKey: 'rollback-trigger',
+              matchHints: ['revert point'],
               captureFormat: 'matching_runs',
               prompt: 'What should the rollback trigger be?',
               answer: [
@@ -480,10 +517,16 @@ describe('createServer', () => {
           answers: [
             expect.objectContaining({
               summary: 'Pilot scope',
+              summaryKey: 'pilot-scope',
+              answerKey: 'pilot-scope',
+              matchHints: ['launch cohort'],
               captureFormat: 'matching_runs',
             }),
             expect.objectContaining({
               summary: 'Rollback trigger',
+              summaryKey: 'rollback-trigger',
+              answerKey: 'rollback-trigger',
+              matchHints: ['revert point'],
               captureFormat: 'matching_runs',
             }),
           ],
@@ -14739,6 +14782,14 @@ preferences:
       ].join('\n'),
       sourceResponseFormat: 'question_blocks',
       inferRemainingAnswers: true,
+      answers: [
+        {
+          summary: 'Pilot scope',
+          summaryKey: 'pilot-scope',
+          answerKey: 'pilot-scope',
+          matchHints: ['launch cohort'],
+        },
+      ],
       workflows: [
         {
           kind: 'planning',
@@ -14767,6 +14818,9 @@ preferences:
           workflowSharedAnswers: [
             expect.objectContaining({
               summary: 'Pilot scope',
+              summaryKey: 'pilot-scope',
+              answerKey: 'pilot-scope',
+              matchHints: ['launch cohort'],
               captureFormat: 'question_blocks',
             }),
           ],
@@ -14777,6 +14831,9 @@ preferences:
                 answers: [
                   expect.objectContaining({
                     summary: 'Pilot scope',
+                    summaryKey: 'pilot-scope',
+                    answerKey: 'pilot-scope',
+                    matchHints: ['launch cohort'],
                     captureFormat: 'question_blocks',
                   }),
                 ],
@@ -14797,6 +14854,9 @@ preferences:
       workflowSharedAnswers: [
         expect.objectContaining({
           summary: 'Pilot scope',
+          summaryKey: 'pilot-scope',
+          answerKey: 'pilot-scope',
+          matchHints: ['launch cohort'],
           captureFormat: 'question_blocks',
         }),
       ],
@@ -14807,6 +14867,9 @@ preferences:
             answers: [
               expect.objectContaining({
                 summary: 'Pilot scope',
+                summaryKey: 'pilot-scope',
+                answerKey: 'pilot-scope',
+                matchHints: ['launch cohort'],
                 captureFormat: 'question_blocks',
               }),
             ],
