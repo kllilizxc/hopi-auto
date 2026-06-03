@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import {
   AnswerInterpretationError,
+  type InterpretableAnswerSource,
   createInterpretedSourceResponseState,
   listAutoSourceResponseFormatCandidates,
   materializeInterpretedDecisionAnswerBatch,
@@ -4991,6 +4992,40 @@ test('materializes matching open decisions from matching answer sources by durab
   ])
 })
 
+test('materializes matching open decisions from matching answer sources by durable decisionKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'source-1',
+      decisionKey: 'launch-sequencing',
+      answer: 'Use a staged rollout.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          prompt: 'How should we phase the launch to users?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes planner answers from matching answer sources by durable answerKey', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -5314,6 +5349,53 @@ test('materializes new decision topics from remaining matching answer sources by
   ])
 })
 
+test('materializes new decision topics from remaining matching answer sources by explicit decisionKey without explicit summary, prompt, match hints, or stable answerSourceKey', () => {
+  const answerSources = [
+    {
+      answerSourceKey: 'auth-strategy-answer',
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      answerSourceKey: 'source-2',
+      decisionKey: 'launch-sequencing',
+      answer: 'Use a staged rollout.',
+    },
+  ] as unknown as InterpretableAnswerSource[]
+
+  expect(
+    materializeInterpretedDecisionAnswerBatch(
+      [],
+      [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+        },
+      ],
+      true,
+      undefined,
+      answerSources,
+      'matching_answer_sources',
+      undefined,
+      true,
+    ),
+  ).toEqual([
+    {
+      decisionKey: 'auth-strategy',
+      summary: 'Choose the auth strategy',
+      taskRef: undefined,
+      answer: 'Use Bun-native auth.',
+    },
+    {
+      decisionKey: 'launch-sequencing',
+      summary: 'Launch sequencing',
+      prompt: 'What should the launch sequencing be?',
+      taskRef: undefined,
+      answer: 'Use a staged rollout.',
+    },
+  ])
+})
+
 test('materializes inferred planner answers from remaining pending answer sources without explicit follow-through summaries', () => {
   const materialized = materializeInterpretedDecisionFollowThrough(
     {
@@ -5596,7 +5678,7 @@ test('rejects remaining matching answer sources without explicit summary, stable
       true,
     ),
   ).toThrow(
-    'Remaining answerSource "source-2" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for inferDecisionTopics.',
+    'Remaining answerSource "source-2" requires summary, stable prompt, decisionKey, summaryKey, exactly one stable match hint, or stable answerSourceKey for inferDecisionTopics.',
   )
 })
 
@@ -5629,7 +5711,7 @@ test('rejects remaining matching answer sources with more than one match hint an
       true,
     ),
   ).toThrow(
-    'Remaining answerSource "rollout-answer" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for inferDecisionTopics.',
+    'Remaining answerSource "rollout-answer" requires summary, stable prompt, decisionKey, summaryKey, exactly one stable match hint, or stable answerSourceKey for inferDecisionTopics.',
   )
 })
 

@@ -719,6 +719,7 @@ Current non-UI Goal assistant substrate:
 - scheduler hard guards that retry planning review/merge work when explicit requested updates still lack durable trace coverage
 - grouped-planning blocker propagation that keeps engineering waiting on the current open grouped leaves instead of stale earlier grouped tasks
 - contiguous explicit anchor-run merging that lets `question_*` and `topic_*` answer surfaces merge one known consumer across adjacent repeated matching units while still failing closed on non-contiguous repeats
+- reusable answer-source decision-key authority that lets `matching_answer_sources` target an existing durable decision by explicit `decisionKey`, and lets remaining reusable source entries materialize a brand-new durable decision topic from that same explicit durable key without restating summary text
 
 What is still missing:
 

@@ -189,6 +189,7 @@ interface ResolvedAnswerContent {
 interface ResolvedAnswerSourceEntry {
   key: string
   answer: string
+  decisionKey?: string
   answerKey?: string
   summaryKey?: string
   summary?: string
@@ -209,6 +210,7 @@ const TOPIC_SUMMARY_PREFIX_PATTERN = '(?:for|about|regarding|on)'
 
 type InterpretableAnswerSourceMetadata = {
   answerSourceKey: string
+  decisionKey?: string
   answerKey?: string
   summaryKey?: string
   summary?: string
@@ -2635,6 +2637,7 @@ function buildPlanningAnswerSourceResponseCandidates(answer: InterpretablePlanni
 
 function buildAnswerSourceResponseCandidates(source: InterpretableAnswerSource) {
   return dedupeNonEmptyStrings([
+    humanizeDecisionKey(source.decisionKey),
     humanizePlanningAnswerKey(source.answerKey),
     humanizeSummaryKey(source.summaryKey),
     humanizeAnswerSourceKey(source.answerSourceKey),
@@ -3126,6 +3129,11 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
     return summaryFromPrompt
   }
 
+  const summaryFromDecisionKey = inferSummaryFromDecisionKey(entry.decisionKey)
+  if (summaryFromDecisionKey) {
+    return summaryFromDecisionKey
+  }
+
   const summaryFromSummaryKey = inferSummaryFromStableSummaryKey(entry.summaryKey)
   if (summaryFromSummaryKey) {
     return summaryFromSummaryKey
@@ -3138,7 +3146,7 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
 
   if (hasMultipleStableMatchHints(entry.matchHints)) {
     throw new AnswerInterpretationError(
-      `Remaining answerSource "${entry.key}" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
+      `Remaining answerSource "${entry.key}" requires summary, stable prompt, decisionKey, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
     )
   }
 
@@ -3148,7 +3156,7 @@ function resolveRequiredAnswerSourceSummary(entry: ResolvedAnswerSourceEntry, la
   }
 
   throw new AnswerInterpretationError(
-    `Remaining answerSource "${entry.key}" requires summary, stable prompt, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
+    `Remaining answerSource "${entry.key}" requires summary, stable prompt, decisionKey, summaryKey, exactly one stable match hint, or stable answerSourceKey for ${label}.`,
   )
 }
 
@@ -7438,16 +7446,32 @@ function createKnownDecisionsBySummaryLookup(knownDecisions: InterpretableKnownD
   return lookup
 }
 
+function createKnownDecisionsByDecisionKeyLookup(knownDecisions: InterpretableKnownDecision[]) {
+  const lookup = new Map<string, InterpretableKnownDecision>()
+  for (const decision of knownDecisions) {
+    const decisionKey = decision.decisionKey.trim()
+    if (decisionKey) {
+      lookup.set(decisionKey, decision)
+    }
+  }
+  return lookup
+}
+
 function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
   entries: ResolvedAnswerSourceEntry[],
   knownDecisions: InterpretableKnownDecision[],
   label: string,
 ): MaterializedInterpretedDecisionAnswer[] {
   const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
+  const knownDecisionsByDecisionKey = createKnownDecisionsByDecisionKeyLookup(knownDecisions)
   return entries.map((entry) => {
     const summary = resolveRequiredAnswerSourceSummary(entry, label)
-    const matchingKnownDecisions =
-      knownDecisionsBySummary.get(normalizeSourceResponseLabel(summary)) ?? []
+    const matchingKnownDecisionByKey = entry.decisionKey?.trim()
+      ? knownDecisionsByDecisionKey.get(entry.decisionKey.trim())
+      : undefined
+    const matchingKnownDecisions = matchingKnownDecisionByKey
+      ? [matchingKnownDecisionByKey]
+      : (knownDecisionsBySummary.get(normalizeSourceResponseLabel(summary)) ?? [])
     if (matchingKnownDecisions.length > 1) {
       throw new AnswerInterpretationError(
         `Multiple existing decisions match inferred answerSource summary "${summary}".`,
@@ -7473,7 +7497,7 @@ function materializeRemainingDecisionTopicAnswersFromAnswerSourceEntries(
           ? {}
           : { prompt: synthesizeCanonicalPromptFromSummary(summary) }),
       ...(entry.matchHints?.length ? { matchHints: entry.matchHints } : {}),
-      decisionKey: matchingKnownDecision?.decisionKey,
+      decisionKey: matchingKnownDecision?.decisionKey ?? entry.decisionKey?.trim(),
       taskRef: matchingKnownDecision?.taskRef,
       answer: entry.answer,
     }
@@ -7956,6 +7980,15 @@ function inferSummaryFromStableSummaryKey(summaryKey: string | undefined) {
   return normalizeExtractedTopicSummary(humanized, true)
 }
 
+function inferSummaryFromDecisionKey(decisionKey: string | undefined) {
+  const humanized = humanizeDecisionKey(decisionKey)
+  if (!humanized) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(humanized, true)
+}
+
 function inferSummaryFromStableAnswerSourceKey(key: string | undefined) {
   const trimmed = key?.trim()
   if (!trimmed) {
@@ -8223,6 +8256,7 @@ function createResolvedAnswerSources(
       }
       resolved = sourceExcerpt
     }
+    const decisionKey = source.decisionKey?.trim() || undefined
     const summaryKey = source.summaryKey?.trim() || undefined
     const answerKey = source.answerKey?.trim() || undefined
     const summary = source.summary?.trim() || undefined
@@ -8233,6 +8267,7 @@ function createResolvedAnswerSources(
     entries.push({
       key,
       answer: resolved,
+      decisionKey,
       answerKey,
       summaryKey,
       summary,

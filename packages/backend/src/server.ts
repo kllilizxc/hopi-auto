@@ -81,6 +81,7 @@ const interpretablePlanningAnswerArraySchema = z
 
 const interpretableAnswerSourceMetadataSchema = {
   answerSourceKey: z.string().min(1),
+  decisionKey: z.string().min(1).optional(),
   answerKey: z.string().min(1).optional(),
   summaryKey: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),

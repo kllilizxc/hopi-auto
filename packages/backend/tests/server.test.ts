@@ -8606,6 +8606,45 @@ describe('createServer', () => {
     })
   })
 
+  test('records matching open decisions through the API from matching answer sources by durable decisionKey', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const decisionResponse = await postJson(server, '/api/goals/test/decisions', {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      prompt: 'How should we phase the launch to users?',
+    })
+    expect(decisionResponse.status).toBe(201)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      answerSources: [
+        {
+          answerSourceKey: 'source-1',
+          decisionKey: 'launch-sequencing',
+          answer: 'Use a staged rollout.',
+        },
+      ],
+      sourceResponseFormat: 'matching_answer_sources',
+      inferOpenDecisions: true,
+    })
+
+    expect(response.status).toBe(200)
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'launch-sequencing',
+          summary: 'Choose the launch sequencing',
+          prompt: 'How should we phase the launch to users?',
+          status: 'resolved',
+          answer: 'Use a staged rollout.',
+        }),
+      ],
+    })
+  })
+
   test('records inferred planner answers through the API from remaining question closing spans without explicit follow-through summaries', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -15284,6 +15323,48 @@ preferences:
     await expect(response.json()).resolves.toMatchObject({
       message:
         'I resolved the open launch-sequencing decision from matching reusable answer sources by durable summaryKey.',
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answers',
+          decisionKeys: ['launch-sequencing'],
+          createdDecisionKeys: [],
+        }),
+      ]),
+    })
+  })
+
+  test('runs the configured Goal assistant and resolves an open decision from matching answer sources by durable decisionKey', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "const [promptFile, outcomeFile] = process.argv.slice(1); const prompt = await Bun.file(promptFile).text(); if (!prompt.includes('Resolve the open launch-sequencing decision from matching reusable answer sources by durable decisionKey.')) throw new Error('missing user message'); await Bun.write(outcomeFile, JSON.stringify({ message: 'I resolved the open launch-sequencing decision from matching reusable answer sources by durable decisionKey.', actions: [{ kind: 'record_answers', answerSources: [{ answerSourceKey: 'source-1', decisionKey: 'launch-sequencing', answer: 'Use a staged rollout.' }], sourceResponseFormat: 'matching_answer_sources', inferOpenDecisions: true }] })); console.log('assistant finished')",
+          '${PROMPT_FILE}',
+          '${OUTCOME_FILE}',
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+    await createDecisionStore(workspaceRoot).createDecision('test', {
+      decisionKey: 'launch-sequencing',
+      summary: 'Choose the launch sequencing',
+      prompt: 'How should we phase the launch to users?',
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const response = await postJson(server, '/api/goals/test/assistant/run', {
+      content:
+        'Resolve the open launch-sequencing decision from matching reusable answer sources by durable decisionKey.',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      message:
+        'I resolved the open launch-sequencing decision from matching reusable answer sources by durable decisionKey.',
       actionResults: expect.arrayContaining([
         expect.objectContaining({
           kind: 'record_answers',
