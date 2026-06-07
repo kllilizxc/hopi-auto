@@ -2,6 +2,7 @@ import type { AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
 import type {
+  GoalPlanningRequest,
   GoalPlanningRequestAnswer,
   GoalPlanningRequestUpdateTarget,
   PlanningRequestStore,
@@ -120,6 +121,7 @@ export type GoalDecisionFollowThroughInput =
 export interface GoalDecisionPlanningFollowThroughResult {
   kind: 'planning'
   workflowTaskKey?: string
+  requests: GoalPlanningRequest[]
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
@@ -128,6 +130,7 @@ export interface GoalDecisionPlanningFollowThroughResult {
 export interface GoalDecisionPlanningBatchFollowThroughResult {
   kind: 'planning_batch'
   groupKey: string
+  requests: GoalPlanningRequest[]
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
@@ -141,6 +144,7 @@ export interface GoalDecisionWorkflowBatchFollowThroughResult {
   kind: 'workflow_batch'
   workflowKey?: string
   workflows: GoalDecisionLeafFollowThroughResult[]
+  requests: GoalPlanningRequest[]
   groupKeys: string[]
   requestKeys: string[]
   taskRefs: string[]
@@ -570,6 +574,7 @@ async function createDecisionResolutionFollowThrough(
           return {
             kind: 'planning_batch' as const,
             groupKey: workflow.groupKey,
+            requests: workflow.requests,
             requestKeys: workflow.requestKeys,
             taskRefs: workflow.taskRefs,
             blockerTaskRefs: workflow.blockerTaskRefs,
@@ -579,11 +584,13 @@ async function createDecisionResolutionFollowThrough(
         return {
           kind: 'planning' as const,
           workflowTaskKey: workflow.workflowTaskKey,
+          requests: workflow.requests,
           requestKeys: workflow.requestKeys,
           taskRefs: workflow.taskRefs,
           blockerTaskRefs: workflow.blockerTaskRefs,
         }
       }),
+      requests: result.requests,
       groupKeys: result.groupKeys,
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
@@ -626,6 +633,7 @@ async function createDecisionResolutionFollowThrough(
 
   return {
     kind: 'planning' as const,
+    requests: [result.request],
     requestKeys: [result.request.requestKey],
     taskRefs: [result.request.taskRef],
     blockerTaskRefs: [result.request.taskRef],
@@ -684,6 +692,7 @@ async function materializeExplicitDecisionFollowThrough(
     return {
       kind: 'planning_batch',
       groupKey: result.groupKey,
+      requests: result.requests,
       requestKeys: result.entries.map((entry) => entry.requestKey),
       taskRefs: result.entries.map((entry) => entry.taskRef),
       blockerTaskRefs,
@@ -711,6 +720,7 @@ async function materializeExplicitDecisionFollowThrough(
 
   return {
     kind: 'planning',
+    requests: [result.request],
     requestKeys: [result.request.requestKey],
     taskRefs: [result.request.taskRef],
     blockerTaskRefs: [result.request.taskRef],

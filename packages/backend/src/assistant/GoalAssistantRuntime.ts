@@ -5,7 +5,7 @@ import type { AgentRuntimeEvent } from '../agent/AgentRunner'
 import { agentAdapterConfigSchema } from '../agent/adapterConfig'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
-import type { TaskStatus } from '../domain/board'
+import type { TaskItem, TaskStatus } from '../domain/board'
 import {
   listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionBundle,
@@ -36,7 +36,11 @@ import {
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
-import { type PreferenceStore, createPreferenceStore } from '../storage/preferenceStore'
+import {
+  type PreferenceEntry,
+  type PreferenceStore,
+  createPreferenceStore,
+} from '../storage/preferenceStore'
 import { summarizeAssistantAction } from './assistantInspection'
 import {
   type GoalAssistantAction,
@@ -189,6 +193,8 @@ async function applyAssistantAction(
   },
 ): Promise<GoalAssistantActionResult> {
   if (action.kind === 'move_task') {
+    let previousStatus: TaskStatus | undefined
+    let movedTask: TaskItem | undefined
     await stores.boardStore.mutateBoard(
       goalKey,
       'assistant',
@@ -201,7 +207,9 @@ async function applyAssistantAction(
         if (!isLegalManualTransition(task.status, action.status)) {
           throw new Error(`Illegal manual transition: ${task.status} -> ${action.status}`)
         }
+        previousStatus = task.status
         task.status = action.status
+        movedTask = cloneTaskItem(task)
       },
     )
 
@@ -209,19 +217,22 @@ async function applyAssistantAction(
       kind: 'move_task',
       taskRef: action.taskRef,
       status: action.status,
+      previousStatus,
+      task: movedTask,
       summary: `Moved ${action.taskRef} to ${action.status}.`,
     }
   }
 
   if (action.kind === 'create_planning_task') {
     let createdRef = ''
+    let createdTask: TaskItem | undefined
     await stores.boardStore.mutateBoard(
       goalKey,
       'assistant',
       'assistant create planning task',
       (board) => {
         createdRef = nextPlanningTaskRef(board.items.map((item) => item.ref))
-        board.items.push({
+        const task: TaskItem = {
           ref: createdRef,
           kind: 'planning',
           status: 'planned',
@@ -229,13 +240,16 @@ async function applyAssistantAction(
           description: action.description,
           acceptanceCriteria: action.acceptanceCriteria,
           blockedBy: action.blockedBy,
-        })
+        }
+        board.items.push(task)
+        createdTask = cloneTaskItem(task)
       },
     )
 
     return {
       kind: 'create_planning_task',
       taskRef: createdRef,
+      task: createdTask,
       summary: `Created planning task ${createdRef}.`,
     }
   }
@@ -281,6 +295,7 @@ async function applyAssistantAction(
       kind: 'request_planning',
       requestKey: result.request.requestKey,
       taskRef: result.request.taskRef,
+      request: result.request,
       created: result.created,
       taskCreated: result.taskCreated,
       resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
@@ -324,6 +339,7 @@ async function applyAssistantAction(
       groupKey: result.groupKey,
       requestKeys: result.entries.map((entry) => entry.requestKey),
       taskRefs: result.entries.map((entry) => entry.taskRef),
+      requests: result.requests,
       blockerTaskRefs: await listGroupedPlanningSinkTaskRefs(
         {
           boardStore: stores.boardStore,
@@ -387,6 +403,7 @@ async function applyAssistantAction(
       workflows: result.workflows,
       requestKeys: result.requestKeys,
       taskRefs: result.taskRefs,
+      requests: result.requests,
       blockerTaskRefs: result.blockerTaskRefs,
       createdRequestKeys: result.createdRequestKeys,
       createdTaskRefs: result.createdTaskRefs,
@@ -421,6 +438,7 @@ async function applyAssistantAction(
       return {
         kind: 'request_decision',
         decisionKey: result.decision.decisionKey,
+        decision: result.decision,
         created: result.created,
         blockerAdded: result.blockerAdded,
         decisionStatus: result.decision.status,
@@ -431,6 +449,7 @@ async function applyAssistantAction(
     return {
       kind: 'request_decision',
       decisionKey: result.decision.decisionKey,
+      decision: result.decision,
       created: result.created,
       blockerAdded: result.blockerAdded,
       decisionStatus: result.decision.status,
@@ -498,6 +517,7 @@ async function applyAssistantAction(
     return {
       kind: 'resolve_decision',
       decisionKey: action.decisionKey,
+      decision: result.decision,
       blockerRemoved: result.blockerRemoved,
       resolvedSourceResponseFormat: materialized.sourceResponseFormat,
       followThrough: result.followThrough,
@@ -561,6 +581,7 @@ async function applyAssistantAction(
     return {
       kind: 'record_answer',
       decisionKey: result.decision.decisionKey,
+      decision: result.decision,
       created: result.created,
       blockerRemoved: result.blockerRemoved,
       resolvedSourceResponseFormat: materialized.sourceResponseFormat,
@@ -621,6 +642,7 @@ async function applyAssistantAction(
     return {
       kind: 'record_answers',
       decisionKeys: result.decisions.map((decision) => decision.decisionKey),
+      decisions: result.decisions,
       createdDecisionKeys: result.createdDecisionKeys,
       blockerRemoved: result.blockerRemoved,
       resolvedSourceResponseFormat: materialized.sourceResponseFormat,
@@ -630,22 +652,35 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_preference') {
-    await stores.preferences.recordPreference({
+    const document = await stores.preferences.recordPreference({
       preferenceKey: action.preferenceKey,
       summary: action.summary,
       rationale: action.rationale,
       supersedes: action.supersedes,
     })
+    const preferenceKey = action.preferenceKey ?? slugifyPreferenceSummary(action.summary)
     return {
       kind: 'record_preference',
-      preferenceKey: action.preferenceKey ?? slugifyPreferenceSummary(action.summary),
+      preferenceKey,
+      preferenceSummary: action.summary,
+      rationale: action.rationale,
+      preference: (() => {
+        const entry = document.entries.find((item) => item.preferenceKey === preferenceKey)
+        return entry ? clonePreferenceEntry(entry) : undefined
+      })(),
+      retiredPreferences:
+        action.supersedes && action.supersedes.length > 0
+          ? document.entries
+              .filter((entry) => action.supersedes?.includes(entry.preferenceKey))
+              .map((entry) => clonePreferenceEntry(entry))
+          : undefined,
       retiredPreferenceKeys: action.supersedes ?? [],
       summary: `Recorded durable preference: ${action.summary}`,
     }
   }
 
   if (action.kind === 'retire_preference') {
-    await stores.preferences.retirePreference({
+    const document = await stores.preferences.retirePreference({
       preferenceKey: action.preferenceKey,
       reason: action.reason,
       supersededBy: action.supersededBy,
@@ -653,13 +688,21 @@ async function applyAssistantAction(
     return {
       kind: 'retire_preference',
       preferenceKey: action.preferenceKey,
+      reason: action.reason,
+      supersededBy: action.supersededBy,
+      preference: (() => {
+        const entry = document.entries.find((item) => item.preferenceKey === action.preferenceKey)
+        return entry ? clonePreferenceEntry(entry) : undefined
+      })(),
       summary: `Retired durable preference: ${action.preferenceKey}`,
     }
   }
 
-  await stores.preferences.writePreferences(action.content)
+  const document = await stores.preferences.writePreferences(action.content)
   return {
     kind: 'update_preference',
+    content: action.content,
+    preferences: document.entries.map((entry) => clonePreferenceEntry(entry)),
     summary: 'Updated durable preferences.',
   }
 }
@@ -841,6 +884,25 @@ function nextPlanningTaskRef(existingRefs: string[]) {
     }, 0) + 1
 
   return `P-${nextNumber}`
+}
+
+function cloneTaskItem(task: TaskItem): TaskItem {
+  return {
+    ...task,
+    acceptanceCriteria: [...task.acceptanceCriteria],
+    blockedBy: task.blockedBy.map((blocker) => ({ ...blocker })),
+  }
+}
+
+function clonePreferenceEntry(entry: PreferenceEntry): PreferenceEntry {
+  return {
+    preferenceKey: entry.preferenceKey,
+    status: entry.status,
+    summary: entry.summary,
+    ...(entry.rationale ? { rationale: entry.rationale } : {}),
+    ...(entry.retiredReason ? { retiredReason: entry.retiredReason } : {}),
+    ...(entry.supersededBy ? { supersededBy: entry.supersededBy } : {}),
+  }
 }
 
 async function writeJsonAtomically(path: string, value: unknown) {

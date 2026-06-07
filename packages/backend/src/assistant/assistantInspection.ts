@@ -1,13 +1,81 @@
 import type { AssistantThreadEntry } from '../runtime/assistantThreadStore'
 import type { GoalAssistantAction } from './assistantRun'
 
+interface AssistantActionResultDecisionInput {
+  decisionKey: string
+  summary: string
+  summaryKey?: string
+  prompt?: string
+  matchHints?: string[]
+  captureFormat?: string
+  status: string
+  taskRef?: string
+  answer?: string
+  createdAt?: string
+  resolvedAt?: string
+}
+
+interface AssistantActionResultPlanningAnswerInput {
+  summary: string
+  answerKey?: string
+  summaryKey?: string
+  prompt?: string
+  matchHints?: string[]
+  captureFormat?: string
+  answer: string
+}
+
+interface AssistantActionResultPlanningRequestInput {
+  requestKey: string
+  workflowKey?: string
+  workflowTaskKey?: string
+  workflowSharedDecisionRefs?: string[]
+  workflowSharedAnswers?: AssistantActionResultPlanningAnswerInput[]
+  blockedByWorkflowKeys: string[]
+  groupKey?: string
+  groupTaskKey?: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  taskRef: string
+  decisionRefs: string[]
+  answers: AssistantActionResultPlanningAnswerInput[]
+  requestedUpdates: string[]
+  status: string
+  createdAt?: string
+  resolvedAt?: string
+  resolution?: string
+}
+
+interface AssistantActionResultTaskInput {
+  ref: string
+  kind: string
+  status: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  blockedBy: Array<{ kind: string; ref: string }>
+}
+
+interface AssistantActionResultPreferenceInput {
+  preferenceKey: string
+  status: string
+  summary: string
+  rationale?: string
+  retiredReason?: string
+  supersededBy?: string
+}
+
 export interface AssistantActionResultDetailsInput {
   kind?: string
   taskRef?: string
+  task?: AssistantActionResultTaskInput
   taskCreated?: boolean
   requestKey?: string
+  request?: AssistantActionResultPlanningRequestInput
   taskRefs?: string[]
   requestKeys?: string[]
+  requests?: AssistantActionResultPlanningRequestInput[]
   createdRequestKeys?: string[]
   createdTaskRefs?: string[]
   groupKeys?: string[]
@@ -16,6 +84,7 @@ export interface AssistantActionResultDetailsInput {
     kind: 'planning' | 'planning_batch'
     workflowTaskKey?: string
     groupKey?: string
+    requests?: AssistantActionResultPlanningRequestInput[]
     requestKeys: string[]
     taskRefs: string[]
     blockerTaskRefs: string[]
@@ -27,22 +96,35 @@ export interface AssistantActionResultDetailsInput {
   decisionKeys?: string[]
   decisionStatus?: string
   preferenceKey?: string
+  preferenceSummary?: string
+  rationale?: string
+  reason?: string
+  supersededBy?: string
+  content?: string
+  preference?: AssistantActionResultPreferenceInput
+  retiredPreferences?: AssistantActionResultPreferenceInput[]
+  preferences?: AssistantActionResultPreferenceInput[]
   retiredPreferenceKeys?: string[]
   summary?: string
   created?: boolean
+  previousStatus?: string
   createdDecisionKeys?: string[]
   blockerAdded?: boolean
   blockerRemoved?: boolean
+  decision?: AssistantActionResultDecisionInput
+  decisions?: AssistantActionResultDecisionInput[]
   resolvedSourceResponseFormat?: string
   followThrough?: {
     kind: 'planning' | 'planning_batch' | 'workflow_batch'
     workflowKey?: string
     groupKey?: string
     groupKeys?: string[]
+    requests?: AssistantActionResultPlanningRequestInput[]
     workflows?: Array<{
       kind: 'planning' | 'planning_batch'
       workflowTaskKey?: string
       groupKey?: string
+      requests?: AssistantActionResultPlanningRequestInput[]
       requestKeys: string[]
       taskRefs: string[]
       blockerTaskRefs: string[]
@@ -83,9 +165,20 @@ export function formatAssistantActionResultDetails(
     if (result.status) {
       lines.push(`Result status: ${result.status}`)
     }
+    if (result.previousStatus) {
+      lines.push(`Previous status: ${result.previousStatus}`)
+    }
+    if (result.task) {
+      appendAssistantResultTaskDetails(lines, 'Task detail', result.task)
+    }
   }
-  if (result.kind === 'create_planning_task' && result.taskRef) {
-    lines.push(`Task ref: ${result.taskRef}`)
+  if (result.kind === 'create_planning_task') {
+    if (result.taskRef) {
+      lines.push(`Task ref: ${result.taskRef}`)
+    }
+    if (result.task) {
+      appendAssistantResultTaskDetails(lines, 'Task detail', result.task)
+    }
   }
   if (result.kind === 'request_planning') {
     if (result.requestKey) {
@@ -99,6 +192,9 @@ export function formatAssistantActionResultDetails(
     }
     if (typeof result.taskCreated === 'boolean') {
       lines.push(`Created planning task: ${result.taskCreated ? 'yes' : 'no'}`)
+    }
+    if (result.request) {
+      appendAssistantResultPlanningRequestDetails(lines, 'Request detail', result.request)
     }
   }
   if (result.kind === 'request_planning_batch') {
@@ -128,6 +224,11 @@ export function formatAssistantActionResultDetails(
         }`,
       )
     }
+    if (result.requests && result.requests.length > 0) {
+      for (const request of result.requests) {
+        appendAssistantResultPlanningRequestDetails(lines, 'Request detail', request)
+      }
+    }
   }
   if (result.kind === 'request_planning_workflows') {
     if (result.workflowKey) {
@@ -142,6 +243,15 @@ export function formatAssistantActionResultDetails(
         lines.push(
           `Workflow child detail: ${summarizeWorkflowResultChild(workflow)} -> requests ${workflow.requestKeys.join(', ')} -> tasks ${workflow.taskRefs.join(', ')} -> blockers ${workflow.blockerTaskRefs.join(', ')}`,
         )
+        if (workflow.requests && workflow.requests.length > 0) {
+          for (const request of workflow.requests) {
+            appendAssistantResultPlanningRequestDetails(
+              lines,
+              `Workflow child request detail: ${summarizeWorkflowResultChild(workflow)}`,
+              request,
+            )
+          }
+        }
       }
     }
     if (result.requestKeys && result.requestKeys.length > 0) {
@@ -167,6 +277,15 @@ export function formatAssistantActionResultDetails(
         }`,
       )
     }
+    if (
+      (!result.workflows || result.workflows.length === 0) &&
+      result.requests &&
+      result.requests.length > 0
+    ) {
+      for (const request of result.requests) {
+        appendAssistantResultPlanningRequestDetails(lines, 'Request detail', request)
+      }
+    }
   }
   if (result.kind === 'request_decision' && result.decisionKey) {
     lines.push(`Decision key: ${result.decisionKey}`)
@@ -185,6 +304,14 @@ export function formatAssistantActionResultDetails(
   }
   if (result.kind === 'record_answers' && result.decisionKeys && result.decisionKeys.length > 0) {
     lines.push(`Decision keys: ${result.decisionKeys.join(', ')}`)
+  }
+  if (result.decision) {
+    appendAssistantResultDecisionDetails(lines, result.decision)
+  }
+  if (result.decisions && result.decisions.length > 0) {
+    for (const decision of result.decisions) {
+      appendAssistantResultDecisionDetails(lines, decision)
+    }
   }
   if (result.createdDecisionKeys && result.createdDecisionKeys.length > 0) {
     lines.push(`Created decision keys: ${result.createdDecisionKeys.join(', ')}`)
@@ -212,11 +339,33 @@ export function formatAssistantActionResultDetails(
         lines.push(
           `Follow-through child detail: ${summarizeWorkflowResultChild(workflow)} -> requests ${workflow.requestKeys.join(', ')} -> tasks ${workflow.taskRefs.join(', ')} -> blockers ${workflow.blockerTaskRefs.join(', ')}`,
         )
+        if (workflow.requests && workflow.requests.length > 0) {
+          for (const request of workflow.requests) {
+            appendAssistantResultPlanningRequestDetails(
+              lines,
+              `Follow-through child request detail: ${summarizeWorkflowResultChild(workflow)}`,
+              request,
+            )
+          }
+        }
       }
     }
     lines.push(`Follow-through requests: ${result.followThrough.requestKeys.join(', ')}`)
     lines.push(`Follow-through tasks: ${result.followThrough.taskRefs.join(', ')}`)
     lines.push(`Follow-through blockers: ${result.followThrough.blockerTaskRefs.join(', ')}`)
+    if (
+      (!result.followThrough.workflows || result.followThrough.workflows.length === 0) &&
+      result.followThrough.requests &&
+      result.followThrough.requests.length > 0
+    ) {
+      for (const request of result.followThrough.requests) {
+        appendAssistantResultPlanningRequestDetails(
+          lines,
+          'Follow-through request detail',
+          request,
+        )
+      }
+    }
   }
   if (result.kind === 'record_preference' || result.kind === 'retire_preference') {
     if (result.preferenceKey) {
@@ -229,6 +378,44 @@ export function formatAssistantActionResultDetails(
     result.retiredPreferenceKeys.length > 0
   ) {
     lines.push(`Retired preference keys: ${result.retiredPreferenceKeys.join(', ')}`)
+  }
+  if (result.kind === 'record_preference') {
+    if (result.preference) {
+      lines.push(`Preference detail: ${summarizeAssistantResultPreference(result.preference)}`)
+    } else if (result.preferenceSummary) {
+      lines.push(`Preference summary: ${result.preferenceSummary}`)
+    }
+    if (!result.preference && result.rationale) {
+      lines.push(`Preference rationale: ${result.rationale}`)
+    }
+    if (result.retiredPreferences && result.retiredPreferences.length > 0) {
+      lines.push(
+        `Retired preference detail: ${result.retiredPreferences
+          .map((preference) => summarizeAssistantResultPreference(preference))
+          .join(' | ')}`,
+      )
+    }
+  }
+  if (result.kind === 'retire_preference') {
+    if (result.preference) {
+      lines.push(`Preference detail: ${summarizeAssistantResultPreference(result.preference)}`)
+    } else if (result.supersededBy) {
+      lines.push(`Superseded by: ${result.supersededBy}`)
+    }
+    if (!result.preference && result.reason) {
+      lines.push(`Retirement reason: ${result.reason}`)
+    }
+  }
+  if (result.kind === 'update_preference' && result.content) {
+    lines.push(`Preference content: ${summarizeInlineAssistantText(result.content)}`)
+    if (result.preferences && result.preferences.length > 0) {
+      lines.push(`Preference entries: ${result.preferences.length}`)
+      lines.push(
+        `Preference entry detail: ${result.preferences
+          .map((preference) => summarizeAssistantResultPreference(preference))
+          .join(' | ')}`,
+      )
+    }
   }
 
   return lines
@@ -243,6 +430,367 @@ function summarizeWorkflowResultChild(workflow: {
     return workflow.workflowTaskKey ?? 'planning'
   }
   return workflow.groupKey ?? 'planning_batch'
+}
+
+function summarizeAssistantResultDecision(decision: AssistantActionResultDecisionInput) {
+  const details = [`${decision.decisionKey} [${decision.status}] ${decision.summary}`]
+  if (decision.summaryKey) {
+    details.push(`[summaryKey=${decision.summaryKey}]`)
+  }
+  if (decision.prompt) {
+    details.push(`[prompt=${decision.prompt}]`)
+  }
+  if (decision.matchHints && decision.matchHints.length > 0) {
+    details.push(`[matchHints=${decision.matchHints.join(', ')}]`)
+  }
+  if (decision.taskRef) {
+    details.push(`[taskRef=${decision.taskRef}]`)
+  }
+  if (decision.captureFormat) {
+    details.push(`[captureFormat=${decision.captureFormat}]`)
+  }
+  return `Decision detail: ${details.join(' ')}`
+}
+
+function summarizeAssistantResultPlanningRequest(
+  label: string,
+  request: AssistantActionResultPlanningRequestInput,
+) {
+  const details = [`${request.requestKey} [${request.status}] ${request.title}`]
+  details.push(`[taskRef=${request.taskRef}]`)
+  if (request.groupKey) {
+    details.push(`[groupKey=${request.groupKey}]`)
+  }
+  if (request.workflowTaskKey) {
+    details.push(`[workflowTaskKey=${request.workflowTaskKey}]`)
+  }
+  if (request.decisionRefs.length > 0) {
+    details.push(`[decisionRefs=${request.decisionRefs.join(', ')}]`)
+  }
+  if (request.requestedUpdates.length > 0) {
+    details.push(`[updates=${request.requestedUpdates.join(', ')}]`)
+  }
+  if ((request.workflowSharedDecisionRefs?.length ?? 0) > 0) {
+    details.push(
+      `[workflowSharedDecisionRefs=${request.workflowSharedDecisionRefs?.join(', ')}]`,
+    )
+  }
+  return `${label}: ${details.join(' ')}`
+}
+
+function summarizeAssistantResultPlanningAnswer(
+  answer: AssistantActionResultPlanningAnswerInput,
+) {
+  const details = [answer.summary]
+  if (answer.prompt) {
+    details.push(`[prompt=${answer.prompt}]`)
+  }
+  if (answer.summaryKey) {
+    details.push(`[summaryKey=${answer.summaryKey}]`)
+  }
+  if (answer.answerKey) {
+    details.push(`[answerKey=${answer.answerKey}]`)
+  }
+  if (answer.matchHints && answer.matchHints.length > 0) {
+    details.push(`[matchHints=${answer.matchHints.join(', ')}]`)
+  }
+  if (answer.captureFormat) {
+    details.push(`[captureFormat=${answer.captureFormat}]`)
+  }
+  return `${details.join(' ')}: ${answer.answer}`
+}
+
+function summarizeAssistantActionPlanningAnswer(
+  answer: Extract<
+    GoalAssistantAction,
+    { kind: 'request_planning' | 'request_planning_batch' | 'request_planning_workflows' }
+  >['answers'][number],
+) {
+  const details = [answer.summary]
+  if (answer.prompt) {
+    details.push(`[prompt=${answer.prompt}]`)
+  }
+  if (answer.summaryKey) {
+    details.push(`[summaryKey=${answer.summaryKey}]`)
+  }
+  if (answer.answerKey) {
+    details.push(`[answerKey=${answer.answerKey}]`)
+  }
+  if (answer.matchHints.length > 0) {
+    details.push(`[matchHints=${answer.matchHints.join(', ')}]`)
+  }
+  if (answer.answerSourceGroupKey) {
+    details.push(`[answerSourceGroupKey=${answer.answerSourceGroupKey}]`)
+  }
+  if (answer.answerSourceKey) {
+    details.push(`[answerSourceKey=${answer.answerSourceKey}]`)
+  }
+  if (answer.sourceExcerpt) {
+    details.push(`[sourceExcerpt=${answer.sourceExcerpt}]`)
+  }
+  if (typeof answer.sourceOccurrence === 'number') {
+    details.push(`[sourceOccurrence=${answer.sourceOccurrence}]`)
+  }
+  return answer.answer ? `${details.join(' ')}: ${answer.answer}` : details.join(' ')
+}
+
+type AssistantActionWithReusableAnswerSources = Extract<
+  GoalAssistantAction,
+  | { kind: 'request_planning' }
+  | { kind: 'request_planning_batch' }
+  | { kind: 'request_planning_workflows' }
+  | { kind: 'record_answer' }
+  | { kind: 'record_answers' }
+  | { kind: 'resolve_decision' }
+>
+
+type AssistantActionReusableAnswerSource =
+  AssistantActionWithReusableAnswerSources['answerSources'][number]
+
+type AssistantActionBlocker = Extract<
+  GoalAssistantAction,
+  { kind: 'create_planning_task' }
+>['blockedBy'][number]
+
+interface AssistantGroupedPlanningRequestLike {
+  taskKey: string
+  title: string
+  description: string
+  acceptanceCriteria: string[]
+  requestedUpdates: string[]
+  blockedBy: AssistantActionBlocker[]
+  blockedByTaskKeys: string[]
+}
+
+function summarizeAssistantActionBlockers(blockers: AssistantActionBlocker[]) {
+  return blockers.map((blocker) => `${blocker.kind}:${blocker.ref}`).join(', ')
+}
+
+function summarizeAcceptanceCriteria(acceptanceCriteria: string[]) {
+  return acceptanceCriteria.join(' | ')
+}
+
+function summarizeInlineAssistantText(text: string) {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function formatGroupedPlanningRequestDetailLines(
+  prefix: string,
+  request: AssistantGroupedPlanningRequestLike,
+) {
+  return [
+    `${prefix}: ${request.taskKey} -> updates ${request.requestedUpdates.join(', ')}`,
+    `${prefix} ${request.taskKey} title: ${request.title}`,
+    ...(request.description.trim().length > 0
+      ? [`${prefix} ${request.taskKey} description: ${request.description}`]
+      : []),
+    ...(request.acceptanceCriteria.length > 0
+      ? [
+          `${prefix} ${request.taskKey} acceptance: ${summarizeAcceptanceCriteria(request.acceptanceCriteria)}`,
+        ]
+      : []),
+    ...(request.blockedBy.length > 0
+      ? [`${prefix} ${request.taskKey} blockers: ${summarizeAssistantActionBlockers(request.blockedBy)}`]
+      : []),
+    ...(request.blockedByTaskKeys.length > 0
+      ? [`${prefix} ${request.taskKey} depends on: ${request.blockedByTaskKeys.join(', ')}`]
+      : []),
+  ]
+}
+
+function summarizeAssistantActionReusableAnswerSource(
+  source: AssistantActionReusableAnswerSource,
+) {
+  const details = [source.answerSourceKey]
+  if (source.sourceGroupKey) {
+    details.push(`[sourceGroupKey=${source.sourceGroupKey}]`)
+  }
+  if (source.route) {
+    details.push(`[route=${source.route}]`)
+  }
+  if (source.decisionKey) {
+    details.push(`[decisionKey=${source.decisionKey}]`)
+  }
+  if (source.answerKey) {
+    details.push(`[answerKey=${source.answerKey}]`)
+  }
+  if (source.summaryKey) {
+    details.push(`[summaryKey=${source.summaryKey}]`)
+  }
+  if (source.summary) {
+    details.push(`[summary=${source.summary}]`)
+  }
+  if (source.prompt) {
+    details.push(`[prompt=${source.prompt}]`)
+  }
+  if (source.matchHints.length > 0) {
+    details.push(`[matchHints=${source.matchHints.join(', ')}]`)
+  }
+  if ('sourceExcerpt' in source) {
+    details.push(`[sourceExcerpt=${source.sourceExcerpt}]`)
+    if (typeof source.sourceOccurrence === 'number') {
+      details.push(`[sourceOccurrence=${source.sourceOccurrence}]`)
+    }
+  }
+  return 'answer' in source ? `${details.join(' ')}: ${source.answer}` : details.join(' ')
+}
+
+function appendAssistantActionReusableAnswerSourceDetails(
+  lines: string[],
+  answerSources: AssistantActionWithReusableAnswerSources['answerSources'],
+) {
+  if (answerSources.length === 0) {
+    return
+  }
+  lines.push(`Reusable answer sources: ${answerSources.length}`)
+  lines.push(
+    `Reusable answer source detail: ${answerSources
+      .map((source) => summarizeAssistantActionReusableAnswerSource(source))
+      .join(' | ')}`,
+  )
+}
+
+function summarizeAssistantResultTask(task: AssistantActionResultTaskInput) {
+  const details = [`${task.ref} [${task.kind}] [${task.status}] ${task.title}`]
+  if (task.blockedBy.length > 0) {
+    details.push(
+      `[blockers=${task.blockedBy.map((blocker) => `${blocker.kind}:${blocker.ref}`).join(', ')}]`,
+    )
+  }
+  return details.join(' ')
+}
+
+function appendAssistantResultTaskDetails(
+  lines: string[],
+  label: string,
+  task: AssistantActionResultTaskInput,
+) {
+  lines.push(`${label}: ${summarizeAssistantResultTask(task)}`)
+  if (task.description.trim().length > 0) {
+    lines.push(`Task description ${task.ref}: ${task.description}`)
+  }
+  if (task.acceptanceCriteria.length > 0) {
+    lines.push(`Task acceptance ${task.ref}: ${summarizeAcceptanceCriteria(task.acceptanceCriteria)}`)
+  }
+}
+
+function summarizeAssistantResultPreference(preference: AssistantActionResultPreferenceInput) {
+  const details = [`${preference.preferenceKey} [${preference.status}] ${preference.summary}`]
+  if (preference.rationale) {
+    details.push(`[rationale=${preference.rationale}]`)
+  }
+  if (preference.retiredReason) {
+    details.push(`[retiredReason=${preference.retiredReason}]`)
+  }
+  if (preference.supersededBy) {
+    details.push(`[supersededBy=${preference.supersededBy}]`)
+  }
+  return details.join(' ')
+}
+
+function appendAssistantResultDecisionDetails(
+  lines: string[],
+  decision: AssistantActionResultDecisionInput,
+) {
+  lines.push(summarizeAssistantResultDecision(decision))
+  if (decision.answer) {
+    lines.push(`Decision answer: ${decision.answer}`)
+  }
+  if (decision.resolvedAt) {
+    lines.push(`Decision resolved at ${decision.decisionKey}: ${decision.resolvedAt}`)
+  }
+}
+
+interface AssistantActionDecisionAnswerLike {
+  summary: string
+  summaryKey?: string
+  prompt?: string
+  matchHints: string[]
+  decisionKey?: string
+  taskRef?: string
+  answer?: string
+  sourceExcerpt?: string
+  sourceOccurrence?: number
+  answerSourceKey?: string
+  answerSourceGroupKey?: string
+}
+
+function summarizeAssistantActionDecisionAnswer(answer: AssistantActionDecisionAnswerLike) {
+  const details = [answer.summary]
+  if (answer.decisionKey) {
+    details.push(`[decisionKey=${answer.decisionKey}]`)
+  }
+  if (answer.summaryKey) {
+    details.push(`[summaryKey=${answer.summaryKey}]`)
+  }
+  if (answer.prompt) {
+    details.push(`[prompt=${answer.prompt}]`)
+  }
+  if (answer.matchHints.length > 0) {
+    details.push(`[matchHints=${answer.matchHints.join(', ')}]`)
+  }
+  if (answer.taskRef) {
+    details.push(`[taskRef=${answer.taskRef}]`)
+  }
+  if (answer.answerSourceGroupKey) {
+    details.push(`[answerSourceGroupKey=${answer.answerSourceGroupKey}]`)
+  }
+  if (answer.answerSourceKey) {
+    details.push(`[answerSourceKey=${answer.answerSourceKey}]`)
+  }
+  if (answer.sourceExcerpt) {
+    details.push(`[sourceExcerpt=${answer.sourceExcerpt}]`)
+  }
+  if (typeof answer.sourceOccurrence === 'number') {
+    details.push(`[sourceOccurrence=${answer.sourceOccurrence}]`)
+  }
+  return answer.answer ? `${details.join(' ')}: ${answer.answer}` : details.join(' ')
+}
+
+function hasAssistantActionDirectDecisionAnswerDetail(answer: AssistantActionDecisionAnswerLike) {
+  return Boolean(
+    answer.answer ??
+      answer.sourceExcerpt ??
+      answer.answerSourceKey ??
+      answer.answerSourceGroupKey ??
+      (typeof answer.sourceOccurrence === 'number' ? String(answer.sourceOccurrence) : undefined),
+  )
+}
+
+function appendAssistantResultPlanningRequestDetails(
+  lines: string[],
+  label: string,
+  request: AssistantActionResultPlanningRequestInput,
+) {
+  lines.push(summarizeAssistantResultPlanningRequest(label, request))
+  if (request.description.trim().length > 0) {
+    lines.push(`Request description ${request.requestKey}: ${request.description}`)
+  }
+  if (request.acceptanceCriteria.length > 0) {
+    lines.push(
+      `Request acceptance ${request.requestKey}: ${summarizeAcceptanceCriteria(request.acceptanceCriteria)}`,
+    )
+  }
+  if (request.resolvedAt) {
+    lines.push(`Request resolved at ${request.requestKey}: ${request.resolvedAt}`)
+  }
+  if (request.resolution) {
+    lines.push(`Request resolution ${request.requestKey}: ${request.resolution}`)
+  }
+  if (request.answers.length > 0) {
+    lines.push(
+      `Request answer detail ${request.requestKey}: ${request.answers
+        .map((answer) => summarizeAssistantResultPlanningAnswer(answer))
+        .join(' | ')}`,
+    )
+  }
+  if ((request.workflowSharedAnswers?.length ?? 0) > 0) {
+    lines.push(
+      `Workflow-shared answer detail ${request.requestKey}: ${request.workflowSharedAnswers
+        ?.map((answer) => summarizeAssistantResultPlanningAnswer(answer))
+        .join(' | ')}`,
+    )
+  }
 }
 
 export function summarizeAssistantEvent(event: AssistantEventPresentationInput) {
@@ -391,13 +939,25 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
   }
   if (action.kind === 'create_planning_task') {
     lines.push(`Planning title: ${action.title}`)
+    if (action.description.trim().length > 0) {
+      lines.push(`Planning description: ${action.description}`)
+    }
+    if (action.acceptanceCriteria.length > 0) {
+      lines.push(`Planning acceptance: ${summarizeAcceptanceCriteria(action.acceptanceCriteria)}`)
+    }
     if (action.blockedBy.length > 0) {
-      lines.push(`Initial blockers: ${action.blockedBy.map((blocker) => blocker.ref).join(', ')}`)
+      lines.push(`Initial blockers: ${summarizeAssistantActionBlockers(action.blockedBy)}`)
     }
     return lines
   }
   if (action.kind === 'request_planning') {
     lines.push(`Planning title: ${action.title}`)
+    if (action.description.trim().length > 0) {
+      lines.push(`Planning description: ${action.description}`)
+    }
+    if (action.acceptanceCriteria.length > 0) {
+      lines.push(`Planning acceptance: ${summarizeAcceptanceCriteria(action.acceptanceCriteria)}`)
+    }
     if (action.groupKey) {
       lines.push(`Planning group key: ${action.groupKey}`)
     }
@@ -406,10 +966,16 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     }
     if (action.answers.length > 0) {
       lines.push(`Captured planner answers: ${action.answers.length}`)
+      lines.push(
+        `Planner answer detail: ${action.answers
+          .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+          .join(' | ')}`,
+      )
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    if (action.blockedBy.length > 0) {
+      lines.push(`Planning blockers: ${summarizeAssistantActionBlockers(action.blockedBy)}`)
     }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     if (action.inferRemainingAnswers) {
       lines.push('Infer remaining answers: yes')
     }
@@ -429,10 +995,13 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     }
     if (action.answers.length > 0) {
       lines.push(`Shared planner answers: ${action.answers.length}`)
+      lines.push(
+        `Shared planner answer detail: ${action.answers
+          .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+          .join(' | ')}`,
+      )
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
-    }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     for (const request of action.requests) {
       lines.push(...formatGroupedPlanningRequestDetails(request))
     }
@@ -460,10 +1029,13 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     }
     if (action.answers.length > 0) {
       lines.push(`Shared planner answers: ${action.answers.length}`)
+      lines.push(
+        `Shared planner answer detail: ${action.answers
+          .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+          .join(' | ')}`,
+      )
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
-    }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     for (const workflow of action.workflows) {
       lines.push(...formatWorkflowActionChildDetails(workflow))
     }
@@ -504,9 +1076,38 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.matchHints.length > 0) {
       lines.push(`Match hints: ${action.matchHints.join(', ')}`)
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    if (
+      hasAssistantActionDirectDecisionAnswerDetail({
+        summary: action.summary,
+        summaryKey: action.summaryKey,
+        prompt: action.prompt,
+        matchHints: action.matchHints,
+        decisionKey: action.decisionKey,
+        taskRef: action.taskRef,
+        answer: action.answer,
+        sourceExcerpt: action.sourceExcerpt,
+        sourceOccurrence: action.sourceOccurrence,
+        answerSourceKey: action.answerSourceKey,
+        answerSourceGroupKey: action.answerSourceGroupKey,
+      })
+    ) {
+      lines.push(
+        `Decision answer detail: ${summarizeAssistantActionDecisionAnswer({
+          summary: action.summary,
+          summaryKey: action.summaryKey,
+          prompt: action.prompt,
+          matchHints: action.matchHints,
+          decisionKey: action.decisionKey,
+          taskRef: action.taskRef,
+          answer: action.answer,
+          sourceExcerpt: action.sourceExcerpt,
+          sourceOccurrence: action.sourceOccurrence,
+          answerSourceKey: action.answerSourceKey,
+          answerSourceGroupKey: action.answerSourceGroupKey,
+        })}`,
+      )
     }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
@@ -517,15 +1118,20 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
   }
   if (action.kind === 'record_answers') {
     lines.push(`Explicit answers: ${action.answers.length}`)
+    if (action.answers.length > 0) {
+      lines.push(
+        `Explicit answer detail: ${action.answers
+          .map((answer) => summarizeAssistantActionDecisionAnswer(answer))
+          .join(' | ')}`,
+      )
+    }
     if (action.inferOpenDecisions) {
       lines.push('Infer open decisions: yes')
     }
     if (action.inferDecisionTopics) {
       lines.push('Infer decision topics: yes')
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
-    }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
@@ -545,9 +1151,38 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     if (action.matchHints.length > 0) {
       lines.push(`Match hints: ${action.matchHints.join(', ')}`)
     }
-    if (action.answerSources.length > 0) {
-      lines.push(`Reusable answer sources: ${action.answerSources.length}`)
+    if (
+      hasAssistantActionDirectDecisionAnswerDetail({
+        summary: action.summary ?? action.decisionKey,
+        summaryKey: action.summaryKey,
+        prompt: action.prompt,
+        matchHints: action.matchHints,
+        decisionKey: action.decisionKey,
+        taskRef: action.taskRef,
+        answer: action.answer,
+        sourceExcerpt: action.sourceExcerpt,
+        sourceOccurrence: action.sourceOccurrence,
+        answerSourceKey: action.answerSourceKey,
+        answerSourceGroupKey: action.answerSourceGroupKey,
+      })
+    ) {
+      lines.push(
+        `Decision answer detail: ${summarizeAssistantActionDecisionAnswer({
+          summary: action.summary ?? action.decisionKey,
+          summaryKey: action.summaryKey,
+          prompt: action.prompt,
+          matchHints: action.matchHints,
+          decisionKey: action.decisionKey,
+          taskRef: action.taskRef,
+          answer: action.answer,
+          sourceExcerpt: action.sourceExcerpt,
+          sourceOccurrence: action.sourceOccurrence,
+          answerSourceKey: action.answerSourceKey,
+          answerSourceGroupKey: action.answerSourceGroupKey,
+        })}`,
+      )
     }
+    appendAssistantActionReusableAnswerSourceDetails(lines, action.answerSources)
     if (action.sourceResponseFormat) {
       lines.push(`Action source-response format: ${action.sourceResponseFormat}`)
     }
@@ -562,7 +1197,7 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
       lines.push(`Supersedes: ${action.supersedes.join(', ')}`)
     }
     if (action.rationale) {
-      lines.push('Rationale captured: yes')
+      lines.push(`Preference rationale: ${action.rationale}`)
     }
     return lines
   }
@@ -575,7 +1210,7 @@ export function formatAssistantActionDetails(action: GoalAssistantAction): strin
     return lines
   }
   if (action.kind === 'update_preference') {
-    lines.push('Preference document replaced: yes')
+    lines.push(`Preference content: ${summarizeInlineAssistantText(action.content)}`)
     return lines
   }
 
@@ -622,6 +1257,11 @@ function appendFollowThroughDetails(
     }
     if (followThrough.answers.length > 0) {
       lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
+      lines.push(
+        `Follow-through shared planner answer detail: ${followThrough.answers
+          .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+          .join(' | ')}`,
+      )
     }
     if (followThrough.inferRemainingAnswers) {
       lines.push('Follow-through infers remaining answers: yes')
@@ -636,6 +1276,11 @@ function appendFollowThroughDetails(
     }
     if (followThrough.answers.length > 0) {
       lines.push(`Follow-through shared planner answers: ${followThrough.answers.length}`)
+      lines.push(
+        `Follow-through shared planner answer detail: ${followThrough.answers
+          .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+          .join(' | ')}`,
+      )
     }
     if (followThrough.inferRemainingAnswers) {
       lines.push('Follow-through infers remaining answers: yes')
@@ -645,6 +1290,11 @@ function appendFollowThroughDetails(
 
   if (followThrough.answers.length > 0) {
     lines.push(`Follow-through captured planner answers: ${followThrough.answers.length}`)
+    lines.push(
+      `Follow-through captured planner answer detail: ${followThrough.answers
+        .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+        .join(' | ')}`,
+    )
   }
   if (followThrough.inferRemainingAnswers) {
     lines.push('Follow-through infers remaining answers: yes')
@@ -661,6 +1311,20 @@ function formatWorkflowActionChildDetails(
   if (workflow.kind === 'planning') {
     return [
       `Workflow child: ${childKey} -> updates ${workflow.requestedUpdates.join(', ')}`,
+      `Workflow child ${childKey} title: ${workflow.title}`,
+      ...(workflow.description.trim().length > 0
+        ? [`Workflow child ${childKey} description: ${workflow.description}`]
+        : []),
+      ...(workflow.acceptanceCriteria.length > 0
+        ? [
+            `Workflow child ${childKey} acceptance: ${summarizeAcceptanceCriteria(workflow.acceptanceCriteria)}`,
+          ]
+        : []),
+      ...(workflow.blockedBy.length > 0
+        ? [
+            `Workflow child ${childKey} blockers: ${summarizeAssistantActionBlockers(workflow.blockedBy)}`,
+          ]
+        : []),
       ...(workflow.blockedByWorkflowKeys.length > 0
         ? [`Workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`]
         : []),
@@ -668,13 +1332,21 @@ function formatWorkflowActionChildDetails(
         ? [`Workflow child ${childKey} decisions: ${workflow.decisionRefs.join(', ')}`]
         : []),
       ...(workflow.answers.length > 0
-        ? [`Workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+        ? [
+            `Workflow child ${childKey} planner answers: ${workflow.answers.length}`,
+            `Workflow child ${childKey} planner answer detail: ${workflow.answers
+              .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+              .join(' | ')}`,
+          ]
         : []),
     ]
   }
 
   return [
     `Workflow child: ${childKey} -> requests ${workflow.requests.map((request) => request.taskKey).join(', ')}`,
+    ...workflow.requests.flatMap((request) =>
+      formatGroupedPlanningRequestDetailLines(`Workflow child ${childKey} grouped request`, request),
+    ),
     ...(workflow.blockedByWorkflowKeys.length > 0
       ? [`Workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`]
       : []),
@@ -682,7 +1354,12 @@ function formatWorkflowActionChildDetails(
       ? [`Workflow child ${childKey} decisions: ${workflow.decisionRefs.join(', ')}`]
       : []),
     ...(workflow.answers.length > 0
-      ? [`Workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+      ? [
+          `Workflow child ${childKey} planner answers: ${workflow.answers.length}`,
+          `Workflow child ${childKey} planner answer detail: ${workflow.answers
+            .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+            .join(' | ')}`,
+        ]
       : []),
   ]
 }
@@ -702,26 +1379,51 @@ function formatFollowThroughWorkflowChildDetails(
   if (workflow.kind === 'planning') {
     return [
       `Follow-through workflow child: ${childKey} -> updates ${workflow.requestedUpdates.join(', ')}`,
+      `Follow-through workflow child ${childKey} title: ${workflow.title}`,
+      ...(workflow.description.trim().length > 0
+        ? [`Follow-through workflow child ${childKey} description: ${workflow.description}`]
+        : []),
+      ...(workflow.acceptanceCriteria.length > 0
+        ? [
+            `Follow-through workflow child ${childKey} acceptance: ${summarizeAcceptanceCriteria(workflow.acceptanceCriteria)}`,
+          ]
+        : []),
       ...(workflow.blockedByWorkflowKeys.length > 0
         ? [
             `Follow-through workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`,
           ]
         : []),
       ...(workflow.answers.length > 0
-        ? [`Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+        ? [
+            `Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`,
+            `Follow-through workflow child ${childKey} planner answer detail: ${workflow.answers
+              .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+              .join(' | ')}`,
+          ]
         : []),
     ]
   }
 
   return [
     `Follow-through workflow child: ${childKey} -> requests ${workflow.requests.map((request) => request.taskKey).join(', ')}`,
+    ...workflow.requests.flatMap((request) =>
+      formatGroupedPlanningRequestDetailLines(
+        `Follow-through workflow child ${childKey} grouped request`,
+        request,
+      ),
+    ),
     ...(workflow.blockedByWorkflowKeys.length > 0
       ? [
           `Follow-through workflow child ${childKey} depends on: ${workflow.blockedByWorkflowKeys.join(', ')}`,
         ]
       : []),
     ...(workflow.answers.length > 0
-      ? [`Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`]
+      ? [
+          `Follow-through workflow child ${childKey} planner answers: ${workflow.answers.length}`,
+          `Follow-through workflow child ${childKey} planner answer detail: ${workflow.answers
+            .map((answer) => summarizeAssistantActionPlanningAnswer(answer))
+            .join(' | ')}`,
+        ]
       : []),
   ]
 }
@@ -760,12 +1462,7 @@ function summarizeWorkflowFollowThroughChild(
 function formatGroupedPlanningRequestDetails(
   request: Extract<GoalAssistantAction, { kind: 'request_planning_batch' }>['requests'][number],
 ) {
-  return [
-    `Grouped request: ${request.taskKey} -> updates ${request.requestedUpdates.join(', ')}`,
-    ...(request.blockedByTaskKeys.length > 0
-      ? [`Grouped request ${request.taskKey} depends on: ${request.blockedByTaskKeys.join(', ')}`]
-      : []),
-  ]
+  return formatGroupedPlanningRequestDetailLines('Grouped request', request)
 }
 
 function formatFollowThroughGroupedPlanningRequestDetails(
@@ -779,14 +1476,7 @@ function formatFollowThroughGroupedPlanningRequestDetails(
     { kind: 'planning_batch' }
   >['requests'][number],
 ) {
-  return [
-    `Follow-through grouped request: ${request.taskKey} -> updates ${request.requestedUpdates.join(', ')}`,
-    ...(request.blockedByTaskKeys.length > 0
-      ? [
-          `Follow-through grouped request ${request.taskKey} depends on: ${request.blockedByTaskKeys.join(', ')}`,
-        ]
-      : []),
-  ]
+  return formatGroupedPlanningRequestDetailLines('Follow-through grouped request', request)
 }
 
 export function formatAssistantThreadEntryPresentation(entry: AssistantThreadEntry): {

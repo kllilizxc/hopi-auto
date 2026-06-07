@@ -54,9 +54,11 @@ export interface GoalPlanningBatchResult {
     taskKey: string
     requestKey: string
     taskRef: string
+    request: GoalPlanningRequest
     created: boolean
     taskCreated: boolean
   }>
+  requests: GoalPlanningRequest[]
 }
 
 export interface GoalPlanningWorkflowInput {
@@ -91,6 +93,7 @@ export interface GoalPlanningWorkflowResult {
   kind: 'planning'
   workflowTaskKey?: string
   groupKey?: string
+  requests: GoalPlanningRequest[]
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
@@ -101,6 +104,7 @@ export interface GoalPlanningWorkflowResult {
 export interface GoalPlanningWorkflowBatchResult {
   kind: 'planning_batch'
   groupKey: string
+  requests: GoalPlanningRequest[]
   requestKeys: string[]
   taskRefs: string[]
   blockerTaskRefs: string[]
@@ -137,6 +141,7 @@ export interface GoalPlanningWorkflowsResult {
   kind: 'workflow_batch'
   workflowKey?: string
   workflows: GoalPlanningWorkflowLeafResult[]
+  requests: GoalPlanningRequest[]
   groupKeys: string[]
   requestKeys: string[]
   taskRefs: string[]
@@ -513,6 +518,7 @@ export async function requestGoalPlanningBatch(
       taskKey: request.taskKey,
       requestKey: result.request.requestKey,
       taskRef: result.request.taskRef,
+      request: result.request,
       created: result.created,
       taskCreated: result.taskCreated,
     })
@@ -575,6 +581,7 @@ export async function requestGoalPlanningBatch(
   return {
     groupKey: input.groupKey,
     entries,
+    requests: entries.map((entry) => entry.request),
   }
 }
 
@@ -714,6 +721,7 @@ export async function requestGoalPlanningWorkflows(
       const workflowResult = {
         kind: 'planning_batch',
         groupKey: result.groupKey,
+        requests: result.requests,
         requestKeys: result.entries.map((entry) => entry.requestKey),
         taskRefs: result.entries.map((entry) => entry.taskRef),
         blockerTaskRefs,
@@ -769,6 +777,7 @@ export async function requestGoalPlanningWorkflows(
       kind: 'planning',
       workflowTaskKey: workflow.workflowTaskKey,
       groupKey: workflow.groupKey,
+      requests: [result.request],
       requestKeys: [result.request.requestKey],
       taskRefs: [result.request.taskRef],
       blockerTaskRefs,
@@ -964,6 +973,7 @@ async function reuseGoalPlanningBatchWorkflow(
       taskKey: request.groupTaskKey ?? '',
       requestKey: request.requestKey,
       taskRef: request.taskRef,
+      request,
       created:
         extension?.entries.find((entry) => entry.requestKey === request.requestKey)?.created ??
         false,
@@ -971,6 +981,7 @@ async function reuseGoalPlanningBatchWorkflow(
         extension?.entries.find((entry) => entry.requestKey === request.requestKey)?.taskCreated ??
         false,
     })),
+    requests: next.requests,
   }
 }
 
@@ -1691,6 +1702,7 @@ async function describeOpenPlanningWorkflowChildren(
       const workflowResult = {
         kind: 'planning_batch' as const,
         groupKey: request.groupKey,
+        requests: groupedRequests,
         requestKeys: groupedRequests.map((entry) => entry.requestKey),
         taskRefs: groupedRequests.map((entry) => entry.taskRef),
         blockerTaskRefs: findOpenGroupedPlanningSinkTaskRefs(groupedRequests, tasks),
@@ -1716,6 +1728,7 @@ async function describeOpenPlanningWorkflowChildren(
       kind: 'planning' as const,
       workflowTaskKey: request.workflowTaskKey,
       groupKey: request.groupKey,
+      requests: [request],
       requestKeys: [request.requestKey],
       taskRefs: [request.taskRef],
       blockerTaskRefs: [request.taskRef],
@@ -1814,6 +1827,7 @@ async function describeOpenPlanningWorkflowState(
     kind: 'workflow_batch',
     workflowKey: input.workflowKey,
     workflows,
+    requests: uniqueRequestsByKey(workflows.flatMap((workflow) => workflow.requests)),
     groupKeys: uniqueStringValues(
       workflows.flatMap((workflow) =>
         workflow.kind === 'planning_batch'
@@ -2107,6 +2121,19 @@ function uniqueStringValues(values: string[]) {
     if (!unique.includes(value)) {
       unique.push(value)
     }
+  }
+  return unique
+}
+
+function uniqueRequestsByKey(requests: GoalPlanningRequest[]) {
+  const unique: GoalPlanningRequest[] = []
+  const seen = new Set<string>()
+  for (const request of requests) {
+    if (seen.has(request.requestKey)) {
+      continue
+    }
+    seen.add(request.requestKey)
+    unique.push(request)
   }
   return unique
 }

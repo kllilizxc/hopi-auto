@@ -6,192 +6,20 @@ HOPI is a file-native autonomous goal orchestration prototype being rebuilt arou
 
 For a zero-context handoff, read:
 
-`docs/zero-context-continuation.md`
+- `docs/zero-context-continuation.md`
+- `docs/agent-handoff.md`
+- `docs/README.md`
 
-Then read:
+## Core Authority
 
-`docs/agent-handoff.md`
+The main authority docs are:
 
-The docs index is:
+- `docs/hopi-phase-1-authority.md`
+- `packages/frontend/MIGRATION.md`
+- `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`
+- `docs/superpowers/specs/README.md`
 
-`docs/README.md`
-
-## Phase 1
-
-Phase 1 backend is implemented and verified, and the active Bun-served UI now reads the backend directly. The completed stabilization plan is:
-
-`docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`
-
-The Phase 1 authority note is:
-
-`docs/hopi-phase-1-authority.md`
-
-The run-history design and implementation slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-run-history-and-bun-ui-design.md`
-- `docs/superpowers/plans/2026-05-31-run-history-and-bun-ui.md`
-
-The execution-runtime and process-runner slices are documented in:
-
-- `docs/superpowers/specs/2026-05-31-execution-runtime-adapter-design.md`
-- `docs/superpowers/plans/2026-05-31-execution-runtime-adapter.md`
-- `docs/superpowers/specs/2026-05-31-process-runner-and-worktree-design.md`
-- `docs/superpowers/plans/2026-05-31-process-runner-and-worktree.md`
-
-The durable write-trace slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-write-trace-recorder-design.md`
-- `docs/superpowers/plans/2026-05-31-write-trace-recorder.md`
-
-The write-trace consumers slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-write-trace-consumers-design.md`
-- `docs/superpowers/plans/2026-05-31-write-trace-consumers.md`
-
-The configured role-process adapter slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-role-process-adapters-design.md`
-- `docs/superpowers/plans/2026-05-31-role-process-adapters.md`
-
-The vendor transport adapter slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-vendor-transport-adapters-design.md`
-- `docs/superpowers/plans/2026-05-31-vendor-transport-adapters.md`
-
-The vendor transcript normalization slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-vendor-transcript-normalization-design.md`
-- `docs/superpowers/plans/2026-05-31-vendor-transcript-normalization.md`
-
-The Goal assistant and planner-runtime design plus the first implemented substrate slice are documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-assistant-and-planner-runtime-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-assistant-substrate-slice.md`
-
-The live Goal assistant execution slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-live-goal-assistant-execution-design.md`
-- `docs/superpowers/plans/2026-06-01-live-goal-assistant-execution.md`
-
-The Goal assistant surfacing and inspection slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-assistant-surfacing-and-inspection-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-assistant-surfacing-and-inspection.md`
-
-The assistant run bundle inspection slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-assistant-run-bundle-inspection-design.md`
-- `docs/superpowers/plans/2026-06-01-assistant-run-bundle-inspection.md`
-
-The Goal assistant preference and planner-request slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-assistant-preferences-and-planning-request-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-assistant-preferences-and-planning-request.md`
-
-The Goal assistant decision-request and management slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-assistant-decision-requests-and-management-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-assistant-decision-requests-and-management.md`
-
-The decision follow-through and explicit reconcile-control slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-decision-resolution-follow-through-and-reconcile-controls-design.md`
-- `docs/superpowers/plans/2026-06-01-decision-resolution-follow-through-and-reconcile-controls.md`
-
-The trace-aware review and merge policy slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-write-trace-aware-review-and-merge-policy-design.md`
-- `docs/superpowers/plans/2026-06-01-write-trace-aware-review-and-merge-policy.md`
-
-The Goal docs inspection and planner doc-status slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-docs-inspection-and-planner-doc-status-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-docs-inspection-and-planner-doc-status.md`
-
-The durable planning-request and planner follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-durable-planning-requests-and-planner-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-durable-planning-requests-and-planner-follow-through.md`
-
-The decision-linked planning follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-decision-linked-planning-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-decision-linked-planning-follow-through.md`
-
-The planning update coverage validation slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-planning-update-coverage-validation-design.md`
-- `docs/superpowers/plans/2026-06-01-planning-update-coverage-validation.md`
-
-The decision-driven planning request enrichment slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-decision-driven-planning-request-enrichment-design.md`
-- `docs/superpowers/plans/2026-06-01-decision-driven-planning-request-enrichment.md`
-
-The decision-resolution planner follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-decision-resolution-planner-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-decision-resolution-planner-follow-through.md`
-
-The Goal-doc planning update target slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-targets-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-doc-planning-update-targets.md`
-
-The generalized Goal-doc planning update path slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-goal-doc-planning-update-paths-design.md`
-- `docs/superpowers/plans/2026-06-01-goal-doc-planning-update-paths.md`
-
-The explicit decision-resolution planner workflow slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-decision-resolution-explicit-planner-workflows-design.md`
-- `docs/superpowers/plans/2026-06-01-decision-resolution-explicit-planner-workflows.md`
-
-The planning-linked decision follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-planning-linked-decision-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-planning-linked-decision-follow-through.md`
-
-The standalone decision follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-standalone-decision-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-standalone-decision-follow-through.md`
-
-The grouped planning follow-through slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-grouped-planning-follow-through-design.md`
-- `docs/superpowers/plans/2026-06-01-grouped-planning-follow-through.md`
-
-The grouped planning decision-enrichment slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-grouped-planning-decision-enrichment-design.md`
-- `docs/superpowers/plans/2026-06-01-grouped-planning-decision-enrichment.md`
-
-The incremental grouped-planning extension slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-incremental-grouped-planning-extension-design.md`
-- `docs/superpowers/plans/2026-06-01-incremental-grouped-planning-extension.md`
-
-The grouped-planning blocker propagation slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-grouped-planning-blocker-propagation-design.md`
-- `docs/superpowers/plans/2026-06-01-grouped-planning-blocker-propagation.md`
-
-The run-history and artifact-aware review/merge policy slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-run-history-and-artifact-aware-review-merge-policy-design.md`
-- `docs/superpowers/plans/2026-06-01-run-history-and-artifact-aware-review-merge-policy.md`
-
-The planning follow-through review/merge policy slice is documented in:
-
-- `docs/superpowers/specs/2026-06-01-planning-follow-through-review-merge-policy-design.md`
-- `docs/superpowers/plans/2026-06-01-planning-follow-through-review-merge-policy.md`
-
-The deterministic merge execution slice is documented in:
-
-- `docs/superpowers/specs/2026-05-31-merge-execution-and-cleanup-design.md`
-- `docs/superpowers/plans/2026-05-31-merge-execution-and-cleanup.md`
+`docs/superpowers/specs/README.md` is the complete design-phase index grouped by date, including the 2026-06-02 and 2026-06-03 authority slices that were not previously surfaced from this root README.
 
 ## Commands
 
@@ -201,19 +29,33 @@ Install dependencies:
 bun install
 ```
 
-Run the backend and Bun UI:
+Run the backend API and compatibility UI:
 
 ```sh
 bun run dev
 ```
 
-Run all Phase 1 checks:
+Run the product frontend package:
+
+```sh
+bun run dev:frontend
+```
+
+Current frontend direction:
+
+- `packages/frontend` is the active product frontend package.
+- The existing React/Vite code in `packages/frontend` is the baseline to preserve and evolve in place.
+- `packages/backend/src/ui` is a capability and API reference surface, not a UI to copy wholesale.
+- Frontend work should continue in `packages/frontend`, starting from its existing `App.tsx`, `Layout.tsx`, `BoardView.tsx`, `SessionView.tsx`, and `AssistantPanel.tsx`.
+- Before substantial frontend work, read `packages/frontend/MIGRATION.md`.
+
+Run all repo checks:
 
 ```sh
 bun run check
 ```
 
-Start the backend:
+Start the backend only:
 
 ```sh
 cd packages/backend

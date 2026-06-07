@@ -28,6 +28,8 @@ export interface InterpretedSourceResponseState {
   questionClosingSpans?: QuestionSourceResponseClosingSpan[]
   questionClosingBlocks?: QuestionSourceResponseClosingBlock[]
   questionMiddleBlocks?: QuestionSourceResponseBlock[]
+  questionAnchorCandidateGroups?: string[][]
+  questionAnchorCandidateLookup?: Map<string, number>
   topicClauses?: TopicSourceResponseSentence[]
   topicSentences?: TopicSourceResponseSentence[]
   topicSpans?: TopicSourceResponseSpan[]
@@ -88,6 +90,8 @@ export interface InterpretedSourceResponseState {
 interface LabeledSourceResponseSection {
   label: string
   value: string
+  sourceLineIndex?: number
+  sourceClauseIndex?: number
 }
 
 interface TopicSourceResponseSentence {
@@ -155,6 +159,35 @@ interface TopicSourceResponseBlock {
 interface MatchingSourceResponseRun {
   text: string
   candidateGroupIndex: number
+}
+
+interface EmbeddedMatchingRunToken {
+  normalizedText: string
+  start: number
+  end: number
+}
+
+interface EmbeddedMatchingRunAnchor {
+  candidateGroupIndex: number
+  startTokenIndex: number
+  endTokenIndex: number
+  startOriginal: number
+  endOriginal: number
+}
+
+interface EmbeddedTopicAnchor {
+  normalizedLabel: string
+  startTokenIndex: number
+  endTokenIndex: number
+  startOriginal: number
+  endOriginal: number
+}
+
+interface CanonicalQuestionAnchorMatch {
+  rawQuestion: string
+  canonicalPrompt: string
+  endTokenIndex: number
+  endOriginal: number
 }
 
 interface ResolvedAnswerContent {
@@ -386,7 +419,6 @@ const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseF
   'matching_answer_sources',
   'pending_answer_sources',
   'labeled_sections',
-  'inline_topics',
   'question_blocks',
   'question_closing_blocks',
   'question_middle_blocks',
@@ -394,6 +426,7 @@ const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseF
   'question_middle_spans',
   'question_closing_spans',
   'question_clauses',
+  'inline_topics',
   'topic_closing_blocks',
   'topic_middle_blocks',
   'topic_blocks',
@@ -408,6 +441,7 @@ const AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY: ConcreteInterpretableSourceResponseF
   'matching_runs',
   'matching_opening_runs',
   'matching_closing_runs',
+  'matching_middle_runs',
   'single_pending',
   'pending_paragraphs',
   'pending_sentences',
@@ -505,6 +539,7 @@ export function listAutoSourceResponseFormatCandidates(input: {
   inferOpenDecisions?: boolean
   inferDecisionTopics?: boolean
   inferRemainingAnswers?: boolean
+  sourceResponse?: string
 }) {
   if (!input.hasSourceResponse && !input.hasAnswerSources) {
     return []
@@ -519,7 +554,7 @@ export function listAutoSourceResponseFormatCandidates(input: {
     return []
   }
 
-  return AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY.filter((format) => {
+  const candidates = AUTO_SOURCE_RESPONSE_FORMAT_PRIORITY.filter((format) => {
     if (!input.hasAnswerSources && ANSWER_SOURCE_ONLY_FORMATS.has(format)) {
       return false
     }
@@ -537,6 +572,68 @@ export function listAutoSourceResponseFormatCandidates(input: {
     }
     return true
   })
+
+  return prioritizeAutoTopicClauseCandidates(candidates, input.sourceResponse)
+}
+
+function prioritizeAutoTopicClauseCandidates(
+  candidates: ConcreteInterpretableSourceResponseFormat[],
+  sourceResponse: string | undefined,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared || parseTopicSourceResponseSentences(shared).length !== 1) {
+    return candidates
+  }
+
+  const conjunctionSegments = parsePendingSourceResponseConjunctions(shared)
+  if (conjunctionSegments.length > 1) {
+    return moveAutoSourceResponseFormatsBefore(candidates, ['topic_clauses'], [
+      'topic_spans',
+      'topic_middle_spans',
+      'topic_closing_spans',
+      'topic_sentences',
+    ])
+  }
+
+  const clauses = parseGenericMatchingSourceResponseClauseUnits(shared)
+  if (clauses.length <= 1) {
+    return candidates
+  }
+
+  const everyClauseEndsWithTopic = clauses.every((clause) => Boolean(extractTrailingTopicSummary(clause.text)))
+  if (everyClauseEndsWithTopic) {
+    return candidates
+  }
+
+  return moveAutoSourceResponseFormatsBefore(candidates, ['topic_clauses'], [
+    'topic_spans',
+    'topic_middle_spans',
+    'topic_closing_spans',
+    'topic_sentences',
+  ])
+}
+
+function moveAutoSourceResponseFormatsBefore(
+  candidates: ConcreteInterpretableSourceResponseFormat[],
+  formatsToMove: ConcreteInterpretableSourceResponseFormat[],
+  anchorFormats: ConcreteInterpretableSourceResponseFormat[],
+) {
+  const remaining = candidates.filter((candidate) => !formatsToMove.includes(candidate))
+  const moved = candidates.filter((candidate) => formatsToMove.includes(candidate))
+  if (moved.length === 0) {
+    return candidates
+  }
+
+  const anchorIndex = remaining.findIndex((candidate) => anchorFormats.includes(candidate))
+  if (anchorIndex === -1) {
+    return candidates
+  }
+
+  return [
+    ...remaining.slice(0, anchorIndex),
+    ...moved,
+    ...remaining.slice(anchorIndex),
+  ]
 }
 
 export function resolveAutoSourceResponseFormat(
@@ -832,6 +929,18 @@ function assertAutoSourceResponseFormatCompleteness(input: {
         ).length,
       )
       return
+    case 'matching_middle_runs':
+      assertAutoSourceResponseUnitCompleteness(
+        input.sourceResponseFormat,
+        'matching middle runs',
+        state.consumedMatchingMiddleRunIndexes.size,
+        parseMatchingMiddleSourceResponseRuns(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ).length,
+      )
+      return
     case 'ordered_items':
       assertAutoSourceResponseUnitCompleteness(
         input.sourceResponseFormat,
@@ -1107,6 +1216,22 @@ function assertAutoSourceResponseFormatCompleteness(input: {
           state,
         ).size,
       )
+      assertAutoLabeledSectionsDidNotSkipStandaloneQuestionAuthority(
+        input.sourceResponse,
+        parseRequiredLabeledSourceResponseSections(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ),
+      )
+      assertAutoLabeledSectionsDidNotSkipStandaloneTopicAuthority(
+        input.sourceResponse,
+        parseRequiredLabeledSourceResponseSections(
+          input.sourceResponse,
+          'sourceResponseFormat auto',
+          state,
+        ),
+      )
       return
     case 'inline_topics':
       assertAutoSourceResponseUnitCompleteness(
@@ -1134,6 +1259,613 @@ function assertAutoSourceResponseUnitCompleteness(
   throw new AnswerInterpretationError(
     `sourceResponseFormat auto rejected ${sourceResponseFormat} because it left ${remainingCount} unconsumed ${unitLabel}.`,
   )
+}
+
+function assertDirectSourceResponseUnitCompleteness(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  unitLabel: string,
+  consumedCount: number,
+  totalCount: number,
+) {
+  if (consumedCount >= totalCount) {
+    return
+  }
+
+  const remainingCount = totalCount - consumedCount
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat ${sourceResponseFormat} rejected sourceResponse because it left ${remainingCount} unconsumed ${unitLabel}.`,
+  )
+}
+
+function parseRequiredQuestionSourceResponseUnits<T>(
+  sourceResponse: string | undefined,
+  label: string,
+  sourceResponseFormat:
+    | 'question_blocks'
+    | 'question_clauses'
+    | 'question_spans'
+    | 'question_middle_spans'
+    | 'question_closing_spans'
+    | 'question_closing_blocks'
+    | 'question_middle_blocks',
+  cached: T[] | undefined,
+  parse: (sourceResponse: string) => T[],
+) {
+  if (cached) {
+    return cached
+  }
+
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat ${sourceResponseFormat} requires sourceResponse for ${label}.`,
+    )
+  }
+
+  return parse(shared)
+}
+
+function assertDirectLabelFamilySourceResponseCompleteness(input: {
+  sourceResponse?: string
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+  enforceDirectLabeledSectionCompleteness?: boolean
+}) {
+  if (
+    input.enforceDirectLabeledSectionCompleteness !== false &&
+    input.sourceResponseFormat === 'labeled_sections' &&
+    (input.sourceResponseState?.consumedLabeledSectionLabels.size ?? 0) > 0
+  ) {
+    const labeledSections = parseRequiredLabeledSourceResponseSections(
+      input.sourceResponse,
+      input.label,
+      input.sourceResponseState,
+    )
+    assertDirectSourceResponseUnitCompleteness(
+      'labeled_sections',
+      'labeled sections',
+      input.sourceResponseState?.consumedLabeledSectionLabels.size ?? 0,
+      labeledSections.size,
+    )
+    assertDirectLabeledSectionsDidNotSkipStandaloneQuestionAuthority(
+      input.sourceResponse,
+      labeledSections,
+    )
+    assertDirectLabeledSectionsDidNotSkipStandaloneTopicAuthority(
+      input.sourceResponse,
+      labeledSections,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'inline_topics' &&
+    (input.sourceResponseState?.consumedInlineTopicLabels.size ?? 0) > 0
+  ) {
+    const inlineTopics = parseRequiredInlineTopicSections(
+      input.sourceResponse,
+      input.label,
+      input.sourceResponseState,
+    )
+    assertDirectSourceResponseUnitCompleteness(
+      'inline_topics',
+      'inline topic clauses',
+      input.sourceResponseState?.consumedInlineTopicLabels.size ?? 0,
+      inlineTopics.size,
+    )
+    assertDirectInlineTopicsDidNotSkipStandaloneQuestionAuthority(
+      input.sourceResponse,
+      inlineTopics,
+      input.sourceResponseState?.consumedInlineTopicLabels,
+    )
+    assertDirectInlineTopicsDidNotSkipStandaloneTopicAuthority(
+      input.sourceResponse,
+      inlineTopics,
+      input.sourceResponseState?.consumedInlineTopicLabels,
+    )
+  }
+}
+
+function assertDirectQuestionAndTopicSourceResponseCompleteness(input: {
+  sourceResponse?: string
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  const state = input.sourceResponseState
+
+  if (
+    input.sourceResponseFormat === 'question_blocks' &&
+    (state?.consumedQuestionBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_blocks',
+      'question blocks',
+      state?.consumedQuestionBlockIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_blocks',
+        state?.questionBlocks,
+        parseQuestionSourceResponseBlocks,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_clauses' &&
+    (state?.consumedQuestionClauseIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_clauses',
+      'question clauses',
+      state?.consumedQuestionClauseIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_clauses',
+        state?.questionClauses,
+        parseQuestionSourceResponseClauses,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_spans' &&
+    (state?.consumedQuestionSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_spans',
+      'question spans',
+      state?.consumedQuestionSpanIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_spans',
+        state?.questionSpans,
+        parseQuestionSourceResponseSpans,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_middle_spans' &&
+    (state?.consumedQuestionMiddleSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_middle_spans',
+      'question middle spans',
+      state?.consumedQuestionMiddleSpanIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_middle_spans',
+        state?.questionMiddleSpans,
+        parseQuestionSourceResponseMiddleSpans,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_closing_spans' &&
+    (state?.consumedQuestionClosingSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_closing_spans',
+      'question closing spans',
+      state?.consumedQuestionClosingSpanIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_closing_spans',
+        state?.questionClosingSpans,
+        parseQuestionSourceResponseClosingSpans,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_closing_blocks' &&
+    (state?.consumedQuestionClosingBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_closing_blocks',
+      'question closing blocks',
+      state?.consumedQuestionClosingBlockIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_closing_blocks',
+        state?.questionClosingBlocks,
+        parseQuestionSourceResponseClosingBlocks,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'question_middle_blocks' &&
+    (state?.consumedQuestionMiddleBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'question_middle_blocks',
+      'question middle blocks',
+      state?.consumedQuestionMiddleBlockIndexes.size ?? 0,
+      parseRequiredQuestionSourceResponseUnits(
+        input.sourceResponse,
+        input.label,
+        'question_middle_blocks',
+        state?.questionMiddleBlocks,
+        parseQuestionSourceResponseMiddleBlocks,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_clauses' &&
+    (state?.consumedTopicClauseIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_clauses',
+      'topic clauses',
+      state?.consumedTopicClauseIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseClauses(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_sentences' &&
+    (state?.consumedTopicSentenceIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_sentences',
+      'topic sentences',
+      state?.consumedTopicSentenceIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseSentences(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_spans' &&
+    (state?.consumedTopicSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_spans',
+      'topic spans',
+      state?.consumedTopicSpanIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseSpans(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_middle_spans' &&
+    (state?.consumedTopicMiddleSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_middle_spans',
+      'topic middle spans',
+      state?.consumedTopicMiddleSpanIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseMiddleSpans(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_closing_spans' &&
+    (state?.consumedTopicClosingSpanIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_closing_spans',
+      'topic closing spans',
+      state?.consumedTopicClosingSpanIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseClosingSpans(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_closing_blocks' &&
+    (state?.consumedTopicClosingBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_closing_blocks',
+      'topic closing blocks',
+      state?.consumedTopicClosingBlockIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseClosingBlocks(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_paragraphs' &&
+    (state?.consumedTopicParagraphIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_paragraphs',
+      'topic paragraphs',
+      state?.consumedTopicParagraphIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseParagraphs(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_middle_blocks' &&
+    (state?.consumedTopicMiddleBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_middle_blocks',
+      'topic middle blocks',
+      state?.consumedTopicMiddleBlockIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseMiddleBlocks(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'topic_blocks' &&
+    (state?.consumedTopicBlockIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'topic_blocks',
+      'topic blocks',
+      state?.consumedTopicBlockIndexes.size ?? 0,
+      parseRequiredTopicSourceResponseBlocks(
+        input.sourceResponse,
+        input.label,
+        state,
+      ).length,
+    )
+  }
+}
+
+function assertDirectOrderedSourceResponseCompleteness(input: {
+  sourceResponse?: string
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  if (
+    input.sourceResponseFormat === 'ordered_items' &&
+    (input.sourceResponseState?.nextOrderedItemIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'ordered_items',
+      'ordered items',
+      input.sourceResponseState?.nextOrderedItemIndex ?? 0,
+      parseRequiredOrderedSourceResponseItems(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'ordered_blocks' &&
+    (input.sourceResponseState?.nextOrderedBlockIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'ordered_blocks',
+      'ordered blocks',
+      input.sourceResponseState?.nextOrderedBlockIndex ?? 0,
+      parseRequiredOrderedSourceResponseBlocks(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+}
+
+function assertDirectPendingSourceResponseCompleteness(input: {
+  sourceResponse?: string
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  if (
+    input.sourceResponseFormat === 'pending_clauses' &&
+    (input.sourceResponseState?.nextPendingClauseIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'pending_clauses',
+      'pending clauses',
+      input.sourceResponseState?.nextPendingClauseIndex ?? 0,
+      parseRequiredPendingSourceResponseClauses(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'pending_paragraphs' &&
+    (input.sourceResponseState?.nextPendingParagraphIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'pending_paragraphs',
+      'pending paragraphs',
+      input.sourceResponseState?.nextPendingParagraphIndex ?? 0,
+      parseRequiredPendingSourceResponseParagraphs(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'pending_sentences' &&
+    (input.sourceResponseState?.nextPendingSentenceIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'pending_sentences',
+      'pending sentences',
+      input.sourceResponseState?.nextPendingSentenceIndex ?? 0,
+      parseRequiredPendingSourceResponseSentences(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'pending_conjunctions' &&
+    (input.sourceResponseState?.nextPendingConjunctionIndex ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'pending_conjunctions',
+      'pending conjunctions',
+      input.sourceResponseState?.nextPendingConjunctionIndex ?? 0,
+      parseRequiredPendingSourceResponseConjunctions(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+}
+
+function assertDirectAnswerSourceFamilySourceResponseCompleteness(input: {
+  sourceResponse?: string
+  answerSources?: InterpretableAnswerSource[]
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  if (
+    input.sourceResponseFormat === 'pending_answer_sources' &&
+    (input.sourceResponseState?.nextPendingAnswerSourceIndex ?? 0) > 0
+  ) {
+    const entries = parseRequiredPendingAnswerSourceEntries(
+      createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+      input.label,
+      input.sourceResponseState,
+    )
+    assertDirectSourceResponseUnitCompleteness(
+      'pending_answer_sources',
+      'pending answer sources',
+      input.sourceResponseState?.nextPendingAnswerSourceIndex ?? 0,
+      entries.length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'matching_answer_sources' &&
+    (input.sourceResponseState?.consumedMatchingAnswerSourceIndexes.size ?? 0) > 0
+  ) {
+    const entries = parseRequiredMatchingAnswerSourceEntries(
+      createResolvedAnswerSources(input.answerSources, input.sourceResponse)?.entries,
+      input.label,
+      input.sourceResponseState,
+    )
+    assertDirectSourceResponseUnitCompleteness(
+      'matching_answer_sources',
+      'matching answer sources',
+      input.sourceResponseState?.consumedMatchingAnswerSourceIndexes.size ?? 0,
+      entries.length,
+    )
+  }
+}
+
+function assertDirectMatchingRunSourceResponseCompleteness(input: {
+  sourceResponse?: string
+  sourceResponseFormat?: InterpretableSourceResponseFormat
+  sourceResponseState?: InterpretedSourceResponseState
+  label: string
+}) {
+  if (
+    input.sourceResponseFormat === 'matching_runs' &&
+    (input.sourceResponseState?.consumedMatchingRunIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'matching_runs',
+      'matching runs',
+      input.sourceResponseState?.consumedMatchingRunIndexes.size ?? 0,
+      parseMatchingSourceResponseRuns(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'matching_opening_runs' &&
+    (input.sourceResponseState?.consumedMatchingOpeningRunIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'matching_opening_runs',
+      'matching opening runs',
+      input.sourceResponseState?.consumedMatchingOpeningRunIndexes.size ?? 0,
+      parseMatchingOpeningSourceResponseRuns(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'matching_closing_runs' &&
+    (input.sourceResponseState?.consumedMatchingClosingRunIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'matching_closing_runs',
+      'matching closing runs',
+      input.sourceResponseState?.consumedMatchingClosingRunIndexes.size ?? 0,
+      parseMatchingClosingSourceResponseRuns(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
+
+  if (
+    input.sourceResponseFormat === 'matching_middle_runs' &&
+    (input.sourceResponseState?.consumedMatchingMiddleRunIndexes.size ?? 0) > 0
+  ) {
+    assertDirectSourceResponseUnitCompleteness(
+      'matching_middle_runs',
+      'matching middle runs',
+      input.sourceResponseState?.consumedMatchingMiddleRunIndexes.size ?? 0,
+      parseMatchingMiddleSourceResponseRuns(
+        input.sourceResponse,
+        input.label,
+        input.sourceResponseState,
+      ).length,
+    )
+  }
 }
 
 function assertNoUnusedExplicitlyRoutedAnswerSources(input: {
@@ -1184,8 +1916,541 @@ function assertNoUnusedExplicitlyRoutedAnswerSources(input: {
   }
 }
 
-function textHasExplicitTopicAuthority(text: string) {
-  return dedupeNonEmptyStrings(extractTopicAnchorCandidateSummariesFromText(text)).length > 0
+function textHasSingleExplicitTopicAuthority(text: string) {
+  return dedupeNonEmptyStrings(extractTopicAnchorCandidateSummariesFromText(text)).length === 1
+}
+
+function autoQuestionSurfaceEstablishedExplicitAuthority(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (!sourceResponseState) {
+    return false
+  }
+
+  switch (sourceResponseFormat) {
+    case 'question_blocks':
+      return (sourceResponseState.questionBlocks?.length ?? 0) > 0
+    case 'question_clauses':
+      return (sourceResponseState.questionClauses?.length ?? 0) > 0
+    case 'question_spans':
+      return (sourceResponseState.questionSpans?.length ?? 0) > 0
+    case 'question_middle_spans':
+      return (sourceResponseState.questionMiddleSpans?.length ?? 0) > 0
+    case 'question_closing_spans':
+      return (sourceResponseState.questionClosingSpans?.length ?? 0) > 0
+    case 'question_closing_blocks':
+      return (sourceResponseState.questionClosingBlocks?.length ?? 0) > 0
+    case 'question_middle_blocks':
+      return (sourceResponseState.questionMiddleBlocks?.length ?? 0) > 0
+    default:
+      return false
+  }
+}
+
+function sourceResponseHasQuestionSentenceAuthority(sourceResponse: string | undefined) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    return false
+  }
+
+  return extractQuestionAuthorityTextsFromText(shared).length > 0
+}
+
+function listStandaloneQuestionAuthoritiesOutsideLabeledSections(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  return dedupeNonEmptyStrings(
+    groupRemainingNonLabeledSectionLineChunks(sourceResponse, labeledSections).flatMap((chunk) =>
+      extractQuestionAuthorityTextsFromText(chunk),
+    ),
+  )
+}
+
+function assertTextDoesNotContainMalformedStandaloneQuestionSpanAuthority(text: string) {
+  const sentences = parseTopicSourceResponseSentences(text)
+  if (sentences.length < 2) {
+    return
+  }
+
+  const [firstSentence, ...answerSentences] = sentences
+  if (!firstSentence || !isQuestionSourceResponseSentence(firstSentence.text)) {
+    return
+  }
+
+  assertQuestionAnswerTopicAuthorityMatchesQuestion(
+    normalizeQuestionSourceResponsePrompt(firstSentence.text),
+    answerSentences.map((sentence) => sentence.text).join(' '),
+    'Question span',
+  )
+}
+
+function assertLabeledSectionsDidNotSkipMalformedExplicitInlineTopicsOutsideParsedSections(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  for (const chunk of groupRemainingNonLabeledSectionLineChunks(
+    sourceResponse,
+    labeledSections,
+  )) {
+    const parsedInlineTopic = parseInlineTopicClause(chunk)
+    if (!parsedInlineTopic) {
+      continue
+    }
+
+    if (inlineTopicClauseUsesExplicitLabelValueSeparator(chunk)) {
+      assertExplicitLabelTextDoesNotContainAuthority(
+        parsedInlineTopic.label,
+        'Inline topic clause label',
+      )
+    }
+    assertLabeledValueAuthorityMatchesLabel(
+      parsedInlineTopic.label,
+      parsedInlineTopic.value,
+      'Inline topic clause',
+      'answer text',
+    )
+  }
+}
+
+function groupRemainingNonLabeledSectionLineChunks(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared || labeledSections.size === 0) {
+    return []
+  }
+
+  const sectionLineIndexes = new Set<number>()
+  for (const section of labeledSections.values()) {
+    if (typeof section.sourceLineIndex === 'number') {
+      sectionLineIndexes.add(section.sourceLineIndex)
+    }
+  }
+  if (sectionLineIndexes.size === 0) {
+    return []
+  }
+
+  const chunks: string[] = []
+  let currentChunkLines: string[] = []
+
+  const flushCurrentChunk = () => {
+    if (currentChunkLines.length === 0) {
+      return
+    }
+    chunks.push(currentChunkLines.join(' '))
+    currentChunkLines = []
+  }
+
+  for (const [lineIndex, line] of shared.split(/\r?\n/).entries()) {
+    if (sectionLineIndexes.has(lineIndex)) {
+      flushCurrentChunk()
+      continue
+    }
+
+    const trimmed = stripLeadingPresentationListMarkers(line.trim())
+    if (!trimmed) {
+      flushCurrentChunk()
+      continue
+    }
+
+    currentChunkLines.push(trimmed)
+  }
+
+  flushCurrentChunk()
+  return chunks
+}
+
+function assertLabeledSectionsDidNotSkipMalformedQuestionSpanAuthorityOutsideParsedSections(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  for (const chunk of groupRemainingNonLabeledSectionLineChunks(
+    sourceResponse,
+    labeledSections,
+  )) {
+    assertTextDoesNotContainMalformedStandaloneQuestionSpanAuthority(chunk)
+  }
+}
+
+function assertAutoLabeledSectionsDidNotSkipStandaloneQuestionAuthority(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  assertLabeledSectionsDidNotSkipMalformedExplicitInlineTopicsOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  assertLabeledSectionsDidNotSkipMalformedQuestionSpanAuthorityOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  const authorities = listStandaloneQuestionAuthoritiesOutsideLabeledSections(
+    sourceResponse,
+    labeledSections,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat auto rejected labeled_sections because sourceResponse still included standalone question authority ${formatQuotedValueList(authorities)} outside labeled sections.`,
+  )
+}
+
+function assertDirectLabeledSectionsDidNotSkipStandaloneQuestionAuthority(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  assertLabeledSectionsDidNotSkipMalformedExplicitInlineTopicsOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  assertLabeledSectionsDidNotSkipMalformedQuestionSpanAuthorityOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  const authorities = listStandaloneQuestionAuthoritiesOutsideLabeledSections(
+    sourceResponse,
+    labeledSections,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat labeled_sections rejected sourceResponse because it still included standalone question authority ${formatQuotedValueList(authorities)} outside labeled sections.`,
+  )
+}
+
+function listStandaloneExplicitTopicAuthoritiesOutsideLabeledSections(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  const authorities: string[] = []
+  for (const chunk of groupRemainingNonLabeledSectionLineChunks(
+    sourceResponse,
+    labeledSections,
+  )) {
+    const parsedInlineTopic = parseInlineTopicClause(chunk)
+    if (
+      parsedInlineTopic &&
+      inlineTopicClauseUsesExplicitLabelValueSeparator(chunk)
+    ) {
+      try {
+        assertExplicitLabelTextDoesNotContainAuthority(
+          parsedInlineTopic.label,
+          'Inline topic clause label',
+        )
+        assertLabeledValueAuthorityMatchesLabel(
+          parsedInlineTopic.label,
+          parsedInlineTopic.value,
+          'Inline topic clause',
+          'answer text',
+        )
+        authorities.push(parsedInlineTopic.label)
+        continue
+      } catch (error) {
+        if (!(error instanceof AnswerInterpretationError)) {
+          throw error
+        }
+      }
+    }
+
+    authorities.push(...extractExplicitTopicSummariesFromQuestionAnswerText(chunk))
+  }
+
+  return dedupeNonEmptyStrings(authorities)
+}
+
+function assertAutoLabeledSectionsDidNotSkipStandaloneTopicAuthority(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  assertLabeledSectionsDidNotSkipMalformedExplicitInlineTopicsOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  const authorities = listStandaloneExplicitTopicAuthoritiesOutsideLabeledSections(
+    sourceResponse,
+    labeledSections,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat auto rejected labeled_sections because sourceResponse still included standalone topic authority for ${formatQuotedValueList(authorities)} outside labeled sections.`,
+  )
+}
+
+function assertDirectLabeledSectionsDidNotSkipStandaloneTopicAuthority(
+  sourceResponse: string | undefined,
+  labeledSections: Map<string, LabeledSourceResponseSection>,
+) {
+  assertLabeledSectionsDidNotSkipMalformedExplicitInlineTopicsOutsideParsedSections(
+    sourceResponse,
+    labeledSections,
+  )
+  const authorities = listStandaloneExplicitTopicAuthoritiesOutsideLabeledSections(
+    sourceResponse,
+    labeledSections,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat labeled_sections rejected sourceResponse because it still included standalone topic authority for ${formatQuotedValueList(authorities)} outside labeled sections.`,
+  )
+}
+
+function listStandaloneQuestionAuthoritiesOutsideInlineTopics(
+  sourceResponse: string | undefined,
+  inlineTopics: Map<string, LabeledSourceResponseSection>,
+  consumedInlineTopicLabels: Set<string> | undefined,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared || inlineTopics.size === 0 || !consumedInlineTopicLabels?.size) {
+    return []
+  }
+
+  const inlineClauseIndexes = collectSemanticallyValidInlineTopicClauseIndexes(shared)
+  if (inlineClauseIndexes.size === 0) {
+    return []
+  }
+
+  for (const chunk of groupRemainingNonInlineTopicClauseChunks(shared, inlineClauseIndexes)) {
+    assertTextDoesNotContainMalformedStandaloneQuestionSpanAuthority(chunk)
+  }
+
+  const authorities: string[] = []
+  for (const [clauseIndex, clause] of splitInlineTopicClauses(shared).entries()) {
+    if (inlineClauseIndexes.has(clauseIndex)) {
+      continue
+    }
+
+    authorities.push(...extractQuestionAuthorityTextsFromText(clause))
+  }
+
+  return dedupeNonEmptyStrings(authorities)
+}
+
+function groupRemainingNonInlineTopicClauseChunks(
+  sourceResponse: string,
+  inlineClauseIndexes: Set<number>,
+) {
+  const chunks: string[] = []
+  let currentChunkClauses: string[] = []
+
+  for (const [clauseIndex, clause] of splitInlineTopicClauses(sourceResponse).entries()) {
+    if (inlineClauseIndexes.has(clauseIndex)) {
+      if (currentChunkClauses.length > 0) {
+        chunks.push(currentChunkClauses.join(' '))
+        currentChunkClauses = []
+      }
+      continue
+    }
+
+    currentChunkClauses.push(clause)
+  }
+
+  if (currentChunkClauses.length > 0) {
+    chunks.push(currentChunkClauses.join(' '))
+  }
+
+  return chunks
+}
+
+function assertDirectInlineTopicsDidNotSkipStandaloneQuestionAuthority(
+  sourceResponse: string | undefined,
+  inlineTopics: Map<string, LabeledSourceResponseSection>,
+  consumedInlineTopicLabels: Set<string> | undefined,
+) {
+  const authorities = listStandaloneQuestionAuthoritiesOutsideInlineTopics(
+    sourceResponse,
+    inlineTopics,
+    consumedInlineTopicLabels,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat inline_topics rejected sourceResponse because it still included standalone question authority ${formatQuotedValueList(authorities)} outside inline topic clauses.`,
+  )
+}
+
+function listStandaloneExplicitTopicAuthoritiesOutsideInlineTopics(
+  sourceResponse: string | undefined,
+  inlineTopics: Map<string, LabeledSourceResponseSection>,
+  consumedInlineTopicLabels: Set<string> | undefined,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared || inlineTopics.size === 0 || !consumedInlineTopicLabels?.size) {
+    return []
+  }
+
+  const inlineClauseIndexes = collectSemanticallyValidInlineTopicClauseIndexes(shared)
+  if (inlineClauseIndexes.size === 0) {
+    return []
+  }
+
+  const authorities: string[] = []
+  for (const [clauseIndex, clause] of splitInlineTopicClauses(shared).entries()) {
+    if (inlineClauseIndexes.has(clauseIndex)) {
+      continue
+    }
+
+    authorities.push(...extractExplicitTopicSummariesFromQuestionAnswerText(clause))
+  }
+
+  return dedupeNonEmptyStrings(authorities)
+}
+
+function assertDirectInlineTopicsDidNotSkipStandaloneTopicAuthority(
+  sourceResponse: string | undefined,
+  inlineTopics: Map<string, LabeledSourceResponseSection>,
+  consumedInlineTopicLabels: Set<string> | undefined,
+) {
+  const authorities = listStandaloneExplicitTopicAuthoritiesOutsideInlineTopics(
+    sourceResponse,
+    inlineTopics,
+    consumedInlineTopicLabels,
+  )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat inline_topics rejected sourceResponse because it still included standalone topic authority for ${formatQuotedValueList(authorities)} outside inline topic clauses.`,
+  )
+}
+
+function listAdditionalVerbalInlineTopicAuthoritiesAlongsideSeparatorStyleInlineTopics(
+  sourceResponse: string | undefined,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    return []
+  }
+
+  let hasSeparatorStyleInlineTopic = false
+  const verbalAuthorities: string[] = []
+  for (const clause of splitInlineTopicClauses(shared)) {
+    const trimmedClause = stripLeadingPresentationListMarkers(
+      clause.trim().replace(/^(?:and|but)\s+/i, ''),
+    )
+    if (!trimmedClause) {
+      continue
+    }
+
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    try {
+      if (inlineTopicClauseUsesExplicitLabelValueSeparator(trimmedClause)) {
+        assertExplicitLabelTextDoesNotContainAuthority(
+          parsed.label,
+          'Inline topic clause label',
+        )
+        assertLabeledValueAuthorityMatchesLabel(
+          parsed.label,
+          parsed.value,
+          'Inline topic clause',
+          'answer text',
+        )
+        hasSeparatorStyleInlineTopic = true
+        continue
+      }
+
+      assertLabeledValueAuthorityMatchesLabel(
+        parsed.label,
+        parsed.value,
+        'Inline topic clause',
+        'answer text',
+      )
+      verbalAuthorities.push(parsed.label)
+    } catch (error) {
+      if (error instanceof AnswerInterpretationError) {
+        continue
+      }
+      throw error
+    }
+  }
+
+  if (!hasSeparatorStyleInlineTopic) {
+    return []
+  }
+
+  return dedupeNonEmptyStrings(verbalAuthorities)
+}
+
+function assertSeparatorStyleInlineTopicsDidNotMixWithAdditionalVerbalInlineTopicAuthority(
+  sourceResponse: string | undefined,
+) {
+  const authorities =
+    listAdditionalVerbalInlineTopicAuthoritiesAlongsideSeparatorStyleInlineTopics(
+      sourceResponse,
+    )
+  if (authorities.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `sourceResponseFormat inline_topics rejected sourceResponse because it mixed separator-style inline topic authority with additional verbal inline topic authority for ${formatQuotedValueList(authorities)}.`,
+  )
+}
+
+function collectSemanticallyValidInlineTopicClauseIndexes(sourceResponse: string) {
+  const indexes = new Set<number>()
+
+  for (const [clauseIndex, clause] of splitInlineTopicClauses(sourceResponse).entries()) {
+    if (isSemanticallyValidInlineTopicClause(clause)) {
+      indexes.add(clauseIndex)
+    }
+  }
+
+  return indexes
+}
+
+function isSemanticallyValidInlineTopicClause(clause: string) {
+  const trimmedClause = stripLeadingPresentationListMarkers(
+    clause.trim().replace(/^(?:and|but)\s+/i, ''),
+  )
+  if (!trimmedClause) {
+    return false
+  }
+  if (extractQuestionAuthorityTextsFromText(trimmedClause).length > 0) {
+    return false
+  }
+
+  const parsed = parseInlineTopicClause(clause)
+  if (!parsed) {
+    return false
+  }
+
+  try {
+    if (inlineTopicClauseUsesExplicitLabelValueSeparator(trimmedClause)) {
+      assertExplicitLabelTextDoesNotContainAuthority(parsed.label, 'Inline topic clause label')
+    }
+    assertLabeledValueAuthorityMatchesLabel(
+      parsed.label,
+      parsed.value,
+      'Inline topic clause',
+      'answer text',
+    )
+    return true
+  } catch (error) {
+    if (error instanceof AnswerInterpretationError) {
+      return false
+    }
+    throw error
+  }
 }
 
 function autoTopicSurfaceEstablishedExplicitAuthority(
@@ -1196,62 +2461,24 @@ function autoTopicSurfaceEstablishedExplicitAuthority(
     return false
   }
 
-  const hasConsumedExplicitText = (
-    texts: string[] | undefined,
-    consumedIndexes: Set<number> | undefined,
-  ) =>
-    Boolean(
-      texts?.some(
-        (text, index) =>
-          (consumedIndexes?.has(index) ?? false) && textHasExplicitTopicAuthority(text),
-      ),
-    )
+  const hasExplicitText = (texts: string[] | undefined) =>
+    Boolean(texts?.some((text) => textHasSingleExplicitTopicAuthority(text)))
 
   switch (sourceResponseFormat) {
     case 'topic_clauses':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicClauses?.map((clause) => clause.text),
-        sourceResponseState.consumedTopicClauseIndexes,
-      )
-    case 'topic_sentences':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicSentences?.map((sentence) => sentence.text),
-        sourceResponseState.consumedTopicSentenceIndexes,
-      )
-    case 'topic_paragraphs':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicParagraphs?.map((paragraph) => paragraph.text),
-        sourceResponseState.consumedTopicParagraphIndexes,
+      return (
+        (sourceResponseState.topicClauses?.length ?? 0) > 1 &&
+        hasExplicitText(sourceResponseState.topicClauses?.map((clause) => clause.text))
       )
     case 'topic_spans':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicSpans?.map((span) => span.anchorText),
-        sourceResponseState.consumedTopicSpanIndexes,
-      )
+      return hasExplicitText(sourceResponseState.topicSpans?.map((span) => span.anchorText))
     case 'topic_middle_spans':
-      return hasConsumedExplicitText(
+      return hasExplicitText(
         sourceResponseState.topicMiddleSpans?.map((span) => span.anchorText),
-        sourceResponseState.consumedTopicMiddleSpanIndexes,
       )
     case 'topic_closing_spans':
-      return hasConsumedExplicitText(
+      return hasExplicitText(
         sourceResponseState.topicClosingSpans?.map((span) => span.closingText),
-        sourceResponseState.consumedTopicClosingSpanIndexes,
-      )
-    case 'topic_closing_blocks':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicClosingBlocks?.map((block) => block.closingText),
-        sourceResponseState.consumedTopicClosingBlockIndexes,
-      )
-    case 'topic_middle_blocks':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicMiddleBlocks?.map((block) => block.anchorText),
-        sourceResponseState.consumedTopicMiddleBlockIndexes,
-      )
-    case 'topic_blocks':
-      return hasConsumedExplicitText(
-        sourceResponseState.topicBlocks?.map((block) => block.anchorText),
-        sourceResponseState.consumedTopicBlockIndexes,
       )
     default:
       return false
@@ -1269,28 +2496,68 @@ function shouldAutoSourceResponseProbeFailClosed(
     return (sourceResponseState?.labeledSections?.size ?? 0) > 0
   }
   if (sourceResponseFormat === 'inline_topics') {
+    if (autoInlineTopicsShouldYieldToExplicitTopicAuthority(sourceResponseState)) {
+      return false
+    }
     return (sourceResponseState?.inlineTopics?.size ?? 0) > 1
   }
+  if (sourceResponseFormat === 'ordered_items') {
+    return (
+      (sourceResponseState?.orderedItems?.length ?? 0) > 1 &&
+      (sourceResponseState?.nextOrderedItemIndex ?? 0) > 0
+    )
+  }
+  if (sourceResponseFormat === 'ordered_blocks') {
+    return (
+      ((sourceResponseState?.orderedBlocks?.length ?? 0) > 1 &&
+        (sourceResponseState?.nextOrderedBlockIndex ?? 0) > 0) ||
+      orderedBlocksCollapsedMarkedOrderedItems(
+        sourceResponseState?.sourceResponse,
+        sourceResponseState?.orderedBlocks,
+      )
+    )
+  }
   if (sourceResponseFormat === 'question_blocks') {
-    return (sourceResponseState?.consumedQuestionBlockIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'question_clauses') {
-    return (sourceResponseState?.consumedQuestionClauseIndexes.size ?? 0) > 0
+    return (
+      autoQuestionSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState) ||
+      sourceResponseHasQuestionSentenceAuthority(sourceResponseState?.sourceResponse)
+    )
   }
   if (sourceResponseFormat === 'question_spans') {
-    return (sourceResponseState?.consumedQuestionSpanIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'question_middle_spans') {
-    return (sourceResponseState?.consumedQuestionMiddleSpanIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'question_closing_spans') {
-    return (sourceResponseState?.consumedQuestionClosingSpanIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'question_closing_blocks') {
-    return (sourceResponseState?.consumedQuestionClosingBlockIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'question_middle_blocks') {
-    return (sourceResponseState?.consumedQuestionMiddleBlockIndexes.size ?? 0) > 0
+    return autoQuestionSurfaceEstablishedExplicitAuthority(
+      sourceResponseFormat,
+      sourceResponseState,
+    )
   }
   if (sourceResponseFormat === 'topic_clauses') {
     return autoTopicSurfaceEstablishedExplicitAuthority(sourceResponseFormat, sourceResponseState)
@@ -1325,7 +2592,329 @@ function shouldAutoSourceResponseProbeFailClosed(
   if (sourceResponseFormat === 'matching_closing_runs') {
     return (sourceResponseState?.consumedMatchingClosingRunIndexes.size ?? 0) > 0
   }
+  if (sourceResponseFormat === 'matching_middle_runs') {
+    return (sourceResponseState?.consumedMatchingMiddleRunIndexes.size ?? 0) > 0
+  }
   return false
+}
+
+function isTerminalLabelFamilyAutoProbeError(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  error: unknown,
+  sourceResponseState?: InterpretedSourceResponseState,
+) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (sourceResponseFormat === 'labeled_sections') {
+    return (
+      message.startsWith('Labeled section label "') ||
+      message.startsWith('Duplicate labeled section "') ||
+      message.includes('included another labeled section inside its value')
+    )
+  }
+  if (sourceResponseFormat !== 'inline_topics') {
+    return false
+  }
+  if (
+    message.includes('still included standalone question authority') &&
+    message.includes('outside inline topic clauses')
+  ) {
+    return true
+  }
+  if (
+    message.includes('still included standalone topic authority for ') &&
+    message.includes('outside inline topic clauses')
+  ) {
+    return !autoInlineTopicsShouldYieldToExplicitTopicAuthority(sourceResponseState)
+  }
+  if (message.includes('included incomplete topic authority for "')) {
+    return !autoInlineTopicsShouldYieldIncompleteTopicAuthorityToClauseTopics(
+      sourceResponseState,
+    )
+  }
+  return (
+    message.startsWith('Inline topic clause label "') ||
+    message.startsWith('Duplicate inline topic clause "') ||
+    message.includes('included answer text with explicit topic authority for "') ||
+    message.includes('included question authority "')
+  )
+}
+
+function assertAutoSourceResponseFormatDidNotStopAtWeakerInlineTopics(
+  sourceResponseFormat: ConcreteInterpretableSourceResponseFormat,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (
+    sourceResponseFormat === 'inline_topics' &&
+    autoInlineTopicsShouldYieldToExplicitTopicAuthority(sourceResponseState)
+  ) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat inline_topics yielded weaker label/value authority than an explicit topic surface already present in sourceResponse.',
+    )
+  }
+}
+
+function assertAutoDidNotSkipMalformedExplicitInlineTopicAuthority(
+  sourceResponse: string | undefined,
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    return
+  }
+
+  try {
+    if (parseLabeledSourceResponseSections(shared).size > 0) {
+      return
+    }
+  } catch (error) {
+    if (error instanceof AnswerInterpretationError) {
+      return
+    }
+    throw error
+  }
+
+  for (const clause of splitInlineTopicClauses(shared)) {
+    const trimmedClause = stripLeadingPresentationListMarkers(
+      clause.trim().replace(/^(?:and|but)\s+/i, ''),
+    )
+    if (
+      !trimmedClause ||
+      !inlineTopicClauseUsesNonLabeledSectionExplicitLabelValueSeparator(trimmedClause)
+    ) {
+      continue
+    }
+
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    try {
+      assertExplicitLabelTextDoesNotContainAuthority(parsed.label, 'Inline topic clause label')
+      assertLabeledValueAuthorityMatchesLabel(
+        parsed.label,
+        parsed.value,
+        'Inline topic clause',
+        'answer text',
+      )
+    } catch (error) {
+      if (error instanceof AnswerInterpretationError) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      throw error
+    }
+
+    continue
+  }
+
+  for (const clause of splitInlineTopicClauses(shared)) {
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    try {
+      assertLabeledValueAuthorityMatchesLabel(
+        parsed.label,
+        parsed.value,
+        'Inline topic clause',
+        'answer text',
+      )
+    } catch (error) {
+      if (
+        error instanceof AnswerInterpretationError &&
+        error.message.includes('included question authority "') &&
+        !inlineTopicQuestionAuthorityShouldYieldToQuestionFamily(clause)
+      ) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      if (!(error instanceof AnswerInterpretationError)) {
+        throw error
+      }
+    }
+  }
+
+  const semanticallyValidInlineTopicClauseIndexes =
+    collectSemanticallyValidInlineTopicClauseIndexes(shared)
+  if (semanticallyValidInlineTopicClauseIndexes.size === 0) {
+    return
+  }
+
+  for (const chunk of groupRemainingNonInlineTopicClauseChunks(
+    shared,
+    semanticallyValidInlineTopicClauseIndexes,
+  )) {
+    assertTextDoesNotContainMalformedStandaloneQuestionSpanAuthority(chunk)
+  }
+
+  const standaloneQuestionAuthorities = dedupeNonEmptyStrings(
+    splitInlineTopicClauses(shared).flatMap((clause, clauseIndex) =>
+      semanticallyValidInlineTopicClauseIndexes.has(clauseIndex)
+        ? []
+        : extractQuestionAuthorityTextsFromText(clause),
+    ),
+  )
+  if (standaloneQuestionAuthorities.length > 0) {
+    throw new AutoSourceResponseTerminalError(
+      `sourceResponseFormat inline_topics rejected sourceResponse because it still included standalone question authority ${formatQuotedValueList(standaloneQuestionAuthorities)} outside inline topic clauses.`,
+    )
+  }
+}
+
+function inlineTopicQuestionAuthorityShouldYieldToQuestionFamily(clause: string) {
+  const trimmedClause = stripLeadingPresentationListMarkers(
+    clause.trim().replace(/^(?:and|but)\s+/i, ''),
+  )
+  if (!trimmedClause) {
+    return false
+  }
+
+  if (isQuestionSourceResponseSentence(trimmedClause)) {
+    return true
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(trimmedClause)
+  if (resolveCanonicalQuestionAnchorMatch(trimmedClause, tokens, 0)) {
+    return true
+  }
+
+  try {
+    return parseQuestionSourceResponseClauses(trimmedClause).length > 0
+  } catch (error) {
+    if (error instanceof AnswerInterpretationError) {
+      return false
+    }
+    throw error
+  }
+}
+
+function assertAutoPlanningDidNotSkipUnsupportedExplicitLabelAuthority(
+  followThrough: InterpretableDecisionFollowThroughInput,
+  sourceResponse: string | undefined,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  if (!followThroughInfersRemainingAnswers(followThrough) || !sourceResponse?.trim()) {
+    return
+  }
+
+  let labeledSections: Map<string, LabeledSourceResponseSection>
+  try {
+    labeledSections = parseRequiredLabeledSourceResponseSections(
+      sourceResponse,
+      'sourceResponseFormat auto',
+      sourceResponseState,
+    )
+  } catch (error) {
+    if (error instanceof AnswerInterpretationError) {
+      throw new AutoSourceResponseTerminalError(error.message)
+    }
+    throw error
+  }
+  for (const section of labeledSections.values()) {
+    try {
+      assertLabeledValueAuthorityMatchesLabel(
+        section.label,
+        section.value,
+        'Labeled section',
+        'value text',
+      )
+    } catch (error) {
+      if (error instanceof AnswerInterpretationError) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      throw error
+    }
+  }
+  if (labeledSections.size > 0) {
+    try {
+      assertAutoLabeledSectionsDidNotSkipStandaloneQuestionAuthority(
+        sourceResponse,
+        labeledSections,
+      )
+      assertAutoLabeledSectionsDidNotSkipStandaloneTopicAuthority(
+        sourceResponse,
+        labeledSections,
+      )
+    } catch (error) {
+      if (error instanceof AnswerInterpretationError) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      throw error
+    }
+    throw new AutoSourceResponseTerminalError(
+      'sourceResponse established explicit labeled section authority, but inferRemainingAnswers does not support labeled_sections.',
+    )
+  }
+  assertAutoDidNotSkipMalformedExplicitInlineTopicAuthority(sourceResponse)
+  if (sourceResponseHasQuestionSentenceAuthority(sourceResponse)) {
+    return
+  }
+
+  let inlineTopics: Map<string, LabeledSourceResponseSection>
+  try {
+    inlineTopics = parseRequiredInlineTopicSections(
+      sourceResponse,
+      'sourceResponseFormat auto',
+      sourceResponseState,
+    )
+  } catch (error) {
+    if (error instanceof AnswerInterpretationError) {
+      throw new AutoSourceResponseTerminalError(error.message)
+    }
+    throw error
+  }
+  for (const section of inlineTopics.values()) {
+    try {
+      assertLabeledValueAuthorityMatchesLabel(
+        section.label,
+        section.value,
+        'Inline topic clause',
+        'answer text',
+      )
+      } catch (error) {
+        if (
+          error instanceof AnswerInterpretationError &&
+          error.message.includes('included incomplete topic authority for "') &&
+          autoInlineTopicsShouldYieldIncompleteTopicAuthorityToClauseTopics(
+            sourceResponseState,
+          )
+        ) {
+          continue
+        }
+      if (error instanceof AnswerInterpretationError) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      throw error
+    }
+  }
+  if (
+    inlineTopics.size > 0 &&
+    !autoInlineTopicsShouldYieldToExplicitTopicAuthority(sourceResponseState)
+  ) {
+    try {
+      const consumedInlineTopicLabels = new Set(inlineTopics.keys())
+      assertDirectInlineTopicsDidNotSkipStandaloneQuestionAuthority(
+        sourceResponse,
+        inlineTopics,
+        consumedInlineTopicLabels,
+      )
+      assertDirectInlineTopicsDidNotSkipStandaloneTopicAuthority(
+        sourceResponse,
+        inlineTopics,
+        consumedInlineTopicLabels,
+      )
+      assertSeparatorStyleInlineTopicsDidNotMixWithAdditionalVerbalInlineTopicAuthority(
+        sourceResponse,
+      )
+    } catch (error) {
+      if (error instanceof AnswerInterpretationError) {
+        throw new AutoSourceResponseTerminalError(error.message)
+      }
+      throw error
+    }
+    throw new AutoSourceResponseTerminalError(
+      'sourceResponse established explicit inline topic authority, but inferRemainingAnswers does not support inline_topics.',
+    )
+  }
 }
 
 export function materializeInterpretedDecisionAnswers(
@@ -1346,6 +2935,10 @@ export function materializeInterpretedDecisionAnswers(
     sourceResponseState ??
     createInterpretedSourceResponseState(sourceResponse, sourceResponseFormat)
   registerTopicAnchorCandidates(interpretationState, [
+    ...answers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...additionalSourceResponseCandidates,
+  ])
+  registerQuestionAnchorCandidateGroups(interpretationState, [
     ...answers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
     ...additionalSourceResponseCandidates,
   ])
@@ -1418,6 +3011,12 @@ export function materializeInterpretedDecisionAnswerBatch(
     ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
     ...reservedAnswerCandidateGroups,
   ])
+  registerQuestionAnchorCandidateGroups(interpretationState, [
+    ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
+    ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
+    ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
+    ...reservedAnswerCandidateGroups,
+  ])
   registerMatchingRunCandidateGroups(interpretationState, [
     ...explicitAnswers.map((answer) => buildDecisionAnswerSourceResponseCandidates(answer)),
     ...openDecisions.map((decision) => buildOpenDecisionSourceResponseCandidates(decision)),
@@ -1435,7 +3034,7 @@ export function materializeInterpretedDecisionAnswerBatch(
       ...knownDecisions.map((decision) => buildKnownDecisionSourceResponseCandidates(decision)),
       ...reservedAnswerCandidateGroups,
     ],
-    inferDecisionTopics,
+    true,
   )
   const explicitDecisionKeys = new Set(
     materializedExplicitAnswers.flatMap((answer) =>
@@ -1449,7 +3048,6 @@ export function materializeInterpretedDecisionAnswerBatch(
         sourceResponse,
         answerSources,
         sourceResponseFormat,
-        inferDecisionTopics,
         interpretationState,
       )
     : []
@@ -1471,12 +3069,329 @@ export function materializeInterpretedDecisionAnswerBatch(
   ]
 
   if (materializedAnswers.length === 0) {
+    if (inferDecisionTopics && sourceResponseFormat === 'labeled_sections') {
+      const labeledSections = parseRequiredLabeledSourceResponseSections(
+        sourceResponse,
+        'inferDecisionTopics',
+        interpretationState,
+      )
+      if (labeledSections.size === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat labeled_sections requires at least one labeled section when inferDecisionTopics is enabled.',
+        )
+      }
+    }
+    if (inferOpenDecisions && sourceResponseFormat === 'labeled_sections') {
+      const labeledSections = parseRequiredLabeledSourceResponseSections(
+        sourceResponse,
+        'inferOpenDecisions',
+        interpretationState,
+      )
+      if (labeledSections.size === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat labeled_sections requires at least one labeled section when inferOpenDecisions is enabled.',
+        )
+      }
+      if (openDecisions.length > 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat labeled_sections requires at least one labeled section to match an open decision when inferOpenDecisions is enabled.',
+        )
+      }
+    }
+    if (inferDecisionTopics && sourceResponseFormat === 'inline_topics') {
+      const inlineTopics = parseRequiredInlineTopicSections(
+        sourceResponse,
+        'inferDecisionTopics',
+        interpretationState,
+      )
+      if (inlineTopics.size === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat inline_topics requires at least one inline topic clause when inferDecisionTopics is enabled.',
+        )
+      }
+    }
+    if (inferOpenDecisions && sourceResponseFormat === 'inline_topics') {
+      const inlineTopics = parseRequiredInlineTopicSections(
+        sourceResponse,
+        'inferOpenDecisions',
+        interpretationState,
+      )
+      if (inlineTopics.size === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat inline_topics requires at least one inline topic clause when inferOpenDecisions is enabled.',
+        )
+      }
+      if (openDecisions.length > 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat inline_topics requires at least one inline topic clause to match an open decision when inferOpenDecisions is enabled.',
+        )
+      }
+    }
+    if (inferOpenDecisions) {
+      throwSpecificOpenDecisionSurfaceNoMatchError(
+        openDecisions,
+        explicitDecisionKeys,
+        sourceResponse,
+        answerSources,
+        sourceResponseFormat,
+        interpretationState,
+      )
+    }
     throw new AnswerInterpretationError(
       'No decision answers were materialized. Provide explicit answers or use inferOpenDecisions with structured sourceResponse items that match at least one open decision.',
     )
   }
 
   return materializedAnswers
+}
+
+function throwSpecificOpenDecisionSurfaceNoMatchError(
+  openDecisions: InterpretableOpenDecision[],
+  explicitDecisionKeys: Set<string>,
+  sourceResponse: string | undefined,
+  answerSources: InterpretableAnswerSource[] | undefined,
+  sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  const unresolvedOpenDecision = openDecisions.find(
+    (decision) => !explicitDecisionKeys.has(decision.decisionKey),
+  )
+  if (!unresolvedOpenDecision) {
+    return
+  }
+
+  const candidates = buildOpenDecisionSourceResponseCandidates(unresolvedOpenDecision)
+  const label = `open decision ${unresolvedOpenDecision.decisionKey}`
+
+  if (sourceResponseFormat === 'matching_answer_sources') {
+    const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
+    resolveMatchingAnswerSourceValue(
+      resolvedAnswerSources?.entries,
+      candidates,
+      label,
+      sourceResponseState,
+      'decision',
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'matching_runs') {
+    resolveMatchingRunSourceResponseValue(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'matching_opening_runs') {
+    resolveMatchingOpeningRunSourceResponseValue(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'matching_closing_runs') {
+    resolveMatchingClosingRunSourceResponseValue(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'matching_middle_runs') {
+    resolveMatchingMiddleRunSourceResponseValue(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_blocks') {
+    consumeQuestionBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_clauses') {
+    consumeQuestionClauseSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_spans') {
+    consumeQuestionSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_middle_spans') {
+    consumeQuestionMiddleSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_closing_spans') {
+    consumeQuestionClosingSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_closing_blocks') {
+    consumeQuestionClosingBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'question_middle_blocks') {
+    consumeQuestionMiddleBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_clauses') {
+    consumeTopicClauseSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+      false,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_sentences') {
+    consumeTopicSentenceSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+      false,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_spans') {
+    consumeTopicSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_middle_spans') {
+    consumeTopicMiddleSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_closing_spans') {
+    consumeTopicClosingSpanSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_closing_blocks') {
+    consumeTopicClosingBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_paragraphs') {
+    consumeTopicParagraphSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+      false,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_middle_blocks') {
+    consumeTopicMiddleBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+    return
+  }
+
+  if (sourceResponseFormat === 'topic_blocks') {
+    consumeTopicBlockSourceResponseSection(
+      sourceResponse,
+      candidates,
+      label,
+      sourceResponseState,
+      true,
+    )
+  }
 }
 
 export function materializeInterpretedDecisionBundle(input: {
@@ -1502,10 +3417,12 @@ export function materializeInterpretedDecisionBundle(input: {
       inferOpenDecisions: input.inferOpenDecisions,
       inferDecisionTopics: input.inferDecisionTopics ?? false,
       inferRemainingAnswers: followThroughInfersRemainingAnswers(input.followThrough),
+      sourceResponse: input.sourceResponse,
     }),
     (candidateFormat) => {
       const state = createInterpretedSourceResponseState(input.sourceResponse, candidateFormat)
       const mixedRemainingAnswerSourceInference = hasMixedRemainingAnswerSourceInference(input)
+      assertAutoDidNotSkipMalformedExplicitInlineTopicAuthority(input.sourceResponse)
       try {
         if (
           mixedRemainingAnswerSourceInference &&
@@ -1539,6 +3456,7 @@ export function materializeInterpretedDecisionBundle(input: {
             input.answerSources,
             candidateFormat,
             state,
+            false,
           )
           materializeMixedRemainingAnswerSourceInference({
             sourceResponse: input.sourceResponse,
@@ -1566,7 +3484,16 @@ export function materializeInterpretedDecisionBundle(input: {
             input.answerSources,
             candidateFormat,
             state,
+            false,
           )
+        }
+        if (candidateFormat === 'inline_topics') {
+          assertDirectLabelFamilySourceResponseCompleteness({
+            sourceResponse: input.sourceResponse,
+            sourceResponseFormat: candidateFormat,
+            sourceResponseState: state,
+            label: 'sourceResponseFormat auto',
+          })
         }
         assertAutoSourceResponseFormatCompleteness({
           sourceResponse: input.sourceResponse,
@@ -1576,7 +3503,13 @@ export function materializeInterpretedDecisionBundle(input: {
           inferDecisionTopics: input.inferDecisionTopics ?? false,
           inferRemainingAnswers: followThroughInfersRemainingAnswers(input.followThrough),
         })
+        assertAutoSourceResponseFormatDidNotStopAtWeakerInlineTopics(candidateFormat, state)
       } catch (error) {
+        if (isTerminalLabelFamilyAutoProbeError(candidateFormat, error, state)) {
+          throw new AutoSourceResponseTerminalError(
+            error instanceof Error ? error.message : String(error),
+          )
+        }
         if (shouldAutoSourceResponseProbeFailClosed(candidateFormat, state)) {
           throw new AutoSourceResponseTerminalError(
             error instanceof Error ? error.message : String(error),
@@ -1625,6 +3558,7 @@ export function materializeInterpretedDecisionBundle(input: {
       input.answerSources,
       resolvedSourceResponseFormat,
       state,
+      false,
     )
     const inferred = materializeMixedRemainingAnswerSourceInference({
       sourceResponse: input.sourceResponse,
@@ -1666,6 +3600,43 @@ export function materializeInterpretedDecisionBundle(input: {
       sourceResponseState: state,
       label: 'decision answer bundle',
     })
+    assertDirectAnswerSourceFamilySourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      answerSources: input.answerSources,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+    assertDirectMatchingRunSourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+    assertDirectLabelFamilySourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+    assertDirectQuestionAndTopicSourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+    assertDirectOrderedSourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
+    assertDirectPendingSourceResponseCompleteness({
+      sourceResponse: input.sourceResponse,
+      sourceResponseFormat: resolvedSourceResponseFormat,
+      sourceResponseState: state,
+      label: 'decision answer bundle',
+    })
 
     return {
       sourceResponseFormat: resolvedSourceResponseFormat,
@@ -1693,10 +3664,48 @@ export function materializeInterpretedDecisionBundle(input: {
     input.answerSources,
     resolvedSourceResponseFormat,
     state,
+    false,
   )
   assertNoUnusedExplicitlyRoutedAnswerSources({
     sourceResponse: input.sourceResponse,
     answerSources: input.answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectAnswerSourceFamilySourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
+    answerSources: input.answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectMatchingRunSourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectLabelFamilySourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectQuestionAndTopicSourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectOrderedSourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: state,
+    label: 'decision answer bundle',
+  })
+  assertDirectPendingSourceResponseCompleteness({
+    sourceResponse: input.sourceResponse,
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: state,
     label: 'decision answer bundle',
@@ -1729,6 +3738,7 @@ export function materializeInterpretedDecisionFollowThrough(
   answerSources?: InterpretableAnswerSource[],
   sourceResponseFormat?: InterpretableSourceResponseFormat,
   sourceResponseState?: InterpretedSourceResponseState,
+  enforceDirectSourceResponseCompleteness = true,
 ) {
   if (!followThrough) {
     return undefined
@@ -1744,9 +3754,12 @@ export function materializeInterpretedDecisionFollowThrough(
   registerTopicAnchorCandidates(interpretationState, [
     ...listInterpretableFollowThroughAnswerCandidateGroups(followThrough),
   ])
+  registerQuestionAnchorCandidateGroups(interpretationState, [
+    ...listInterpretableFollowThroughAnswerCandidateGroups(followThrough),
+  ])
 
   if (followThrough.kind === 'planning') {
-    return {
+    const materialized = {
       ...followThrough,
       answers: materializeInterpretedPlanningAnswers(
         followThrough.answers,
@@ -1760,10 +3773,52 @@ export function materializeInterpretedDecisionFollowThrough(
         followThrough.inferRemainingAnswers ?? false,
       ),
     }
+    if (enforceDirectSourceResponseCompleteness) {
+      assertDirectAnswerSourceFamilySourceResponseCompleteness({
+        sourceResponse,
+        answerSources,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+      assertDirectMatchingRunSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+      assertDirectLabelFamilySourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+      assertDirectQuestionAndTopicSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+      assertDirectOrderedSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+      assertDirectPendingSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough "${followThrough.title}"`,
+      })
+    }
+    return {
+      ...materialized,
+    }
   }
 
   if (followThrough.kind === 'planning_batch') {
-    return {
+    const materialized = {
       ...followThrough,
       answers: materializeInterpretedPlanningAnswers(
         followThrough.answers,
@@ -1776,6 +3831,48 @@ export function materializeInterpretedDecisionFollowThrough(
         interpretationState,
         followThrough.inferRemainingAnswers ?? false,
       ),
+    }
+    if (enforceDirectSourceResponseCompleteness) {
+      assertDirectAnswerSourceFamilySourceResponseCompleteness({
+        sourceResponse,
+        answerSources,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+      assertDirectMatchingRunSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+      assertDirectLabelFamilySourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+      assertDirectQuestionAndTopicSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+      assertDirectOrderedSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+      assertDirectPendingSourceResponseCompleteness({
+        sourceResponse,
+        sourceResponseFormat,
+        sourceResponseState: interpretationState,
+        label: `followThrough batch "${followThrough.groupKey}"`,
+      })
+    }
+    return {
+      ...materialized,
     }
   }
 
@@ -1788,6 +3885,7 @@ export function materializeInterpretedDecisionFollowThrough(
     matchingAnswerSourceEntries,
     sourceResponseFormat,
     interpretationState,
+    false,
   )
 
   const workflows = followThrough.workflows.map((workflow) => {
@@ -1803,6 +3901,7 @@ export function materializeInterpretedDecisionFollowThrough(
           matchingAnswerSourceEntries,
           sourceResponseFormat,
           interpretationState,
+          false,
         ),
       }
     }
@@ -1818,11 +3917,12 @@ export function materializeInterpretedDecisionFollowThrough(
         matchingAnswerSourceEntries,
         sourceResponseFormat,
         interpretationState,
+        false,
       ),
     }
   })
 
-  return {
+  const materialized = {
     kind: 'workflow_batch' as const,
     workflowKey: followThrough.workflowKey,
     reuseTaskRef: followThrough.reuseTaskRef,
@@ -1842,6 +3942,47 @@ export function materializeInterpretedDecisionFollowThrough(
     ),
     workflows,
   }
+  if (enforceDirectSourceResponseCompleteness) {
+    assertDirectAnswerSourceFamilySourceResponseCompleteness({
+      sourceResponse,
+      answerSources,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+    assertDirectMatchingRunSourceResponseCompleteness({
+      sourceResponse,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+    assertDirectLabelFamilySourceResponseCompleteness({
+      sourceResponse,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+    assertDirectQuestionAndTopicSourceResponseCompleteness({
+      sourceResponse,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+    assertDirectOrderedSourceResponseCompleteness({
+      sourceResponse,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+    assertDirectPendingSourceResponseCompleteness({
+      sourceResponse,
+      sourceResponseFormat,
+      sourceResponseState: interpretationState,
+      label: `followThrough workflow batch "${followThrough.workflowKey ?? 'workflow_batch'}"`,
+    })
+  }
+
+  return materialized
 }
 
 function resolveAutoPlanningSourceResponseFormat(
@@ -1858,9 +3999,15 @@ function resolveAutoPlanningSourceResponseFormat(
       needsExplicitAnswerInterpretation:
         listInterpretableFollowThroughAnswerSummaries(followThrough).length > 0,
       inferRemainingAnswers: followThroughInfersRemainingAnswers(followThrough),
+      sourceResponse,
     }),
     (candidateFormat) => {
       const state = createInterpretedSourceResponseState(sourceResponse, candidateFormat)
+      assertAutoPlanningDidNotSkipUnsupportedExplicitLabelAuthority(
+        followThrough,
+        sourceResponse,
+        state,
+      )
       try {
         materializeInterpretedDecisionFollowThrough(
           followThrough,
@@ -1868,14 +4015,29 @@ function resolveAutoPlanningSourceResponseFormat(
           answerSources,
           candidateFormat,
           state,
+          false,
         )
+        if (candidateFormat === 'inline_topics') {
+          assertDirectLabelFamilySourceResponseCompleteness({
+            sourceResponse,
+            sourceResponseFormat: candidateFormat,
+            sourceResponseState: state,
+            label: 'sourceResponseFormat auto',
+          })
+        }
         assertAutoSourceResponseFormatCompleteness({
           sourceResponse,
           answerSources,
           sourceResponseFormat: candidateFormat,
           sourceResponseState: state,
         })
+        assertAutoSourceResponseFormatDidNotStopAtWeakerInlineTopics(candidateFormat, state)
       } catch (error) {
+        if (isTerminalLabelFamilyAutoProbeError(candidateFormat, error, state)) {
+          throw new AutoSourceResponseTerminalError(
+            error instanceof Error ? error.message : String(error),
+          )
+        }
         if (shouldAutoSourceResponseProbeFailClosed(candidateFormat, state)) {
           throw new AutoSourceResponseTerminalError(
             error instanceof Error ? error.message : String(error),
@@ -1928,6 +4090,7 @@ export function materializeInterpretedPlanningInput<
     answerSources,
     resolvedSourceResponseFormat,
     interpretationState,
+    false,
   )
   if (!materialized || materialized.kind !== 'planning') {
     throw new Error(`Expected materialized planning input for ${input.title}.`)
@@ -1935,6 +4098,43 @@ export function materializeInterpretedPlanningInput<
   assertNoUnusedExplicitlyRoutedAnswerSources({
     sourceResponse,
     answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectAnswerSourceFamilySourceResponseCompleteness({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectMatchingRunSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectLabelFamilySourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectQuestionAndTopicSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectOrderedSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning input "${input.title}"`,
+  })
+  assertDirectPendingSourceResponseCompleteness({
+    sourceResponse,
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: interpretationState,
     label: `planning input "${input.title}"`,
@@ -1983,6 +4183,7 @@ export function materializeInterpretedPlanningBatchInput<
     answerSources,
     resolvedSourceResponseFormat,
     interpretationState,
+    false,
   )
   if (!materialized || materialized.kind !== 'planning_batch') {
     throw new Error(`Expected materialized planning batch input for ${input.groupKey}.`)
@@ -1990,6 +4191,43 @@ export function materializeInterpretedPlanningBatchInput<
   assertNoUnusedExplicitlyRoutedAnswerSources({
     sourceResponse,
     answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectAnswerSourceFamilySourceResponseCompleteness({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectMatchingRunSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectLabelFamilySourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectQuestionAndTopicSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectOrderedSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning batch "${input.groupKey}"`,
+  })
+  assertDirectPendingSourceResponseCompleteness({
+    sourceResponse,
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: interpretationState,
     label: `planning batch "${input.groupKey}"`,
@@ -2042,6 +4280,7 @@ export function materializeInterpretedPlanningWorkflowBatchInput<
     answerSources,
     resolvedSourceResponseFormat,
     interpretationState,
+    false,
   )
   if (!materialized || materialized.kind !== 'workflow_batch') {
     throw new Error(
@@ -2051,6 +4290,43 @@ export function materializeInterpretedPlanningWorkflowBatchInput<
   assertNoUnusedExplicitlyRoutedAnswerSources({
     sourceResponse,
     answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectAnswerSourceFamilySourceResponseCompleteness({
+    sourceResponse,
+    answerSources,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectMatchingRunSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectLabelFamilySourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectQuestionAndTopicSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectOrderedSourceResponseCompleteness({
+    sourceResponse,
+    sourceResponseFormat: resolvedSourceResponseFormat,
+    sourceResponseState: interpretationState,
+    label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
+  })
+  assertDirectPendingSourceResponseCompleteness({
+    sourceResponse,
     sourceResponseFormat: resolvedSourceResponseFormat,
     sourceResponseState: interpretationState,
     label: `planning workflow batch "${input.workflowKey ?? 'workflow_batch'}"`,
@@ -2103,7 +4379,7 @@ function finalizeMaterializedPlanningAnswers(
   captureFormat?: AnswerCaptureFormat,
 ) {
   if (!captureFormat) {
-    return finalizeMaterializedPlanningAnswers(answers, captureFormat)
+    return answers
   }
   return answers.map((answer) => attachCaptureFormat(answer, captureFormat))
 }
@@ -2142,6 +4418,9 @@ function materializeInterpretedPlanningAnswers(
   registerTopicAnchorCandidates(interpretationState, [
     ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
   ])
+  registerQuestionAnchorCandidateGroups(interpretationState, [
+    ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
+  ])
   registerMatchingRunCandidateGroups(interpretationState, [
     ...explicitAnswers.map((answer) => buildPlanningAnswerSourceResponseCandidates(answer)),
   ])
@@ -2162,7 +4441,7 @@ function materializeInterpretedPlanningAnswers(
       buildPlanningAnswerSourceResponseCandidates(answer),
       interpretationState,
       buildPlanningPendingAnswerSourceConsumerDescriptor(answer),
-      inferRemainingAnswers,
+      true,
     )
 
     return attachCaptureFormat(
@@ -2307,7 +4586,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionBlockIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(block.question),
+        summary: inferSummaryFromQuestionLabel(block.question),
         prompt: block.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
@@ -2329,7 +4608,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionClauseIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(clause.question),
+        summary: inferSummaryFromQuestionLabel(clause.question),
         prompt: clause.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: clause.answer,
@@ -2351,7 +4630,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionSpanIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(span.question),
+        summary: inferSummaryFromQuestionLabel(span.question),
         prompt: span.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
@@ -2373,7 +4652,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionMiddleSpanIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(span.question),
+        summary: inferSummaryFromQuestionLabel(span.question),
         prompt: span.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
@@ -2395,7 +4674,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionClosingSpanIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(span.question),
+        summary: inferSummaryFromQuestionLabel(span.question),
         prompt: span.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: span.answer,
@@ -2417,7 +4696,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionClosingBlockIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(block.question),
+        summary: inferSummaryFromQuestionLabel(block.question),
         prompt: block.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
@@ -2439,7 +4718,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       }
       interpretationState?.consumedQuestionMiddleBlockIndexes.add(index)
       answers.push({
-        summary: stripQuestionBlockLabel(block.question),
+        summary: inferSummaryFromQuestionLabel(block.question),
         prompt: block.question,
         ...(captureFormat ? { captureFormat } : {}),
         answer: block.answer,
@@ -2460,6 +4739,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicClauseIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(clause.text, 'Topic clause')
       const summary = inferTopicSummaryFromTopicSentence(clause.text)
       answers.push({
         summary,
@@ -2483,6 +4763,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicSentenceIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(sentence.text, 'Topic sentence')
       const summary = inferTopicSummaryFromTopicSentence(sentence.text)
       answers.push({
         summary,
@@ -2506,6 +4787,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicSpanIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic span')
       const summary = inferTopicSummaryFromTopicSpan(span)
       answers.push({
         summary,
@@ -2529,6 +4811,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicMiddleSpanIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic middle span')
       const summary = inferTopicSummaryFromTopicSpan(span)
       answers.push({
         summary,
@@ -2552,6 +4835,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicClosingSpanIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic closing span')
       const summary = inferTopicSummaryFromTopicClosingSpan(span)
       answers.push({
         summary,
@@ -2575,6 +4859,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicClosingBlockIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic closing block')
       const summary = inferTopicSummaryFromTopicClosingBlock(block)
       answers.push({
         summary,
@@ -2598,6 +4883,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicParagraphIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(paragraph.text, 'Topic paragraph')
       const summary = inferTopicSummaryFromTopicParagraph(paragraph.text)
       answers.push({
         summary,
@@ -2621,6 +4907,7 @@ function materializeRemainingInterpretedPlanningAnswers(
         continue
       }
       interpretationState?.consumedTopicMiddleBlockIndexes.add(index)
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic middle block')
       const summary = inferTopicSummaryFromTopicBlock(block)
       answers.push({
         summary,
@@ -2643,6 +4930,7 @@ function materializeRemainingInterpretedPlanningAnswers(
       continue
     }
     interpretationState?.consumedTopicBlockIndexes.add(index)
+    assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic block')
     const summary = inferTopicSummaryFromTopicBlock(block)
     answers.push({
       summary,
@@ -2700,6 +4988,12 @@ function resolveAnswerContent(
         `Unknown answerSourceKey "${referencedSourceKey}" for ${label}.`,
       )
     }
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      sourced,
+      sourceResponseCandidates,
+      `Named answerSource "${referencedSourceKey}" for ${label}`,
+      'answerSource',
+    )
     return interpreted({ answer: sourced })
   }
   if (referencedSourceGroupKey) {
@@ -2709,6 +5003,12 @@ function resolveAnswerContent(
         `Unknown answerSourceGroupKey "${referencedSourceGroupKey}" for ${label}.`,
       )
     }
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      sourced,
+      sourceResponseCandidates,
+      `Named answerSource group "${referencedSourceGroupKey}" for ${label}`,
+      'answerSource',
+    )
     return interpreted({ answer: sourced })
   }
 
@@ -2724,111 +5024,210 @@ function resolveAnswerContent(
   }
 
   if (sourceResponseFormat === 'single_pending') {
+    const resolvedAnswer = consumeSinglePendingSourceResponse(sourceResponse, label, sourceResponseState)
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Single pending reply for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: consumeSinglePendingSourceResponse(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'pending_clauses') {
+    const resolvedAnswer = resolvePendingSourceResponseClause(sourceResponse, label, sourceResponseState)
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Pending clause for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolvePendingSourceResponseClause(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'pending_paragraphs') {
+    const resolvedAnswer = resolvePendingSourceResponseParagraph(
+      sourceResponse,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Pending paragraph for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolvePendingSourceResponseParagraph(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'pending_sentences') {
+    const resolvedAnswer = resolvePendingSourceResponseSentence(
+      sourceResponse,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Pending sentence for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolvePendingSourceResponseSentence(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'pending_conjunctions') {
+    const resolvedAnswer = resolvePendingSourceResponseConjunction(
+      sourceResponse,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Pending conjunction for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolvePendingSourceResponseConjunction(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'pending_answer_sources') {
+    const resolvedAnswer = resolvePendingAnswerSourceValue(
+      pendingAnswerSourceEntries,
+      label,
+      sourceResponseState,
+      pendingAnswerSourceConsumerDescriptor,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Pending answerSource for ${label}`,
+      'answerSource',
+    )
     return interpreted({
-      answer: resolvePendingAnswerSourceValue(
-        pendingAnswerSourceEntries,
-        label,
-        sourceResponseState,
-        pendingAnswerSourceConsumerDescriptor,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'matching_answer_sources') {
+    const resolvedAnswer = resolveMatchingAnswerSourceValue(
+      matchingAnswerSourceEntries,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+      pendingAnswerSourceConsumerDescriptor?.family,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Matching answerSource for ${label}`,
+      'answerSource',
+    )
     return interpreted({
-      answer: resolveMatchingAnswerSourceValue(
-        matchingAnswerSourceEntries,
-        sourceResponseCandidates,
-        label,
-        sourceResponseState,
-        pendingAnswerSourceConsumerDescriptor?.family,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'matching_runs') {
+    const resolvedAnswer = resolveMatchingRunSourceResponseValue(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Matching run for ${label}`,
+    )
     return interpreted({
-      answer: resolveMatchingRunSourceResponseValue(
-        sourceResponse,
-        sourceResponseCandidates,
-        label,
-        sourceResponseState,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'matching_opening_runs') {
+    const resolvedAnswer = resolveMatchingOpeningRunSourceResponseValue(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Matching opening run for ${label}`,
+    )
     return interpreted({
-      answer: resolveMatchingOpeningRunSourceResponseValue(
-        sourceResponse,
-        sourceResponseCandidates,
-        label,
-        sourceResponseState,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'matching_closing_runs') {
+    const resolvedAnswer = resolveMatchingClosingRunSourceResponseValue(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Matching closing run for ${label}`,
+    )
     return interpreted({
-      answer: resolveMatchingClosingRunSourceResponseValue(
-        sourceResponse,
-        sourceResponseCandidates,
-        label,
-        sourceResponseState,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'matching_middle_runs') {
+    const resolvedAnswer = resolveMatchingMiddleRunSourceResponseValue(
+      sourceResponse,
+      sourceResponseCandidates,
+      label,
+      sourceResponseState,
+    )
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Matching middle run for ${label}`,
+    )
     return interpreted({
-      answer: resolveMatchingMiddleRunSourceResponseValue(
-        sourceResponse,
-        sourceResponseCandidates,
-        label,
-        sourceResponseState,
-      ),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'ordered_items') {
+    const resolvedAnswer = resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState)
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Ordered item for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolveOrderedSourceResponseItem(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
   if (sourceResponseFormat === 'ordered_blocks') {
+    const resolvedAnswer = resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState)
+    assertMatchedAnswerTextAuthorityMatchesConsumer(
+      resolvedAnswer,
+      sourceResponseCandidates,
+      `Ordered block for ${label}`,
+      'sourceResponse',
+    )
     return interpreted({
-      answer: resolveOrderedSourceResponseBlock(sourceResponse, label, sourceResponseState),
+      answer: resolvedAnswer,
     })
   }
 
@@ -3053,6 +5452,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicClosingBlock) {
       throw new AnswerInterpretationError(
@@ -3084,6 +5484,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicMiddleBlock) {
       throw new AnswerInterpretationError(
@@ -3100,6 +5501,7 @@ function resolveAnswerContent(
       label,
       sourceResponseState,
       true,
+      rejectMultipleInferredTopicSummariesInTopicUnits,
     )
     if (!topicBlock) {
       throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
@@ -3241,13 +5643,19 @@ function resolveLabeledSourceResponseSection(
     label,
     sourceResponseState,
   )
-  const match = findLabeledSourceResponseSection(
+  const match = findLabeledSourceResponseSectionEntry(
     sectionsByLabel,
     candidates,
     sourceResponseState?.consumedLabeledSectionLabels,
   )
   if (match) {
-    return match
+    assertLabeledValueAuthorityMatchesLabel(
+      match.label,
+      match.value,
+      'Labeled section',
+      'value text',
+    )
+    return match.value
   }
 
   throw new AnswerInterpretationError(`No labeled section matched ${label} in sourceResponse.`)
@@ -3264,13 +5672,19 @@ function resolveInlineTopicSourceResponseSection(
     label,
     sourceResponseState,
   )
-  const match = findLabeledSourceResponseSection(
+  const match = findLabeledSourceResponseSectionEntry(
     sectionsByLabel,
     candidates,
     sourceResponseState?.consumedInlineTopicLabels,
   )
   if (match) {
-    return match
+    assertLabeledValueAuthorityMatchesLabel(
+      match.label,
+      match.value,
+      'Inline topic clause',
+      'answer text',
+    )
+    return match.value
   }
 
   throw new AnswerInterpretationError(`No inline topic clause matched ${label} in sourceResponse.`)
@@ -3288,7 +5702,8 @@ function consumeSinglePendingSourceResponse(
   }
 
   const shared = sourceResponse?.trim()
-  if (!shared) {
+  const normalizedShared = shared ? normalizeGenericPendingOrMatchingUnitText(shared) : undefined
+  if (!normalizedShared) {
     throw new AnswerInterpretationError(
       `sourceResponseFormat single_pending requires sourceResponse for ${label}.`,
     )
@@ -3298,7 +5713,7 @@ function consumeSinglePendingSourceResponse(
     sourceResponseState.singlePendingConsumed = true
   }
 
-  return shared
+  return normalizedShared
 }
 
 function resolvePendingSourceResponseClause(
@@ -4425,7 +6840,23 @@ function parseMatchingOpeningSourceResponseRuns(
     )
   }
 
+  const shared = sourceResponse?.trim()
+  const sentenceCount = shared ? parseTopicSourceResponseSentences(shared).length : 0
   const { units, joiner, unitLabel } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  if (sentenceCount === 1) {
+    const embeddedRuns = parseEmbeddedMatchingOpeningSourceResponseRuns(
+      sourceResponse,
+      label,
+      candidateGroups,
+    )
+    if (embeddedRuns) {
+      if (sourceResponseState) {
+        sourceResponseState.matchingOpeningRuns = embeddedRuns
+      }
+      return embeddedRuns
+    }
+  }
+
   const runs: MatchingSourceResponseRun[] = []
   const leadingTexts: string[] = []
   let currentMatchedTexts: string[] = []
@@ -4510,6 +6941,443 @@ function parseMatchingOpeningSourceResponseRuns(
   return runs
 }
 
+function parseEmbeddedMatchingOpeningSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  candidateGroups: string[][],
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_opening_runs requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(shared)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedMatchingRunAnchors(
+    shared,
+    tokens,
+    candidateGroups,
+    'matching_opening_runs',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex !== 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat matching_opening_runs requires each run to start with a matched anchor before any leading sentence.',
+    )
+  }
+
+  const runs: MatchingSourceResponseRun[] = []
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+    const nextAnchor = anchors[index + 1]
+
+    if (nextAnchor) {
+      if (nextAnchor.startTokenIndex < anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_opening_runs found overlapping embedded anchors for different matched consumers.',
+        )
+      }
+      if (nextAnchor.startTokenIndex === anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_opening_runs requires at least one trailing sentence before the next matched anchor.',
+        )
+      }
+    } else if (anchor.endTokenIndex >= tokens.length) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_opening_runs requires each run to end with at least one trailing sentence after the matched anchor.',
+      )
+    }
+
+    const endOriginal = nextAnchor?.startOriginal ?? shared.length
+    runs.push({
+      text: normalizeEmbeddedMatchingRunText(shared.slice(anchor.startOriginal, endOriginal)),
+      candidateGroupIndex: anchor.candidateGroupIndex,
+    })
+  }
+
+  return runs
+}
+
+function resolveEmbeddedMatchingRunAnchors(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+  candidateGroups: string[][],
+  sourceResponseFormat:
+    | 'matching_opening_runs'
+    | 'matching_closing_runs'
+    | 'matching_middle_runs',
+) {
+  const anchors: EmbeddedMatchingRunAnchor[] = []
+
+  candidateGroups.forEach((candidateGroup, candidateGroupIndex) => {
+    const matches = collapseEmbeddedMatchingRunRanges(
+      findEmbeddedMatchingRunTokenRanges(tokens, candidateGroup),
+    )
+    if (matches.length > 1) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found multiple embedded anchors for the same matched consumer.`,
+      )
+    }
+    const match = matches[0]
+    if (!match) {
+      return
+    }
+    anchors.push({
+      candidateGroupIndex,
+      startTokenIndex: match.startTokenIndex,
+      endTokenIndex: match.endTokenIndex,
+      startOriginal: tokens[match.startTokenIndex]?.start ?? 0,
+      endOriginal: tokens[match.endTokenIndex - 1]?.end ?? sourceResponse.length,
+    })
+  })
+
+  anchors.sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+  for (let index = 1; index < anchors.length; index += 1) {
+    const previous = anchors[index - 1] as EmbeddedMatchingRunAnchor
+    const current = anchors[index] as EmbeddedMatchingRunAnchor
+    if (current.startTokenIndex < previous.endTokenIndex) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found overlapping embedded anchors for different matched consumers.`,
+      )
+    }
+  }
+
+  return anchors
+}
+
+function resolveEmbeddedQuestionAnchors(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+  candidateGroups: string[][],
+  sourceResponseFormat: 'question_spans' | 'question_middle_spans' | 'question_closing_spans',
+) {
+  const anchors: EmbeddedMatchingRunAnchor[] = []
+
+  candidateGroups.forEach((candidateGroup, candidateGroupIndex) => {
+    const matches = collapseEmbeddedMatchingRunRanges(
+      findEmbeddedMatchingRunTokenRanges(tokens, candidateGroup),
+    )
+    if (matches.length > 1) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found multiple embedded anchors for the same matched question.`,
+      )
+    }
+    const match = matches[0]
+    if (!match) {
+      return
+    }
+    anchors.push({
+      candidateGroupIndex,
+      startTokenIndex: match.startTokenIndex,
+      endTokenIndex: match.endTokenIndex,
+      startOriginal: tokens[match.startTokenIndex]?.start ?? 0,
+      endOriginal: tokens[match.endTokenIndex - 1]?.end ?? sourceResponse.length,
+    })
+  })
+
+  anchors.sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+  for (let index = 1; index < anchors.length; index += 1) {
+    const previous = anchors[index - 1] as EmbeddedMatchingRunAnchor
+    const current = anchors[index] as EmbeddedMatchingRunAnchor
+    if (current.startTokenIndex < previous.endTokenIndex) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found overlapping embedded anchors for different matched questions.`,
+      )
+    }
+  }
+
+  return anchors
+}
+
+function resolveEmbeddedQuestionAnchorsWithInferredCandidates(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+  candidateGroups: string[][],
+  sourceResponseFormat: 'question_spans' | 'question_middle_spans' | 'question_closing_spans',
+) {
+  const explicitCandidateGroups = filterEmbeddedQuestionCandidateGroups(candidateGroups)
+  const explicitAnchors = explicitCandidateGroups.length
+    ? resolveEmbeddedQuestionAnchors(
+        sourceResponse,
+        tokens,
+        explicitCandidateGroups,
+        sourceResponseFormat,
+      )
+    : []
+  const inferredCandidateGroups = inferEmbeddedCanonicalQuestionCandidateGroups(
+    sourceResponse,
+    tokens,
+  )
+  const inferredAnchors = inferredCandidateGroups.length
+    ? resolveEmbeddedQuestionAnchors(
+        sourceResponse,
+        tokens,
+        inferredCandidateGroups,
+        sourceResponseFormat,
+      )
+    : []
+
+  if (explicitAnchors.length === 0) {
+    return inferredAnchors
+  }
+  if (inferredAnchors.length === 0) {
+    return explicitAnchors
+  }
+
+  const merged = [...explicitAnchors]
+  for (const inferredAnchor of inferredAnchors) {
+    const duplicate = merged.some(
+      (anchor) =>
+        anchor.startTokenIndex === inferredAnchor.startTokenIndex &&
+        anchor.endTokenIndex === inferredAnchor.endTokenIndex,
+    )
+    if (!duplicate) {
+      merged.push(inferredAnchor)
+    }
+  }
+
+  merged.sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+  for (let index = 1; index < merged.length; index += 1) {
+    const previous = merged[index - 1] as EmbeddedMatchingRunAnchor
+    const current = merged[index] as EmbeddedMatchingRunAnchor
+    if (current.startTokenIndex < previous.endTokenIndex) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found overlapping embedded anchors for different matched questions.`,
+      )
+    }
+  }
+
+  return merged
+}
+
+function resolveEmbeddedTopicAnchors(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+  candidateLabels: string[],
+  sourceResponseFormat: 'topic_spans' | 'topic_middle_spans' | 'topic_closing_spans',
+) {
+  const anchors: EmbeddedTopicAnchor[] = []
+
+  candidateLabels.forEach((candidateLabel) => {
+    const normalizedLabel = normalizeSourceResponseText(candidateLabel)
+    if (!normalizedLabel) {
+      return
+    }
+
+    const matches = collapseEmbeddedMatchingRunRanges(
+      findEmbeddedMatchingRunTokenRanges(tokens, [candidateLabel]),
+    )
+    if (matches.length > 1) {
+      throw new AnswerInterpretationError(
+        `sourceResponseFormat ${sourceResponseFormat} found multiple embedded anchors for the same topic label.`,
+      )
+    }
+
+    const match = matches[0]
+    if (!match) {
+      return
+    }
+
+    anchors.push({
+      normalizedLabel,
+      startTokenIndex: match.startTokenIndex,
+      endTokenIndex: match.endTokenIndex,
+      startOriginal: tokens[match.startTokenIndex]?.start ?? 0,
+      endOriginal: tokens[match.endTokenIndex - 1]?.end ?? sourceResponse.length,
+    })
+  })
+
+  anchors.sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+  const filteredAnchors: EmbeddedTopicAnchor[] = []
+  for (const anchor of anchors) {
+    const previous = filteredAnchors[filteredAnchors.length - 1]
+    if (!previous || anchor.startTokenIndex >= previous.endTokenIndex) {
+      filteredAnchors.push(anchor)
+      continue
+    }
+
+    const previousContainsCurrent = normalizedTopicLabelContainsLabel(
+      previous.normalizedLabel,
+      anchor.normalizedLabel,
+    )
+    const currentContainsPrevious = normalizedTopicLabelContainsLabel(
+      anchor.normalizedLabel,
+      previous.normalizedLabel,
+    )
+    if (previousContainsCurrent && !currentContainsPrevious) {
+      filteredAnchors[filteredAnchors.length - 1] = anchor
+      continue
+    }
+    if (currentContainsPrevious && !previousContainsCurrent) {
+      continue
+    }
+
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat ${sourceResponseFormat} found overlapping embedded topic anchors for different topic labels.`,
+    )
+  }
+
+  return filteredAnchors
+}
+
+function collapseEmbeddedMatchingRunRanges(
+  ranges: Array<{ startTokenIndex: number; endTokenIndex: number }>,
+) {
+  if (ranges.length <= 1) {
+    return ranges
+  }
+
+  const sorted = [...ranges].sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+  const collapsed: Array<{ startTokenIndex: number; endTokenIndex: number }> = []
+
+  for (const range of sorted) {
+    const previous = collapsed[collapsed.length - 1]
+    if (!previous || range.startTokenIndex >= previous.endTokenIndex) {
+      collapsed.push({ ...range })
+      continue
+    }
+    previous.startTokenIndex = Math.min(previous.startTokenIndex, range.startTokenIndex)
+    previous.endTokenIndex = Math.max(previous.endTokenIndex, range.endTokenIndex)
+  }
+
+  return collapsed
+}
+
+function findEmbeddedMatchingRunTokenRanges(
+  tokens: EmbeddedMatchingRunToken[],
+  candidateGroup: string[],
+) {
+  const ranges = new Map<string, { startTokenIndex: number; endTokenIndex: number }>()
+
+  for (const candidate of candidateGroup) {
+    const normalizedCandidate = normalizeSourceResponseText(candidate)
+    const normalizedCandidateCore = normalizeQuestionPromptCore(candidate)
+    const sequences = dedupeNonEmptyStrings([normalizedCandidate, normalizedCandidateCore])
+    for (const sequence of sequences) {
+      const candidateTokens = sequence.split(' ').filter(Boolean)
+      if (candidateTokens.length === 0) {
+        continue
+      }
+      for (
+        let startTokenIndex = 0;
+        startTokenIndex <= tokens.length - candidateTokens.length;
+        startTokenIndex += 1
+      ) {
+        const matches = candidateTokens.every(
+          (token, offset) => tokens[startTokenIndex + offset]?.normalizedText === token,
+        )
+        if (!matches) {
+          continue
+        }
+        const endTokenIndex = startTokenIndex + candidateTokens.length
+        ranges.set(`${startTokenIndex}:${endTokenIndex}`, {
+          startTokenIndex,
+          endTokenIndex,
+        })
+      }
+    }
+  }
+
+  return [...ranges.values()].sort((left, right) => left.startTokenIndex - right.startTokenIndex)
+}
+
+const EMBEDDED_MATCHING_RUN_APOSTROPHE_T_CONTRACTIONS = new Map([
+  ['aren', "aren't"],
+  ['can', "can't"],
+  ['couldn', "couldn't"],
+  ['didn', "didn't"],
+  ['don', "don't"],
+  ['doesn', "doesn't"],
+  ['hadn', "hadn't"],
+  ['haven', "haven't"],
+  ['hasn', "hasn't"],
+  ['isn', "isn't"],
+  ['mayn', "mayn't"],
+  ['mightn', "mightn't"],
+  ['mustn', "mustn't"],
+  ['needn', "needn't"],
+  ['oughtn', "oughtn't"],
+  ['shan', "shan't"],
+  ['shouldn', "shouldn't"],
+  ['wasn', "wasn't"],
+  ['weren', "weren't"],
+  ['won', "won't"],
+  ['wouldn', "wouldn't"],
+])
+
+const EMBEDDED_MATCHING_RUN_APOSTROPHE_EXISTENTIAL_STARTER_CONTRACTIONS = new Map([
+  ['d', "there'd"],
+  ['ll', "there'll"],
+  ['ve', "there've"],
+])
+
+const EMBEDDED_MATCHING_RUN_APOSTROPHE_EXISTENTIAL_COPULA_CONTRACTIONS = new Map([
+  ['re', "there're"],
+  ['s', "there's"],
+])
+
+function tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse: string) {
+  const tokens: EmbeddedMatchingRunToken[] = []
+  const pattern = /[a-z0-9]+/gi
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(sourceResponse)) !== null) {
+    const normalizedText = match[0].toLowerCase()
+    const previousToken = tokens[tokens.length - 1]
+    const separator = previousToken
+      ? sourceResponse.slice(previousToken.end, match.index)
+      : ''
+    const mergedContractedNegative =
+      normalizedText === 't' && /['’]/u.test(separator)
+        ? EMBEDDED_MATCHING_RUN_APOSTROPHE_T_CONTRACTIONS.get(
+            previousToken?.normalizedText ?? '',
+          )
+        : undefined
+    const mergedExistentialStarter =
+      previousToken?.normalizedText === 'there' && /['’]/u.test(separator)
+        ? EMBEDDED_MATCHING_RUN_APOSTROPHE_EXISTENTIAL_STARTER_CONTRACTIONS.get(normalizedText)
+        : undefined
+    const mergedExistentialCopula =
+      previousToken?.normalizedText === 'there' && /['’]/u.test(separator)
+        ? EMBEDDED_MATCHING_RUN_APOSTROPHE_EXISTENTIAL_COPULA_CONTRACTIONS.get(normalizedText)
+        : undefined
+
+    if (previousToken && mergedContractedNegative) {
+      previousToken.normalizedText = mergedContractedNegative
+      previousToken.end = match.index + match[0].length
+      continue
+    }
+
+    if (previousToken && mergedExistentialStarter) {
+      previousToken.normalizedText = mergedExistentialStarter
+      previousToken.end = match.index + match[0].length
+      continue
+    }
+
+    if (previousToken && mergedExistentialCopula) {
+      previousToken.normalizedText = mergedExistentialCopula
+      previousToken.end = match.index + match[0].length
+      continue
+    }
+
+    tokens.push({
+      normalizedText,
+      start: match.index,
+      end: match.index + match[0].length,
+    })
+  }
+
+  return tokens
+}
+
 function parseMatchingClosingSourceResponseRuns(
   sourceResponse: string | undefined,
   label: string,
@@ -4527,7 +7395,23 @@ function parseMatchingClosingSourceResponseRuns(
     )
   }
 
+  const shared = sourceResponse?.trim()
+  const sentenceCount = shared ? parseTopicSourceResponseSentences(shared).length : 0
   const { units, joiner, unitLabel } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  if (sentenceCount === 1) {
+    const embeddedRuns = parseEmbeddedMatchingClosingSourceResponseRuns(
+      sourceResponse,
+      label,
+      candidateGroups,
+    )
+    if (embeddedRuns) {
+      if (sourceResponseState) {
+        sourceResponseState.matchingClosingRuns = embeddedRuns
+      }
+      return embeddedRuns
+    }
+  }
+
   const runs: MatchingSourceResponseRun[] = []
   let leadingTexts: string[] = []
   let currentMatchedTexts: string[] = []
@@ -4600,6 +7484,84 @@ function parseMatchingClosingSourceResponseRuns(
   return runs
 }
 
+function parseEmbeddedMatchingClosingSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  candidateGroups: string[][],
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_closing_runs requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(shared)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedMatchingRunAnchors(
+    shared,
+    tokens,
+    candidateGroups,
+    'matching_closing_runs',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat matching_closing_runs requires each run to start with at least one leading sentence before the matched anchor.',
+    )
+  }
+
+  const runs: MatchingSourceResponseRun[] = []
+  let previousEndTokenIndex = 0
+  let previousEndOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+    const nextAnchor = anchors[index + 1]
+    const nextTokenStartOriginal = tokens[anchor.endTokenIndex]?.start ?? shared.length
+
+    if (anchor.startTokenIndex <= previousEndTokenIndex) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_closing_runs found overlapping embedded anchors for different matched consumers.',
+      )
+    }
+
+    if (nextAnchor) {
+      if (nextAnchor.startTokenIndex < anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_closing_runs found overlapping embedded anchors for different matched consumers.',
+        )
+      }
+      if (nextAnchor.startTokenIndex === anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_closing_runs requires at least one leading sentence before the next matched anchor.',
+        )
+      }
+    } else if (anchor.endTokenIndex < tokens.length) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_closing_runs requires each run to end with a matched anchor after at least one leading sentence.',
+      )
+    }
+
+    runs.push({
+      text: normalizeEmbeddedMatchingRunText(
+        shared.slice(previousEndOriginal, nextTokenStartOriginal),
+      ),
+      candidateGroupIndex: anchor.candidateGroupIndex,
+    })
+    previousEndTokenIndex = anchor.endTokenIndex
+    previousEndOriginal = nextTokenStartOriginal
+  }
+
+  return runs
+}
+
 function parseMatchingMiddleSourceResponseRuns(
   sourceResponse: string | undefined,
   label: string,
@@ -4617,7 +7579,23 @@ function parseMatchingMiddleSourceResponseRuns(
     )
   }
 
+  const shared = sourceResponse?.trim()
+  const sentenceCount = shared ? parseTopicSourceResponseSentences(shared).length : 0
   const { units, joiner, unitLabel } = parseMatchingRunSourceResponseUnits(sourceResponse, label)
+  if (sentenceCount === 1) {
+    const embeddedRuns = parseEmbeddedMatchingMiddleSourceResponseRuns(
+      sourceResponse,
+      label,
+      candidateGroups,
+    )
+    if (embeddedRuns) {
+      if (sourceResponseState) {
+        sourceResponseState.matchingMiddleRuns = embeddedRuns
+      }
+      return embeddedRuns
+    }
+  }
+
   const runs: MatchingSourceResponseRun[] = []
   let currentLeadingTexts: string[] = []
   let currentAnchor: { text: string; candidateGroupIndex: number } | undefined
@@ -4698,6 +7676,91 @@ function parseMatchingMiddleSourceResponseRuns(
   return runs
 }
 
+function parseEmbeddedMatchingMiddleSourceResponseRuns(
+  sourceResponse: string | undefined,
+  label: string,
+  candidateGroups: string[][],
+) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    throw new AnswerInterpretationError(
+      `sourceResponseFormat matching_middle_runs requires sourceResponse for ${label}.`,
+    )
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(shared)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedMatchingRunAnchors(
+    shared,
+    tokens,
+    candidateGroups,
+    'matching_middle_runs',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat matching_middle_runs requires each run to start with at least one leading sentence before the matched anchor.',
+    )
+  }
+
+  const runs: MatchingSourceResponseRun[] = []
+  let currentRunStartOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+    const nextAnchor = anchors[index + 1]
+    const trailingTokenCount = tokens.length - anchor.endTokenIndex
+
+    if (index === anchors.length - 1) {
+      if (trailingTokenCount === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat matching_middle_runs requires each run to end with at least one trailing sentence after the matched anchor.',
+        )
+      }
+      runs.push({
+        text: normalizeEmbeddedMatchingRunText(shared.slice(currentRunStartOriginal)),
+        candidateGroupIndex: anchor.candidateGroupIndex,
+      })
+      break
+    }
+
+    if (!nextAnchor) {
+      break
+    }
+
+    if (nextAnchor.startTokenIndex < anchor.endTokenIndex) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_middle_runs found overlapping embedded anchors for different matched consumers.',
+      )
+    }
+
+    const gapTokenCount = nextAnchor.startTokenIndex - anchor.endTokenIndex
+    if (gapTokenCount < 2) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat matching_middle_runs requires at least one trailing sentence before the next matched anchor and at least one leading sentence for that next run.',
+      )
+    }
+
+    const nextRunLeadingTokenStartOriginal =
+      tokens[nextAnchor.startTokenIndex - 1]?.start ?? shared.length
+    runs.push({
+      text: normalizeEmbeddedMatchingRunText(
+        shared.slice(currentRunStartOriginal, nextRunLeadingTokenStartOriginal),
+      ),
+      candidateGroupIndex: anchor.candidateGroupIndex,
+    })
+    currentRunStartOriginal = nextRunLeadingTokenStartOriginal
+  }
+
+  return runs
+}
+
 function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined, label: string) {
   const shared = sourceResponse?.trim()
   if (!shared) {
@@ -4706,26 +7769,27 @@ function parseMatchingRunSourceResponseUnits(sourceResponse: string | undefined,
     )
   }
 
-  const paragraphs = parseTopicSourceResponseParagraphs(shared)
+  const paragraphs = parseGenericMatchingSourceResponseParagraphUnits(shared)
   if (paragraphs.length > 1) {
     return { units: paragraphs, joiner: '\n\n', unitLabel: 'paragraph' }
   }
 
-  const sentences = parseTopicSourceResponseSentences(shared)
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
   if (sentences.length > 1) {
     return { units: sentences, joiner: ' ', unitLabel: 'sentence' }
   }
 
-  const clauses = parseTopicSourceResponseClauses(shared)
+  const clauses = parseGenericMatchingSourceResponseClauseUnits(shared)
   if (clauses.length > 1) {
     return { units: clauses, joiner: ', ', unitLabel: 'clause' }
   }
 
+  const normalizedWholeReply = normalizeGenericPendingOrMatchingUnitText(shared)
   return {
     units: [
       {
-        text: shared,
-        normalizedText: normalizeSourceResponseText(shared),
+        text: normalizedWholeReply || shared,
+        normalizedText: normalizeSourceResponseText(normalizedWholeReply || shared),
       },
     ],
     joiner: ' ',
@@ -4799,7 +7863,6 @@ function materializeMatchingOpenDecisionAnswers(
   sourceResponse: string | undefined,
   answerSources: InterpretableAnswerSource[] | undefined,
   sourceResponseFormat: InterpretableSourceResponseFormat | undefined,
-  inferDecisionTopics = false,
   sourceResponseState?: InterpretedSourceResponseState,
 ) {
   if (
@@ -4836,7 +7899,7 @@ function materializeMatchingOpenDecisionAnswers(
     sourceResponseFormat !== 'topic_blocks'
   ) {
     throw new AnswerInterpretationError(
-      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "matching_closing_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+      'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "matching_closing_runs", "matching_middle_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     )
   }
   const resolvedAnswerSources = createResolvedAnswerSources(answerSources, sourceResponse)
@@ -4874,18 +7937,33 @@ function materializeMatchingOpenDecisionAnswers(
     }
     let match: string | undefined
     if (sourceResponseFormat === 'labeled_sections' || sourceResponseFormat === 'inline_topics') {
-      match = findLabeledSourceResponseSection(
+      const matchSection = findLabeledSourceResponseSectionEntry(
         sectionsByLabel ?? new Map<string, LabeledSourceResponseSection>(),
         buildOpenDecisionSourceResponseCandidates(decision),
         sourceResponseFormat === 'labeled_sections'
           ? sourceResponseState?.consumedLabeledSectionLabels
           : sourceResponseState?.consumedInlineTopicLabels,
       )
+      if (matchSection) {
+        assertLabeledValueAuthorityMatchesLabel(
+          matchSection.label,
+          matchSection.value,
+          sourceResponseFormat === 'labeled_sections' ? 'Labeled section' : 'Inline topic clause',
+          sourceResponseFormat === 'labeled_sections' ? 'value text' : 'answer text',
+        )
+        match = matchSection.value
+      }
     } else if (sourceResponseFormat === 'single_pending') {
       match = consumeSinglePendingSourceResponse(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+      )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Single pending reply for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
       )
     } else if (sourceResponseFormat === 'pending_clauses') {
       match = resolvePendingSourceResponseClause(
@@ -4893,11 +7971,23 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
       )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Pending clause for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
+      )
     } else if (sourceResponseFormat === 'pending_paragraphs') {
       match = resolvePendingSourceResponseParagraph(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+      )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Pending paragraph for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
       )
     } else if (sourceResponseFormat === 'pending_sentences') {
       match = resolvePendingSourceResponseSentence(
@@ -4905,11 +7995,23 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
       )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Pending sentence for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
+      )
     } else if (sourceResponseFormat === 'pending_conjunctions') {
       match = resolvePendingSourceResponseConjunction(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+      )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Pending conjunction for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
       )
     } else if (sourceResponseFormat === 'pending_answer_sources') {
       match = resolvePendingAnswerSourceValue(
@@ -4918,6 +8020,12 @@ function materializeMatchingOpenDecisionAnswers(
         sourceResponseState,
         buildDecisionPendingAnswerSourceConsumerDescriptor(decision),
       )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Pending answerSource for decision answer ${decision.decisionKey}`,
+        'answerSource',
+      )
     } else if (sourceResponseFormat === 'matching_answer_sources') {
       match = resolveMatchingAnswerSourceValue(
         matchingAnswerSourceEntries,
@@ -4925,6 +8033,12 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         'decision',
+      )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Matching answerSource for decision answer ${decision.decisionKey}`,
+        'answerSource',
       )
     } else if (sourceResponseFormat === 'matching_runs') {
       match = resolveMatchingRunSourceResponseValue(
@@ -4959,6 +8073,12 @@ function materializeMatchingOpenDecisionAnswers(
         sourceResponse,
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
+      )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Ordered block for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
       )
     } else if (sourceResponseFormat === 'question_blocks') {
       match = consumeQuestionBlockSourceResponseSection(
@@ -5023,7 +8143,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
-        inferDecisionTopics,
+        true,
       )
     } else if (sourceResponseFormat === 'topic_sentences') {
       match = consumeTopicSentenceSourceResponseSection(
@@ -5032,7 +8152,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
-        inferDecisionTopics,
+        true,
       )
     } else if (sourceResponseFormat === 'topic_spans') {
       match = consumeTopicSpanSourceResponseSection(
@@ -5073,7 +8193,7 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
         false,
-        inferDecisionTopics,
+        true,
       )
     } else if (sourceResponseFormat === 'topic_middle_blocks') {
       match = consumeTopicMiddleBlockSourceResponseSection(
@@ -5097,9 +8217,40 @@ function materializeMatchingOpenDecisionAnswers(
         `decision answer ${decision.decisionKey}`,
         sourceResponseState,
       )
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Ordered item for decision answer ${decision.decisionKey}`,
+        'sourceResponse',
+      )
     }
     if (!match) {
       continue
+    }
+    if (sourceResponseFormat === 'matching_runs') {
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Matching run for decision answer ${decision.decisionKey}`,
+      )
+    } else if (sourceResponseFormat === 'matching_opening_runs') {
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Matching opening run for decision answer ${decision.decisionKey}`,
+      )
+    } else if (sourceResponseFormat === 'matching_closing_runs') {
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Matching closing run for decision answer ${decision.decisionKey}`,
+      )
+    } else if (sourceResponseFormat === 'matching_middle_runs') {
+      assertMatchedAnswerTextAuthorityMatchesConsumer(
+        match,
+        buildOpenDecisionSourceResponseCandidates(decision),
+        `Matching middle run for decision answer ${decision.decisionKey}`,
+      )
     }
     materializedAnswers.push({
       summary: decision.summary,
@@ -5811,7 +8962,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(block.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(block.question),
         prompt: matchingKnownDecision?.prompt ?? block.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5840,7 +8991,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(clause.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(clause.question),
         prompt: matchingKnownDecision?.prompt ?? clause.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5866,7 +9017,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(span.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(span.question),
         prompt: matchingKnownDecision?.prompt ?? span.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5892,7 +9043,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(span.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(span.question),
         prompt: matchingKnownDecision?.prompt ?? span.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5921,7 +9072,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(span.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(span.question),
         prompt: matchingKnownDecision?.prompt ?? span.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5950,7 +9101,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(block.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(block.question),
         prompt: matchingKnownDecision?.prompt ?? block.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -5979,7 +9130,7 @@ function materializeNewDecisionTopicAnswers(
 
       const matchingKnownDecision = matchingKnownDecisions[0]
       materializedAnswers.push({
-        summary: matchingKnownDecision?.summary ?? stripQuestionBlockLabel(block.question),
+        summary: matchingKnownDecision?.summary ?? inferSummaryFromQuestionLabel(block.question),
         prompt: matchingKnownDecision?.prompt ?? block.question,
         decisionKey: matchingKnownDecision?.decisionKey,
         taskRef: matchingKnownDecision?.taskRef,
@@ -6007,6 +9158,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(clause.text, 'Topic clause')
       const summary =
         matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSentence(clause.text)
       materializedAnswers.push({
@@ -6038,6 +9190,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(sentence.text, 'Topic sentence')
       const summary =
         matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSentence(sentence.text)
       materializedAnswers.push({
@@ -6066,6 +9219,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic span')
       const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSpan(span)
       materializedAnswers.push({
         summary,
@@ -6093,6 +9247,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic middle span')
       const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicSpan(span)
       materializedAnswers.push({
         summary,
@@ -6123,6 +9278,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic closing span')
       const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingSpan(span)
       materializedAnswers.push({
         summary,
@@ -6153,6 +9309,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic closing block')
       const summary =
         matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicClosingBlock(block)
       materializedAnswers.push({
@@ -6184,6 +9341,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(paragraph.text, 'Topic paragraph')
       const summary =
         matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicParagraph(paragraph.text)
       materializedAnswers.push({
@@ -6212,6 +9370,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic middle block')
       const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicBlock(block)
       materializedAnswers.push({
         summary,
@@ -6239,6 +9398,7 @@ function materializeNewDecisionTopicAnswers(
       }
 
       const matchingKnownDecision = matchingKnownDecisions[0]
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic block')
       const summary = matchingKnownDecision?.summary ?? inferTopicSummaryFromTopicBlock(block)
       materializedAnswers.push({
         summary,
@@ -6253,11 +9413,21 @@ function materializeNewDecisionTopicAnswers(
   }
 
   const knownDecisionsBySummary = createKnownDecisionsBySummaryLookup(knownDecisions)
+  const labeledSectionUnitLabel =
+    sourceResponseFormat === 'inline_topics' ? 'Inline topic clause' : 'Labeled section'
+  const labeledSectionValueLabel =
+    sourceResponseFormat === 'inline_topics' ? 'answer text' : 'value text'
   for (const [normalizedLabel, section] of sectionsByLabel) {
     if (reservedLabels.has(normalizedLabel)) {
       continue
     }
 
+    assertLabeledValueAuthorityMatchesLabel(
+      section.label,
+      section.value,
+      labeledSectionUnitLabel,
+      labeledSectionValueLabel,
+    )
     consumedLabels?.add(normalizedLabel)
     const matchingKnownDecisions = knownDecisionsBySummary.get(normalizedLabel) ?? []
     if (matchingKnownDecisions.length > 1) {
@@ -6387,10 +9557,83 @@ function parseRequiredQuestionSourceResponseSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedQuestionSourceResponseSpans(
+      shared,
+      sourceResponseState?.questionAnchorCandidateGroups ?? [],
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.questionSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseQuestionSourceResponseSpans(shared)
   if (sourceResponseState) {
     sourceResponseState.questionSpans = spans
   }
+  return spans
+}
+
+function parseEmbeddedQuestionSourceResponseSpans(
+  sourceResponse: string,
+  candidateGroups: string[][],
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedQuestionAnchorsWithInferredCandidates(
+    sourceResponse,
+    tokens,
+    candidateGroups,
+    'question_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex !== 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat question_spans requires sourceResponse to start with a matched question anchor.',
+    )
+  }
+
+  const spans: QuestionSourceResponseSpan[] = []
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+    const nextAnchor = anchors[index + 1]
+    if (nextAnchor) {
+      if (nextAnchor.startTokenIndex === anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat question_spans requires each embedded question anchor to include answer text before the next matched question anchor.',
+        )
+      }
+    } else if (anchor.endTokenIndex >= tokens.length) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat question_spans requires each embedded question anchor to include answer text after the matched question anchor.',
+      )
+    }
+
+    const question = normalizeEmbeddedQuestionAnchorText(
+      sourceResponse.slice(anchor.startOriginal, anchor.endOriginal).trim(),
+    )
+    const answer = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(anchor.endOriginal, nextAnchor?.startOriginal ?? sourceResponse.length),
+    )
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(question, answer, 'Question span')
+    spans.push({
+      question,
+      normalizedQuestionText: normalizeSourceResponseText(question),
+      normalizedQuestionCoreText: normalizeQuestionPromptCore(question),
+      answer,
+    })
+  }
+
   return spans
 }
 
@@ -6410,10 +9653,119 @@ function parseRequiredQuestionSourceResponseMiddleSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedQuestionSourceResponseMiddleSpans(
+      shared,
+      sourceResponseState?.questionAnchorCandidateGroups ?? [],
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.questionMiddleSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseQuestionSourceResponseMiddleSpans(shared)
   if (sourceResponseState) {
     sourceResponseState.questionMiddleSpans = spans
   }
+  return spans
+}
+
+function parseEmbeddedQuestionSourceResponseMiddleSpans(
+  sourceResponse: string,
+  candidateGroups: string[][],
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedQuestionAnchorsWithInferredCandidates(
+    sourceResponse,
+    tokens,
+    candidateGroups,
+    'question_middle_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat question_middle_spans requires each span to start with at least one leading sentence before the question sentence.',
+    )
+  }
+
+  const spans: QuestionSourceResponseSpan[] = []
+  let currentSpanStartOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+    const nextAnchor = anchors[index + 1]
+    const trailingTokenCount = tokens.length - anchor.endTokenIndex
+
+    const question = normalizeEmbeddedQuestionAnchorText(
+      sourceResponse.slice(anchor.startOriginal, anchor.endOriginal).trim(),
+    )
+    const leadingAnswer = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(currentSpanStartOriginal, anchor.startOriginal),
+    )
+
+    if (index === anchors.length - 1) {
+      if (trailingTokenCount === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat question_middle_spans requires each span to end with at least one trailing sentence after the question sentence.',
+        )
+      }
+
+      const trailingAnswer = normalizeEmbeddedMatchingRunText(
+        sourceResponse.slice(anchor.endOriginal),
+      )
+      const answer = [leadingAnswer, trailingAnswer].filter(Boolean).join(' ')
+      assertQuestionAnswerTopicAuthorityMatchesQuestion(
+        question,
+        answer,
+        'Question middle span',
+      )
+      spans.push({
+        question,
+        normalizedQuestionText: normalizeSourceResponseText(question),
+        normalizedQuestionCoreText: normalizeQuestionPromptCore(question),
+        answer,
+      })
+      break
+    }
+
+    if (!nextAnchor) {
+      break
+    }
+
+    const gapTokenCount = nextAnchor.startTokenIndex - anchor.endTokenIndex
+    if (gapTokenCount < 2) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat question_middle_spans requires at least one trailing sentence before the next question sentence and at least one leading sentence for that next span.',
+      )
+    }
+
+    const nextSpanLeadingTokenStartOriginal =
+      tokens[nextAnchor.startTokenIndex - 1]?.start ?? sourceResponse.length
+    const trailingAnswer = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(anchor.endOriginal, nextSpanLeadingTokenStartOriginal),
+    )
+    const answer = [leadingAnswer, trailingAnswer].filter(Boolean).join(' ')
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(question, answer, 'Question middle span')
+    spans.push({
+      question,
+      normalizedQuestionText: normalizeSourceResponseText(question),
+      normalizedQuestionCoreText: normalizeQuestionPromptCore(question),
+      answer,
+    })
+    currentSpanStartOriginal = nextSpanLeadingTokenStartOriginal
+  }
+
   return spans
 }
 
@@ -6433,10 +9785,89 @@ function parseRequiredQuestionSourceResponseClosingSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedQuestionSourceResponseClosingSpans(
+      shared,
+      sourceResponseState?.questionAnchorCandidateGroups ?? [],
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.questionClosingSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseQuestionSourceResponseClosingSpans(shared)
   if (sourceResponseState) {
     sourceResponseState.questionClosingSpans = spans
   }
+  return spans
+}
+
+function parseEmbeddedQuestionSourceResponseClosingSpans(
+  sourceResponse: string,
+  candidateGroups: string[][],
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const anchors = resolveEmbeddedQuestionAnchorsWithInferredCandidates(
+    sourceResponse,
+    tokens,
+    candidateGroups,
+    'question_closing_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat question_closing_spans requires each span to include at least one leading sentence before the question sentence.',
+    )
+  }
+
+  const spans: QuestionSourceResponseClosingSpan[] = []
+  let previousEndTokenIndex = 0
+  let previousEndOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedMatchingRunAnchor
+
+    if (index > 0 && anchor.startTokenIndex === previousEndTokenIndex) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat question_closing_spans requires at least one leading sentence before the next question sentence.',
+      )
+    }
+
+    const hasTrailingTokens = anchor.endTokenIndex < tokens.length
+    if (index === anchors.length - 1 && hasTrailingTokens) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat question_closing_spans requires each span to end with a question sentence.',
+      )
+    }
+
+    const question = normalizeEmbeddedQuestionAnchorText(
+      sourceResponse.slice(anchor.startOriginal, anchor.endOriginal).trim(),
+    )
+    const answer = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(previousEndOriginal, anchor.startOriginal),
+    )
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(question, answer, 'Question closing span')
+    spans.push({
+      question,
+      normalizedQuestionText: normalizeSourceResponseText(question),
+      normalizedQuestionCoreText: normalizeQuestionPromptCore(question),
+      answer,
+    })
+    previousEndTokenIndex = anchor.endTokenIndex
+    previousEndOriginal = tokens[anchor.endTokenIndex]?.start ?? sourceResponse.length
+  }
+
   return spans
 }
 
@@ -6502,7 +9933,19 @@ function parseRequiredTopicSourceResponseClauses(
     )
   }
 
-  const clauses = parseTopicSourceResponseClauses(shared)
+  const clauseCandidates = sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>()
+  const sentenceClauses = parseTopicSourceResponseClauses(shared)
+  if (sentenceClauses.length === 1) {
+    const embeddedClauses = parseEmbeddedTopicSourceResponseClauses(shared, clauseCandidates)
+    if (embeddedClauses) {
+      if (sourceResponseState) {
+        sourceResponseState.topicClauses = embeddedClauses
+      }
+      return embeddedClauses
+    }
+  }
+
+  const clauses = sentenceClauses
   if (sourceResponseState) {
     sourceResponseState.topicClauses = clauses
   }
@@ -6548,13 +9991,99 @@ function parseRequiredTopicSourceResponseSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedTopicSourceResponseSpans(
+      shared,
+      sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.topicSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseTopicSourceResponseSpans(
-    parseTopicSourceResponseSentences(shared),
+    sentences,
     sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
   )
   if (sourceResponseState) {
     sourceResponseState.topicSpans = spans
   }
+  return spans
+}
+
+function parseEmbeddedTopicSourceResponseSpans(
+  sourceResponse: string,
+  normalizedCandidateLabels: Set<string>,
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const candidateLabels = dedupeNonEmptyStrings([
+    ...normalizedCandidateLabels,
+    ...(normalizedCandidateLabels.size > 1
+      ? []
+      : inferEmbeddedLeadingTopicCandidateLabels(sourceResponse, tokens)),
+  ])
+  const anchors = resolveEmbeddedTopicAnchors(
+    sourceResponse,
+    tokens,
+    candidateLabels,
+    'topic_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex !== 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_spans requires sourceResponse to start with a topic anchor sentence.',
+    )
+  }
+
+  const spans: TopicSourceResponseSpan[] = []
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedTopicAnchor
+    const nextAnchor = anchors[index + 1]
+
+    if (nextAnchor) {
+      if (nextAnchor.startTokenIndex === anchor.endTokenIndex) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat topic_spans requires each span to include answer text after the topic anchor.',
+        )
+      }
+    } else if (anchor.endTokenIndex >= tokens.length) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat topic_spans requires each span to include answer text after the topic anchor.',
+      )
+    }
+
+    const endOriginal = nextAnchor?.startOriginal ?? sourceResponse.length
+    const text = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(anchor.startOriginal, endOriginal),
+    )
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      normalizeSourceResponseText(text),
+      normalizedCandidateLabels,
+    )
+    if (matchingLabels.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple topic span anchors matched sentence "${text}" in sourceResponse.`,
+      )
+    }
+
+    spans.push({
+      text,
+      anchorText: text,
+      normalizedAnchorLabel: matchingLabels[0] ?? anchor.normalizedLabel,
+    })
+  }
+
   return spans
 }
 
@@ -6574,13 +10103,137 @@ function parseRequiredTopicSourceResponseMiddleSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedTopicSourceResponseMiddleSpans(
+      shared,
+      sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.topicMiddleSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseTopicSourceResponseMiddleSpans(
-    parseTopicSourceResponseSentences(shared),
+    sentences,
     sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
   )
   if (sourceResponseState) {
     sourceResponseState.topicMiddleSpans = spans
   }
+  return spans
+}
+
+function parseEmbeddedTopicSourceResponseMiddleSpans(
+  sourceResponse: string,
+  normalizedCandidateLabels: Set<string>,
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const candidateLabels = dedupeNonEmptyStrings([
+    ...normalizedCandidateLabels,
+    ...(normalizedCandidateLabels.size > 1
+      ? []
+      : inferEmbeddedLeadingTopicCandidateLabels(sourceResponse, tokens)),
+  ])
+  const anchors = resolveEmbeddedTopicAnchors(
+    sourceResponse,
+    tokens,
+    candidateLabels,
+    'topic_middle_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_middle_spans requires each span to start with at least one leading sentence before the topic anchor sentence.',
+    )
+  }
+
+  const spans: TopicSourceResponseSpan[] = []
+  let currentSpanStartOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedTopicAnchor
+    const nextAnchor = anchors[index + 1]
+    const trailingTokenCount = tokens.length - anchor.endTokenIndex
+
+    if (index === anchors.length - 1) {
+      if (trailingTokenCount === 0) {
+        throw new AnswerInterpretationError(
+          'sourceResponseFormat topic_middle_spans requires each span to end with at least one trailing sentence after the topic anchor sentence.',
+        )
+      }
+
+      const text = normalizeEmbeddedMatchingRunText(
+        sourceResponse.slice(currentSpanStartOriginal),
+      )
+      const anchorText = normalizeEmbeddedMatchingRunText(
+        sourceResponse.slice(anchor.startOriginal),
+      )
+      const matchingLabels = findMatchingNormalizedTopicLabels(
+        normalizeSourceResponseText(text),
+        normalizedCandidateLabels,
+      )
+      if (matchingLabels.length > 1) {
+        throw new AnswerInterpretationError(
+          `Multiple topic middle span anchors matched sentence "${text}" in sourceResponse.`,
+        )
+      }
+
+      spans.push({
+        text,
+        anchorText,
+        normalizedAnchorLabel: matchingLabels[0] ?? anchor.normalizedLabel,
+      })
+      break
+    }
+
+    if (!nextAnchor) {
+      break
+    }
+
+    const gapTokenCount = nextAnchor.startTokenIndex - anchor.endTokenIndex
+    if (gapTokenCount < 2) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat topic_middle_spans requires at least one trailing sentence before the next topic anchor sentence and at least one leading sentence for that next span.',
+      )
+    }
+
+    const nextSpanLeadingTokenStartOriginal =
+      tokens[nextAnchor.startTokenIndex - 1]?.start ?? sourceResponse.length
+    const text = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(currentSpanStartOriginal, nextSpanLeadingTokenStartOriginal),
+    )
+    const anchorText = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(anchor.startOriginal, nextSpanLeadingTokenStartOriginal),
+    )
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      normalizeSourceResponseText(text),
+      normalizedCandidateLabels,
+    )
+    if (matchingLabels.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple topic middle span anchors matched sentence "${text}" in sourceResponse.`,
+      )
+    }
+
+    spans.push({
+      text,
+      anchorText,
+      normalizedAnchorLabel: matchingLabels[0] ?? anchor.normalizedLabel,
+    })
+    currentSpanStartOriginal = nextSpanLeadingTokenStartOriginal
+  }
+
   return spans
 }
 
@@ -6600,14 +10253,183 @@ function parseRequiredTopicSourceResponseClosingSpans(
     )
   }
 
+  const sentences = parseGenericMatchingSourceResponseSentenceUnits(shared)
+  if (sentences.length === 1) {
+    const embeddedSpans = parseEmbeddedTopicSourceResponseClosingSpans(
+      shared,
+      sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
+    )
+    if (embeddedSpans) {
+      if (sourceResponseState) {
+        sourceResponseState.topicClosingSpans = embeddedSpans
+      }
+      return embeddedSpans
+    }
+  }
+
   const spans = parseTopicSourceResponseClosingSpans(
-    parseTopicSourceResponseSentences(shared),
+    sentences,
     sourceResponseState?.topicAnchorCandidateLabels ?? new Set<string>(),
   )
   if (sourceResponseState) {
     sourceResponseState.topicClosingSpans = spans
   }
   return spans
+}
+
+function parseEmbeddedTopicSourceResponseClosingSpans(
+  sourceResponse: string,
+  normalizedCandidateLabels: Set<string>,
+) {
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(sourceResponse)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const candidateLabels = dedupeNonEmptyStrings([
+    ...normalizedCandidateLabels,
+    ...(normalizedCandidateLabels.size > 1
+      ? []
+      : inferEmbeddedClosingTopicCandidateLabels(sourceResponse, tokens)),
+  ])
+  const anchors = resolveEmbeddedTopicAnchors(
+    sourceResponse,
+    tokens,
+    candidateLabels,
+    'topic_closing_spans',
+  )
+  if (anchors.length === 0) {
+    return undefined
+  }
+
+  if (anchors[0]?.startTokenIndex === 0) {
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_closing_spans requires each span to include at least one leading sentence before the topic-closing anchor.',
+    )
+  }
+
+  const spans: TopicSourceResponseClosingSpan[] = []
+  let previousEndTokenIndex = 0
+  let previousEndOriginal = 0
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index] as EmbeddedTopicAnchor
+
+    if (index > 0 && anchor.startTokenIndex === previousEndTokenIndex) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat topic_closing_spans requires at least one leading sentence before the next topic-closing anchor.',
+      )
+    }
+
+    const hasTrailingTokens = anchor.endTokenIndex < tokens.length
+    if (index === anchors.length - 1 && hasTrailingTokens) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat topic_closing_spans requires each span to end with a topic-closing sentence.',
+      )
+    }
+
+    const nextTokenStartOriginal = tokens[anchor.endTokenIndex]?.start ?? sourceResponse.length
+    const text = normalizeEmbeddedMatchingRunText(
+      sourceResponse.slice(previousEndOriginal, nextTokenStartOriginal),
+    )
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      normalizeSourceResponseText(text),
+      normalizedCandidateLabels,
+    )
+    if (matchingLabels.length > 1) {
+      throw new AnswerInterpretationError(
+        `Multiple topic closing span anchors matched sentence "${text}" in sourceResponse.`,
+      )
+    }
+
+    spans.push({
+      text,
+      closingText: text,
+      normalizedClosingLabel: matchingLabels[0] ?? anchor.normalizedLabel,
+    })
+    previousEndTokenIndex = anchor.endTokenIndex
+    previousEndOriginal = nextTokenStartOriginal
+  }
+
+  return spans
+}
+
+const EMBEDDED_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
+  'after',
+  'and',
+  'before',
+  'because',
+  'but',
+  'or',
+  'then',
+])
+
+function inferEmbeddedLeadingTopicCandidateLabels(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  if (startsWithNonPunctuatedWhClauseDeclarative(sourceResponse)) {
+    return []
+  }
+
+  const labels: string[] = []
+
+  for (const token of tokens) {
+    const suffix = sourceResponse.slice(token.start)
+    const summary = extractLeadingTopicSummary(suffix)
+    if (!summary) {
+      continue
+    }
+
+    const normalizedSummary = normalizeSourceResponseText(summary)
+    if (!normalizedSummary) {
+      continue
+    }
+
+    const summaryTokens = normalizedSummary.split(' ').filter(Boolean)
+    if (summaryTokens.length < 2) {
+      continue
+    }
+    if (summaryTokens.some((summaryToken) => EMBEDDED_TOPIC_SUMMARY_REJECT_TOKENS.has(summaryToken))) {
+      continue
+    }
+
+    labels.push(normalizedSummary)
+  }
+
+  return dedupeNonEmptyStrings(labels)
+}
+
+function inferEmbeddedClosingTopicCandidateLabels(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  const labels: string[] = []
+
+  for (const token of tokens) {
+    const prefix = sourceResponse.slice(0, token.end)
+    const summary = extractTrailingTopicSummary(prefix)
+    if (!summary) {
+      continue
+    }
+
+    const normalizedSummary = normalizeSourceResponseText(summary)
+    if (!normalizedSummary) {
+      continue
+    }
+
+    const summaryTokens = normalizedSummary.split(' ').filter(Boolean)
+    if (summaryTokens.length < 2) {
+      continue
+    }
+    if (summaryTokens.some((summaryToken) => EMBEDDED_TOPIC_SUMMARY_REJECT_TOKENS.has(summaryToken))) {
+      continue
+    }
+
+    labels.push(normalizedSummary)
+  }
+
+  return dedupeNonEmptyStrings(labels)
 }
 
 function parseRequiredTopicSourceResponseClosingBlocks(
@@ -6711,7 +10533,7 @@ function parseRequiredTopicSourceResponseBlocks(
   return blocks
 }
 
-function findLabeledSourceResponseSection(
+function findLabeledSourceResponseSectionEntry(
   sectionsByLabel: Map<string, LabeledSourceResponseSection>,
   candidates: string[],
   consumedLabels?: Set<string>,
@@ -6721,7 +10543,7 @@ function findLabeledSourceResponseSection(
     const match = sectionsByLabel.get(normalizedLabel)
     if (match) {
       consumedLabels?.add(normalizedLabel)
-      return match.value
+      return match
     }
   }
   return undefined
@@ -7200,6 +11022,13 @@ function consumeTopicSentenceSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic sentence matched ${label} in sourceResponse.`)
   }
+  for (const matchingIndex of matchingIndexes) {
+    const text = sentences[matchingIndex]?.text
+    if (text) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(text, 'topic sentence')
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(text, 'Topic sentence')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     sentences,
     matchingIndexes,
@@ -7232,6 +11061,13 @@ function consumeTopicClauseSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic clause matched ${label} in sourceResponse.`)
   }
+  for (const matchingIndex of matchingIndexes) {
+    const text = clauses[matchingIndex]?.text
+    if (text) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(text, 'topic clause')
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(text, 'Topic clause')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     clauses,
     matchingIndexes,
@@ -7259,6 +11095,16 @@ function consumeTopicSpanSourceResponseSection(
       return undefined
     }
     throw new AnswerInterpretationError(`No topic span matched ${label} in sourceResponse.`)
+  }
+  for (const matchingIndex of matchingIndexes) {
+    const span = spans[matchingIndex]
+    const anchorText = span?.anchorText
+    if (anchorText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(anchorText, 'topic span anchor sentence')
+    }
+    if (span?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic span')
+    }
   }
   return consumeContiguousTopicSourceResponseText(
     spans,
@@ -7291,6 +11137,19 @@ function consumeTopicMiddleSpanSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic middle span matched ${label} in sourceResponse.`)
   }
+  for (const matchingIndex of matchingIndexes) {
+    const span = spans[matchingIndex]
+    const anchorText = span?.anchorText
+    if (anchorText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(
+        anchorText,
+        'topic middle span anchor sentence',
+      )
+    }
+    if (span?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic middle span')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     spans,
     matchingIndexes,
@@ -7322,6 +11181,19 @@ function consumeTopicClosingSpanSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic closing span matched ${label} in sourceResponse.`)
   }
+  for (const matchingIndex of matchingIndexes) {
+    const span = spans[matchingIndex]
+    const closingText = span?.closingText
+    if (closingText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(
+        closingText,
+        'topic closing span sentence',
+      )
+    }
+    if (span?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(span.text, 'Topic closing span')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     spans,
     matchingIndexes,
@@ -7337,6 +11209,7 @@ function consumeTopicClosingBlockSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   registerTopicAnchorCandidates(sourceResponseState, [candidates])
   const blocks = parseRequiredTopicSourceResponseClosingBlocks(
@@ -7354,6 +11227,29 @@ function consumeTopicClosingBlockSourceResponseSection(
     throw new AnswerInterpretationError(
       `No topic closing block matched ${label} in sourceResponse.`,
     )
+  }
+  if (rejectMultipleInferredTopicSummaries) {
+    for (const matchingIndex of matchingIndexes) {
+      const closingText = blocks[matchingIndex]?.closingText
+      if (closingText && paragraphTextImpliesMultipleTopicSummaries(closingText)) {
+        throw new AnswerInterpretationError(
+          `Multiple topic closing blocks matched ${label} in sourceResponse.`,
+        )
+      }
+    }
+  }
+  for (const matchingIndex of matchingIndexes) {
+    const block = blocks[matchingIndex]
+    const closingText = block?.closingText
+    if (closingText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(
+        closingText,
+        'topic closing block paragraph',
+      )
+    }
+    if (block?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic closing block')
+    }
   }
   return consumeContiguousTopicSourceResponseText(
     blocks,
@@ -7386,13 +11282,29 @@ function consumeTopicParagraphSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic paragraph matched ${label} in sourceResponse.`)
   }
+  if (rejectMultipleInferredTopicSummaries) {
+    for (const matchingIndex of matchingIndexes) {
+      const text = paragraphs[matchingIndex]?.text
+      if (text && paragraphTextImpliesMultipleTopicSummaries(text)) {
+        throw new AnswerInterpretationError(
+          `Multiple topic paragraphs matched ${label} in sourceResponse.`,
+        )
+      }
+    }
+  }
+  for (const matchingIndex of matchingIndexes) {
+    const text = paragraphs[matchingIndex]?.text
+    if (text) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(text, 'topic paragraph')
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(text, 'Topic paragraph')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     paragraphs,
     matchingIndexes,
     `Multiple topic paragraphs matched ${label} in sourceResponse.`,
     sourceResponseState?.consumedTopicParagraphIndexes,
     '\n\n',
-    rejectMultipleInferredTopicSummaries,
   )
 }
 
@@ -7402,6 +11314,7 @@ function consumeTopicMiddleBlockSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   registerTopicAnchorCandidates(sourceResponseState, [candidates])
   const blocks = parseRequiredTopicSourceResponseMiddleBlocks(
@@ -7418,6 +11331,29 @@ function consumeTopicMiddleBlockSourceResponseSection(
     }
     throw new AnswerInterpretationError(`No topic middle block matched ${label} in sourceResponse.`)
   }
+  if (rejectMultipleInferredTopicSummaries) {
+    for (const matchingIndex of matchingIndexes) {
+      const anchorText = blocks[matchingIndex]?.anchorText
+      if (anchorText && paragraphTextImpliesMultipleTopicSummaries(anchorText)) {
+        throw new AnswerInterpretationError(
+          `Multiple topic middle blocks matched ${label} in sourceResponse.`,
+        )
+      }
+    }
+  }
+  for (const matchingIndex of matchingIndexes) {
+    const block = blocks[matchingIndex]
+    const anchorText = block?.anchorText
+    if (anchorText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(
+        anchorText,
+        'topic middle block anchor paragraph',
+      )
+    }
+    if (block?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic middle block')
+    }
+  }
   return consumeContiguousTopicSourceResponseText(
     blocks,
     matchingIndexes,
@@ -7433,6 +11369,7 @@ function consumeTopicBlockSourceResponseSection(
   label: string,
   sourceResponseState: InterpretedSourceResponseState | undefined,
   required: boolean,
+  rejectMultipleInferredTopicSummaries = false,
 ) {
   registerTopicAnchorCandidates(sourceResponseState, [candidates])
   const blocks = parseRequiredTopicSourceResponseBlocks(sourceResponse, label, sourceResponseState)
@@ -7444,6 +11381,29 @@ function consumeTopicBlockSourceResponseSection(
       return undefined
     }
     throw new AnswerInterpretationError(`No topic block matched ${label} in sourceResponse.`)
+  }
+  if (rejectMultipleInferredTopicSummaries) {
+    for (const matchingIndex of matchingIndexes) {
+      const anchorText = blocks[matchingIndex]?.anchorText
+      if (anchorText && paragraphTextImpliesMultipleTopicSummaries(anchorText)) {
+        throw new AnswerInterpretationError(
+          `Multiple topic blocks matched ${label} in sourceResponse.`,
+        )
+      }
+    }
+  }
+  for (const matchingIndex of matchingIndexes) {
+    const block = blocks[matchingIndex]
+    const anchorText = block?.anchorText
+    if (anchorText) {
+      assertTopicTextHasSubstantiveLeadingAnswerContent(
+        anchorText,
+        'topic block anchor paragraph',
+      )
+    }
+    if (block?.text) {
+      assertTopicAnswerTextDoesNotContainQuestionAuthority(block.text, 'Topic block')
+    }
   }
   return consumeContiguousTopicSourceResponseText(
     blocks,
@@ -7531,7 +11491,7 @@ function parseRequiredPendingSourceResponseClauses(
     )
   }
 
-  const clauses = parseTopicSourceResponseClauses(shared).map((clause) => clause.text)
+  const clauses = parseGenericPendingSourceResponseClauses(shared)
   if (sourceResponseState) {
     sourceResponseState.pendingClauses = clauses
   }
@@ -7554,7 +11514,7 @@ function parseRequiredPendingSourceResponseParagraphs(
     )
   }
 
-  const paragraphs = parseTopicSourceResponseParagraphs(shared).map((paragraph) => paragraph.text)
+  const paragraphs = parseGenericPendingSourceResponseParagraphs(shared)
   if (sourceResponseState) {
     sourceResponseState.pendingParagraphs = paragraphs
   }
@@ -7577,7 +11537,7 @@ function parseRequiredPendingSourceResponseSentences(
     )
   }
 
-  const sentences = parseTopicSourceResponseSentences(shared).map((sentence) => sentence.text)
+  const sentences = parseGenericPendingSourceResponseSentences(shared)
   if (sourceResponseState) {
     sourceResponseState.pendingSentences = sentences
   }
@@ -7666,6 +11626,7 @@ function parseRequiredOrderedSourceResponseBlocks(
   }
 
   const blocks = parseOrderedSourceResponseBlocks(shared)
+  assertOrderedBlocksDidNotCollapseMarkedOrderedItems(shared, blocks)
   if (sourceResponseState) {
     sourceResponseState.orderedBlocks = blocks
   }
@@ -7679,8 +11640,7 @@ function parseOrderedSourceResponseItems(sourceResponse: string) {
     if (!trimmed) {
       continue
     }
-    const match = /^(?:[-*•]\s*|\d+[.)]\s*)?(.*\S)$/.exec(trimmed)
-    const value = match?.[1]?.trim()
+    const value = stripLeadingPresentationListMarkers(trimmed)
     if (!value) {
       continue
     }
@@ -7692,14 +11652,74 @@ function parseOrderedSourceResponseItems(sourceResponse: string) {
 function parseOrderedSourceResponseBlocks(sourceResponse: string) {
   return sourceResponse
     .split(/\r?\n\s*\r?\n\s*\r?\n+/)
-    .map((block) => block.trim())
+    .map((block) => normalizeOrderedSourceResponseBlock(block))
     .filter(Boolean)
+}
+
+function sourceResponseHasMultipleMarkedOrderedLines(sourceResponse: string | undefined) {
+  const shared = sourceResponse?.trim()
+  if (!shared) {
+    return false
+  }
+
+  let markedLineCount = 0
+  for (const line of shared.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    if (stripLeadingPresentationListMarkers(trimmed) !== trimmed) {
+      markedLineCount += 1
+      if (markedLineCount > 1) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function orderedBlocksCollapsedMarkedOrderedItems(
+  sourceResponse: string | undefined,
+  blocks: string[] | undefined,
+) {
+  return (blocks?.length ?? 0) === 1 && sourceResponseHasMultipleMarkedOrderedLines(sourceResponse)
+}
+
+function assertOrderedBlocksDidNotCollapseMarkedOrderedItems(
+  sourceResponse: string | undefined,
+  blocks: string[],
+) {
+  if (!orderedBlocksCollapsedMarkedOrderedItems(sourceResponse, blocks)) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    'sourceResponseFormat ordered_blocks rejected sourceResponse because it collapsed multiple ordered item lines into one ordered block.',
+  )
+}
+
+function normalizeOrderedSourceResponseBlock(block: string) {
+  const trimmed = block.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+
+  const paragraphs = trimmed
+    .split(/\r?\n\s*\r?\n+/)
+    .map((paragraph) => normalizeExplicitTopicOrQuestionUnitText(paragraph))
+    .filter(Boolean)
+  if (paragraphs.length === 0) {
+    return trimmed
+  }
+
+  return paragraphs.join('\n\n')
 }
 
 function parseQuestionSourceResponseBlocks(sourceResponse: string) {
   const paragraphs = sourceResponse
     .split(/\r?\n\s*\r?\n+/)
-    .map((paragraph) => paragraph.trim())
+    .map((paragraph) => normalizeExplicitTopicOrQuestionUnitText(paragraph))
     .filter(Boolean)
   const blocks: QuestionSourceResponseBlock[] = []
   let currentQuestion: string | undefined
@@ -7707,24 +11727,31 @@ function parseQuestionSourceResponseBlocks(sourceResponse: string) {
 
   for (const paragraph of paragraphs) {
     if (isQuestionSourceResponseParagraph(paragraph)) {
+      const questionParagraph = normalizeQuestionSourceResponsePrompt(paragraph)
       if (currentQuestion) {
         if (answerParagraphs.length === 0) {
           throw new AnswerInterpretationError(
             `Question block "${currentQuestion}" in sourceResponse did not include an answer block.`,
           )
         }
+        const answer = answerParagraphs.join('\n\n')
+        assertQuestionAnswerTopicAuthorityMatchesQuestion(
+          currentQuestion,
+          answer,
+          'Question block',
+        )
         blocks.push({
           question: currentQuestion,
           normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
           normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-          answer: answerParagraphs.join('\n\n'),
+          answer,
         })
       } else if (answerParagraphs.length > 0) {
         throw new AnswerInterpretationError(
           'sourceResponseFormat question_blocks requires sourceResponse to start with a question block.',
         )
       }
-      currentQuestion = paragraph
+      currentQuestion = questionParagraph
       answerParagraphs = []
       continue
     }
@@ -7745,37 +11772,74 @@ function parseQuestionSourceResponseBlocks(sourceResponse: string) {
       `Question block "${currentQuestion}" in sourceResponse did not include an answer block.`,
     )
   }
+  const finalBlockAnswer = answerParagraphs.join('\n\n')
+  assertQuestionAnswerTopicAuthorityMatchesQuestion(
+    currentQuestion,
+    finalBlockAnswer,
+    'Question block',
+  )
   blocks.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
     normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-    answer: answerParagraphs.join('\n\n'),
+    answer: finalBlockAnswer,
   })
   return blocks
 }
 
 function parseQuestionSourceResponseClauses(sourceResponse: string) {
   const clauses = sourceResponse
-    .split(/(?:\r?\n+|,+\s*|;+\s*)/)
+    .split(/(?:\r?\n+|,+\s*|，+\s*|;+\s*|；+\s*)/)
     .map((clause) => clause.trim())
-    .filter(Boolean)
+    .filter((sentence) => sentence.length > 0 && !isStandalonePresentationListMarker(sentence))
   const parsedClauses: QuestionSourceResponseSpan[] = []
 
   for (const clause of clauses) {
-    const match = /^(?<question>.+?[?？])\s*(?<answer>.*)$/u.exec(clause)?.groups
-    if (!match?.question) {
+    const normalizedClause = stripLeadingQuestionPromptConjunction(clause)
+    const match = /^(?<question>.+?[?？])\s*(?<answer>.*)$/u.exec(normalizedClause)?.groups
+    const canonicalQuestionAnchor = match?.question
+      ? undefined
+      : resolveCanonicalQuestionAnchorMatch(
+          normalizedClause,
+          tokenizeEmbeddedMatchingRunSourceResponse(normalizedClause),
+          0,
+        )
+    const clauseSentences = parseTopicSourceResponseSentences(normalizedClause)
+    const question = match?.question
+      ? normalizeQuestionSourceResponsePrompt(match.question)
+      : canonicalQuestionAnchor?.canonicalPrompt
+        ?? (clauseSentences[0] && isQuestionSourceResponseSentence(clauseSentences[0].text)
+          ? normalizeQuestionSourceResponsePrompt(clauseSentences[0].text)
+          : undefined)
+    if (!question) {
       throw new AnswerInterpretationError(
         'sourceResponseFormat question_clauses requires each clause to contain one question sentence followed by answer text.',
       )
     }
 
-    const question = match.question.trim()
-    const answer = match.answer?.trim()
+    const answer = normalizeExplicitTopicOrQuestionUnitText(
+      match?.answer?.trim() ??
+        (canonicalQuestionAnchor
+          ? normalizedClause.slice(canonicalQuestionAnchor.endOriginal).trim()
+          : clauseSentences.length > 1
+            ? clauseSentences
+                .slice(1)
+                .map((sentence) => sentence.text)
+                .join(' ')
+            : '')
+          .trim(),
+    )
     if (!answer) {
       throw new AnswerInterpretationError(
         `Question clause "${question}" in sourceResponse did not include answer text.`,
       )
     }
+    if (questionClauseAnswerContainsAdditionalQuestionAnchor(answer)) {
+      throw new AnswerInterpretationError(
+        `Question clause "${question}" in sourceResponse included another question anchor inside answer text.`,
+      )
+    }
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(question, answer, 'Question clause')
 
     parsedClauses.push({
       question,
@@ -7788,6 +11852,35 @@ function parseQuestionSourceResponseClauses(sourceResponse: string) {
   return parsedClauses
 }
 
+const QUESTION_CLAUSE_INNER_CANONICAL_ANCHOR_PRECEDING_TOKENS = new Set(['and', 'but'])
+
+function questionClauseAnswerContainsAdditionalQuestionAnchor(answer: string) {
+  for (const sentence of parseTopicSourceResponseSentences(answer)) {
+    if (isQuestionSourceResponseSentence(sentence.text)) {
+      return true
+    }
+
+    const strippedSentence = stripLeadingQuestionPromptConjunction(sentence.text)
+    const strippedTokens = tokenizeEmbeddedMatchingRunSourceResponse(strippedSentence)
+    if (resolveCanonicalQuestionAnchorMatch(strippedSentence, strippedTokens, 0)) {
+      return true
+    }
+
+    const sentenceTokens = tokenizeEmbeddedMatchingRunSourceResponse(sentence.text)
+    for (let startTokenIndex = 1; startTokenIndex < sentenceTokens.length - 3; startTokenIndex += 1) {
+      const previousToken = sentenceTokens[startTokenIndex - 1]?.normalizedText
+      if (!QUESTION_CLAUSE_INNER_CANONICAL_ANCHOR_PRECEDING_TOKENS.has(previousToken ?? '')) {
+        continue
+      }
+      if (resolveCanonicalQuestionAnchorMatch(sentence.text, sentenceTokens, startTokenIndex)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
 function parseQuestionSourceResponseSpans(sourceResponse: string) {
   const sentences = parseTopicSourceResponseSentences(sourceResponse)
   const spans: QuestionSourceResponseSpan[] = []
@@ -7796,24 +11889,31 @@ function parseQuestionSourceResponseSpans(sourceResponse: string) {
 
   for (const sentence of sentences) {
     if (isQuestionSourceResponseSentence(sentence.text)) {
+      const questionSentence = normalizeQuestionSourceResponsePrompt(sentence.text)
       if (currentQuestion) {
         if (answerSentences.length === 0) {
           throw new AnswerInterpretationError(
             `Question span "${currentQuestion}" in sourceResponse did not include an answer sentence.`,
           )
         }
+        const answer = answerSentences.join(' ')
+        assertQuestionAnswerTopicAuthorityMatchesQuestion(
+          currentQuestion,
+          answer,
+          'Question span',
+        )
         spans.push({
           question: currentQuestion,
           normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
           normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-          answer: answerSentences.join(' '),
+          answer,
         })
       } else if (answerSentences.length > 0) {
         throw new AnswerInterpretationError(
           'sourceResponseFormat question_spans requires sourceResponse to start with a question sentence.',
         )
       }
-      currentQuestion = sentence.text
+      currentQuestion = questionSentence
       answerSentences = []
       continue
     }
@@ -7834,11 +11934,17 @@ function parseQuestionSourceResponseSpans(sourceResponse: string) {
       `Question span "${currentQuestion}" in sourceResponse did not include an answer sentence.`,
     )
   }
+  const finalSpanAnswer = answerSentences.join(' ')
+  assertQuestionAnswerTopicAuthorityMatchesQuestion(
+    currentQuestion,
+    finalSpanAnswer,
+    'Question span',
+  )
   spans.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
     normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-    answer: answerSentences.join(' '),
+    answer: finalSpanAnswer,
   })
   return spans
 }
@@ -7866,7 +11972,7 @@ function parseQuestionSourceResponseMiddleSpans(sourceResponse: string) {
           'sourceResponseFormat question_middle_spans requires each span to start with at least one leading sentence before the question sentence.',
         )
       }
-      currentQuestion = sentence.text
+      currentQuestion = normalizeQuestionSourceResponsePrompt(sentence.text)
       trailingSentences = []
       continue
     }
@@ -7876,31 +11982,45 @@ function parseQuestionSourceResponseMiddleSpans(sourceResponse: string) {
         'sourceResponseFormat question_middle_spans requires at least one trailing sentence before the next question sentence and at least one leading sentence for that next span.',
       )
     }
+    const answer = [...currentLeadingSentences, ...trailingSentences.slice(0, -1)].join(' ')
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(
+      currentQuestion,
+      answer,
+      'Question middle span',
+    )
 
     spans.push({
       question: currentQuestion,
       normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
       normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-      answer: [...currentLeadingSentences, ...trailingSentences.slice(0, -1)].join(' '),
+      answer,
     })
     currentLeadingSentences = [trailingSentences[trailingSentences.length - 1] as string]
-    currentQuestion = sentence.text
+    currentQuestion = normalizeQuestionSourceResponsePrompt(sentence.text)
     trailingSentences = []
   }
 
   if (!currentQuestion) {
-    return spans
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat question_middle_spans requires at least one question anchor sentence with leading and trailing answer sentences.',
+    )
   }
   if (trailingSentences.length === 0) {
     throw new AnswerInterpretationError(
       'sourceResponseFormat question_middle_spans requires each span to end with at least one trailing sentence after the question sentence.',
     )
   }
+  const finalMiddleSpanAnswer = [...currentLeadingSentences, ...trailingSentences].join(' ')
+  assertQuestionAnswerTopicAuthorityMatchesQuestion(
+    currentQuestion,
+    finalMiddleSpanAnswer,
+    'Question middle span',
+  )
   spans.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
     normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-    answer: [...currentLeadingSentences, ...trailingSentences].join(' '),
+    answer: finalMiddleSpanAnswer,
   })
   return spans
 }
@@ -7916,17 +12036,25 @@ function parseQuestionSourceResponseClosingSpans(sourceResponse: string) {
       continue
     }
 
+    const questionSentence = normalizeQuestionSourceResponsePrompt(sentence.text)
+
     if (pendingAnswerSentences.length === 0) {
       throw new AnswerInterpretationError(
-        `Question closing span "${sentence.text}" in sourceResponse did not include an answer sentence.`,
+        `Question closing span "${questionSentence}" in sourceResponse did not include an answer sentence.`,
       )
     }
+    const answer = pendingAnswerSentences.join(' ')
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(
+      questionSentence,
+      answer,
+      'Question closing span',
+    )
 
     spans.push({
-      question: sentence.text,
-      normalizedQuestionText: normalizeSourceResponseText(sentence.text),
-      normalizedQuestionCoreText: normalizeQuestionPromptCore(sentence.text),
-      answer: pendingAnswerSentences.join(' '),
+      question: questionSentence,
+      normalizedQuestionText: normalizeSourceResponseText(questionSentence),
+      normalizedQuestionCoreText: normalizeQuestionPromptCore(questionSentence),
+      answer,
     })
     pendingAnswerSentences = []
   }
@@ -7951,17 +12079,25 @@ function parseQuestionSourceResponseClosingBlocks(sourceResponse: string) {
       continue
     }
 
+    const questionParagraph = normalizeQuestionSourceResponsePrompt(paragraph.text)
+
     if (pendingAnswerParagraphs.length === 0) {
       throw new AnswerInterpretationError(
-        `Question closing block "${paragraph.text}" in sourceResponse did not include an answer block.`,
+        `Question closing block "${questionParagraph}" in sourceResponse did not include an answer block.`,
       )
     }
+    const answer = pendingAnswerParagraphs.join('\n\n')
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(
+      questionParagraph,
+      answer,
+      'Question closing block',
+    )
 
     blocks.push({
-      question: paragraph.text,
-      normalizedQuestionText: normalizeSourceResponseText(paragraph.text),
-      normalizedQuestionCoreText: normalizeQuestionPromptCore(paragraph.text),
-      answer: pendingAnswerParagraphs.join('\n\n'),
+      question: questionParagraph,
+      normalizedQuestionText: normalizeSourceResponseText(questionParagraph),
+      normalizedQuestionCoreText: normalizeQuestionPromptCore(questionParagraph),
+      answer,
     })
     pendingAnswerParagraphs = []
   }
@@ -7998,7 +12134,7 @@ function parseQuestionSourceResponseMiddleBlocks(sourceResponse: string) {
           'sourceResponseFormat question_middle_blocks requires each block to start with at least one leading paragraph before the question paragraph.',
         )
       }
-      currentQuestion = paragraph.text
+      currentQuestion = normalizeQuestionSourceResponsePrompt(paragraph.text)
       trailingParagraphs = []
       continue
     }
@@ -8008,48 +12144,89 @@ function parseQuestionSourceResponseMiddleBlocks(sourceResponse: string) {
         'sourceResponseFormat question_middle_blocks requires at least one trailing paragraph before the next question paragraph and at least one leading paragraph for that next block.',
       )
     }
+    const answer = [...currentLeadingParagraphs, ...trailingParagraphs.slice(0, -1)].join('\n\n')
+    assertQuestionAnswerTopicAuthorityMatchesQuestion(
+      currentQuestion,
+      answer,
+      'Question middle block',
+    )
 
     blocks.push({
       question: currentQuestion,
       normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
       normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-      answer: [...currentLeadingParagraphs, ...trailingParagraphs.slice(0, -1)].join('\n\n'),
+      answer,
     })
     currentLeadingParagraphs = [trailingParagraphs[trailingParagraphs.length - 1] as string]
-    currentQuestion = paragraph.text
+    currentQuestion = normalizeQuestionSourceResponsePrompt(paragraph.text)
     trailingParagraphs = []
   }
 
   if (!currentQuestion) {
-    return blocks
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat question_middle_blocks requires at least one question anchor paragraph with leading and trailing answer paragraphs.',
+    )
   }
   if (trailingParagraphs.length === 0) {
     throw new AnswerInterpretationError(
       'sourceResponseFormat question_middle_blocks requires each block to end with at least one trailing paragraph after the question paragraph.',
     )
   }
+  const finalMiddleBlockAnswer = [...currentLeadingParagraphs, ...trailingParagraphs].join(
+    '\n\n',
+  )
+  assertQuestionAnswerTopicAuthorityMatchesQuestion(
+    currentQuestion,
+    finalMiddleBlockAnswer,
+    'Question middle block',
+  )
   blocks.push({
     question: currentQuestion,
     normalizedQuestionText: normalizeSourceResponseText(currentQuestion),
     normalizedQuestionCoreText: normalizeQuestionPromptCore(currentQuestion),
-    answer: [...currentLeadingParagraphs, ...trailingParagraphs].join('\n\n'),
+    answer: finalMiddleBlockAnswer,
   })
   return blocks
 }
 
 function isQuestionSourceResponseParagraph(paragraph: string) {
-  return /[?？]\s*$/u.test(paragraph.trim())
+  const trimmed = stripLeadingQuestionPromptConjunction(paragraph)
+  return (
+    /[?？]\s*$/u.test(trimmed) ||
+    Boolean(inferCanonicalQuestionAnchorSummary(trimmed)) ||
+    Boolean(inferNonPunctuatedInterrogativeQuestionAuthority(trimmed))
+  )
+}
+
+function normalizeQuestionSourceResponsePrompt(question: string) {
+  const trimmed = stripLeadingQuestionPromptConjunction(question)
+  if (!trimmed || /[?？]\s*$/u.test(trimmed)) {
+    return normalizeExplicitQuestionSurfaceText(trimmed)
+  }
+  if (inferCanonicalQuestionAnchorSummary(trimmed)) {
+    return normalizeEmbeddedQuestionAnchorText(trimmed)
+  }
+  const nonPunctuatedQuestionAuthority = inferNonPunctuatedInterrogativeQuestionAuthority(trimmed)
+  if (nonPunctuatedQuestionAuthority) {
+    return nonPunctuatedQuestionAuthority
+  }
+  return normalizeEmbeddedQuestionAnchorText(trimmed)
 }
 
 function isQuestionSourceResponseSentence(sentence: string) {
-  return /[?？]\s*$/u.test(sentence.trim())
+  const trimmed = stripLeadingQuestionPromptConjunction(sentence)
+  return (
+    /[?？]\s*$/u.test(trimmed) ||
+    Boolean(inferCanonicalQuestionAnchorSummary(trimmed)) ||
+    Boolean(inferNonPunctuatedInterrogativeQuestionAuthority(trimmed))
+  )
 }
 
 function parseTopicSourceResponseSentences(sourceResponse: string) {
   return sourceResponse
-    .split(/(?:\r?\n+|;+\s*|(?<=[.?!])\s+)/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean)
+    .split(/(?:\r?\n+|;+\s*|；+\s*|(?<=[.?!。？！])\s+)/)
+    .map((sentence) => normalizeExplicitTopicOrQuestionUnitText(sentence))
+    .filter((sentence) => sentence.length > 0 && !isStandalonePresentationListMarker(sentence))
     .map((sentence) => ({
       text: sentence,
       normalizedText: normalizeSourceResponseText(sentence),
@@ -8058,30 +12235,134 @@ function parseTopicSourceResponseSentences(sourceResponse: string) {
 
 function parseTopicSourceResponseClauses(sourceResponse: string) {
   return sourceResponse
-    .split(/(?:\r?\n+|,+\s*|;+\s*|(?<=[.?!])\s+)/)
-    .map((clause) => clause.trim())
-    .filter(Boolean)
+    .split(/(?:\r?\n+|,+\s*|，+\s*|;+\s*|；+\s*|(?<=[.?!。？！])\s+)/)
+    .map((clause) => normalizeExplicitTopicOrQuestionUnitText(clause))
+    .filter((clause) => clause.length > 0 && !isStandalonePresentationListMarker(clause))
     .map((clause) => ({
       text: clause,
       normalizedText: normalizeSourceResponseText(clause),
     }))
 }
 
+function parseEmbeddedTopicSourceResponseClauses(
+  sourceResponse: string,
+  normalizedCandidateLabels: Set<string>,
+) {
+  const segments = parsePendingSourceResponseConjunctions(sourceResponse)
+  if (segments.length <= 1) {
+    return undefined
+  }
+
+  const clauses = segments.map((segment) => ({
+    text: segment,
+    normalizedText: normalizeSourceResponseText(segment),
+  }))
+
+  for (const clause of clauses) {
+    const matchingLabels = findMatchingNormalizedTopicLabels(
+      clause.normalizedText,
+      normalizedCandidateLabels,
+    )
+    const anchorLabel = resolveSingleTopicAnchorLabel(
+      clause.text,
+      matchingLabels,
+      `Multiple topic clause anchors matched conjunction segment "${clause.text}" in sourceResponse.`,
+      inferNormalizedTopicAnchorLabelsFromText,
+    )
+    if (!anchorLabel) {
+      return undefined
+    }
+  }
+
+  return clauses
+}
+
 function parseTopicSourceResponseParagraphs(sourceResponse: string) {
   return sourceResponse
     .split(/\r?\n\s*\r?\n+/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean)
+    .map((paragraph) => normalizeExplicitTopicOrQuestionUnitText(paragraph))
+    .filter((paragraph) => paragraph.length > 0 && !isStandalonePresentationListMarker(paragraph))
     .map((paragraph) => ({
       text: paragraph,
       normalizedText: normalizeSourceResponseText(paragraph),
     }))
 }
 
+function normalizeExplicitTopicOrQuestionUnitText(text: string) {
+  return stripLeadingPresentationListMarkers(text.trim())
+}
+
+function normalizeGenericPendingOrMatchingUnitText(text: string) {
+  return stripLeadingPresentationListMarkers(text.trim())
+}
+
+function normalizeEmbeddedMatchingRunText(text: string) {
+  return stripStandalonePresentationListMarkerTokens(
+    stripTrailingPresentationListMarkers(stripLeadingPresentationListMarkers(text.trim())),
+  )
+}
+
+function parseGenericPendingSourceResponseClauses(sourceResponse: string) {
+  return parseTopicSourceResponseClauses(sourceResponse)
+    .map((clause) => normalizeGenericPendingOrMatchingUnitText(clause.text))
+    .filter(Boolean)
+}
+
+function parseGenericPendingSourceResponseParagraphs(sourceResponse: string) {
+  return parseTopicSourceResponseParagraphs(sourceResponse)
+    .map((paragraph) => normalizeGenericPendingOrMatchingUnitText(paragraph.text))
+    .filter(Boolean)
+}
+
+function parseGenericPendingSourceResponseSentences(sourceResponse: string) {
+  return parseTopicSourceResponseSentences(sourceResponse)
+    .map((sentence) => normalizeGenericPendingOrMatchingUnitText(sentence.text))
+    .filter(Boolean)
+}
+
+function parseGenericMatchingSourceResponseParagraphUnits(sourceResponse: string) {
+  return parseTopicSourceResponseParagraphs(sourceResponse)
+    .map((paragraph) => normalizeGenericPendingOrMatchingUnitText(paragraph.text))
+    .filter(Boolean)
+    .map((text) => ({
+      text,
+      normalizedText: normalizeSourceResponseText(text),
+    }))
+}
+
+function parseGenericMatchingSourceResponseSentenceUnits(sourceResponse: string) {
+  return parseTopicSourceResponseSentences(sourceResponse)
+    .map((sentence) => normalizeGenericPendingOrMatchingUnitText(sentence.text))
+    .filter(Boolean)
+    .map((text) => ({
+      text,
+      normalizedText: normalizeSourceResponseText(text),
+    }))
+}
+
+function parseGenericMatchingSourceResponseClauseUnits(sourceResponse: string) {
+  return parseTopicSourceResponseClauses(sourceResponse)
+    .map((clause) => normalizeGenericPendingOrMatchingUnitText(clause.text))
+    .filter(Boolean)
+    .map((text) => ({
+      text,
+      normalizedText: normalizeSourceResponseText(text),
+    }))
+}
+
 function parsePendingSourceResponseConjunctions(sourceResponse: string) {
-  return sourceResponse
+  const normalizedSourceResponse = normalizeGenericPendingOrMatchingUnitText(sourceResponse)
+  if (!normalizedSourceResponse) {
+    return []
+  }
+
+  if (sourceResponseStartsWithProtectedLeadingConjunctionSequence(normalizedSourceResponse)) {
+    return [normalizedSourceResponse]
+  }
+
+  return normalizedSourceResponse
     .split(/\s+(?:and then|then|and)\s+/i)
-    .map((segment) => segment.trim())
+    .map((segment) => normalizeGenericPendingOrMatchingUnitText(segment))
     .filter(Boolean)
 }
 
@@ -8200,7 +12481,9 @@ function parseTopicSourceResponseMiddleSpans(
   }
 
   if (!currentAnchor) {
-    return spans
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_middle_spans requires at least one topic anchor sentence with leading and trailing continuation sentences.',
+    )
   }
 
   if (trailingSentences.length === 0) {
@@ -8331,11 +12614,15 @@ function parseTopicSourceResponseBlocks(
       continue
     }
 
-    if (currentBlock) {
-      currentBlock = {
-        ...currentBlock,
-        text: `${currentBlock.text}\n\n${paragraph.text}`,
-      }
+    if (!currentBlock) {
+      throw new AnswerInterpretationError(
+        'sourceResponseFormat topic_blocks requires sourceResponse to start with a topic anchor paragraph.',
+      )
+    }
+
+    currentBlock = {
+      ...currentBlock,
+      text: `${currentBlock.text}\n\n${paragraph.text}`,
     }
   }
 
@@ -8411,7 +12698,9 @@ function parseTopicSourceResponseMiddleBlocks(
   }
 
   if (!currentAnchor) {
-    return blocks
+    throw new AnswerInterpretationError(
+      'sourceResponseFormat topic_middle_blocks requires at least one topic anchor paragraph with leading and trailing continuation paragraphs.',
+    )
   }
 
   if (trailingParagraphs.length === 0) {
@@ -8431,19 +12720,30 @@ function parseTopicSourceResponseMiddleBlocks(
 
 function parseLabeledSourceResponseSections(sourceResponse: string) {
   const sectionsByLabel = new Map<string, LabeledSourceResponseSection>()
-  for (const line of sourceResponse.split(/\r?\n/)) {
-    const trimmed = line.trim()
+  for (const [lineIndex, line] of sourceResponse.split(/\r?\n/).entries()) {
+    const trimmed = stripLeadingPresentationListMarkers(line.trim())
     if (!trimmed) {
       continue
     }
-    const match = /^(?:[-*•]\s*)?([^:]+?)\s*:\s*(.+)$/.exec(trimmed)
+    const match = /^(?:[-*•]\s*)?([^:：]+?)\s*[:：]\s*(.+)$/.exec(trimmed)
     if (!match) {
       continue
     }
     const rawLabel = match[1]?.trim()
-    const value = match[2]?.trim()
+    const value = normalizeExplicitTopicOrQuestionUnitText(match[2] ?? '')
     if (!rawLabel || !value) {
       continue
+    }
+    assertExplicitLabelTextDoesNotContainAuthority(rawLabel, 'Labeled section label')
+    if (labeledSectionValueStartsWithNestedSameSummaryLabel(rawLabel, value)) {
+      throw new AnswerInterpretationError(
+        `Labeled section "${rawLabel}" in sourceResponse included another labeled section inside its value.`,
+      )
+    }
+    if (labeledSectionValueContainsAdditionalLabeledSentence(value)) {
+      throw new AnswerInterpretationError(
+        `Labeled section "${rawLabel}" in sourceResponse included another labeled section inside its value.`,
+      )
     }
     const normalized = normalizeSourceResponseLabel(rawLabel)
     if (sectionsByLabel.has(normalized)) {
@@ -8454,43 +12754,251 @@ function parseLabeledSourceResponseSections(sourceResponse: string) {
     sectionsByLabel.set(normalized, {
       label: rawLabel,
       value,
+      sourceLineIndex: lineIndex,
     })
   }
   return sectionsByLabel
 }
 
+function assertExplicitLabelTextDoesNotContainAuthority(label: string, unitLabel: string) {
+  const questionAuthorities = extractQuestionAuthorityTextsFromText(label)
+  if (questionAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${label}" in sourceResponse included question authority ${formatQuotedValueList(questionAuthorities)} inside label text.`,
+    )
+  }
+
+  const topicAuthorities = extractInferredTopicSummaries(label)
+  if (topicAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${label}" in sourceResponse included topic authority for ${formatQuotedValueList(topicAuthorities)} inside label text.`,
+    )
+  }
+
+  const incompleteSummary = extractIncompleteLeadingTopicAuthoritySummary(label)
+  if (!incompleteSummary) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `${unitLabel} "${label}" in sourceResponse included incomplete topic authority for ${formatQuotedValueList([incompleteSummary])} inside label text.`,
+  )
+}
+
+function labeledSectionValueStartsWithNestedSameSummaryLabel(label: string, value: string) {
+  const firstSentence = parseTopicSourceResponseSentences(value)[0]?.text
+  if (!firstSentence) {
+    return false
+  }
+
+  const nested = parseInlineTopicClause(firstSentence)
+  if (!nested) {
+    return false
+  }
+
+  const expectedSummary = inferComparableExplicitLabelSummary(label)
+  const nestedSummary = inferComparableExplicitLabelSummary(nested.label)
+  if (!expectedSummary || !nestedSummary) {
+    return false
+  }
+
+  return normalizeSourceResponseLabel(expectedSummary) === normalizeSourceResponseLabel(nestedSummary)
+}
+
+function labeledSectionValueContainsAdditionalLabeledSentence(value: string) {
+  const sentences = parseTopicSourceResponseSentences(value)
+  for (const sentence of sentences.slice(1)) {
+    if (parseInlineTopicClause(sentence.text)) {
+      return true
+    }
+  }
+  return false
+}
+
 function parseInlineTopicSections(sourceResponse: string) {
   const sectionsByLabel = new Map<string, LabeledSourceResponseSection>()
-  const clauses = sourceResponse
-    .split(/(?:\r?\n+|;+\s*|(?<=[.?!])\s+)/)
-    .map((clause) => clause.trim())
-    .filter(Boolean)
+  const clauses = splitInlineTopicClauses(sourceResponse)
 
-  for (const clause of clauses) {
+  for (const [clauseIndex, clause] of clauses.entries()) {
     const parsed = parseInlineTopicClause(clause)
     if (!parsed) {
       continue
     }
 
+    const trimmedClause = stripLeadingPresentationListMarkers(
+      clause.trim().replace(/^(?:and|but)\s+/i, ''),
+    )
+    if (inlineTopicClauseUsesExplicitLabelValueSeparator(trimmedClause)) {
+      assertExplicitLabelTextDoesNotContainAuthority(parsed.label, 'Inline topic clause label')
+    }
     const normalized = normalizeSourceResponseLabel(parsed.label)
     if (sectionsByLabel.has(normalized)) {
       throw new AnswerInterpretationError(
         `Duplicate inline topic clause "${parsed.label}" in sourceResponse.`,
       )
     }
-    sectionsByLabel.set(normalized, parsed)
+    sectionsByLabel.set(normalized, {
+      ...parsed,
+      sourceClauseIndex: clauseIndex,
+    })
   }
 
   return sectionsByLabel
 }
 
+function splitInlineTopicClauses(sourceResponse: string) {
+  const rawClauses = sourceResponse
+    .split(/(?:\r?\n+|;+\s*|；+\s*|(?<=[.?!。？！])\s+)/)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+
+  const clauses: string[] = []
+  for (const clause of rawClauses) {
+    const previousClause = clauses.at(-1)
+    if (previousClause && shouldMergeWithFollowingInlineTopicClause(previousClause)) {
+      clauses[clauses.length - 1] = `${previousClause} ${clause}`.trim()
+      continue
+    }
+    clauses.push(clause)
+  }
+
+  return clauses
+}
+
+function shouldMergeWithFollowingInlineTopicClause(clause: string) {
+  const trimmed = stripLeadingPresentationListMarkers(
+    clause.trim().replace(/^(?:and|but)\s+/i, ''),
+  )
+  if (!trimmed || /[.?!。？！]$/u.test(trimmed)) {
+    return false
+  }
+
+  if (/^(?<label>.+?)\s*(?::|：|=|＝|->|－>|→)\s*$/u.test(trimmed)) {
+    return true
+  }
+
+  if (/^(?<label>.+?)\s+(?:-|－|–|—)\s*$/u.test(trimmed)) {
+    return true
+  }
+
+  const verbal = new RegExp(
+    `^(?<label>.+?)\\s+(?<answer>${TOPIC_SUMMARY_VERB_PATTERN}\\b.*)$`,
+    'i',
+  ).exec(trimmed)?.groups
+
+  return Boolean(
+    verbal?.answer && !topicPredicateIncludesSubstantiveAnswerContent(verbal.answer),
+  )
+}
+
+const LEADING_COMMON_ROMAN_OUTLINE_PAREN_MARKER_PATTERN =
+  /^(?:(?:\([IVXivx]{2,8}\)|（[IVXivx]{2,8}）)\s*)+/u
+const LEADING_COMMON_ROMAN_OUTLINE_MARKER_PATTERN = /^(?:(?:[IVX]{2,8}[.)])\s*)+/u
+const STANDALONE_COMMON_ROMAN_OUTLINE_MARKER_PATTERN =
+  /^(?:[IVX]{2,8}[.)]|\([IVXivx]{2,8}\)|（[IVXivx]{2,8}）)$/u
+const LEADING_FULLWIDTH_NUMBER_PAREN_MARKER_PATTERN =
+  /^(?:(?:\([０-９]+\)|（[０-９]+）)\s*)+/u
+const LEADING_FULLWIDTH_NUMBER_MARKER_PATTERN =
+  /^(?:(?:[０-９]+[．.)）])\s*)+/u
+const LEADING_CIRCLED_NUMBER_MARKER_PATTERN = /^(?:[①-⑳]\s*)+/u
+const LEADING_IDEOGRAPHIC_COMMA_NUMBER_MARKER_PATTERN =
+  /^(?:(?:\d+|[０-９]+|[一二三四五六七八九十百千]+)、\s*)+/u
+const LEADING_CJK_NUMBER_PAREN_MARKER_PATTERN =
+  /^(?:(?:\([一二三四五六七八九十百千]+\)|（[一二三四五六七八九十百千]+）)\s*)+/u
+const STANDALONE_FULLWIDTH_NUMBER_MARKER_PATTERN =
+  /^(?:[０-９]+[．.)）]|\([０-９]+\)|（[０-９]+）|[①-⑳])$/u
+const STANDALONE_IDEOGRAPHIC_COMMA_NUMBER_MARKER_PATTERN =
+  /^(?:\d+、|[０-９]+、|[一二三四五六七八九十百千]+、|\([一二三四五六七八九十百千]+\)|（[一二三四五六七八九十百千]+）)$/u
+
+function stripLeadingPresentationListMarkers(text: string) {
+  let stripped = text.trim()
+  while (stripped) {
+    const next = stripped
+      .replace(/^(?:#{1,6}\s+)+/u, '')
+      .replace(/^(?:>\s*)+/u, '')
+      .replace(/^(?:[-*]\s*\[(?: |x|X)\]\s*)+/u, '')
+      .replace(/^(?:\[(?: |x|X)\]\s*)+/u, '')
+      .replace(LEADING_IDEOGRAPHIC_COMMA_NUMBER_MARKER_PATTERN, '')
+      .replace(LEADING_CJK_NUMBER_PAREN_MARKER_PATTERN, '')
+      .replace(LEADING_FULLWIDTH_NUMBER_PAREN_MARKER_PATTERN, '')
+      .replace(LEADING_FULLWIDTH_NUMBER_MARKER_PATTERN, '')
+      .replace(LEADING_CIRCLED_NUMBER_MARKER_PATTERN, '')
+      .replace(/^(?:(?:\(\d+\)|（\d+）|\([A-Za-z]\)|（[A-Za-z]）)\s*)+/u, '')
+      .replace(LEADING_COMMON_ROMAN_OUTLINE_PAREN_MARKER_PATTERN, '')
+      .replace(LEADING_COMMON_ROMAN_OUTLINE_MARKER_PATTERN, '')
+      .replace(/^(?:(?:\d+[.)]|[A-Za-z][.)])\s*)+/u, '')
+      .replace(/^(?:[-+*•・●→○◦▪◆■□▸▹►▻▶▷⁃‣–—―]\s*)+/u, '')
+      .trim()
+    if (next === stripped) {
+      return stripped
+    }
+    stripped = next
+  }
+  return stripped
+}
+
+function stripTrailingPresentationListMarkers(text: string) {
+  let stripped = text.trim()
+  while (stripped) {
+    let removed = false
+    for (let index = stripped.length - 1; index >= 0; index -= 1) {
+      const previousCharacter = stripped[index - 1]
+      if (index > 0 && previousCharacter && !/[\s,;:([{]/u.test(previousCharacter)) {
+        continue
+      }
+
+      const suffix = stripped.slice(index).trim()
+      if (!suffix) {
+        continue
+      }
+      if (stripLeadingPresentationListMarkers(suffix) !== '') {
+        continue
+      }
+
+      stripped = stripped.slice(0, index).trimEnd()
+      removed = true
+      break
+    }
+
+    if (!removed) {
+      return stripped
+    }
+  }
+
+  return stripped
+}
+
+function stripStandalonePresentationListMarkerTokens(text: string) {
+  return text
+    .split(/\s+/)
+    .filter((token) => token && !isStandalonePresentationListMarker(token))
+    .join(' ')
+}
+
+function isStandalonePresentationListMarker(text: string) {
+  const trimmed = text.trim()
+  return (
+    /^(?:#{1,6}|[-+*•・●→○◦▪◆■□▸▹►▻▶▷⁃‣–—―]|>+|\d+[.)]|[A-Za-z][.)]|\(\d+\)|（\d+）|\([A-Za-z]\)|（[A-Za-z]）|\[(?: |x|X)\])$/u.test(
+      trimmed,
+    ) ||
+    STANDALONE_COMMON_ROMAN_OUTLINE_MARKER_PATTERN.test(trimmed) ||
+    STANDALONE_FULLWIDTH_NUMBER_MARKER_PATTERN.test(trimmed) ||
+    STANDALONE_IDEOGRAPHIC_COMMA_NUMBER_MARKER_PATTERN.test(trimmed)
+  )
+}
+
 function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | undefined {
-  const trimmed = clause.trim().replace(/^(?:and|but)\s+/i, '')
+  const trimmed = stripLeadingPresentationListMarkers(
+    clause.trim().replace(/^(?:and|but)\s+/i, ''),
+  )
   if (!trimmed) {
     return undefined
   }
+  if (extractPrefixedTopicSummary(trimmed)) {
+    return undefined
+  }
 
-  const punctuated = /^(?<label>.+?)\s*(?::|=|->)\s*(?<answer>.+)$/.exec(trimmed)?.groups
+  const punctuated = /^(?<label>.+?)\s*(?::|：|=|＝|->|－>|→)\s*(?<answer>.+)$/.exec(trimmed)?.groups
   if (punctuated?.label && punctuated.answer) {
     return {
       label: punctuated.label.trim(),
@@ -8498,7 +13006,7 @@ function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | 
     }
   }
 
-  const dashed = /^(?<label>.+?)\s+-\s+(?<answer>.+)$/.exec(trimmed)?.groups
+  const dashed = /^(?<label>.+?)\s+(?:-|－|–|—)\s+(?<answer>.+)$/.exec(trimmed)?.groups
   if (dashed?.label && dashed.answer) {
     return {
       label: dashed.label.trim(),
@@ -8506,11 +13014,23 @@ function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | 
     }
   }
 
+  if (
+    isQuestionSourceResponseSentence(trimmed) ||
+    startsWithNonPunctuatedWhClauseDeclarative(trimmed) ||
+    resolveCanonicalQuestionAnchorMatch(
+      trimmed,
+      tokenizeEmbeddedMatchingRunSourceResponse(trimmed),
+      0,
+    )
+  ) {
+    return undefined
+  }
+
   const verbal = new RegExp(
     `^(?<label>.+?)\\s+(?<answer>${TOPIC_SUMMARY_VERB_PATTERN}\\b.+)$`,
     'i',
   ).exec(trimmed)?.groups
-  if (verbal?.label && verbal.answer) {
+  if (verbal?.label && verbal.answer && topicPredicateIncludesSubstantiveAnswerContent(verbal.answer)) {
     return {
       label: verbal.label.trim(),
       value: normalizeInlineTopicAnswer(verbal.answer),
@@ -8520,9 +13040,22 @@ function parseInlineTopicClause(clause: string): LabeledSourceResponseSection | 
   return undefined
 }
 
+function inlineTopicClauseUsesExplicitLabelValueSeparator(trimmedClause: string) {
+  return (
+    /^(?<label>.+?)\s*(?::|：|=|＝|->|－>|→)\s*(?<answer>.+)$/u.test(trimmedClause) ||
+    /^(?<label>.+?)\s+(?:-|－|–|—)\s+(?<answer>.+)$/.test(trimmedClause)
+  )
+}
+
+function inlineTopicClauseUsesNonLabeledSectionExplicitLabelValueSeparator(trimmedClause: string) {
+  return (
+    /^(?<label>.+?)\s*(?:=|＝|->|－>|→)\s*(?<answer>.+)$/u.test(trimmedClause) ||
+    /^(?<label>.+?)\s+(?:-|－|–|—)\s+(?<answer>.+)$/.test(trimmedClause)
+  )
+}
+
 function normalizeInlineTopicAnswer(value: string) {
-  const stripped = value
-    .trim()
+  const stripped = normalizeExplicitTopicOrQuestionUnitText(value)
     .replace(/^(?:should|will|must|can|could|would|is|are|was|were)\b\s*/i, '')
 
   if (stripped.length === 0) {
@@ -8860,7 +13393,8 @@ function registerTopicAnchorCandidates(
 ) {
   if (
     !sourceResponseState ||
-    (sourceResponseState.sourceResponseFormat !== 'topic_spans' &&
+    (sourceResponseState.sourceResponseFormat !== 'topic_clauses' &&
+      sourceResponseState.sourceResponseFormat !== 'topic_spans' &&
       sourceResponseState.sourceResponseFormat !== 'topic_middle_spans' &&
       sourceResponseState.sourceResponseFormat !== 'topic_closing_spans' &&
       sourceResponseState.sourceResponseFormat !== 'topic_closing_blocks' &&
@@ -8885,12 +13419,55 @@ function registerTopicAnchorCandidates(
 
   sourceResponseState.topicAnchorCandidateLabels = candidateLabels
   if (changed) {
+    sourceResponseState.topicClauses = undefined
     sourceResponseState.topicSpans = undefined
     sourceResponseState.topicMiddleSpans = undefined
     sourceResponseState.topicClosingSpans = undefined
     sourceResponseState.topicClosingBlocks = undefined
     sourceResponseState.topicMiddleBlocks = undefined
     sourceResponseState.topicBlocks = undefined
+  }
+}
+
+function registerQuestionAnchorCandidateGroups(
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+  candidateGroups: string[][],
+) {
+  if (
+    !sourceResponseState ||
+    (sourceResponseState.sourceResponseFormat !== 'question_spans' &&
+      sourceResponseState.sourceResponseFormat !== 'question_middle_spans' &&
+      sourceResponseState.sourceResponseFormat !== 'question_closing_spans')
+  ) {
+    return
+  }
+
+  const groups = sourceResponseState.questionAnchorCandidateGroups ?? []
+  const lookup = sourceResponseState.questionAnchorCandidateLookup ?? new Map<string, number>()
+  let changed = false
+
+  for (const candidateGroup of candidateGroups) {
+    const dedupedGroup = dedupeNonEmptyStrings(candidateGroup)
+    if (dedupedGroup.length === 0) {
+      continue
+    }
+
+    const groupKey = buildMatchingRunCandidateGroupKey(dedupedGroup)
+    if (!groupKey || lookup.has(groupKey)) {
+      continue
+    }
+
+    lookup.set(groupKey, groups.length)
+    groups.push(dedupedGroup)
+    changed = true
+  }
+
+  sourceResponseState.questionAnchorCandidateGroups = groups
+  sourceResponseState.questionAnchorCandidateLookup = lookup
+  if (changed) {
+    sourceResponseState.questionSpans = undefined
+    sourceResponseState.questionMiddleSpans = undefined
+    sourceResponseState.questionClosingSpans = undefined
   }
 }
 
@@ -9345,10 +13922,4894 @@ function findMatchingKnownDecisionsForTopicBlock(
 }
 
 function stripQuestionBlockLabel(question: string) {
-  return question
-    .trim()
+  return stripLeadingQuestionPromptConjunction(question)
     .replace(/[?？]+\s*$/u, '')
     .trim()
+}
+
+function inferSummaryFromQuestionLabel(question: string) {
+  return inferCanonicalQuestionAnchorSummary(question) ?? stripQuestionBlockLabel(question)
+}
+
+function inferComparableQuestionTopicSummary(question: string) {
+  return (
+    inferCanonicalQuestionAnchorSummary(question) ??
+    normalizeExtractedTopicSummary(stripQuestionBlockLabel(question), true)
+  )
+}
+
+function inferComparableExplicitLabelSummary(label: string) {
+  return inferCanonicalQuestionAnchorSummary(label) ?? normalizeExtractedTopicSummary(label, true)
+}
+
+const SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES = [
+  ['any', 'time'],
+  ['as', 'far', 'as'],
+  ['as', 'long', 'as'],
+  ['as', 'much', 'as'],
+  ['as', 'soon', 'as'],
+  ['as', 'if'],
+  ['as', 'though'],
+  ['again', 'and', 'again'],
+  ['all', 'along'],
+  ['all', 'at', 'once'],
+  ['all', 'of', 'a', 'sudden'],
+  ['all', 'the', 'while'],
+  ['all', 'this', 'time'],
+  ['all', 'too', 'often'],
+  ['at', 'another', 'point'],
+  ['at', 'an', 'early', 'stage'],
+  ['at', 'first'],
+  ['at', 'intervals'],
+  ['at', 'irregular', 'intervals'],
+  ['at', 'last'],
+  ['at', 'length'],
+  ['at', 'present'],
+  ['at', 'regular', 'intervals'],
+  ['at', 'some', 'stage'],
+  ['at', 'that', 'point'],
+  ['at', 'that', 'stage'],
+  ['at', 'the', 'outset'],
+  ['at', 'this', 'point'],
+  ['at', 'this', 'stage'],
+  ['even', 'as'],
+  ['even', 'if'],
+  ['even', 'when'],
+  ['even', 'though'],
+  ['except', 'if'],
+  ['except', 'when'],
+  ['at', 'one', 'point'],
+  ['at', 'some', 'point'],
+  ['at', 'times'],
+  ['by', 'the', 'time'],
+  ['each', 'time'],
+  ['every', 'time'],
+  ['every', 'now', 'and', 'again'],
+  ['every', 'now', 'and', 'then'],
+  ['every', 'blue', 'moon'],
+  ['every', 'once', 'in', 'a', 'while'],
+  ['every', 'so', 'often'],
+  ['fear', 'that'],
+  ['fifth', 'time'],
+  ['first', 'time'],
+  ['fourth', 'time'],
+  ['for', 'fear', 'that'],
+  ['for', 'a', 'while'],
+  ['for', 'the', 'foreseeable', 'future'],
+  ['for', 'the', 'near', 'future'],
+  ['for', 'now'],
+  ['for', 'quite', 'a', 'while'],
+  ['for', 'the', 'time', 'being'],
+  ['from', 'time', 'immemorial'],
+  ['from', 'time', 'to', 'time'],
+  ['given', 'that'],
+  ['independent', 'of', 'whether'],
+  ['in', 'case'],
+  ['in', 'due', 'course'],
+  ['in', 'the', 'meantime'],
+  ['inasmuch', 'as'],
+  ['in', 'order', 'to'],
+  ['insofar', 'as'],
+  ['irrespective', 'of', 'whether'],
+  ['just', 'as'],
+  ['last', 'time'],
+  ['now', 'and', 'again'],
+  ['now', 'and', 'then'],
+  ['next', 'time'],
+  ['not', 'infrequently'],
+  ['second', 'time'],
+  ['third', 'time'],
+  ['the', 'first', 'time'],
+  ['the', 'fifth', 'time'],
+  ['the', 'fourth', 'time'],
+  ['the', 'instant'],
+  ['the', 'last', 'time'],
+  ['the', 'minute'],
+  ['the', 'moment'],
+  ['the', 'next', 'time'],
+  ['the', 'ninth', 'time'],
+  ['the', 'second', 'time'],
+  ['the', 'seventh', 'time'],
+  ['the', 'sixth', 'time'],
+  ['the', 'tenth', 'time'],
+  ['the', 'third', 'time'],
+  ['the', 'eighth', 'time'],
+  ['now', 'that'],
+  ['no', 'matter', 'how'],
+  ['no', 'matter', 'if'],
+  ['no', 'matter', 'when'],
+  ['no', 'matter', 'whether'],
+  ['once', 'again'],
+  ['once', 'in', 'a', 'blue', 'moon'],
+  ['only', 'if'],
+  ['only', 'when'],
+  ['off', 'and', 'on'],
+  ['on', 'and', 'off'],
+  ['on', 'a', 'daily', 'basis'],
+  ['on', 'a', 'monthly', 'basis'],
+  ['on', 'a', 'regular', 'basis'],
+  ['on', 'a', 'weekly', 'basis'],
+  ['on', 'a', 'yearly', 'basis'],
+  ['on', 'an', 'irregular', 'basis'],
+  ['on', 'occasion'],
+  ['on', 'rare', 'occasions'],
+  ['on', 'short', 'notice'],
+  ['once', 'in', 'a', 'while'],
+  ['over', 'and', 'over'],
+  ['over', 'and', 'over', 'again'],
+  ['provided', 'that'],
+  ['regardless', 'of', 'whether'],
+  ['save', 'that'],
+  ['seeing', 'that'],
+  ['so', 'long', 'as'],
+  ['so', 'far', 'as'],
+  ['so', 'often'],
+  ['so', 'that'],
+  ['sooner', 'or', 'later'],
+  ['supposing', 'that'],
+  ['more', 'often', 'than', 'not'],
+  ['time', 'after', 'time'],
+  ['time', 'and', 'again'],
+  ['time', 'and', 'time', 'again'],
+  ['to', 'date'],
+  ['to', 'this', 'day'],
+  ['until', 'then'],
+  ['after', 'a', 'while'],
+  ['after', 'a', 'time'],
+  ['after', 'some', 'time'],
+  ['after'],
+  ['afterward'],
+  ['afterwards'],
+  ['accordingly'],
+  ['admittedly'],
+  ['although'],
+  ['alternatively'],
+  ['another', 'time'],
+  ['apparently'],
+  ['arguably'],
+  ['assuming'],
+  ['at', 'irregular', 'times'],
+  ['at', 'regular', 'times'],
+  ['at', 'short', 'notice'],
+  ['back', 'and', 'forth'],
+  ['before', 'too', 'long'],
+  ['because'],
+  ['before', 'long'],
+  ['before'],
+  ['beforehand'],
+  ['basically'],
+  ['by', 'then'],
+  ['broadly'],
+  ['certainly'],
+  ['chiefly'],
+  ['conceivably'],
+  ['concurrently'],
+  ['collectively'],
+  ['consequently'],
+  ['crucially'],
+  ['conventionally'],
+  ['conversely'],
+  ['currently'],
+  ['day', 'after', 'day'],
+  ['day', 'by', 'day'],
+  ['decidedly'],
+  ['definitely'],
+  ['earlier'],
+  ['effectively'],
+  ['essentially'],
+  ['evidently'],
+  ['ever', 'since'],
+  ['finally'],
+  ['formally'],
+  ['for', 'a', 'time'],
+  ['for', 'the', 'first', 'little', 'while'],
+  ['for', 'the', 'next', 'little', 'while'],
+  ['formerly'],
+  ['granted'],
+  ['for', 'some', 'time'],
+  ['from', 'day', 'one'],
+  ['from', 'now', 'on'],
+  ['from', 'the', 'beginning'],
+  ['from', 'the', 'outset'],
+  ['from', 'that', 'point', 'on'],
+  ['from', 'then', 'on'],
+  ['from', 'this', 'point', 'on'],
+  ['fundamentally'],
+  ['given'],
+  ['gradually'],
+  ['generally'],
+  ['hence'],
+  ['henceforth'],
+  ['henceforward'],
+  ['hereafter'],
+  ['hereby'],
+  ['hereupon'],
+  ['historically'],
+  ['if'],
+  ['ideally'],
+  ['immediately'],
+  ['implicitly'],
+  ['importantly'],
+  ['incidentally'],
+  ['individually'],
+  ['initially'],
+  ['informally'],
+  ['instantly'],
+  ['instead'],
+  ['inevitably'],
+  ['lately'],
+  ['lest'],
+  ['later'],
+  ['largely'],
+  ['in', 'the', 'early', 'stages'],
+  ['loosely'],
+  ['in', 'no', 'time'],
+  ['in', 'the', 'foreseeable', 'future'],
+  ['in', 'the', 'fullness', 'of', 'time'],
+  ['in', 'the', 'later', 'stages'],
+  ['in', 'short', 'order'],
+  ['in', 'the', 'beginning'],
+  ['in', 'the', 'end'],
+  ['in', 'the', 'long', 'run'],
+  ['in', 'the', 'long', 'term'],
+  ['in', 'the', 'medium', 'term'],
+  ['in', 'the', 'near', 'term'],
+  ['in', 'the', 'near', 'future'],
+  ['in', 'the', 'short', 'run'],
+  ['in', 'the', 'short', 'term'],
+  ['in', 'time'],
+  ['instant'],
+  ['little', 'by', 'little'],
+  ['meanwhile'],
+  ['mainly'],
+  ['manifestly'],
+  ['merely'],
+  ['minute'],
+  ['moment'],
+  ['momentarily'],
+  ['month', 'after', 'month'],
+  ['naturally'],
+  ['ninth', 'time'],
+  ['night', 'after', 'night'],
+  ['normally'],
+  ['nowadays'],
+  ['notably'],
+  ['occasionally'],
+  ['officially'],
+  ['ordinarily'],
+  ['ostensibly'],
+  ['otherwise'],
+  ['over', 'time'],
+  ['nominally'],
+  ['narrowly'],
+  ['partially'],
+  ['partly'],
+  ['permanently'],
+  ['possibly'],
+  ['practically'],
+  ['predominantly'],
+  ['provided'],
+  ['presently'],
+  ['previously'],
+  ['primarily'],
+  ['promptly'],
+  ['provisionally'],
+  ['potentially'],
+  ['presumably'],
+  ['principally'],
+  ['approximately'],
+  ['save'],
+  ['realistically'],
+  ['regularly'],
+  ['recently'],
+  ['remarkably'],
+  ['roughly'],
+  ['seemingly'],
+  ['simply'],
+  ['similarly'],
+  ['simultaneously'],
+  ['seventh', 'time'],
+  ['seeing'],
+  ['since', 'then'],
+  ['since'],
+  ['sixth', 'time'],
+  ['soon'],
+  ['shortly'],
+  ['sometimes'],
+  ['specifically'],
+  ['step', 'by', 'step'],
+  ['strictly'],
+  ['subsequently'],
+  ['supposing'],
+  ['surely'],
+  ['tentatively'],
+  ['thereafter'],
+  ['thereupon'],
+  ['that', 'time'],
+  ['tenth', 'time'],
+  ['temporarily'],
+  ['this', 'time'],
+  ['theoretically'],
+  ['technically'],
+  ['though'],
+  ['traditionally'],
+  ['typically'],
+  ['thereby'],
+  ['therefore'],
+  ['ultimately'],
+  ['undoubtedly'],
+  ['usually'],
+  ['thus'],
+  ['virtually'],
+  ['eventually'],
+  ['explicitly'],
+  ['academically'],
+  ['aesthetically'],
+  ['administratively'],
+  ['allegedly'],
+  ['algorithmically'],
+  ['analytically'],
+  ['alarmingly'],
+  ['amazingly'],
+  ['abstractly'],
+  ['architecturally'],
+  ['astonishingly'],
+  ['automatically'],
+  ['abruptly'],
+  ['biologically'],
+  ['bizarrely'],
+  ['briefly'],
+  ['carefully'],
+  ['canonically'],
+  ['clearly'],
+  ['civically'],
+  ['chronologically'],
+  ['clinically'],
+  ['commonly'],
+  ['commercially'],
+  ['comparatively'],
+  ['computationally'],
+  ['concretely'],
+  ['coincidentally'],
+  ['conceptually'],
+  ['conveniently'],
+  ['confidentially'],
+  ['constitutionally'],
+  ['contextually'],
+  ['counterintuitively'],
+  ['contractually'],
+  ['critically'],
+  ['curiously'],
+  ['cynically'],
+  ['demographically'],
+  ['descriptively'],
+  ['diagnostically'],
+  ['domestically'],
+  ['dramatically'],
+  ['culturally'],
+  ['delicately'],
+  ['deliberately'],
+  ['directly'],
+  ['ecologically'],
+  ['economically'],
+  ['empirically'],
+  ['ethically'],
+  ['environmentally'],
+  ['exactly'],
+  ['expectedly'],
+  ['experimentally'],
+  ['externally'],
+  ['financially'],
+  ['figuratively'],
+  ['famously'],
+  ['fortunately'],
+  ['frankly'],
+  ['frequently'],
+  ['functionally'],
+  ['geographically'],
+  ['geologically'],
+  ['globally'],
+  ['grammatically'],
+  ['happily'],
+  ['hermeneutically'],
+  ['honestly'],
+  ['iconically'],
+  ['ideologically'],
+  ['indirectly'],
+  ['industrially'],
+  ['institutionally'],
+  ['incredibly'],
+  ['inexplicably'],
+  ['internationally'],
+  ['internally'],
+  ['interestingly'],
+  ['intentionally'],
+  ['intuitively'],
+  ['ironically'],
+  ['juridically'],
+  ['judicially'],
+  ['legally'],
+  ['likewise'],
+  ['literally'],
+  ['literarily'],
+  ['linguistically'],
+  ['locally'],
+  ['logistically'],
+  ['loudly'],
+  ['managerially'],
+  ['mathematically'],
+  ['mechanically'],
+  ['mechanistically'],
+  ['maybe'],
+  ['mercifully'],
+  ['medically'],
+  ['metaphorically'],
+  ['methodologically'],
+  ['musically'],
+  ['mysteriously'],
+  ['narratively'],
+  ['notionally'],
+  ['notoriously'],
+  ['normatively'],
+  ['numerically'],
+  ['objectively'],
+  ['oddly'],
+  ['openly'],
+  ['operationally'],
+  ['organizationally'],
+  ['perhaps'],
+  ['paradoxically'],
+  ['pedagogically'],
+  ['personally'],
+  ['philosophically'],
+  ['physically'],
+  ['plainly'],
+  ['politely'],
+  ['pragmatically'],
+  ['prescriptively'],
+  ['precisely'],
+  ['puzzlingly'],
+  ['probabilistically'],
+  ['originally'],
+  ['predictably'],
+  ['privately'],
+  ['politically'],
+  ['procedurally'],
+  ['professionally'],
+  ['psychologically'],
+  ['publicly'],
+  ['purposely'],
+  ['quietly'],
+  ['qualitatively'],
+  ['quantitatively'],
+  ['rarely'],
+  ['readily'],
+  ['regionally'],
+  ['regrettably'],
+  ['reportedly'],
+  ['respectfully'],
+  ['rhetorically'],
+  ['routinely'],
+  ['sadly'],
+  ['scientifically'],
+  ['secretly'],
+  ['semantically'],
+  ['seriously'],
+  ['shockingly'],
+  ['socially'],
+  ['sociologically'],
+  ['speculatively'],
+  ['surprisingly'],
+  ['statistically'],
+  ['stylistically'],
+  ['structurally'],
+  ['strategically'],
+  ['strangely'],
+  ['supposedly'],
+  ['suddenly'],
+  ['swiftly'],
+  ['sympathetically'],
+  ['symbolically'],
+  ['systematically'],
+  ['sharply'],
+  ['slowly'],
+  ['tactically'],
+  ['technologically'],
+  ['thankfully'],
+  ['thematically'],
+  ['textually'],
+  ['topologically'],
+  ['tragically'],
+  ['typologically'],
+  ['unexpectedly'],
+  ['unfortunately'],
+  ['understandably'],
+  ['unbelievably'],
+  ['unsurprisingly'],
+  ['unusually'],
+  ['verbally'],
+  ['viscerally'],
+  ['visibly'],
+  ['visually'],
+  ['wonderfully'],
+  ['week', 'after', 'week'],
+  ['with', 'time'],
+  ['until'],
+  ['unless'],
+  ['eighth', 'time'],
+  ['whenever'],
+  ['whether', 'or', 'not'],
+  ['whether'],
+  ['whereas'],
+  ['wherever'],
+  ['while'],
+  ['wisely'],
+  ['customarily'],
+  ['morally'],
+  ['year', 'after', 'year'],
+] as const
+
+const SUBORDINATE_CLAUSE_LEADING_WORDS = new Set(
+  [
+    ...SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES.flatMap((sequence) =>
+      sequence.length === 1 ? [sequence[0]] : [],
+    ),
+    'once',
+    'twice',
+    'thrice',
+  ],
+)
+
+const MULTI_TOKEN_SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES =
+  SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES.filter((sequence) => sequence.length > 1)
+
+const SUBORDINATE_CLAUSE_ORDINAL_TIME_SINGLE_TOKEN_ORDINALS = new Set([
+  'first',
+  'second',
+  'third',
+  'fourth',
+  'fifth',
+  'sixth',
+  'seventh',
+  'eighth',
+  'ninth',
+  'tenth',
+  'eleventh',
+  'twelfth',
+  'thirteenth',
+  'fourteenth',
+  'fifteenth',
+  'sixteenth',
+  'seventeenth',
+  'eighteenth',
+  'nineteenth',
+  'twentieth',
+  'thirtieth',
+  'fortieth',
+  'fiftieth',
+  'sixtieth',
+  'seventieth',
+  'eightieth',
+  'ninetieth',
+  'hundredth',
+])
+
+const SUBORDINATE_CLAUSE_ORDINAL_TIME_TENS_TOKENS = new Set([
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+])
+
+const SUBORDINATE_CLAUSE_ORDINAL_TIME_COMPOUND_TAIL_TOKENS = new Set([
+  'first',
+  'second',
+  'third',
+  'fourth',
+  'fifth',
+  'sixth',
+  'seventh',
+  'eighth',
+  'ninth',
+])
+
+const SUBORDINATE_CLAUSE_TIME_LEADING_SIMPLE_HEAD_TOKENS = new Set([
+  'another',
+  'any',
+  'each',
+  'every',
+  'last',
+  'many',
+  'most',
+  'next',
+  'one',
+  'only',
+  'other',
+  'same',
+  'several',
+  'some',
+  'that',
+  'this',
+])
+
+const SUBORDINATE_CLAUSE_TIME_LEADING_OPTIONAL_PREFIX_TOKENS = new Set(['very', 'yet'])
+
+const SUBORDINATE_CLAUSE_TIME_LEADING_OPTIONAL_MIDDLE_TOKENS = new Set([
+  'couple',
+  'every',
+  'few',
+  'more',
+  'other',
+  'several',
+  'single',
+])
+
+const SUBORDINATE_CLAUSE_TIME_PLURAL_QUANTITY_TOKENS = new Set([
+  'couple',
+  'few',
+  'several',
+])
+
+const SUBORDINATE_CLAUSE_TIME_DIRECT_TIMES_COUNT_HEAD_TOKENS = new Set([
+  'countless',
+  'half',
+  'multiple',
+  'numerous',
+])
+
+const SUBORDINATE_CLAUSE_TIME_LEXICAL_COUNT_HEAD_TOKENS = new Set(['once', 'twice', 'thrice'])
+
+const SUBORDINATE_CLAUSE_TIME_COUNT_NOUN_LEADING_QUANTIFIER_TOKENS = new Set([
+  'few',
+  'many',
+  'several',
+])
+
+const SUBORDINATE_CLAUSE_TIME_SINGLE_TOKEN_CARDINAL_TOKENS = new Set([
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+])
+
+const SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TENS_TOKENS = new Set([
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+])
+
+const SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TAIL_TOKENS = new Set([
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+])
+
+const SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS = new Set([
+  'score',
+  'dozen',
+  'hundred',
+  'thousand',
+])
+
+const SUBORDINATE_CLAUSE_TIME_PLURAL_COUNT_NOUN_TOKENS = new Set([
+  'scores',
+  'dozens',
+  'hundreds',
+  'thousands',
+])
+
+const SUBORDINATE_CLAUSE_TIME_DIRECT_THE_TIME_HEAD_TOKENS = new Set(['all', 'half'])
+
+const SUBORDINATE_CLAUSE_TIME_OF_THE_TIME_HEAD_TOKENS = new Set([
+  'all',
+  'half',
+  'most',
+  'much',
+  'part',
+  'rest',
+  'some',
+])
+
+const SUBORDINATE_CLAUSE_TIME_OF_TIMES_HEAD_TOKENS = new Set(['plenty'])
+
+const SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_MODIFIER_TOKENS = new Set([
+  'awful',
+  'fair',
+  'good',
+  'great',
+  'half',
+  'huge',
+  'large',
+  'small',
+  'tiny',
+  'very',
+  'whole',
+])
+
+const SUBORDINATE_CLAUSE_TIME_PRE_ARTICLE_PREFIX_TOKENS = new Set([
+  'just',
+  'only',
+  'quite',
+])
+
+const SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS = new Set([
+  'couple',
+  'few',
+  'many',
+])
+
+const SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS = new Set([
+  'couple',
+  'few',
+])
+
+const SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS = new Set([
+  'more',
+])
+
+const SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS = new Set([
+  'more',
+  'so',
+])
+
+const SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OF_TIMES_HEAD_TOKENS = new Set([
+  'bunch',
+  'couple',
+  'handful',
+  'lot',
+  'number',
+])
+
+const SUBORDINATE_CLAUSE_TIME_BARE_OF_TIMES_HEAD_TOKENS = new Set([
+  'bunch',
+  'couple',
+  'handful',
+  'lot',
+  'number',
+])
+
+const SUBORDINATE_CLAUSE_PREPOSITIONAL_TIME_LEADING_TOKENS = new Set([
+  'at',
+  'by',
+  'for',
+  'from',
+])
+
+const SUBORDINATE_CLAUSE_PREPOSITIONAL_TIME_POINT_HEAD_TOKENS = new Set([
+  'instant',
+  'minute',
+  'moment',
+])
+
+const SUBORDINATE_CLAUSE_TIME_DURATION_UNIT_TOKENS = new Set([
+  'ages',
+  'centuries',
+  'days',
+  'decades',
+  'months',
+  'weeks',
+  'years',
+])
+
+const SUBORDINATE_CLAUSE_TIME_DURATION_HORIZON_MODIFIER_TOKENS = new Set([
+  'long',
+  'medium',
+  'short',
+])
+
+function matchLeadingTokenSequenceLength(
+  tokens: string[],
+  sequences: readonly (readonly string[])[],
+) {
+  let bestMatchLength: number | undefined
+
+  for (const sequence of sequences) {
+    if (sequence.length > tokens.length) {
+      continue
+    }
+
+    let matches = true
+    for (let index = 0; index < sequence.length; index += 1) {
+      if (tokens[index] !== sequence[index]) {
+        matches = false
+        break
+      }
+    }
+
+    if (matches) {
+      bestMatchLength = Math.max(bestMatchLength ?? 0, sequence.length)
+    }
+  }
+
+  return bestMatchLength
+}
+
+function sourceResponseStartsWithProtectedLeadingConjunctionSequence(sourceResponse: string) {
+  const normalizedLabel = normalizeSourceResponseLabel(sourceResponse)
+  if (!normalizedLabel) {
+    return false
+  }
+
+  const tokens = normalizedLabel.split(' ').filter(Boolean)
+  const leadingSequenceLength = matchLeadingSubordinateClauseSequenceLength(tokens)
+  if (leadingSequenceLength === undefined) {
+    return false
+  }
+
+  const leadingTokens = tokens.slice(0, leadingSequenceLength)
+  return leadingTokens.includes('and') || leadingTokens.includes('then')
+}
+
+function matchGenericTimeSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  let tokenIndex = startIndex
+
+  while (
+    tokenIndex < tokens.length &&
+    SUBORDINATE_CLAUSE_TIME_LEADING_OPTIONAL_PREFIX_TOKENS.has(tokens[tokenIndex] ?? '')
+  ) {
+    tokenIndex += 1
+  }
+
+  if (tokenIndex >= tokens.length) {
+    return undefined
+  }
+
+  const simpleHeadToken = tokens[tokenIndex]
+  if (
+    simpleHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_LEADING_SIMPLE_HEAD_TOKENS.has(simpleHeadToken)
+  ) {
+    let nounIndex = tokenIndex + 1
+
+    while (
+      nounIndex < tokens.length &&
+      SUBORDINATE_CLAUSE_TIME_LEADING_OPTIONAL_MIDDLE_TOKENS.has(tokens[nounIndex] ?? '')
+    ) {
+      nounIndex += 1
+    }
+
+    const nounToken = tokens[nounIndex]
+    const previousToken = tokens[nounIndex - 1]
+    if (nounToken === 'time') {
+      if (simpleHeadToken === 'some') {
+        return previousToken === 'other' || previousToken === 'some'
+          ? nounIndex - startIndex + 1
+          : undefined
+      }
+
+      if (simpleHeadToken === 'most') {
+        return previousToken === 'every' ? nounIndex - startIndex + 1 : undefined
+      }
+
+      return nounIndex - startIndex + 1
+    }
+
+    if (
+      nounToken === 'times' &&
+      (simpleHeadToken === 'many' ||
+        simpleHeadToken === 'most' ||
+        simpleHeadToken === 'several' ||
+        simpleHeadToken === 'some' ||
+        SUBORDINATE_CLAUSE_TIME_LEADING_OPTIONAL_MIDDLE_TOKENS.has(
+          tokens[nounIndex - 1] ?? '',
+        ))
+    ) {
+      return nounIndex - startIndex + 1
+    }
+
+    if (
+      nounToken === 'of' &&
+      previousToken &&
+      SUBORDINATE_CLAUSE_TIME_BARE_OF_TIMES_HEAD_TOKENS.has(previousToken) &&
+      tokens[nounIndex + 1] === 'times'
+    ) {
+      return nounIndex - startIndex + 2
+    }
+
+    if (
+      nounToken &&
+      SUBORDINATE_CLAUSE_TIME_BARE_OF_TIMES_HEAD_TOKENS.has(nounToken) &&
+      tokens[nounIndex + 1] === 'of' &&
+      tokens[nounIndex + 2] === 'times'
+    ) {
+      return nounIndex - startIndex + 3
+    }
+  }
+
+  const ordinalTimeSequenceLength = matchOrdinalTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    tokenIndex,
+  )
+  if (ordinalTimeSequenceLength !== undefined) {
+    return tokenIndex - startIndex + ordinalTimeSequenceLength
+  }
+
+  const quantifiedTimeSequenceLength = matchQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+    tokens,
+    tokenIndex,
+  )
+  if (quantifiedTimeSequenceLength !== undefined) {
+    return tokenIndex - startIndex + quantifiedTimeSequenceLength
+  }
+
+  return undefined
+}
+
+function matchDurationUnitTemporalPhraseSequenceLengthAt(tokens: string[], startIndex: number) {
+  const firstToken = tokens[startIndex]
+  const secondToken = tokens[startIndex + 1]
+  const thirdToken = tokens[startIndex + 2]
+  const fourthToken = tokens[startIndex + 3]
+
+  if (
+    firstToken === 'for' &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_TIME_DURATION_UNIT_TOKENS.has(secondToken)
+  ) {
+    return 2
+  }
+
+  if (
+    firstToken === 'over' &&
+    secondToken === 'the' &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_DURATION_UNIT_TOKENS.has(thirdToken)
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken === 'over' &&
+    secondToken === 'the' &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_DURATION_HORIZON_MODIFIER_TOKENS.has(thirdToken) &&
+    fourthToken === 'term'
+  ) {
+    return 4
+  }
+
+  if (
+    firstToken === 'in' &&
+    secondToken === 'recent' &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_DURATION_UNIT_TOKENS.has(thirdToken)
+  ) {
+    return 3
+  }
+
+  return undefined
+}
+
+function isOrdinalTimeLeadingToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (SUBORDINATE_CLAUSE_ORDINAL_TIME_SINGLE_TOKEN_ORDINALS.has(token) ||
+        /^\d+(?:st|nd|rd|th)$/i.test(token)),
+  )
+}
+
+function matchOrdinalTimeSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const firstToken = tokens[startIndex]
+  const secondToken = tokens[startIndex + 1]
+  const thirdToken = tokens[startIndex + 2]
+  const fourthToken = tokens[startIndex + 3]
+  const fifthToken = tokens[startIndex + 4]
+
+  if (isOrdinalTimeLeadingToken(firstToken)) {
+    if (secondToken === 'time') {
+      return 2
+    }
+
+    if (
+      secondToken &&
+      SUBORDINATE_CLAUSE_TIME_PLURAL_QUANTITY_TOKENS.has(secondToken) &&
+      thirdToken === 'times'
+    ) {
+      return 3
+    }
+
+    if (
+      secondToken &&
+      SUBORDINATE_CLAUSE_TIME_BARE_OF_TIMES_HEAD_TOKENS.has(secondToken) &&
+      thirdToken === 'of' &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_ORDINAL_TIME_TENS_TOKENS.has(firstToken) &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_ORDINAL_TIME_COMPOUND_TAIL_TOKENS.has(secondToken)
+  ) {
+    if (thirdToken === 'time') {
+      return 3
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_PLURAL_QUANTITY_TOKENS.has(thirdToken) &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_BARE_OF_TIMES_HEAD_TOKENS.has(thirdToken) &&
+      fourthToken === 'of' &&
+      fifthToken === 'times'
+    ) {
+      return 5
+    }
+  }
+
+  return undefined
+}
+
+function isSingleTokenCardinalTimeLeadingToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (SUBORDINATE_CLAUSE_TIME_SINGLE_TOKEN_CARDINAL_TOKENS.has(token) || /^\d+$/.test(token)),
+  )
+}
+
+function matchTimeCardinalSequenceLengthAt(tokens: string[], startIndex: number): number | undefined {
+  const firstToken = tokens[startIndex]
+  const secondToken = tokens[startIndex + 1]
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TENS_TOKENS.has(firstToken) &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TAIL_TOKENS.has(secondToken)
+  ) {
+    return 2
+  }
+
+  return isSingleTokenCardinalTimeLeadingToken(firstToken) ? 1 : undefined
+}
+
+function getTimeLexicalCountOrder(token: string | undefined) {
+  switch (token) {
+    case 'once':
+      return 1
+    case 'twice':
+      return 2
+    case 'thrice':
+      return 3
+    default:
+      return undefined
+  }
+}
+
+function matchTimeCardinalRangeSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const firstCardinalLength = matchTimeCardinalSequenceLengthAt(tokens, startIndex)
+  if (firstCardinalLength === undefined || tokens[startIndex + firstCardinalLength] !== 'or') {
+    return undefined
+  }
+
+  const secondCardinalStartIndex = startIndex + firstCardinalLength + 1
+  const secondCardinalLength = matchTimeCardinalSequenceLengthAt(tokens, secondCardinalStartIndex)
+  if (secondCardinalLength === undefined) {
+    return undefined
+  }
+
+  const afterSecondCardinalIndex = secondCardinalStartIndex + secondCardinalLength
+  const afterSecondCardinalToken = tokens[afterSecondCardinalIndex]
+  const followingToken = tokens[afterSecondCardinalIndex + 1]
+  const trailingToken = tokens[afterSecondCardinalIndex + 2]
+
+  if (afterSecondCardinalToken === 'times') {
+    return afterSecondCardinalIndex - startIndex + 1
+  }
+
+  if (
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+      afterSecondCardinalToken ?? '',
+    ) &&
+    followingToken === 'times'
+  ) {
+    return afterSecondCardinalIndex - startIndex + 2
+  }
+
+  if (
+    afterSecondCardinalToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(afterSecondCardinalToken)
+  ) {
+    if (followingToken === 'times') {
+      return afterSecondCardinalIndex - startIndex + 2
+    }
+
+    if (
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(followingToken ?? '') &&
+      trailingToken === 'times'
+    ) {
+      return afterSecondCardinalIndex - startIndex + 3
+    }
+  }
+
+  return undefined
+}
+
+function matchCountBasedTimeSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const firstToken = tokens[startIndex]
+  const secondToken = tokens[startIndex + 1]
+  const thirdToken = tokens[startIndex + 2]
+  const fourthToken = tokens[startIndex + 3]
+  const fifthToken = tokens[startIndex + 4]
+  const sixthToken = tokens[startIndex + 5]
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_DIRECT_TIMES_COUNT_HEAD_TOKENS.has(firstToken) &&
+    secondToken === 'times'
+  ) {
+    return 2
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_DIRECT_TIMES_COUNT_HEAD_TOKENS.has(firstToken) &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(secondToken ?? '') &&
+    thirdToken === 'times'
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_LEXICAL_COUNT_HEAD_TOKENS.has(firstToken)
+  ) {
+    if (secondToken === 'more') {
+      return 2
+    }
+
+    if (
+      secondToken === 'or' &&
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_LEXICAL_COUNT_HEAD_TOKENS.has(thirdToken) &&
+      getTimeLexicalCountOrder(thirdToken) === getTimeLexicalCountOrder(firstToken)! + 1
+    ) {
+      if (fourthToken === 'more') {
+        return 4
+      }
+
+      return 3
+    }
+
+    return 1
+  }
+
+  const cardinalRangeSequenceLength = matchTimeCardinalRangeSequenceLengthAt(tokens, startIndex)
+  if (cardinalRangeSequenceLength !== undefined) {
+    return cardinalRangeSequenceLength
+  }
+
+  if (isSingleTokenCardinalTimeLeadingToken(firstToken)) {
+    if (secondToken === 'times') {
+      return 2
+    }
+
+    if (
+      secondToken === 'or' &&
+      isSingleTokenCardinalTimeLeadingToken(thirdToken) &&
+      ((fourthToken === 'times' ||
+        (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '') &&
+          fifthToken === 'times')) ||
+        (fourthToken &&
+          SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(fourthToken) &&
+          (fifthToken === 'times' ||
+            (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+              fifthToken ?? '',
+            ) &&
+              sixthToken === 'times'))))
+    ) {
+      if (fourthToken === 'times') {
+        return 4
+      }
+
+      if (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '')) {
+        return 5
+      }
+
+      return fifthToken === 'times' ? 5 : 6
+    }
+
+    if (
+      secondToken &&
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(secondToken) &&
+      thirdToken === 'times'
+    ) {
+      return 3
+    }
+
+    if (
+      secondToken &&
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(secondToken) &&
+      thirdToken === 'times'
+    ) {
+      return 3
+    }
+
+    if (
+      secondToken &&
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(secondToken) &&
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(thirdToken) &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TENS_TOKENS.has(firstToken) &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_TIME_COMPOUND_CARDINAL_TAIL_TOKENS.has(secondToken)
+  ) {
+    if (thirdToken === 'times') {
+      return 3
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(thirdToken) &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(thirdToken) &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(thirdToken) &&
+      fourthToken &&
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken) &&
+      fifthToken === 'times'
+    ) {
+      return 5
+    }
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_COUNT_NOUN_LEADING_QUANTIFIER_TOKENS.has(firstToken) &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(secondToken)
+  ) {
+    if (thirdToken === 'times') {
+      return 3
+    }
+
+    if (
+      thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(thirdToken) &&
+      fourthToken === 'times'
+    ) {
+      return 4
+    }
+
+    if (
+      thirdToken === 'and' &&
+      fourthToken === 'a' &&
+      fifthToken === 'half' &&
+      (sixthToken === 'times' ||
+        (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+          sixthToken ?? '',
+        ) &&
+          tokens[startIndex + 6] === 'times'))
+    ) {
+      return sixthToken === 'times' ? 6 : 7
+    }
+
+    if (thirdToken === 'or') {
+      if (
+        fourthToken === 'so' &&
+        (fifthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            fifthToken ?? '',
+          ) &&
+            sixthToken === 'times'))
+      ) {
+        return fifthToken === 'times' ? 5 : 6
+      }
+
+      if (fourthToken === 'more' && fifthToken === 'times') {
+        return 5
+      }
+
+      const cardinalLength = matchTimeCardinalSequenceLengthAt(tokens, startIndex + 3)
+      if (cardinalLength !== undefined) {
+        const afterCardinalIndex = startIndex + 3 + cardinalLength
+        if (tokens[afterCardinalIndex] === 'times') {
+          return afterCardinalIndex - startIndex + 1
+        }
+
+        if (
+          SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            tokens[afterCardinalIndex] ?? '',
+          ) &&
+          tokens[afterCardinalIndex + 1] === 'times'
+        ) {
+          return afterCardinalIndex - startIndex + 2
+        }
+      }
+    }
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_PLURAL_COUNT_NOUN_TOKENS.has(firstToken) &&
+    secondToken === 'of' &&
+    thirdToken === 'times'
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_PLURAL_COUNT_NOUN_TOKENS.has(firstToken) &&
+    secondToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(secondToken) &&
+    thirdToken === 'times'
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_PLURAL_COUNT_NOUN_TOKENS.has(firstToken) &&
+    secondToken === 'or' &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(thirdToken) &&
+    (fourthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '') &&
+        fifthToken === 'times'))
+  ) {
+    return fourthToken === 'times' ? 4 : 5
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_PLURAL_COUNT_NOUN_TOKENS.has(firstToken) &&
+    secondToken === 'and' &&
+    thirdToken === firstToken &&
+    ((fourthToken === 'of' && fifthToken === 'times') ||
+      (fourthToken &&
+        SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken) &&
+        fifthToken === 'times') ||
+      (fourthToken === 'or' &&
+        fifthToken &&
+        SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(fifthToken) &&
+        (sixthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            sixthToken ?? '',
+          ) &&
+            tokens[startIndex + 6] === 'times'))))
+  ) {
+    if (fourthToken !== 'or') {
+      return 5
+    }
+
+    return sixthToken === 'times' ? 6 : 7
+  }
+
+  return undefined
+}
+
+function matchQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const firstToken = tokens[startIndex]
+  const secondToken = tokens[startIndex + 1]
+  const thirdToken = tokens[startIndex + 2]
+  const fourthToken = tokens[startIndex + 3]
+  const fifthToken = tokens[startIndex + 4]
+
+  if (
+    firstToken === 'half' &&
+    (secondToken === 'a' || secondToken === 'an') &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(thirdToken) &&
+    (fourthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '') &&
+        fifthToken === 'times'))
+  ) {
+    return fourthToken === 'times' ? 4 : 5
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_DIRECT_THE_TIME_HEAD_TOKENS.has(firstToken) &&
+    secondToken === 'the' &&
+    thirdToken === 'time'
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_OF_THE_TIME_HEAD_TOKENS.has(firstToken) &&
+    secondToken === 'of' &&
+    thirdToken === 'the' &&
+    fourthToken === 'time'
+  ) {
+    return 4
+  }
+
+  if (
+    firstToken &&
+    SUBORDINATE_CLAUSE_TIME_OF_TIMES_HEAD_TOKENS.has(firstToken) &&
+    secondToken === 'of' &&
+    thirdToken === 'times'
+  ) {
+    return 3
+  }
+
+  const countBasedSequenceLength = matchCountBasedTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    startIndex,
+  )
+  if (countBasedSequenceLength !== undefined) {
+    return countBasedSequenceLength
+  }
+
+  const articleLedSequenceLength = matchArticleLedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+    tokens,
+    startIndex,
+  )
+  if (articleLedSequenceLength !== undefined) {
+    return articleLedSequenceLength
+  }
+
+  if (
+    firstToken === 'the' &&
+    (secondToken === 'other' || secondToken === 'same') &&
+    thirdToken === 'time'
+  ) {
+    return 3
+  }
+
+  if (
+    firstToken === 'at' &&
+    secondToken === 'the' &&
+    thirdToken === 'same' &&
+    fourthToken === 'time'
+  ) {
+    return 4
+  }
+
+  if (
+    firstToken === 'by' &&
+    secondToken === 'the' &&
+    thirdToken === 'same' &&
+    fourthToken === 'time'
+  ) {
+    return 4
+  }
+
+  if (
+    (firstToken === 'for' || firstToken === 'from') &&
+    secondToken === 'the'
+  ) {
+    const prepositionalTimeSequenceLength = matchGenericTimeSubordinateClauseSequenceLengthAt(
+      tokens,
+      startIndex + 2,
+    )
+    if (prepositionalTimeSequenceLength !== undefined) {
+      return prepositionalTimeSequenceLength + 2
+    }
+  }
+
+  return undefined
+}
+
+function matchArticleLedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const articleToken = tokens[startIndex]
+  if (articleToken !== 'a' && articleToken !== 'an') {
+    return undefined
+  }
+
+  let articleLedHeadIndex = startIndex + 1
+
+  while (
+    articleLedHeadIndex < tokens.length &&
+    isArticleLedQuantifiedTimeModifierToken(tokens[articleLedHeadIndex])
+  ) {
+    articleLedHeadIndex += 1
+  }
+
+  const articleLedHeadToken = tokens[articleLedHeadIndex]
+  const articleLedNextToken = tokens[articleLedHeadIndex + 1]
+  const articleLedThirdToken = tokens[articleLedHeadIndex + 2]
+  const articleLedFourthToken = tokens[articleLedHeadIndex + 3]
+  const articleLedFifthToken = tokens[articleLedHeadIndex + 4]
+  const articleLedSixthToken = tokens[articleLedHeadIndex + 5]
+  const articleLedSeventhToken = tokens[articleLedHeadIndex + 6]
+
+  const articleLedOrdinalSequenceLength = matchOrdinalTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    articleLedHeadIndex,
+  )
+  if (articleLedOrdinalSequenceLength !== undefined) {
+    return articleLedHeadIndex - startIndex + articleLedOrdinalSequenceLength
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 2
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 3
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(articleLedThirdToken) &&
+    articleLedFourthToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 4
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken === 'and' &&
+    articleLedFourthToken === 'a' &&
+    articleLedFifthToken === 'half' &&
+    (articleLedSixthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+        articleLedSixthToken ?? '',
+      ) &&
+        articleLedSeventhToken === 'times'))
+  ) {
+    return articleLedHeadIndex - startIndex + (articleLedSixthToken === 'times' ? 6 : 7)
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken === 'or' &&
+    articleLedFourthToken &&
+    SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(articleLedFourthToken) &&
+    (articleLedFifthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+        articleLedFifthToken ?? '',
+      ) &&
+        articleLedSixthToken === 'times'))
+  ) {
+    return articleLedHeadIndex - startIndex + (articleLedFifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken === 'or'
+  ) {
+    const cardinalRangeLength = matchTimeCardinalSequenceLengthAt(tokens, articleLedHeadIndex + 3)
+    if (cardinalRangeLength !== undefined) {
+      const afterCardinalIndex = articleLedHeadIndex + 3 + cardinalRangeLength
+      if (tokens[afterCardinalIndex] === 'times') {
+        return afterCardinalIndex - startIndex + 1
+      }
+
+      if (
+        SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+          tokens[afterCardinalIndex] ?? '',
+        ) &&
+        tokens[afterCardinalIndex + 1] === 'times'
+      ) {
+        return afterCardinalIndex - startIndex + 2
+      }
+    }
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'or' &&
+    isSingleTokenCardinalTimeLeadingToken(articleLedThirdToken) &&
+    ((articleLedFourthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+        articleLedFourthToken ?? '',
+      ) &&
+        articleLedFifthToken === 'times')) ||
+      (articleLedFourthToken &&
+        SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedFourthToken) &&
+        (articleLedFifthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            articleLedFifthToken ?? '',
+          ) &&
+            articleLedSixthToken === 'times'))))
+  ) {
+    if (articleLedFourthToken === 'times') {
+      return articleLedHeadIndex - startIndex + 4
+    }
+
+    if (
+      SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+        articleLedFourthToken ?? '',
+      )
+    ) {
+      return articleLedHeadIndex - startIndex + 5
+    }
+
+    return articleLedHeadIndex - startIndex + (articleLedFifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'or' &&
+    ((articleLedThirdToken &&
+      SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(articleLedThirdToken) &&
+      (articleLedFourthToken === 'times' ||
+        (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+          articleLedFourthToken ?? '',
+        ) &&
+          articleLedFifthToken === 'times'))) ||
+      (isSingleTokenCardinalTimeLeadingToken(articleLedThirdToken) &&
+        (articleLedFourthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            articleLedFourthToken ?? '',
+          ) &&
+            articleLedFifthToken === 'times'))))
+  ) {
+    return articleLedHeadIndex - startIndex + (articleLedFourthToken === 'times' ? 4 : 5)
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'and' &&
+    articleLedThirdToken === 'a' &&
+    articleLedFourthToken === 'half' &&
+    (articleLedFifthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+        articleLedFifthToken ?? '',
+      ) &&
+        articleLedSixthToken === 'times'))
+  ) {
+    return articleLedHeadIndex - startIndex + (articleLedFifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    articleLedHeadToken &&
+    (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(articleLedHeadToken) ||
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedHeadToken)) &&
+    articleLedNextToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(articleLedNextToken) &&
+    articleLedThirdToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 3
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 2
+  }
+
+  if (
+    articleLedHeadToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OF_TIMES_HEAD_TOKENS.has(articleLedHeadToken) &&
+    articleLedNextToken === 'of' &&
+    articleLedThirdToken === 'times'
+  ) {
+    return articleLedHeadIndex - startIndex + 3
+  }
+
+  return undefined
+}
+
+function matchArticleStrippedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  let headIndex = startIndex
+
+  while (
+    headIndex < tokens.length &&
+    SUBORDINATE_CLAUSE_TIME_PRE_ARTICLE_PREFIX_TOKENS.has(tokens[headIndex] ?? '')
+  ) {
+    headIndex += 1
+  }
+
+  const articleLedSequenceLength = matchArticleLedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(
+    tokens,
+    headIndex,
+  )
+  if (articleLedSequenceLength !== undefined) {
+    return headIndex - startIndex + articleLedSequenceLength
+  }
+
+  while (
+    headIndex < tokens.length &&
+    isArticleLedQuantifiedTimeModifierToken(tokens[headIndex])
+  ) {
+    headIndex += 1
+  }
+
+  const headToken = tokens[headIndex]
+  const nextToken = tokens[headIndex + 1]
+  const thirdToken = tokens[headIndex + 2]
+  const fourthToken = tokens[headIndex + 3]
+  const fifthToken = tokens[headIndex + 4]
+  const sixthToken = tokens[headIndex + 5]
+  const seventhToken = tokens[headIndex + 6]
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(headToken) &&
+    nextToken === 'times'
+  ) {
+    return headIndex - startIndex + 2
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(headToken) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(nextToken) &&
+    thirdToken === 'times'
+  ) {
+    return headIndex - startIndex + 3
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(headToken) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(nextToken) &&
+    thirdToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(thirdToken) &&
+    fourthToken === 'times'
+  ) {
+    return headIndex - startIndex + 4
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(headToken) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(nextToken) &&
+    thirdToken === 'and' &&
+    fourthToken === 'a' &&
+    fifthToken === 'half' &&
+    (sixthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(sixthToken ?? '') &&
+        seventhToken === 'times'))
+  ) {
+    return headIndex - startIndex + (sixthToken === 'times' ? 6 : 7)
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(headToken) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(nextToken) &&
+    thirdToken === 'or' &&
+    fourthToken &&
+    SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(fourthToken) &&
+    (fifthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fifthToken ?? '') &&
+        sixthToken === 'times'))
+  ) {
+    return headIndex - startIndex + (fifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_COUNT_NOUN_LEADING_HEAD_TOKENS.has(headToken) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(nextToken) &&
+    thirdToken === 'or'
+  ) {
+    const cardinalRangeLength = matchTimeCardinalSequenceLengthAt(tokens, headIndex + 3)
+    if (cardinalRangeLength !== undefined) {
+      const afterCardinalIndex = headIndex + 3 + cardinalRangeLength
+      if (tokens[afterCardinalIndex] === 'times') {
+        return afterCardinalIndex - startIndex + 1
+      }
+
+      if (
+        SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+          tokens[afterCardinalIndex] ?? '',
+        ) &&
+        tokens[afterCardinalIndex + 1] === 'times'
+      ) {
+        return afterCardinalIndex - startIndex + 2
+      }
+    }
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(headToken) &&
+    nextToken === 'or' &&
+    isSingleTokenCardinalTimeLeadingToken(thirdToken) &&
+    ((fourthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '') &&
+        fifthToken === 'times')) ||
+      (fourthToken &&
+        SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(fourthToken) &&
+        (fifthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            fifthToken ?? '',
+          ) &&
+            sixthToken === 'times'))))
+  ) {
+    if (fourthToken === 'times') {
+      return headIndex - startIndex + 4
+    }
+
+    if (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '')) {
+      return headIndex - startIndex + 5
+    }
+
+    return headIndex - startIndex + (fifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(headToken) &&
+    nextToken === 'or' &&
+    ((thirdToken &&
+      SUBORDINATE_CLAUSE_TIME_RANGE_OR_APPROXIMATION_TAIL_TOKENS.has(thirdToken) &&
+      (fourthToken === 'times' ||
+        (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fourthToken ?? '') &&
+          fifthToken === 'times'))) ||
+      (isSingleTokenCardinalTimeLeadingToken(thirdToken) &&
+        (fourthToken === 'times' ||
+          (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(
+            fourthToken ?? '',
+          ) &&
+            fifthToken === 'times'))))
+  ) {
+    return headIndex - startIndex + (fourthToken === 'times' ? 4 : 5)
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(headToken) &&
+    nextToken === 'and' &&
+    thirdToken === 'a' &&
+    fourthToken === 'half' &&
+    (fifthToken === 'times' ||
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(fifthToken ?? '') &&
+        sixthToken === 'times'))
+  ) {
+    return headIndex - startIndex + (fifthToken === 'times' ? 5 : 6)
+  }
+
+  if (
+    headToken &&
+    (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_DIRECT_TIMES_HEAD_TOKENS.has(headToken) ||
+      SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(headToken)) &&
+    nextToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_POST_HEAD_TOKENS.has(nextToken) &&
+    thirdToken === 'times'
+  ) {
+    return headIndex - startIndex + 3
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_SINGULAR_COUNT_NOUN_TOKENS.has(headToken) &&
+    nextToken === 'times'
+  ) {
+    return headIndex - startIndex + 2
+  }
+
+  if (
+    headToken &&
+    SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OF_TIMES_HEAD_TOKENS.has(headToken) &&
+    nextToken === 'of' &&
+    thirdToken === 'times'
+  ) {
+    return headIndex - startIndex + 3
+  }
+
+  return undefined
+}
+
+function isArticleLedQuantifiedTimeModifierToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (SUBORDINATE_CLAUSE_TIME_ARTICLE_LED_OPTIONAL_MODIFIER_TOKENS.has(token) ||
+        /^[a-z]+ly$/i.test(token)),
+  )
+}
+
+function matchLeadingSubordinateClauseSequenceLength(tokens: string[]) {
+  const explicitSequenceLength = matchLeadingTokenSequenceLength(
+    tokens,
+    SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES,
+  )
+  if (explicitSequenceLength !== undefined) {
+    return explicitSequenceLength
+  }
+
+  const durationUnitTemporalSequenceLength = matchDurationUnitTemporalPhraseSequenceLengthAt(
+    tokens,
+    0,
+  )
+  if (durationUnitTemporalSequenceLength !== undefined) {
+    return durationUnitTemporalSequenceLength
+  }
+
+  const prepositionalTimeSequenceLength = matchPrepositionalTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    0,
+  )
+  if (prepositionalTimeSequenceLength !== undefined) {
+    return prepositionalTimeSequenceLength
+  }
+
+  const articleStrippedQuantifiedTimeSequenceLength =
+    matchArticleStrippedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(tokens, 0)
+  if (articleStrippedQuantifiedTimeSequenceLength !== undefined) {
+    return articleStrippedQuantifiedTimeSequenceLength
+  }
+
+  if (tokens[0] === 'the') {
+    const articleStrippedSequenceLength = matchGenericTimeSubordinateClauseSequenceLengthAt(
+      tokens,
+      1,
+    )
+    if (articleStrippedSequenceLength !== undefined) {
+      return articleStrippedSequenceLength + 1
+    }
+  }
+
+  return matchGenericTimeSubordinateClauseSequenceLengthAt(tokens, 0)
+}
+
+function startsWithMultiTokenSubordinateClauseSequence(tokens: string[]) {
+  const leadingSequenceLength =
+    matchLeadingTokenSequenceLength(tokens, MULTI_TOKEN_SUBORDINATE_CLAUSE_LEADING_TOKEN_SEQUENCES) ??
+    matchDurationUnitTemporalPhraseSequenceLengthAt(tokens, 0) ??
+    matchPrepositionalTimeSubordinateClauseSequenceLengthAt(tokens, 0) ??
+    matchArticleStrippedQuantifiedTimePhraseSubordinateClauseSequenceLengthAt(tokens, 0) ??
+    matchGenericTimeSubordinateClauseSequenceLengthAt(tokens, 0) ??
+    (tokens[0] === 'the'
+      ? (() => {
+          const articleStrippedSequenceLength = matchGenericTimeSubordinateClauseSequenceLengthAt(
+            tokens,
+            1,
+          )
+          return articleStrippedSequenceLength !== undefined
+            ? articleStrippedSequenceLength + 1
+            : undefined
+        })()
+      : undefined)
+
+  return leadingSequenceLength !== undefined && leadingSequenceLength > 1
+}
+
+function matchPrepositionalTimeSubordinateClauseSequenceLengthAt(
+  tokens: string[],
+  startIndex: number,
+): number | undefined {
+  const firstToken = tokens[startIndex]
+  if (
+    !firstToken ||
+    !SUBORDINATE_CLAUSE_PREPOSITIONAL_TIME_LEADING_TOKENS.has(firstToken)
+  ) {
+    return undefined
+  }
+
+  const nestedGenericTimeSequenceLength = matchGenericTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    startIndex + 1,
+  )
+  if (nestedGenericTimeSequenceLength !== undefined) {
+    return nestedGenericTimeSequenceLength + 1
+  }
+
+  const articleToken = tokens[startIndex + 1]
+  if (articleToken !== 'the' && articleToken !== 'a' && articleToken !== 'an') {
+    return undefined
+  }
+
+  if (articleToken === 'a' || articleToken === 'an') {
+    const articleLedOrdinalSequenceLength = matchOrdinalTimeSubordinateClauseSequenceLengthAt(
+      tokens,
+      startIndex + 2,
+    )
+    if (articleLedOrdinalSequenceLength !== undefined) {
+      return articleLedOrdinalSequenceLength + 2
+    }
+
+    return undefined
+  }
+
+  const pointHeadToken = tokens[startIndex + 2]
+  if (
+    pointHeadToken &&
+    SUBORDINATE_CLAUSE_PREPOSITIONAL_TIME_POINT_HEAD_TOKENS.has(pointHeadToken)
+  ) {
+    return 3
+  }
+
+  const nestedTimeSequenceLength = matchGenericTimeSubordinateClauseSequenceLengthAt(
+    tokens,
+    startIndex + 2,
+  )
+  if (nestedTimeSequenceLength !== undefined) {
+    return nestedTimeSequenceLength + 2
+  }
+
+  return undefined
+}
+
+const QUESTION_ANSWER_TOPIC_LEADING_LABEL_REJECT_TOKENS = new Set([
+  'do',
+  'does',
+  'did',
+  'keep',
+  'keeps',
+  'keeping',
+  'kept',
+  'means',
+  'require',
+  'requires',
+  'required',
+  'start',
+  'starts',
+  'started',
+  'then',
+  'use',
+  'uses',
+  'used',
+  'when',
+  ...SUBORDINATE_CLAUSE_LEADING_WORDS,
+])
+
+function formatQuotedValueList(values: string[]) {
+  return values.map((value) => `"${value}"`).join(', ')
+}
+
+function questionAnswerLabelHasRejectedLeadingTokens(labelTokens: string[]) {
+  return (
+    labelTokens.length === 0 ||
+    labelTokens.some((token) => QUESTION_ANSWER_TOPIC_LEADING_LABEL_REJECT_TOKENS.has(token)) ||
+    startsWithMultiTokenSubordinateClauseSequence(labelTokens)
+  )
+}
+
+function extractQuestionAnswerLeadingTopicSummary(text: string) {
+  const trimmed = stripLeadingTopicPromptConjunction(text)
+  if (!trimmed) {
+    return undefined
+  }
+
+  const label = matchLeadingTopicAuthority(trimmed)?.label
+  if (!label) {
+    return undefined
+  }
+
+  const normalizedLabel = normalizeSourceResponseLabel(label)
+  if (!normalizedLabel) {
+    return undefined
+  }
+
+  const labelTokens = normalizedLabel.split(' ').filter(Boolean)
+  if (questionAnswerLabelHasRejectedLeadingTokens(labelTokens)) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(label, true)
+}
+
+function matchLeadingTopicAuthorityAllowBarePredicate(text: string) {
+  return new RegExp(
+    `^(?<label>.+?)\\s+(?<answer>${TOPIC_SUMMARY_VERB_PATTERN}\\b.*)$`,
+    'i',
+  ).exec(text)?.groups
+}
+
+function extractIncompleteLeadingTopicAuthoritySummary(text: string) {
+  const trimmed = stripLeadingTopicPromptConjunction(text)
+  if (!trimmed) {
+    return undefined
+  }
+
+  const groups = matchLeadingTopicAuthorityAllowBarePredicate(trimmed)
+  const label = groups?.label
+  const answer = groups?.answer
+  if (!label || answer === undefined || topicPredicateIncludesSubstantiveAnswerContent(answer)) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(label, true)
+}
+
+function extractNestedLeadingTopicAuthoritySummary(text: string): string | undefined {
+  const trimmed = stripLeadingTopicPromptConjunction(text)
+  if (!trimmed) {
+    return undefined
+  }
+
+  const groups = matchLeadingTopicAuthorityAllowBarePredicate(trimmed)
+  const label = groups?.label
+  const answer = groups?.answer
+  if (!label || answer === undefined || !normalizeExtractedTopicSummary(label, true)) {
+    return undefined
+  }
+
+  const strippedAnswer = answer
+    .trim()
+    .replace(new RegExp(`^(?:${TOPIC_SUMMARY_VERB_PATTERN})\\b\\s*`, 'i'), '')
+    .trim()
+  if (!strippedAnswer) {
+    return undefined
+  }
+
+  const nestedLabel = matchLeadingTopicAuthorityAllowBarePredicate(strippedAnswer)?.label
+  const nestedSummary = nestedLabel ? normalizeExtractedTopicSummary(nestedLabel, true) : undefined
+  return nestedSummary ?? extractNestedLeadingTopicAuthoritySummary(strippedAnswer)
+}
+
+function sanitizeQuestionAnswerExplicitTopicSummary(summary: string | undefined) {
+  if (!summary) {
+    return undefined
+  }
+
+  const normalizedSummary = normalizeSourceResponseLabel(summary)
+  if (!normalizedSummary) {
+    return undefined
+  }
+
+  const labelTokens = normalizedSummary.split(' ').filter(Boolean)
+  if (questionAnswerLabelHasRejectedLeadingTokens(labelTokens)) {
+    return undefined
+  }
+
+  return summary
+}
+
+function extractExplicitTopicSummariesFromQuestionAnswerSentence(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return []
+  }
+
+  const hasExplicitInlineTopicDelimiter =
+    /^(?<label>.+?)\s*(?::|：|=|＝|->|－>|→)\s*(?<answer>.+)$/u.test(trimmed) ||
+    /^(?<label>.+?)\s+(?:-|－|–|—)\s+(?<answer>.+)$/u.test(trimmed)
+  const inlineTopicSummary = sanitizeQuestionAnswerExplicitTopicSummary(
+    hasExplicitInlineTopicDelimiter
+      ? normalizeExtractedTopicSummary(parseInlineTopicClause(trimmed)?.label ?? '', true)
+      : undefined,
+  )
+  const prefixed = sanitizeQuestionAnswerExplicitTopicSummary(extractPrefixedTopicSummary(trimmed))
+  const asTopic = sanitizeQuestionAnswerExplicitTopicSummary(extractAsTopicSummary(trimmed))
+  const trailing = sanitizeQuestionAnswerExplicitTopicSummary(extractTrailingTopicSummary(trimmed))
+  const copular = sanitizeQuestionAnswerExplicitTopicSummary(extractCopularTopicSummary(trimmed))
+  const leading = copular ? undefined : extractQuestionAnswerLeadingTopicSummary(trimmed)
+
+  return dedupeNonEmptyStrings([inlineTopicSummary, prefixed, asTopic, trailing, copular, leading])
+}
+
+function extractExplicitTopicSummariesFromQuestionAnswerText(answer: string) {
+  return dedupeNonEmptyStrings(
+    parseTopicSourceResponseSentences(answer).flatMap((sentence) =>
+      extractExplicitTopicSummariesFromQuestionAnswerSentence(sentence.text),
+    ),
+  )
+}
+
+function extractIncompleteLeadingTopicAuthoritySummariesFromQuestionAnswerText(answer: string) {
+  return dedupeNonEmptyStrings(
+    parseTopicSourceResponseSentences(answer).flatMap((sentence) => {
+      const summary = extractIncompleteLeadingTopicAuthoritySummary(sentence.text)
+      return summary ? [summary] : []
+    }),
+  )
+}
+
+function collectDirectAnswerTextAuthoritySegments(answer: string) {
+  const clauses = parseTopicSourceResponseClauses(answer).map((clause) => clause.text)
+  const conjunctions = parsePendingSourceResponseConjunctions(answer)
+  return dedupeNonEmptyStrings([
+    ...parseTopicSourceResponseSentences(answer).map((sentence) => sentence.text),
+    ...(clauses.length > 1 ? clauses : []),
+    ...(conjunctions.length > 1 ? conjunctions : []),
+  ])
+}
+
+function extractExplicitTopicSummariesFromDirectAnswerText(answer: string) {
+  return dedupeNonEmptyStrings(
+    collectDirectAnswerTextAuthoritySegments(answer).flatMap((segment) =>
+      extractExplicitTopicSummariesFromQuestionAnswerSentence(segment),
+    ),
+  )
+}
+
+function extractIncompleteLeadingTopicAuthoritySummariesFromDirectAnswerText(answer: string) {
+  return dedupeNonEmptyStrings(
+    collectDirectAnswerTextAuthoritySegments(answer).flatMap((segment) => {
+      const summary = extractIncompleteLeadingTopicAuthoritySummary(segment)
+      return summary ? [summary] : []
+    }),
+  )
+}
+
+function extractNestedLeadingTopicAuthoritySummariesFromDirectAnswerText(answer: string) {
+  return dedupeNonEmptyStrings(
+    collectDirectAnswerTextAuthoritySegments(answer).flatMap((segment) => {
+      const summary = extractNestedLeadingTopicAuthoritySummary(segment)
+      return summary ? [summary] : []
+    }),
+  )
+}
+
+const NON_PUNCTUATED_INTERROGATIVE_LEADING_WORDS = new Set([
+  "aren't",
+  'are',
+  "can't",
+  'can',
+  'cannot',
+  "couldn't",
+  'could',
+  "didn't",
+  'did',
+  "doesn't",
+  'does',
+  "hadn't",
+  'had',
+  "haven't",
+  "hasn't",
+  'has',
+  'how',
+  "isn't",
+  'is',
+  'may',
+  "mayn't",
+  'might',
+  "mightn't",
+  'must',
+  "mustn't",
+  "needn't",
+  'ought',
+  "oughtn't",
+  "shan't",
+  'shall',
+  "shouldn't",
+  'should',
+  "wasn't",
+  'was',
+  "weren't",
+  'were',
+  'when',
+  'where',
+  'what',
+  'which',
+  'who',
+  'whom',
+  'whose',
+  'why',
+  "won't",
+  'will',
+  "wouldn't",
+  'would',
+])
+
+const CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_LEADING_WORDS = new Set([
+  'am',
+  "don't",
+  'do',
+  'have',
+  'need',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_WH_LEADING_WORDS = new Set([
+  'how',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'whom',
+  'whose',
+  'why',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_ADVERB_LEADING_WORDS = new Set([
+  'how',
+  'when',
+  'where',
+  'why',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS = new Set([
+  'am',
+  "aren't",
+  'are',
+  'be',
+  'been',
+  'being',
+  "can't",
+  'can',
+  'cannot',
+  "couldn't",
+  'could',
+  "didn't",
+  'did',
+  'do',
+  "doesn't",
+  'does',
+  "hadn't",
+  'had',
+  "haven't",
+  "hasn't",
+  'has',
+  'have',
+  "isn't",
+  'is',
+  'may',
+  "mayn't",
+  'might',
+  "mightn't",
+  'must',
+  "mustn't",
+  "needn't",
+  'ought',
+  "oughtn't",
+  "shan't",
+  'shall',
+  "shouldn't",
+  'should',
+  "wasn't",
+  'was',
+  "weren't",
+  'were',
+  "won't",
+  'will',
+  "wouldn't",
+  'would',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS = new Set([
+  'am',
+  'are',
+  'be',
+  'been',
+  'being',
+  'is',
+  'was',
+  'were',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS = new Set([
+  'remain',
+  'remained',
+  'remains',
+  'stay',
+  'stayed',
+  'stays',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_LEXICAL_PREDICATE_TOKENS = new Set([
+  'be',
+  'been',
+  'being',
+  'do',
+  'does',
+  'did',
+  'have',
+  'has',
+  'had',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_HOW_QUESTION_SECOND_WORDS = new Set([
+  'far',
+  'few',
+  'little',
+  'long',
+  'many',
+  'much',
+  'often',
+  'soon',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_HOW_EMBEDDED_CLAUSE_SECOND_WORDS = new Set([
+  'far',
+  'few',
+  'little',
+  'long',
+  'many',
+  'much',
+  'often',
+  'soon',
+])
+
+const CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS = new Set([
+  'a',
+  'an',
+  'he',
+  'her',
+  'his',
+  'i',
+  'it',
+  'its',
+  'my',
+  'our',
+  'she',
+  'that',
+  'their',
+  'the',
+  'these',
+  'they',
+  'this',
+  'those',
+  'we',
+  'you',
+  'your',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS = new Set([
+  'already',
+  'also',
+  'actually',
+  'basically',
+  'certainly',
+  'clearly',
+  'conceivably',
+  'currently',
+  'definitely',
+  'effectively',
+  'even',
+  'essentially',
+  'ever',
+  'generally',
+  'just',
+  'largely',
+  'maybe',
+  'merely',
+  'mostly',
+  'not',
+  'now',
+  'obviously',
+  'only',
+  'perhaps',
+  'plainly',
+  'possibly',
+  'presumably',
+  'probably',
+  'really',
+  'simply',
+  'strictly',
+  'surely',
+  'still',
+  'then',
+  'today',
+  'virtually',
+  'yet',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_TOKEN_SEQUENCES = [
+  ['a', 'bit'],
+  ['a', 'fair', 'bit'],
+  ['a', 'good', 'deal'],
+  ['a', 'great', 'deal'],
+  ['a', 'little'],
+  ['a', 'little', 'bit'],
+  ['a', 'lot'],
+  ['a', 'whole', 'lot'],
+  ['all', 'the', 'more'],
+  ['all', 'too'],
+  ['any', 'longer'],
+  ['any', 'more'],
+  ['at', 'the', 'least'],
+  ['at', 'the', 'very', 'least'],
+  ['by', 'now'],
+  ['just', 'about'],
+  ['just', 'plain'],
+  ['kind', 'of'],
+  ['less', 'and', 'less'],
+  ['more', 'or', 'less'],
+  ['more', 'and', 'more'],
+  ['no', 'longer'],
+  ['no', 'more'],
+  ['sort', 'of'],
+  ['at', 'all'],
+  ['at', 'least'],
+  ['at', 'most'],
+  ['way', 'less'],
+  ['way', 'more'],
+] as const
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_PREDICATE_LOOKAHEAD = 5
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_CHAIN_LOOKBACK = 10
+
+const NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'as',
+  'at',
+  'because',
+  'before',
+  'but',
+  'by',
+  'for',
+  'from',
+  'if',
+  'in',
+  'into',
+  'of',
+  'on',
+  'onto',
+  'or',
+  'so',
+  'than',
+  'that',
+  'the',
+  'these',
+  'this',
+  'those',
+  'to',
+  'under',
+  'until',
+  'when',
+  'where',
+  'while',
+  'with',
+  'without',
+])
+
+const CONTEXTUAL_BARE_HAVE_PARTICIPLE_PREDICATE_WORDS = new Set([
+  'become',
+  'been',
+  'begun',
+  'broken',
+  'built',
+  'come',
+  'done',
+  'drawn',
+  'driven',
+  'fallen',
+  'felt',
+  'found',
+  'gone',
+  'grown',
+  'held',
+  'kept',
+  'known',
+  'left',
+  'lost',
+  'made',
+  'met',
+  'put',
+  'read',
+  'run',
+  'said',
+  'seen',
+  'sent',
+  'set',
+  'shown',
+  'spent',
+  'stood',
+  'taken',
+  'told',
+  'understood',
+  'won',
+  'written',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_TOKENS = new Set([
+  'appear',
+  'appeared',
+  'appears',
+  'continue',
+  'continued',
+  'continues',
+  'come',
+  'came',
+  'comes',
+  'grow',
+  'grew',
+  'grows',
+  'get',
+  'gets',
+  'got',
+  'happen',
+  'happened',
+  'happens',
+  'need',
+  'needed',
+  'needs',
+  'prove',
+  'proved',
+  'proves',
+  'remain',
+  'remained',
+  'remains',
+  'seem',
+  'seemed',
+  'seems',
+  'tend',
+  'tended',
+  'tends',
+  'used',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_COPULAR_SUPPORT_TOKENS = new Set([
+  'apt',
+  'bound',
+  'certain',
+  'due',
+  'liable',
+  'likely',
+  'meant',
+  'ready',
+  'set',
+  'sure',
+  'unlikely',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_COPULAR_SUPPORT_MODIFIER_TOKENS = new Set([
+  'almost',
+  'extremely',
+  'far',
+  'fairly',
+  'highly',
+  'least',
+  'less',
+  'more',
+  'most',
+  'much',
+  'nearly',
+  'quite',
+  'rather',
+  'somewhat',
+  'too',
+  'very',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_NEGATIVE_COPULA_TOKENS = new Set([
+  "aren't",
+  "isn't",
+  "wasn't",
+  "weren't",
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_TERMINAL_COPULA_LOOKBACK = 10
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_PHRASAL_SUPPORT_TOKENS = new Set([
+  'turn',
+  'turned',
+  'turns',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_STARTER_TOKENS = new Set([
+  "there'd",
+  "there'll",
+  "there've",
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_COPULA_TOKENS = new Set([
+  "there's",
+  "there're",
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_SUPPORT_TOKENS = new Set([
+  'keep',
+  'keeps',
+  'kept',
+  'stop',
+  'stopped',
+  'stops',
+])
+
+const NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_PHRASAL_SUPPORT_CHAINS = [
+  {
+    verbs: new Set(['end', 'ended', 'ends']),
+    particle: 'up',
+  },
+  {
+    verbs: new Set(['go', 'goes', 'went']),
+    particle: 'on',
+  },
+  {
+    verbs: new Set(['wind', 'winds', 'wound']),
+    particle: 'up',
+  },
+] as const
+
+function isNonPunctuatedWhExistentialStarterToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (token === 'there' ||
+        NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_STARTER_TOKENS.has(token) ||
+        NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_COPULA_TOKENS.has(token)),
+  )
+}
+
+function isNonPunctuatedWhExistentialSupportVerbToken(token: string | undefined) {
+  if (!token) {
+    return false
+  }
+
+  if (
+    NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_TOKENS.has(token) ||
+    NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_PHRASAL_SUPPORT_TOKENS.has(token) ||
+    NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_SUPPORT_TOKENS.has(token)
+  ) {
+    return true
+  }
+
+  return NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_PHRASAL_SUPPORT_CHAINS.some((chain) =>
+    chain.verbs.has(token),
+  )
+}
+
+function looksLikeNonPunctuatedWhExistentialCopularSupportToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) &&
+      (NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_COPULAR_SUPPORT_TOKENS.has(token) ||
+        /(?:ed|en)$/iu.test(token)),
+  )
+}
+
+function isNonPunctuatedWhExistentialCopulaToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+        NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_NEGATIVE_COPULA_TOKENS.has(token)),
+  )
+}
+
+function looksLikeNonPunctuatedWhExistentialCopularSupportModifierToken(
+  token: string | undefined,
+) {
+  return Boolean(
+    token &&
+      !looksLikeNonPunctuatedWhExistentialCopularSupportToken(token) &&
+      (NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_COPULAR_SUPPORT_MODIFIER_TOKENS.has(token) ||
+        /ly$/iu.test(token)),
+  )
+}
+
+function skipNonPunctuatedInterrogativePredicateFillers(
+  tokens: EmbeddedMatchingRunToken[],
+  tokenIndex: number,
+) {
+  let nextTokenIndex = tokenIndex
+  while (nextTokenIndex < tokens.length) {
+    const matchedSequence =
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_TOKEN_SEQUENCES.filter((sequence) =>
+        sequence.every(
+          (token, sequenceIndex) =>
+            tokens[nextTokenIndex + sequenceIndex]?.normalizedText === token,
+        ),
+      ).sort((leftSequence, rightSequence) => rightSequence.length - leftSequence.length)[0]
+    if (matchedSequence) {
+      nextTokenIndex += matchedSequence.length
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(
+        tokens[nextTokenIndex]?.normalizedText ?? '',
+      )
+    ) {
+      nextTokenIndex += 1
+      continue
+    }
+
+    break
+  }
+  return nextTokenIndex
+}
+
+function skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+  tokens: EmbeddedMatchingRunToken[],
+  tokenIndex: number,
+) {
+  let nextTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex)
+  while (
+    looksLikeNonPunctuatedWhExistentialCopularSupportModifierToken(
+      tokens[nextTokenIndex]?.normalizedText,
+    )
+  ) {
+    nextTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, nextTokenIndex + 1)
+  }
+  return nextTokenIndex
+}
+
+function findNonPunctuatedWhExistentialCopularSupportPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  copulaTokenIndex: number,
+) {
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    copulaTokenIndex + 1,
+  )
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    )
+  ) {
+    const supportChainPredicateIndex =
+      findNonPunctuatedWhExistentialSupportToPredicateIndex(tokens, supportTokenIndex)
+    if (supportChainPredicateIndex !== undefined) {
+      return supportChainPredicateIndex
+    }
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialSupportVerbCopularSupportPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  supportVerbTokenIndex: number,
+) {
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    supportVerbTokenIndex + 1,
+  )
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    )
+  ) {
+    const supportChainPredicateIndex =
+      findNonPunctuatedWhExistentialSupportToPredicateIndex(tokens, supportTokenIndex)
+    if (supportChainPredicateIndex !== undefined) {
+      return supportChainPredicateIndex
+    }
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialContractedStarterCopularSupportPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  starterTokenIndex: number,
+) {
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    starterTokenIndex + 1,
+  )
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    )
+  ) {
+    const directPredicateTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+      tokens,
+      supportTokenIndex + 1,
+    )
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+        tokens[directPredicateTokenIndex]?.normalizedText ?? '',
+      )
+    ) {
+      return directPredicateTokenIndex
+    }
+
+    const supportChainPredicateIndex =
+      findNonPunctuatedWhExistentialSupportToPredicateIndex(tokens, supportTokenIndex)
+    if (supportChainPredicateIndex !== undefined) {
+      return supportChainPredicateIndex
+    }
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialSupportToPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  supportTokenIndex: number,
+) {
+  const toTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, supportTokenIndex + 1)
+  if (tokens[toTokenIndex]?.normalizedText !== 'to') {
+    return undefined
+  }
+
+  const continuationTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, toTokenIndex + 1)
+  if (
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[continuationTokenIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return continuationTokenIndex
+  }
+
+  if (
+    tokens[continuationTokenIndex]?.normalizedText === 'have' ||
+    tokens[continuationTokenIndex]?.normalizedText === 'has' ||
+    tokens[continuationTokenIndex]?.normalizedText === 'had'
+  ) {
+    const perfectCopulaPredicateIndex = findNonPunctuatedWhExistentialPerfectCopulaPredicateIndex(
+      tokens,
+      continuationTokenIndex + 1,
+    )
+    if (perfectCopulaPredicateIndex !== undefined) {
+      return perfectCopulaPredicateIndex
+    }
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialContractedStarterPerfectPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  starterTokenIndex: number,
+) {
+  const firstTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, starterTokenIndex + 1)
+  if (tokens[firstTokenIndex]?.normalizedText === 'have') {
+    const copulaTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, firstTokenIndex + 1)
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+        tokens[copulaTokenIndex]?.normalizedText ?? '',
+      )
+    ) {
+      return copulaTokenIndex
+    }
+  }
+
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    starterTokenIndex + 1,
+  )
+  const perfectAuxiliaryTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+    tokens,
+    supportTokenIndex + 1,
+  )
+  const copulaTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+    tokens,
+    perfectAuxiliaryTokenIndex + 1,
+  )
+
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    ) &&
+    tokens[perfectAuxiliaryTokenIndex]?.normalizedText === 'have' &&
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[copulaTokenIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return copulaTokenIndex
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialPerfectCopulaPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startTokenIndex: number,
+) {
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    startTokenIndex,
+  )
+  if (
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[supportTokenIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return supportTokenIndex
+  }
+
+  const copulaTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    supportTokenIndex + 1,
+  )
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    ) &&
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[copulaTokenIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return copulaTokenIndex
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialAuxiliaryPerfectPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  auxiliaryTokenIndex: number,
+) {
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    auxiliaryTokenIndex + 1,
+  )
+  const perfectAuxiliaryTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+    tokens,
+    supportTokenIndex + 1,
+  )
+  const copulaTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+    tokens,
+    perfectAuxiliaryTokenIndex + 1,
+  )
+
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    ) &&
+    (tokens[perfectAuxiliaryTokenIndex]?.normalizedText === 'have' ||
+      tokens[perfectAuxiliaryTokenIndex]?.normalizedText === 'has' ||
+      tokens[perfectAuxiliaryTokenIndex]?.normalizedText === 'had') &&
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[copulaTokenIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return copulaTokenIndex
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhExistentialContractedCopulaPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  starterTokenIndex: number,
+) {
+  if (tokens[starterTokenIndex]?.normalizedText === "there's") {
+    const perfectCopulaPredicateIndex = findNonPunctuatedWhExistentialPerfectCopulaPredicateIndex(
+      tokens,
+      starterTokenIndex + 1,
+    )
+    if (perfectCopulaPredicateIndex !== undefined) {
+      return perfectCopulaPredicateIndex
+    }
+  }
+
+  const firstPredicateTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(
+    tokens,
+    starterTokenIndex + 1,
+  )
+
+  if (
+    tokens[firstPredicateTokenIndex]?.normalizedText === 'going' &&
+    tokens[firstPredicateTokenIndex + 1]?.normalizedText === 'to' &&
+    NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[firstPredicateTokenIndex + 2]?.normalizedText ?? '',
+    )
+  ) {
+    return firstPredicateTokenIndex + 2
+  }
+
+  const supportTokenIndex = skipNonPunctuatedWhExistentialCopularSupportPrefixes(
+    tokens,
+    starterTokenIndex + 1,
+  )
+
+  if (
+    looksLikeNonPunctuatedWhExistentialCopularSupportToken(
+      tokens[supportTokenIndex]?.normalizedText,
+    )
+  ) {
+    const supportChainPredicateIndex =
+      findNonPunctuatedWhExistentialSupportToPredicateIndex(tokens, supportTokenIndex)
+    if (supportChainPredicateIndex !== undefined) {
+      return supportChainPredicateIndex
+    }
+  }
+
+  return undefined
+}
+
+function extractNonPunctuatedInterrogativeLeadingWord(text: string) {
+  const match = /^[^a-z0-9]*(?<word>[a-z]+(?:['’][a-z]+)?)/iu.exec(text.trim())?.groups?.word
+  return match?.toLowerCase().replaceAll('’', "'")
+}
+
+function looksLikePluralNounInterrogativeSubjectHead(token: string) {
+  return (
+    /^[a-z][a-z0-9'-]*s$/iu.test(token) &&
+    !/['’]s$/iu.test(token) &&
+    !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) &&
+    !looksLikeNonPunctuatedWhExistentialCopularSupportModifierToken(token) &&
+    !isNonPunctuatedWhExistentialSupportVerbToken(token) &&
+    !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+    !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token)
+  )
+}
+
+function findContextualBareInterrogativePredicateToken(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (!token || NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token)) {
+      continue
+    }
+    return token
+  }
+
+  return undefined
+}
+
+function isLikelyBareDoQuestionPredicateToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      !token.endsWith('ing') &&
+      !token.endsWith('ly') &&
+      !token.endsWith('s'),
+  )
+}
+
+function isLikelyBareHaveQuestionPredicateToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      (/ed$/iu.test(token) || /en$/iu.test(token) || CONTEXTUAL_BARE_HAVE_PARTICIPLE_PREDICATE_WORDS.has(token)),
+  )
+}
+
+function hasContextualBareInterrogativeSubject(
+  tokens: EmbeddedMatchingRunToken[],
+  leadingWord: string,
+  secondToken: string | undefined,
+) {
+  if (leadingWord === 'need') {
+    if (secondToken === 'there') {
+      return true
+    }
+
+    if (secondToken && CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(secondToken)) {
+      return true
+    }
+
+    const predicateToken = findContextualBareInterrogativePredicateToken(tokens, 2)
+    return Boolean(
+      secondToken &&
+        predicateToken &&
+        !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(secondToken) &&
+        !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(secondToken) &&
+        !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(secondToken) &&
+        (tokenLooksLikeNonPunctuatedWhClauseSubject(secondToken) ||
+          !looksLikeNonPunctuatedWhSubjectClausePredicateHead(secondToken)),
+    )
+  }
+
+  if (leadingWord === 'have' && secondToken === 'there') {
+    return true
+  }
+
+  if ((leadingWord === 'do' || leadingWord === "don't") && secondToken === 'there') {
+    return true
+  }
+
+  if (secondToken && CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(secondToken)) {
+    return true
+  }
+
+  if (leadingWord !== 'do' && leadingWord !== "don't" && leadingWord !== 'have') {
+    return false
+  }
+
+  const maxSubjectHeadIndex = Math.min(tokens.length - 2, 3)
+  for (let subjectHeadIndex = 1; subjectHeadIndex <= maxSubjectHeadIndex; subjectHeadIndex += 1) {
+    const subjectHeadToken = tokens[subjectHeadIndex]?.normalizedText
+    if (!subjectHeadToken || !looksLikePluralNounInterrogativeSubjectHead(subjectHeadToken)) {
+      continue
+    }
+
+    const predicateToken = findContextualBareInterrogativePredicateToken(
+      tokens,
+      subjectHeadIndex + 1,
+    )
+    if (
+      ((leadingWord === 'do' || leadingWord === "don't") &&
+        isLikelyBareDoQuestionPredicateToken(predicateToken)) ||
+      (leadingWord === 'have' && isLikelyBareHaveQuestionPredicateToken(predicateToken))
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function looksLikeNonPunctuatedWhSubjectClausePredicateHead(token: string | undefined) {
+  return Boolean(
+    token &&
+      !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) &&
+      (/ed$/iu.test(token) ||
+        /en$/iu.test(token) ||
+        /ing$/iu.test(token) ||
+        (/s$/iu.test(token) && !/['’]s$/iu.test(token))),
+  )
+}
+
+function looksLikeNonPunctuatedWhSubjectClauseLexicalToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token),
+  )
+}
+
+function looksLikeNonPunctuatedWhNounPhraseSubjectHeadToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !isNonPunctuatedWhExistentialStarterToken(token) &&
+      looksLikeNonPunctuatedWhSubjectClauseLexicalToken(token) &&
+      !looksLikeNonPunctuatedWhSubjectClausePredicateHead(token),
+  )
+}
+
+function looksLikeNonPunctuatedWhInfinitiveVerbToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+      !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token),
+  )
+}
+
+function tokenLooksLikeNonPunctuatedWhClauseSubject(token: string | undefined) {
+  return Boolean(
+    token &&
+      (CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_SUBJECT_WORDS.has(token) ||
+        looksLikePluralNounInterrogativeSubjectHead(token)),
+  )
+}
+
+function isNonPunctuatedWhInfinitiveClauseDeclarative(tokens: EmbeddedMatchingRunToken[]) {
+  const maxInfinitiveTokenIndex = Math.min(tokens.length - 2, 4)
+  for (let tokenIndex = 1; tokenIndex <= maxInfinitiveTokenIndex; tokenIndex += 1) {
+    if (tokens[tokenIndex]?.normalizedText !== 'to') {
+      continue
+    }
+
+    if (
+      !looksLikeNonPunctuatedWhInfinitiveVerbToken(tokens[tokenIndex + 1]?.normalizedText)
+    ) {
+      continue
+    }
+
+    for (let laterTokenIndex = tokenIndex + 2; laterTokenIndex < tokens.length; laterTokenIndex += 1) {
+      const laterToken = tokens[laterTokenIndex]?.normalizedText
+      if (
+        !laterToken ||
+        NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(laterToken) ||
+        NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(laterToken)
+      ) {
+        continue
+      }
+
+      if (
+        NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(laterToken) ||
+        looksLikeNonPunctuatedWhSubjectClausePredicateHead(laterToken)
+      ) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function findNonPunctuatedWhEmbeddedClausePredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (token && NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_LEXICAL_PREDICATE_TOKENS.has(token)) {
+      for (let laterTokenIndex = tokenIndex + 1; laterTokenIndex < tokens.length; laterTokenIndex += 1) {
+        const laterToken = tokens[laterTokenIndex]?.normalizedText
+        if (
+          !laterToken ||
+          NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(laterToken) ||
+          NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(laterToken)
+        ) {
+          continue
+        }
+
+        if (
+          NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(laterToken) ||
+          NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(laterToken) ||
+          looksLikeNonPunctuatedWhSubjectClausePredicateHead(laterToken)
+        ) {
+          return tokenIndex
+        }
+
+        break
+      }
+    }
+
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) ||
+      (tokenLooksLikeNonPunctuatedWhClauseSubject(token) &&
+        !looksLikeNonPunctuatedWhSubjectClausePredicateHead(token))
+    ) {
+      continue
+    }
+
+    if (isNonPunctuatedWhExistentialStarterToken(token)) {
+      const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+        tokens,
+        tokenIndex,
+      )
+      if (existentialPredicateIndex !== undefined) {
+        return existentialPredicateIndex
+      }
+    }
+
+    return tokenIndex
+  }
+
+  return undefined
+}
+
+function findNonPunctuatedWhDeclarativeTailPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token)
+    ) {
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token)
+    ) {
+      return tokenIndex
+    }
+  }
+
+  return undefined
+}
+
+function looksLikeNonPunctuatedWhBareClausePredicateToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      !isNonPunctuatedWhExistentialStarterToken(token) &&
+      looksLikeNonPunctuatedWhSubjectClauseLexicalToken(token) &&
+      !looksLikeNonPunctuatedWhSubjectClausePredicateHead(token) &&
+      !looksLikeNonPunctuatedWhNounPhraseSubjectHeadToken(token),
+  )
+}
+
+function findNonPunctuatedWhExistentialPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  thereTokenIndex: number,
+) {
+  const starterToken = tokens[thereTokenIndex]?.normalizedText
+  if (!isNonPunctuatedWhExistentialStarterToken(starterToken)) {
+    return undefined
+  }
+
+  if (
+    starterToken &&
+    NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_COPULA_TOKENS.has(starterToken)
+  ) {
+    return findNonPunctuatedWhExistentialContractedCopulaPredicateIndex(tokens, thereTokenIndex)
+  }
+
+  if (starterToken === "there've") {
+    const perfectCopulaPredicateIndex = findNonPunctuatedWhExistentialPerfectCopulaPredicateIndex(
+      tokens,
+      thereTokenIndex + 1,
+    )
+    if (perfectCopulaPredicateIndex !== undefined) {
+      return perfectCopulaPredicateIndex
+    }
+  }
+
+  let lastTokenIndex = Math.min(
+    tokens.length - 1,
+    thereTokenIndex + NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_PREDICATE_LOOKAHEAD,
+  )
+  for (let tokenIndex = thereTokenIndex + 1; tokenIndex <= lastTokenIndex; tokenIndex += 1) {
+    const nonFillerTokenIndex = skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex)
+    if (nonFillerTokenIndex !== tokenIndex) {
+      lastTokenIndex = Math.max(
+        lastTokenIndex,
+        Math.min(tokens.length - 1, nonFillerTokenIndex),
+      )
+      tokenIndex = nonFillerTokenIndex - 1
+      continue
+    }
+
+    const token = tokens[tokenIndex]?.normalizedText
+    if (!token || NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token)) {
+      continue
+    }
+
+    if (
+      starterToken &&
+      NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_CONTRACTED_STARTER_TOKENS.has(starterToken)
+    ) {
+      const contractedStarterPerfectPredicateIndex =
+        findNonPunctuatedWhExistentialContractedStarterPerfectPredicateIndex(
+          tokens,
+          thereTokenIndex,
+        )
+      if (contractedStarterPerfectPredicateIndex !== undefined) {
+        return contractedStarterPerfectPredicateIndex
+      }
+
+      const contractedStarterCopularSupportPredicateIndex =
+        findNonPunctuatedWhExistentialContractedStarterCopularSupportPredicateIndex(
+          tokens,
+          thereTokenIndex,
+        )
+      if (contractedStarterCopularSupportPredicateIndex !== undefined) {
+        return contractedStarterCopularSupportPredicateIndex
+      }
+    }
+
+    if (token === 'have' || token === 'has' || token === 'had') {
+      const perfectCopulaPredicateIndex = findNonPunctuatedWhExistentialPerfectCopulaPredicateIndex(
+        tokens,
+        tokenIndex + 1,
+      )
+      if (perfectCopulaPredicateIndex !== undefined) {
+        return perfectCopulaPredicateIndex
+      }
+    }
+
+    if (
+      isNonPunctuatedWhExistentialCopulaToken(token) &&
+      tokens[tokenIndex + 1]?.normalizedText === 'going' &&
+      tokens[tokenIndex + 2]?.normalizedText === 'to' &&
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+        tokens[tokenIndex + 3]?.normalizedText ?? '',
+      )
+    ) {
+      return tokenIndex + 3
+    }
+
+    if (isNonPunctuatedWhExistentialCopulaToken(token)) {
+      const copularSupportPredicateIndex =
+        findNonPunctuatedWhExistentialCopularSupportPredicateIndex(tokens, tokenIndex)
+      if (copularSupportPredicateIndex !== undefined) {
+        return copularSupportPredicateIndex
+      }
+    }
+
+    if (isNonPunctuatedWhExistentialCopulaToken(token)) {
+      return tokenIndex
+    }
+
+    if (isNonPunctuatedWhExistentialSupportVerbToken(token)) {
+      const supportVerbCopularSupportPredicateIndex =
+        findNonPunctuatedWhExistentialSupportVerbCopularSupportPredicateIndex(tokens, tokenIndex)
+      if (supportVerbCopularSupportPredicateIndex !== undefined) {
+        return supportVerbCopularSupportPredicateIndex
+      }
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_PHRASAL_SUPPORT_TOKENS.has(token) &&
+      tokens[tokenIndex + 1]?.normalizedText === 'out' &&
+      tokens[
+        skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 2)
+      ]?.normalizedText === 'to' &&
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+        tokens[
+          skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 2) + 1
+        ]?.normalizedText ?? '',
+      )
+    ) {
+      return skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 2) + 1
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_SUPPORT_TOKENS.has(token) &&
+      tokens[
+        skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 1)
+      ]?.normalizedText === 'being'
+    ) {
+      return skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 1)
+    }
+
+    for (const chain of NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_BEING_PHRASAL_SUPPORT_CHAINS) {
+      if (
+        chain.verbs.has(token) &&
+        tokens[tokenIndex + 1]?.normalizedText === chain.particle &&
+        tokens[
+          skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 2)
+        ]?.normalizedText === 'being'
+      ) {
+        return skipNonPunctuatedInterrogativePredicateFillers(tokens, tokenIndex + 2)
+      }
+    }
+
+    if (NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token)) {
+      const auxiliaryPerfectPredicateIndex =
+        findNonPunctuatedWhExistentialAuxiliaryPerfectPredicateIndex(tokens, tokenIndex)
+      if (auxiliaryPerfectPredicateIndex !== undefined) {
+        return auxiliaryPerfectPredicateIndex
+      }
+    }
+
+    if (
+      token === 'to' ||
+      NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_TOKENS.has(token)
+    ) {
+      continue
+    }
+
+    return undefined
+  }
+
+  return undefined
+}
+
+function isWithinNonPunctuatedWhExistentialSupportChain(
+  tokens: EmbeddedMatchingRunToken[],
+  tokenIndex: number,
+) {
+  const firstThereTokenIndex = Math.max(
+    0,
+    tokenIndex - NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_CHAIN_LOOKBACK,
+  )
+  for (let thereTokenIndex = firstThereTokenIndex; thereTokenIndex < tokenIndex; thereTokenIndex += 1) {
+    if (!isNonPunctuatedWhExistentialStarterToken(tokens[thereTokenIndex]?.normalizedText)) {
+      continue
+    }
+
+    const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+      tokens,
+      thereTokenIndex,
+    )
+    if (
+      existentialPredicateIndex !== undefined &&
+      tokenIndex > thereTokenIndex &&
+      tokenIndex < existentialPredicateIndex
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isNonPunctuatedWhExistentialTerminalCopula(
+  tokens: EmbeddedMatchingRunToken[],
+  copulaIndex: number,
+) {
+  if (
+    !NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+      tokens[copulaIndex]?.normalizedText ?? '',
+    )
+  ) {
+    return false
+  }
+
+  const firstThereTokenIndex = Math.max(
+    0,
+    copulaIndex - NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_TERMINAL_COPULA_LOOKBACK,
+  )
+  for (let thereTokenIndex = firstThereTokenIndex; thereTokenIndex < copulaIndex; thereTokenIndex += 1) {
+    if (!isNonPunctuatedWhExistentialStarterToken(tokens[thereTokenIndex]?.normalizedText)) {
+      continue
+    }
+
+    if (
+      findNonPunctuatedWhExistentialPredicateIndex(tokens, thereTokenIndex) === copulaIndex
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function findNonPunctuatedWhNounPhraseSubjectClauseInnerPredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) ||
+      isWithinNonPunctuatedWhExistentialSupportChain(tokens, tokenIndex)
+    ) {
+      continue
+    }
+
+    if (isNonPunctuatedWhExistentialStarterToken(token)) {
+      const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+        tokens,
+        tokenIndex,
+      )
+      if (existentialPredicateIndex !== undefined) {
+        return existentialPredicateIndex
+      }
+    }
+
+    const previousToken = tokens[tokenIndex - 1]?.normalizedText
+    if (
+      isNonPunctuatedWhExistentialStarterToken(previousToken) &&
+      NON_PUNCTUATED_INTERROGATIVE_EXISTENTIAL_SUPPORT_TOKENS.has(token) &&
+      tokens[tokenIndex + 1]?.normalizedText === 'to' &&
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(
+        tokens[tokenIndex + 2]?.normalizedText ?? '',
+      )
+    ) {
+      continue
+    }
+
+    if (
+      looksLikePluralNounInterrogativeSubjectHead(token) &&
+      looksLikeNonPunctuatedWhSubjectClauseLexicalToken(previousToken) &&
+      (NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(tokens[tokenIndex + 1]?.normalizedText ?? '') ||
+        NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(
+          tokens[tokenIndex + 1]?.normalizedText ?? '',
+        ) ||
+        findNonPunctuatedWhExistentialPredicateIndex(tokens, tokenIndex + 1) !== undefined ||
+        looksLikeNonPunctuatedWhBareClausePredicateToken(tokens[tokenIndex + 1]?.normalizedText))
+    ) {
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(token) ||
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token)
+    ) {
+      return tokenIndex
+    }
+
+    if (
+      looksLikeNonPunctuatedWhBareClausePredicateToken(token) &&
+      (looksLikePluralNounInterrogativeSubjectHead(previousToken ?? '') ||
+        tokenLooksLikeNonPunctuatedWhClauseSubject(previousToken))
+    ) {
+      return tokenIndex
+    }
+  }
+
+  return undefined
+}
+
+function resolveNonPunctuatedWhOuterPredicateSearchStart(
+  tokens: EmbeddedMatchingRunToken[],
+  innerPredicateIndex: number,
+) {
+  const innerPredicateToken = tokens[innerPredicateIndex]?.normalizedText
+  return innerPredicateToken &&
+    ((NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(innerPredicateToken) &&
+      !isNonPunctuatedWhExistentialTerminalCopula(tokens, innerPredicateIndex) &&
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(tokens[innerPredicateIndex + 1]?.normalizedText)) ||
+      (NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(innerPredicateToken) &&
+        looksLikeNonPunctuatedWhSubjectClauseLexicalToken(
+          tokens[innerPredicateIndex + 1]?.normalizedText,
+        )))
+    ? innerPredicateIndex + 2
+    : innerPredicateIndex + 1
+}
+
+function findNonPunctuatedWhOuterClausePredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token)
+    ) {
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(token)
+    ) {
+      return tokenIndex
+    }
+
+    if (
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token) &&
+      (tokenIndex === startIndex ||
+        !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(
+          tokens[tokenIndex - 1]?.normalizedText ?? '',
+        ))
+    ) {
+      return tokenIndex
+    }
+  }
+
+  return undefined
+}
+
+function looksLikeNonPunctuatedHowEmbeddedClauseSubjectToken(token: string | undefined) {
+  return Boolean(
+    token &&
+      (tokenLooksLikeNonPunctuatedWhClauseSubject(token) ||
+        (!isNonPunctuatedWhExistentialStarterToken(token) &&
+          !NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) &&
+          !NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) &&
+          !NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) &&
+          !looksLikeNonPunctuatedWhSubjectClausePredicateHead(token))),
+  )
+}
+
+function isNonPunctuatedWhEmbeddedSubjectClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  const maxSubjectIndex = Math.min(tokens.length - 3, 5)
+  for (let subjectIndex = 1; subjectIndex <= maxSubjectIndex; subjectIndex += 1) {
+    const subjectToken = tokens[subjectIndex]?.normalizedText
+    if (
+      !tokenLooksLikeNonPunctuatedWhClauseSubject(subjectToken) ||
+      isWithinNonPunctuatedWhExistentialSupportChain(tokens, subjectIndex)
+    ) {
+      continue
+    }
+
+    const innerPredicateIndex = findNonPunctuatedWhEmbeddedClausePredicateIndex(
+      tokens,
+      subjectIndex + 1,
+    )
+    if (innerPredicateIndex === undefined) {
+      continue
+    }
+
+    const outerPredicateIndex = findNonPunctuatedWhDeclarativeTailPredicateIndex(
+      tokens,
+      innerPredicateIndex + 1,
+    )
+    if (outerPredicateIndex !== undefined) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isNonPunctuatedWhNounPhraseSubjectClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  const maxSubjectHeadIndex = Math.min(tokens.length - 3, 4)
+  for (let subjectHeadIndex = 1; subjectHeadIndex <= maxSubjectHeadIndex; subjectHeadIndex += 1) {
+    const subjectHeadToken = tokens[subjectHeadIndex]?.normalizedText
+    if (!looksLikeNonPunctuatedWhNounPhraseSubjectHeadToken(subjectHeadToken)) {
+      continue
+    }
+
+    const innerPredicateIndex = findNonPunctuatedWhNounPhraseSubjectClauseInnerPredicateIndex(
+      tokens,
+      subjectHeadIndex + 1,
+    )
+    if (innerPredicateIndex === undefined) {
+      continue
+    }
+
+    const outerPredicateIndex = findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, innerPredicateIndex),
+    )
+    if (outerPredicateIndex !== undefined) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function hasNonPunctuatedWhCommaContinuation(text: string) {
+  const commaTail = /^[^,，]+[,，]\s*(?<tail>.+)$/u.exec(text.trim())?.groups?.tail?.trim()
+  return Boolean(commaTail && tokenizeEmbeddedMatchingRunSourceResponse(commaTail).length > 0)
+}
+
+function findNonPunctuatedWhAdverbClauseInnerPredicateIndex(tokens: EmbeddedMatchingRunToken[]) {
+  const predicateIndex = findNonPunctuatedWhDeclarativeTailPredicateIndex(tokens, 2)
+  if (predicateIndex !== undefined) {
+    return predicateIndex
+  }
+
+  if (
+    tokenLooksLikeNonPunctuatedWhClauseSubject(tokens[1]?.normalizedText) &&
+    looksLikeNonPunctuatedWhSubjectClauseLexicalToken(tokens[2]?.normalizedText)
+  ) {
+    return 2
+  }
+
+  return undefined
+}
+
+function isNonPunctuatedWhAdverbClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+  text: string,
+) {
+  const leadingWord = tokens[0]?.normalizedText
+  const secondToken = tokens[1]?.normalizedText
+  if (
+    !leadingWord ||
+    !NON_PUNCTUATED_INTERROGATIVE_ADVERB_LEADING_WORDS.has(leadingWord) ||
+    NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(secondToken ?? '')
+  ) {
+    return false
+  }
+
+  if (hasNonPunctuatedWhCommaContinuation(text)) {
+    return true
+  }
+
+  const innerPredicateIndex = findNonPunctuatedWhAdverbClauseInnerPredicateIndex(tokens)
+  if (innerPredicateIndex === undefined) {
+    return false
+  }
+
+  return (
+    findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, innerPredicateIndex),
+    ) !== undefined
+  )
+}
+
+function findNonPunctuatedHowEmbeddedClausePredicateIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) ||
+      isWithinNonPunctuatedWhExistentialSupportChain(tokens, tokenIndex)
+    ) {
+      continue
+    }
+
+    if (isNonPunctuatedWhExistentialStarterToken(token)) {
+      const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+        tokens,
+        tokenIndex,
+      )
+      if (existentialPredicateIndex !== undefined) {
+        return existentialPredicateIndex
+      }
+    }
+
+    const previousToken = tokens[tokenIndex - 1]?.normalizedText
+    if (
+      looksLikePluralNounInterrogativeSubjectHead(token) &&
+      looksLikeNonPunctuatedWhSubjectClauseLexicalToken(previousToken) &&
+      findNonPunctuatedWhExistentialPredicateIndex(tokens, tokenIndex + 1) !== undefined
+    ) {
+      continue
+    }
+
+    if (
+      looksLikeNonPunctuatedWhNounPhraseSubjectHeadToken(token) &&
+      looksLikeNonPunctuatedWhSubjectClauseLexicalToken(previousToken) &&
+      findNonPunctuatedWhExistentialPredicateIndex(tokens, tokenIndex + 1) !== undefined
+    ) {
+      continue
+    }
+
+    if (
+      (token === 'have' || token === 'has' || token === 'had') &&
+      tokenLooksLikeNonPunctuatedWhClauseSubject(tokens[tokenIndex - 1]?.normalizedText)
+    ) {
+      return tokenIndex
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(token) ||
+      (tokenLooksLikeNonPunctuatedWhClauseSubject(token) &&
+        !looksLikeNonPunctuatedWhSubjectClausePredicateHead(token))
+    ) {
+      continue
+    }
+
+    return tokenIndex
+  }
+
+  return undefined
+}
+
+function isNonPunctuatedHowModifierEmbeddedClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  if (
+    tokens[0]?.normalizedText !== 'how' ||
+    !NON_PUNCTUATED_INTERROGATIVE_HOW_EMBEDDED_CLAUSE_SECOND_WORDS.has(
+      tokens[1]?.normalizedText ?? '',
+    )
+  ) {
+    return false
+  }
+
+  const maxSubjectIndex = Math.min(tokens.length - 3, 5)
+  for (let subjectIndex = 2; subjectIndex <= maxSubjectIndex; subjectIndex += 1) {
+    const subjectToken = tokens[subjectIndex]?.normalizedText
+    if (
+      !looksLikeNonPunctuatedHowEmbeddedClauseSubjectToken(subjectToken) ||
+      isWithinNonPunctuatedWhExistentialSupportChain(tokens, subjectIndex)
+    ) {
+      continue
+    }
+
+    const innerPredicateIndex = findNonPunctuatedHowEmbeddedClausePredicateIndex(
+      tokens,
+      subjectIndex + 1,
+    )
+    if (innerPredicateIndex === undefined) {
+      continue
+    }
+
+    const outerPredicateIndex = findNonPunctuatedWhDeclarativeTailPredicateIndex(
+      tokens,
+      innerPredicateIndex + 1,
+    )
+    if (outerPredicateIndex !== undefined) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isNonPunctuatedWhLeadingExistentialClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  if (!isNonPunctuatedWhExistentialStarterToken(tokens[1]?.normalizedText)) {
+    return false
+  }
+
+  const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(tokens, 1)
+  if (existentialPredicateIndex === undefined) {
+    return false
+  }
+
+  return (
+    findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, existentialPredicateIndex),
+    ) !== undefined
+  )
+}
+
+function findNonPunctuatedWhClauseExistentialStarterIndex(
+  tokens: EmbeddedMatchingRunToken[],
+  startIndex: number,
+) {
+  for (let tokenIndex = startIndex; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token) ||
+      isWithinNonPunctuatedWhExistentialSupportChain(tokens, tokenIndex)
+    ) {
+      continue
+    }
+
+    if (isNonPunctuatedWhExistentialStarterToken(token)) {
+      return tokenIndex
+    }
+  }
+
+  return undefined
+}
+
+function resolveNonPunctuatedWhExistentialClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+  starterTokenIndex: number,
+) {
+  if (!isNonPunctuatedWhExistentialStarterToken(tokens[starterTokenIndex]?.normalizedText)) {
+    return undefined
+  }
+
+  const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+    tokens,
+    starterTokenIndex,
+  )
+  if (existentialPredicateIndex === undefined) {
+    return undefined
+  }
+
+  return (
+    findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, existentialPredicateIndex),
+    ) !== undefined
+  )
+}
+
+function isAuxiliaryLedExistentialPluralComplementQuestion(
+  tokens: EmbeddedMatchingRunToken[],
+  leadingWord: string,
+  existentialStarterIndex: number,
+) {
+  if (
+    existentialStarterIndex !== 1 ||
+    !(
+      NON_PUNCTUATED_INTERROGATIVE_AUXILIARY_TOKENS.has(leadingWord) ||
+      leadingWord === "don't" ||
+      leadingWord === 'need'
+    )
+  ) {
+    return false
+  }
+
+  const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+    tokens,
+    existentialStarterIndex,
+  )
+  if (existentialPredicateIndex === undefined) {
+    return false
+  }
+
+  let sawPluralComplementHead = false
+  for (
+    let tokenIndex = existentialPredicateIndex + 1;
+    tokenIndex < tokens.length;
+    tokenIndex += 1
+  ) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token)
+    ) {
+      continue
+    }
+
+    if (!sawPluralComplementHead) {
+      if (looksLikePluralNounInterrogativeSubjectHead(token)) {
+        sawPluralComplementHead = true
+      }
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(token) ||
+      isNonPunctuatedWhExistentialStarterToken(token) ||
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token)
+    ) {
+      return false
+    }
+  }
+
+  return sawPluralComplementHead
+}
+
+function isAdverbLedExistentialPluralComplementQuestion(
+  tokens: EmbeddedMatchingRunToken[],
+  leadingWord: string,
+  existentialStarterIndex: number,
+) {
+  if (
+    existentialStarterIndex !== 1 ||
+    !NON_PUNCTUATED_INTERROGATIVE_ADVERB_LEADING_WORDS.has(leadingWord)
+  ) {
+    return false
+  }
+
+  const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+    tokens,
+    existentialStarterIndex,
+  )
+  if (existentialPredicateIndex === undefined) {
+    return false
+  }
+
+  let sawPluralComplementHead = false
+  for (
+    let tokenIndex = existentialPredicateIndex + 1;
+    tokenIndex < tokens.length;
+    tokenIndex += 1
+  ) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token)
+    ) {
+      continue
+    }
+
+    if (!sawPluralComplementHead) {
+      if (looksLikePluralNounInterrogativeSubjectHead(token)) {
+        sawPluralComplementHead = true
+      }
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(token) ||
+      isNonPunctuatedWhExistentialStarterToken(token) ||
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token)
+    ) {
+      return false
+    }
+  }
+
+  return sawPluralComplementHead
+}
+
+function hasBareExistentialPluralComplementTail(
+  tokens: EmbeddedMatchingRunToken[],
+  existentialPredicateIndex: number,
+) {
+  let sawPluralComplementHead = false
+  for (
+    let tokenIndex = existentialPredicateIndex + 1;
+    tokenIndex < tokens.length;
+    tokenIndex += 1
+  ) {
+    const token = tokens[tokenIndex]?.normalizedText
+    if (
+      !token ||
+      NON_PUNCTUATED_INTERROGATIVE_PREDICATE_FILLER_WORDS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_NON_PREDICATE_WORDS.has(token)
+    ) {
+      continue
+    }
+
+    if (!sawPluralComplementHead) {
+      if (looksLikePluralNounInterrogativeSubjectHead(token)) {
+        sawPluralComplementHead = true
+      }
+      continue
+    }
+
+    if (
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token) ||
+      NON_PUNCTUATED_INTERROGATIVE_LINKING_PREDICATE_TOKENS.has(token) ||
+      isNonPunctuatedWhExistentialStarterToken(token) ||
+      looksLikeNonPunctuatedWhSubjectClausePredicateHead(token)
+    ) {
+      return false
+    }
+  }
+
+  return sawPluralComplementHead
+}
+
+function isNonPunctuatedWhClauseDeclarative(
+  tokens: EmbeddedMatchingRunToken[],
+  leadingWord: string,
+  text: string,
+) {
+  if (!NON_PUNCTUATED_INTERROGATIVE_WH_LEADING_WORDS.has(leadingWord)) {
+    return false
+  }
+
+  const secondToken = tokens[1]?.normalizedText
+  const existentialStarterIndex = findNonPunctuatedWhClauseExistentialStarterIndex(tokens, 1)
+  if (existentialStarterIndex !== undefined) {
+    const existentialClauseDeclarative = resolveNonPunctuatedWhExistentialClauseDeclarative(
+      tokens,
+      existentialStarterIndex,
+    )
+    if (existentialClauseDeclarative !== undefined) {
+      if (
+        existentialClauseDeclarative &&
+        isAdverbLedExistentialPluralComplementQuestion(
+          tokens,
+          leadingWord,
+          existentialStarterIndex,
+        )
+      ) {
+        return false
+      }
+      return existentialClauseDeclarative
+    }
+  }
+  if (isNonPunctuatedWhInfinitiveClauseDeclarative(tokens)) {
+    return true
+  }
+  if (isNonPunctuatedHowModifierEmbeddedClauseDeclarative(tokens)) {
+    return true
+  }
+  if (
+    !(
+      leadingWord === 'how' &&
+      NON_PUNCTUATED_INTERROGATIVE_HOW_EMBEDDED_CLAUSE_SECOND_WORDS.has(secondToken ?? '')
+    ) &&
+    isNonPunctuatedWhEmbeddedSubjectClauseDeclarative(tokens)
+  ) {
+    return true
+  }
+  if (isNonPunctuatedWhLeadingExistentialClauseDeclarative(tokens)) {
+    return true
+  }
+  if (leadingWord !== 'how' && isNonPunctuatedWhNounPhraseSubjectClauseDeclarative(tokens)) {
+    return true
+  }
+
+  const firstDelayedCopulaIndex = tokens.findIndex(
+    (token, tokenIndex) =>
+      tokenIndex >= 2 &&
+      NON_PUNCTUATED_INTERROGATIVE_COPULA_TOKENS.has(token.normalizedText) &&
+      !isNonPunctuatedWhExistentialTerminalCopula(tokens, tokenIndex),
+  )
+  if (firstDelayedCopulaIndex >= 3) {
+    for (let tokenIndex = 1; tokenIndex < firstDelayedCopulaIndex - 1; tokenIndex += 1) {
+      if (tokens[tokenIndex]?.normalizedText !== 'to') {
+        continue
+      }
+
+      if (
+        looksLikeNonPunctuatedWhSubjectClauseLexicalToken(tokens[tokenIndex + 1]?.normalizedText)
+      ) {
+        return true
+      }
+    }
+  }
+
+  if (
+    firstDelayedCopulaIndex >= 2 &&
+    looksLikeNonPunctuatedWhSubjectClausePredicateHead(tokens[1]?.normalizedText) &&
+    !(
+      isNonPunctuatedWhExistentialStarterToken(tokens[2]?.normalizedText) &&
+      findNonPunctuatedWhExistentialPredicateIndex(tokens, 2) !== undefined
+    )
+  ) {
+    return true
+  }
+
+  if (firstDelayedCopulaIndex >= 3) {
+    let sawClauseSubject = false
+    for (let tokenIndex = 1; tokenIndex < firstDelayedCopulaIndex; tokenIndex += 1) {
+      const token = tokens[tokenIndex]?.normalizedText
+      if (!token) {
+        continue
+      }
+
+      if (!sawClauseSubject && tokenLooksLikeNonPunctuatedWhClauseSubject(token)) {
+        sawClauseSubject = true
+        continue
+      }
+
+      if (sawClauseSubject && isWithinNonPunctuatedWhExistentialSupportChain(tokens, tokenIndex)) {
+        continue
+      }
+
+      if (
+        sawClauseSubject &&
+        (looksLikeNonPunctuatedWhSubjectClausePredicateHead(token) ||
+          looksLikeNonPunctuatedWhBareClausePredicateToken(token))
+      ) {
+        return true
+      }
+    }
+  }
+
+  if (
+    leadingWord === 'how' &&
+    NON_PUNCTUATED_INTERROGATIVE_HOW_QUESTION_SECOND_WORDS.has(secondToken ?? '')
+  ) {
+    return false
+  }
+
+  if (isNonPunctuatedWhAdverbClauseDeclarative(tokens, text)) {
+    return true
+  }
+
+  return false
+}
+
+function inferNonPunctuatedInterrogativeQuestionAuthority(sentence: string) {
+  const strippedSentence = stripLeadingQuestionPromptConjunction(sentence).trim()
+  if (!strippedSentence || /[?？]/u.test(strippedSentence)) {
+    return undefined
+  }
+
+  const withoutTerminalPunctuation = strippedSentence.replace(/[.!。！]+$/u, '').trim()
+  if (!withoutTerminalPunctuation) {
+    return undefined
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(withoutTerminalPunctuation)
+  const leadingWord = extractNonPunctuatedInterrogativeLeadingWord(withoutTerminalPunctuation)
+  const secondToken = tokens[1]?.normalizedText
+  if (
+    !leadingWord ||
+    (!NON_PUNCTUATED_INTERROGATIVE_LEADING_WORDS.has(leadingWord) &&
+      !CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_LEADING_WORDS.has(leadingWord)) ||
+    tokens.length < 3
+  ) {
+    return undefined
+  }
+
+  if (
+    CONTEXTUAL_NON_PUNCTUATED_INTERROGATIVE_LEADING_WORDS.has(leadingWord) &&
+    !hasContextualBareInterrogativeSubject(tokens, leadingWord, secondToken)
+  ) {
+    return undefined
+  }
+
+  const existentialStarterIndex = findNonPunctuatedWhClauseExistentialStarterIndex(tokens, 1)
+  if (existentialStarterIndex !== undefined) {
+    const existentialClauseDeclarative = resolveNonPunctuatedWhExistentialClauseDeclarative(
+      tokens,
+      existentialStarterIndex,
+    )
+    if (existentialClauseDeclarative === false) {
+      return normalizeExplicitQuestionSurfaceText(`${withoutTerminalPunctuation}?`)
+    }
+    if (existentialClauseDeclarative === true) {
+      if (
+        isAuxiliaryLedExistentialPluralComplementQuestion(
+          tokens,
+          leadingWord,
+          existentialStarterIndex,
+        )
+      ) {
+        return normalizeExplicitQuestionSurfaceText(`${withoutTerminalPunctuation}?`)
+      }
+      if (
+        isAdverbLedExistentialPluralComplementQuestion(
+          tokens,
+          leadingWord,
+          existentialStarterIndex,
+        )
+      ) {
+        return normalizeExplicitQuestionSurfaceText(`${withoutTerminalPunctuation}?`)
+      }
+      return undefined
+    }
+  }
+
+  if (isNonPunctuatedWhClauseDeclarative(tokens, leadingWord, withoutTerminalPunctuation)) {
+    return undefined
+  }
+
+  return normalizeExplicitQuestionSurfaceText(`${withoutTerminalPunctuation}?`)
+}
+
+function startsWithNonPunctuatedWhClauseDeclarative(text: string) {
+  const strippedText = stripLeadingQuestionPromptConjunction(text).trim()
+  if (!strippedText || /[?？]/u.test(strippedText)) {
+    return false
+  }
+
+  const withoutTerminalPunctuation = strippedText.replace(/[.!。！]+$/u, '').trim()
+  if (!withoutTerminalPunctuation) {
+    return false
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(withoutTerminalPunctuation)
+  const leadingWord = extractNonPunctuatedInterrogativeLeadingWord(withoutTerminalPunctuation)
+  if (
+    !leadingWord ||
+    !NON_PUNCTUATED_INTERROGATIVE_WH_LEADING_WORDS.has(leadingWord) ||
+    tokens.length < 3
+  ) {
+    return false
+  }
+
+  const existentialStarterIndex = findNonPunctuatedWhClauseExistentialStarterIndex(tokens, 1)
+  if (existentialStarterIndex !== undefined) {
+    const existentialClauseDeclarative = resolveNonPunctuatedWhExistentialClauseDeclarative(
+      tokens,
+      existentialStarterIndex,
+    )
+    if (existentialClauseDeclarative !== undefined) {
+      if (
+        existentialClauseDeclarative &&
+        isAdverbLedExistentialPluralComplementQuestion(
+          tokens,
+          leadingWord,
+          existentialStarterIndex,
+        )
+      ) {
+        return false
+      }
+      return existentialClauseDeclarative
+    }
+  }
+
+  return isNonPunctuatedWhClauseDeclarative(tokens, leadingWord, withoutTerminalPunctuation)
+}
+
+function subordinateClauseHasLaterOuterPredicateOrContinuation(
+  tokens: EmbeddedMatchingRunToken[],
+  text: string,
+  subordinateClauseStartIndex: number,
+) {
+  if (hasNonPunctuatedWhCommaContinuation(text)) {
+    return true
+  }
+
+  const subordinateSuffix = text
+    .trim()
+    .split(/\s+/u)
+    .slice(subordinateClauseStartIndex)
+    .join(' ')
+    .trim()
+  if (
+    subordinateSuffix &&
+    (extractExplicitTopicSummariesFromQuestionAnswerSentence(subordinateSuffix).length > 0 ||
+      extractQuestionAuthorityTextsFromText(subordinateSuffix).length > 0)
+  ) {
+    return true
+  }
+
+  const existentialStarterIndex = findNonPunctuatedWhClauseExistentialStarterIndex(
+    tokens,
+    subordinateClauseStartIndex,
+  )
+  if (existentialStarterIndex !== undefined) {
+    const existentialPredicateIndex = findNonPunctuatedWhExistentialPredicateIndex(
+      tokens,
+      existentialStarterIndex,
+    )
+    if (existentialPredicateIndex !== undefined) {
+      const outerPredicateIndex = findNonPunctuatedWhOuterClausePredicateIndex(
+        tokens,
+        resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, existentialPredicateIndex),
+      )
+      return (
+        outerPredicateIndex !== undefined &&
+        !hasBareExistentialPluralComplementTail(tokens, existentialPredicateIndex)
+      )
+    }
+  }
+
+  const embeddedSubjectPredicateIndex = findNonPunctuatedWhEmbeddedClausePredicateIndex(
+    tokens,
+    subordinateClauseStartIndex + 1,
+  )
+  if (
+    embeddedSubjectPredicateIndex !== undefined &&
+    findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, embeddedSubjectPredicateIndex),
+    ) !== undefined
+  ) {
+    return true
+  }
+
+  const nounPhrasePredicateIndex = findNonPunctuatedWhNounPhraseSubjectClauseInnerPredicateIndex(
+    tokens,
+    subordinateClauseStartIndex + 1,
+  )
+  if (
+    nounPhrasePredicateIndex !== undefined &&
+    findNonPunctuatedWhOuterClausePredicateIndex(
+      tokens,
+      resolveNonPunctuatedWhOuterPredicateSearchStart(tokens, nounPhrasePredicateIndex),
+    ) !== undefined
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function inferSubordinateClauseFragmentAuthority(sentence: string) {
+  const strippedSentence = stripLeadingQuestionPromptConjunction(sentence).trim()
+  if (!strippedSentence || /[?？]/u.test(strippedSentence)) {
+    return undefined
+  }
+
+  const withoutTerminalPunctuation = strippedSentence.replace(/[.!。！]+$/u, '').trim()
+  if (!withoutTerminalPunctuation) {
+    return undefined
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(withoutTerminalPunctuation)
+  const leadingTokenCount = matchLeadingSubordinateClauseSequenceLength(
+    tokens.map((token) => token.normalizedText),
+  )
+  if (
+    !leadingTokenCount ||
+    tokens.length < leadingTokenCount + 2
+  ) {
+    return undefined
+  }
+
+  if (
+    subordinateClauseHasLaterOuterPredicateOrContinuation(
+      tokens,
+      withoutTerminalPunctuation,
+      leadingTokenCount,
+    )
+  ) {
+    return undefined
+  }
+
+  return normalizeExplicitTopicOrQuestionUnitText(strippedSentence)
+}
+
+function extractSubordinateClauseFragmentAuthoritiesFromText(text: string) {
+  const authorities: string[] = []
+
+  for (const sentence of parseTopicSourceResponseSentences(text)) {
+    const fragmentAuthority = inferSubordinateClauseFragmentAuthority(sentence.text)
+    if (fragmentAuthority) {
+      authorities.push(fragmentAuthority)
+    }
+  }
+
+  return dedupeNonEmptyStrings(authorities)
+}
+
+function extractQuestionAuthorityTextsFromText(text: string) {
+  const authorities: string[] = []
+
+  for (const sentence of parseTopicSourceResponseSentences(text)) {
+    const strippedSentence = stripLeadingQuestionPromptConjunction(sentence.text)
+    const strippedTokens = tokenizeEmbeddedMatchingRunSourceResponse(strippedSentence)
+    const canonicalQuestionAuthorities: string[] = []
+    for (let startTokenIndex = 0; startTokenIndex < strippedTokens.length - 3; startTokenIndex += 1) {
+      const match = resolveCanonicalQuestionAnchorMatch(
+        strippedSentence,
+        strippedTokens,
+        startTokenIndex,
+      )
+      if (match) {
+        canonicalQuestionAuthorities.push(match.canonicalPrompt)
+      }
+    }
+
+    if (canonicalQuestionAuthorities.length > 0) {
+      authorities.push(...canonicalQuestionAuthorities)
+      continue
+    }
+
+    const nonPunctuatedAuthority = inferNonPunctuatedInterrogativeQuestionAuthority(
+      sentence.text,
+    )
+    if (nonPunctuatedAuthority) {
+      authorities.push(nonPunctuatedAuthority)
+      continue
+    }
+
+    if (isQuestionSourceResponseSentence(sentence.text)) {
+      const normalizedQuestion = normalizeExplicitQuestionSurfaceText(
+        stripLeadingQuestionPromptConjunction(sentence.text),
+      )
+      if (normalizedQuestion) {
+        authorities.push(normalizedQuestion)
+      }
+    }
+  }
+
+  return dedupeNonEmptyStrings(authorities)
+}
+
+function assertQuestionAnswerTopicAuthorityMatchesQuestion(
+  question: string,
+  answer: string,
+  unitLabel: string,
+) {
+  const leadingTextBeforeCanonicalAuthority =
+    extractLeadingTextBeforeCanonicalQuestionAuthority(question)
+  if (leadingTextBeforeCanonicalAuthority) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${question}" in sourceResponse included leading text "${leadingTextBeforeCanonicalAuthority}" before canonical question authority.`,
+    )
+  }
+
+  const incompleteQuestionSummary = extractIncompleteLeadingTopicAuthoritySummary(
+    stripQuestionBlockLabel(question),
+  )
+  if (incompleteQuestionSummary) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${question}" in sourceResponse included incomplete topic authority for ${formatQuotedValueList([incompleteQuestionSummary])} inside question text.`,
+    )
+  }
+
+  const expectedSummary = inferComparableQuestionTopicSummary(question)
+  if (!expectedSummary) {
+    return
+  }
+
+  const answerTopicSummaries = extractExplicitTopicSummariesFromQuestionAnswerText(answer)
+  if (answerTopicSummaries.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${question}" in sourceResponse included answer text with explicit topic authority for ${formatQuotedValueList(answerTopicSummaries)}.`,
+    )
+  }
+
+  const incompleteSummaries = extractIncompleteLeadingTopicAuthoritySummariesFromQuestionAnswerText(
+    answer,
+  )
+  if (incompleteSummaries.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `${unitLabel} "${question}" in sourceResponse included incomplete topic authority for ${formatQuotedValueList(incompleteSummaries)} inside answer text.`,
+  )
+}
+
+function assertMatchedAnswerTextAuthorityMatchesConsumer(
+  answer: string,
+  candidates: string[],
+  unitLabel: string,
+  authorityContainerLabel = 'sourceResponse',
+) {
+  const normalizedCandidates = dedupeNonEmptyStrings(candidates).map((candidate) => ({
+    normalizedCandidate: normalizeSourceResponseText(candidate),
+    normalizedCandidateCore: normalizeQuestionPromptCore(candidate),
+  }))
+  if (normalizedCandidates.length === 0) {
+    return
+  }
+
+  const authorityMatchesCurrentCandidates = (authority: string) => {
+    const normalizedAuthority = normalizeSourceResponseText(authority)
+    const normalizedAuthorityCore = normalizeQuestionPromptCore(authority)
+    if (!normalizedAuthority && !normalizedAuthorityCore) {
+      return false
+    }
+
+    return normalizedCandidates.some(({ normalizedCandidate, normalizedCandidateCore }) => {
+      if (
+        normalizedAuthority &&
+        topicTextMatchesCandidate(
+          normalizedAuthority,
+          normalizedCandidate,
+          normalizedCandidateCore,
+        )
+      ) {
+        return true
+      }
+      if (normalizedAuthority && normalizedCandidate.includes(normalizedAuthority)) {
+        return true
+      }
+      if (normalizedAuthority && normalizedCandidateCore.includes(normalizedAuthority)) {
+        return true
+      }
+      if (normalizedAuthorityCore && normalizedCandidateCore.includes(normalizedAuthorityCore)) {
+        return true
+      }
+      return false
+    })
+  }
+
+  const conflictingQuestionAuthorities = extractQuestionAuthorityTextsFromText(answer)
+  if (conflictingQuestionAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} in ${authorityContainerLabel} included answer text with question authority ${formatQuotedValueList(conflictingQuestionAuthorities)}.`,
+    )
+  }
+
+  const subordinateClauseAuthorities = extractSubordinateClauseFragmentAuthoritiesFromText(answer)
+  if (subordinateClauseAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} in ${authorityContainerLabel} included answer text with subordinate-clause fragment authority ${formatQuotedValueList(subordinateClauseAuthorities)}.`,
+    )
+  }
+
+  const nestedCurrentTopicSummaries = extractNestedLeadingTopicAuthoritySummariesFromDirectAnswerText(
+    answer,
+  ).filter((summary) => authorityMatchesCurrentCandidates(summary))
+  if (nestedCurrentTopicSummaries.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} in ${authorityContainerLabel} included incomplete topic authority for ${formatQuotedValueList(nestedCurrentTopicSummaries)} inside answer text.`,
+    )
+  }
+
+  const conflictingTopicSummaries = extractExplicitTopicSummariesFromDirectAnswerText(answer).filter(
+    (summary) => !authorityMatchesCurrentCandidates(summary),
+  )
+  if (conflictingTopicSummaries.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} in ${authorityContainerLabel} included answer text with explicit topic authority for ${formatQuotedValueList(conflictingTopicSummaries)}.`,
+    )
+  }
+
+  const incompleteSummaries = extractIncompleteLeadingTopicAuthoritySummariesFromDirectAnswerText(
+    answer,
+  )
+  if (incompleteSummaries.length === 0) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `${unitLabel} in ${authorityContainerLabel} included incomplete topic authority for ${formatQuotedValueList(incompleteSummaries)} inside answer text.`,
+  )
+}
+
+function assertLabeledValueAuthorityMatchesLabel(
+  label: string,
+  value: string,
+  unitLabel: string,
+  valueLabel: string,
+) {
+  const questionAuthorities = extractQuestionAuthorityTextsFromText(value)
+  if (questionAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${label}" in sourceResponse included question authority ${formatQuotedValueList(questionAuthorities)} inside ${valueLabel}.`,
+    )
+  }
+
+  const expectedSummary = inferComparableExplicitLabelSummary(label)
+  if (!expectedSummary) {
+    return
+  }
+
+  const normalizedExpectedSummary = normalizeSourceResponseLabel(expectedSummary)
+  const conflictingSummaries = extractExplicitTopicSummariesFromQuestionAnswerText(value).filter(
+    (summary) => normalizeSourceResponseLabel(summary) !== normalizedExpectedSummary,
+  )
+  if (conflictingSummaries.length === 0) {
+    const incompleteSummaries =
+      extractIncompleteLeadingTopicAuthoritySummariesFromQuestionAnswerText(value)
+    if (incompleteSummaries.length === 0) {
+      return
+    }
+
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${label}" in sourceResponse included incomplete topic authority for ${formatQuotedValueList(incompleteSummaries)} inside ${valueLabel}.`,
+    )
+  }
+
+  throw new AnswerInterpretationError(
+    `${unitLabel} "${label}" in sourceResponse included ${valueLabel} with explicit topic authority for ${formatQuotedValueList(conflictingSummaries)}.`,
+  )
+}
+
+function assertTopicAnswerTextDoesNotContainQuestionAuthority(text: string, unitLabel: string) {
+  const authorities = extractQuestionAuthorityTextsFromText(text)
+  if (authorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${text}" in sourceResponse included question authority ${formatQuotedValueList(authorities)} inside answer text.`,
+    )
+  }
+
+  const subordinateClauseAuthorities = extractSubordinateClauseFragmentAuthoritiesFromText(text)
+  if (subordinateClauseAuthorities.length > 0) {
+    throw new AnswerInterpretationError(
+      `${unitLabel} "${text}" in sourceResponse included subordinate-clause fragment authority ${formatQuotedValueList(subordinateClauseAuthorities)} inside answer text.`,
+    )
+  }
+}
+
+function stripLeadingQuestionPromptConjunction(question: string) {
+  return stripLeadingPresentationListMarkers(question.trim().replace(/^(?:and|but)\s+/i, ''))
+}
+
+function normalizeExplicitQuestionSurfaceText(question: string) {
+  if (!question) {
+    return question
+  }
+
+  return `${question.slice(0, 1).toUpperCase()}${question.slice(1)}`
+}
+
+function normalizeEmbeddedQuestionAnchorText(question: string) {
+  const summary = inferCanonicalQuestionAnchorSummary(question)
+  return synthesizeCanonicalPromptFromSummary(summary ?? '') ?? question.trim()
 }
 
 function normalizeSourceResponseLabel(value: string) {
@@ -9426,6 +18887,28 @@ const QUESTION_KEYWORD_STOPWORDS = new Set([
   'with',
 ])
 
+const EMBEDDED_CANONICAL_QUESTION_SUBJECT_LEADING_TOKENS = new Set([
+  'a',
+  'an',
+  'her',
+  'his',
+  'its',
+  'my',
+  'our',
+  'that',
+  'the',
+  'their',
+  'these',
+  'this',
+  'those',
+  'your',
+])
+
+const EMBEDDED_CANONICAL_QUESTION_SUBJECT_REJECT_TOKENS = new Set([
+  ...QUESTION_KEYWORD_STOPWORDS,
+  'be',
+])
+
 function normalizeQuestionPromptCore(value: string) {
   const normalized = normalizeSourceResponseText(value)
   if (!normalized) {
@@ -9439,6 +18922,239 @@ function normalizeQuestionPromptCore(value: string) {
   }
 
   return tokens.slice(startIndex).join(' ')
+}
+
+function inferCanonicalQuestionAnchorSummary(question: string) {
+  const trimmed = stripCanonicalQuestionAnchorLabel(question)
+  if (!trimmed) {
+    return undefined
+  }
+
+  const subject = /^what should\s+(?<subject>.+?)\s+be$/i.exec(trimmed)?.groups?.subject
+  if (!subject) {
+    return undefined
+  }
+
+  return normalizeExtractedTopicSummary(subject, true)
+}
+
+function stripCanonicalQuestionAnchorLabel(question: string) {
+  return stripLeadingQuestionPromptConjunction(question)
+    .replace(/[?？.!。！]+$/u, '')
+    .trim()
+}
+
+function extractLeadingTextBeforeCanonicalQuestionAuthority(question: string) {
+  const trimmed = question.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const tokens = tokenizeEmbeddedMatchingRunSourceResponse(trimmed)
+  for (let startTokenIndex = 0; startTokenIndex < tokens.length - 3; startTokenIndex += 1) {
+    const match = resolveCanonicalQuestionAnchorMatch(trimmed, tokens, startTokenIndex)
+    if (!match) {
+      continue
+    }
+
+    const prefix = trimmed.slice(0, tokens[startTokenIndex]?.start ?? 0).trim()
+    if (!prefix) {
+      return undefined
+    }
+
+    const normalizedPrefix = stripLeadingPresentationListMarkers(prefix)
+      .replace(/^(?:and|but)\b[\s,;:.\-–—―]*/i, '')
+      .trim()
+    return normalizedPrefix || undefined
+  }
+
+  return undefined
+}
+
+function resolveCanonicalQuestionAnchorMatch(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+  startTokenIndex: number,
+): CanonicalQuestionAnchorMatch | undefined {
+  if (
+    tokens[startTokenIndex]?.normalizedText !== 'what' ||
+    tokens[startTokenIndex + 1]?.normalizedText !== 'should'
+  ) {
+    return undefined
+  }
+
+  const maxEndTokenIndex = Math.min(tokens.length, startTokenIndex + 10)
+  for (let endTokenIndex = startTokenIndex + 3; endTokenIndex < maxEndTokenIndex; endTokenIndex += 1) {
+    if (tokens[endTokenIndex]?.normalizedText !== 'be') {
+      continue
+    }
+
+    const subjectLeadingToken = tokens[startTokenIndex + 2]?.normalizedText
+    const subjectStartTokenIndex = EMBEDDED_CANONICAL_QUESTION_SUBJECT_LEADING_TOKENS.has(
+      subjectLeadingToken ?? '',
+    )
+      ? startTokenIndex + 3
+      : startTokenIndex + 2
+    if (subjectStartTokenIndex >= endTokenIndex) {
+      continue
+    }
+
+    const subjectTokens = tokens
+      .slice(subjectStartTokenIndex, endTokenIndex)
+      .map((token) => token.normalizedText)
+    if (
+      subjectTokens.length === 0 ||
+      subjectTokens.some((token) => EMBEDDED_CANONICAL_QUESTION_SUBJECT_REJECT_TOKENS.has(token))
+    ) {
+      continue
+    }
+
+    const endOriginal = tokens[endTokenIndex]?.end ?? sourceResponse.length
+    const rawQuestion = sourceResponse.slice(tokens[startTokenIndex]?.start ?? 0, endOriginal).trim()
+    const canonicalPrompt = normalizeEmbeddedQuestionAnchorText(rawQuestion)
+    if (canonicalPrompt === rawQuestion) {
+      continue
+    }
+
+    return {
+      rawQuestion,
+      canonicalPrompt,
+      endTokenIndex,
+      endOriginal,
+    }
+  }
+
+  return undefined
+}
+
+function inlineTopicClauseUsesExplicitTopicAuthority(trimmedClause: string) {
+  if (!trimmedClause) {
+    return false
+  }
+
+  if (/^(?<label>.+?)\s*(?::|：|=|＝|->|－>|→)\s*(?<answer>.+)$/u.test(trimmedClause)) {
+    return false
+  }
+
+  if (/^(?<label>.+?)\s+(?:-|－|–|—)\s+(?<answer>.+)$/u.test(trimmedClause)) {
+    return false
+  }
+
+  return dedupeNonEmptyStrings(extractInferredTopicSummaries(trimmedClause)).length === 1
+}
+
+function autoInlineTopicsShouldYieldToExplicitTopicAuthority(
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  const sourceResponse = sourceResponseState?.sourceResponse?.trim()
+  if (!sourceResponse) {
+    return false
+  }
+
+  let parsedClauseCount = 0
+  for (const clause of splitInlineTopicClauses(sourceResponse)) {
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    parsedClauseCount += 1
+    const trimmedClause = stripLeadingPresentationListMarkers(
+      clause.trim().replace(/^(?:and|but)\s+/i, ''),
+    )
+    if (!inlineTopicClauseUsesExplicitTopicAuthority(trimmedClause)) {
+      return false
+    }
+  }
+
+  return parsedClauseCount > 0
+}
+
+function autoInlineTopicsShouldYieldIncompleteTopicAuthorityToClauseTopics(
+  sourceResponseState: InterpretedSourceResponseState | undefined,
+) {
+  const sourceResponse = sourceResponseState?.sourceResponse?.trim()
+  if (!sourceResponse) {
+    return false
+  }
+
+  let parsedVerbalInlineClauseCount = 0
+  for (const clause of splitInlineTopicClauses(sourceResponse)) {
+    const parsed = parseInlineTopicClause(clause)
+    if (!parsed) {
+      continue
+    }
+
+    const trimmedClause = stripLeadingPresentationListMarkers(
+      clause.trim().replace(/^(?:and|but)\s+/i, ''),
+    )
+    if (inlineTopicClauseUsesExplicitLabelValueSeparator(trimmedClause)) {
+      return false
+    }
+    parsedVerbalInlineClauseCount += 1
+  }
+
+  if (parsedVerbalInlineClauseCount === 0) {
+    return false
+  }
+
+  const clauses = parseTopicSourceResponseClauses(sourceResponse)
+  if (clauses.length <= 1) {
+    return false
+  }
+
+  const clauseTopicAuthorityCount = clauses.filter(
+    (clause) =>
+      extractInferredTopicSummaries(clause.text).length > 0 ||
+      textHasIncompleteLeadingTopicAuthority(clause.text),
+  ).length
+
+  return clauseTopicAuthorityCount > 1
+}
+
+function filterEmbeddedQuestionCandidateGroups(candidateGroups: string[][]) {
+  return candidateGroups.flatMap((candidateGroup) => {
+    const filteredGroup = dedupeNonEmptyStrings(candidateGroup.filter(isEmbeddedQuestionCandidate))
+    return filteredGroup.length > 0 ? [filteredGroup] : []
+  })
+}
+
+function isEmbeddedQuestionCandidate(candidate: string) {
+  const trimmed = candidate.trim()
+  if (!trimmed) {
+    return false
+  }
+  if (/[?？]/u.test(trimmed)) {
+    return true
+  }
+
+  const normalized = normalizeSourceResponseText(trimmed)
+  return /^(?:what|which|who|whom|whose|why|where|when|how)\b/.test(normalized)
+}
+
+function inferEmbeddedCanonicalQuestionCandidateGroups(
+  sourceResponse: string,
+  tokens: EmbeddedMatchingRunToken[],
+) {
+  const groups: string[][] = []
+
+  for (let startTokenIndex = 0; startTokenIndex < tokens.length - 3; startTokenIndex += 1) {
+    const match = resolveCanonicalQuestionAnchorMatch(sourceResponse, tokens, startTokenIndex)
+    if (!match) {
+      continue
+    }
+
+    groups.push(dedupeNonEmptyStrings([match.rawQuestion, match.canonicalPrompt]))
+  }
+
+  return groups
+}
+
+function normalizedTopicLabelContainsLabel(
+  normalizedCandidateLabel: string,
+  normalizedContainedLabel: string,
+) {
+  return ` ${normalizedCandidateLabel} `.includes(` ${normalizedContainedLabel} `)
 }
 
 function extractQuestionPromptKeywordAnchors(normalizedText: string) {
@@ -9544,6 +19260,7 @@ function inferNormalizedTopicAnchorLabelsFromText(text: string) {
 }
 
 function inferTopicSummaryFromTopicSentence(sentence: string) {
+  assertTopicTextHasSubstantiveLeadingAnswerContent(sentence, 'topic sentence')
   const summaries = extractTopicAnchorCandidateSummariesFromText(sentence)
   if (summaries.length === 0) {
     throw new AnswerInterpretationError(
@@ -9559,11 +19276,8 @@ function inferTopicSummaryFromTopicSentence(sentence: string) {
 }
 
 function inferTopicSummaryFromTopicParagraph(paragraph: string) {
-  const summaries = dedupeNonEmptyStrings(
-    parseTopicSourceResponseSentences(paragraph).flatMap((sentence) =>
-      extractTopicAnchorCandidateSummariesFromText(sentence.text),
-    ),
-  )
+  assertTopicTextHasSubstantiveLeadingAnswerContent(paragraph, 'topic paragraph')
+  const summaries = extractTopicAnchorCandidateSummariesFromParagraphText(paragraph)
   if (summaries.length === 0) {
     throw new AnswerInterpretationError(
       `Could not infer a decision summary from topic paragraph "${paragraph}".`,
@@ -9586,6 +19300,21 @@ function extractTopicAnchorCandidateSummariesFromText(text: string) {
   return dedupeNonEmptyStrings(
     conjunctionSegments.flatMap((segment) => extractInferredTopicSummaries(segment)),
   )
+}
+
+function extractTopicAnchorCandidateSummariesFromParagraphText(text: string) {
+  return dedupeNonEmptyStrings(
+    [
+      ...extractTopicAnchorCandidateSummariesFromText(text),
+      ...parseTopicSourceResponseClauses(text).flatMap((clause) =>
+        extractTopicAnchorCandidateSummariesFromText(clause.text),
+      ),
+    ],
+  )
+}
+
+function paragraphTextImpliesMultipleTopicSummaries(text: string) {
+  return extractTopicAnchorCandidateSummariesFromParagraphText(text).length > 1
 }
 
 function inferTopicSummaryFromTopicSpan(span: TopicSourceResponseSpan) {
@@ -9623,17 +19352,36 @@ function normalizeExtractedTopicSummary(summary: string, stripLeadingArticle = f
     return undefined
   }
   const firstToken = tokens[0]
-  if (firstToken && LEADING_TOPIC_SUMMARY_REJECT_TOKENS.has(firstToken)) {
+  if (
+    (firstToken && LEADING_TOPIC_SUMMARY_REJECT_TOKENS.has(firstToken)) ||
+    startsWithMultiTokenSubordinateClauseSequence(tokens)
+  ) {
     return undefined
   }
 
   return `${normalizedSummary.slice(0, 1).toUpperCase()}${normalizedSummary.slice(1)}`
 }
 
+const EXTRACTABLE_TOPIC_SUMMARY_PATTERN = "[A-Za-z0-9][A-Za-z0-9 &'’/_-]*?"
+
 function extractTrailingTopicSummary(text: string) {
-  const match = /\bfor\s+(?!(?:the|a|an)\b)(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
-    text.trim(),
-  )?.groups?.summary
+  const trimmed = text.trim()
+  if (!trimmed || startsWithNonPunctuatedWhClauseDeclarative(trimmed)) {
+    return undefined
+  }
+
+  const normalized = normalizeSourceResponseLabel(trimmed)
+  if (normalized) {
+    const tokens = normalized.split(' ').filter(Boolean)
+    if (matchLeadingSubordinateClauseSequenceLength(tokens) !== undefined) {
+      return undefined
+    }
+  }
+
+  const match = new RegExp(
+    `\\bfor\\s+(?!(?:the|a|an)\\b)(?<summary>${EXTRACTABLE_TOPIC_SUMMARY_PATTERN})\\s*[,.;?!，；。？！]?$`,
+    'i',
+  ).exec(trimmed)?.groups?.summary
   if (!match) {
     return undefined
   }
@@ -9647,12 +19395,12 @@ function inferSummaryFromStablePrompt(prompt: string | undefined) {
     return undefined
   }
 
-  const subject = /^what should\s+(?<subject>.+?)\s+be\s*[?？]\s*$/i.exec(trimmed)?.groups?.subject
-  if (!subject) {
+  const canonicalSummary = inferCanonicalQuestionAnchorSummary(trimmed)
+  if (!canonicalSummary) {
     return synthesizeCanonicalPromptFromSummary(trimmed) === trimmed ? trimmed : undefined
   }
 
-  return normalizeExtractedTopicSummary(subject, true)
+  return canonicalSummary
 }
 
 function inferSummaryFromStableMatchHints(matchHints: string[] | undefined) {
@@ -9747,13 +19495,21 @@ function shouldDeriveSummaryKeyFromAnswerSourceKey(entry: ResolvedAnswerSourceEn
 }
 
 function extractPrefixedTopicSummary(text: string) {
-  const trimmed = text.trim()
+  const trimmed = stripLeadingTopicPromptConjunction(text)
   if (!trimmed) {
     return undefined
   }
 
+  const normalized = normalizeSourceResponseLabel(trimmed)
+  if (normalized) {
+    const tokens = normalized.split(' ').filter(Boolean)
+    if (startsWithMultiTokenSubordinateClauseSequence(tokens)) {
+      return undefined
+    }
+  }
+
   const summary = new RegExp(
-    `^(?:${TOPIC_SUMMARY_PREFIX_PATTERN})\\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\\s*(?:,|:|-)\\s+.+$`,
+    `^(?:${TOPIC_SUMMARY_PREFIX_PATTERN})\\s+(?<summary>${EXTRACTABLE_TOPIC_SUMMARY_PATTERN})\\s*(?:,|:|-|，|：|－)\\s+.+$`,
     'i',
   ).exec(trimmed)?.groups?.summary
   if (!summary) {
@@ -9765,13 +19521,14 @@ function extractPrefixedTopicSummary(text: string) {
 
 function extractAsTopicSummary(text: string) {
   const trimmed = text.trim()
-  if (!trimmed) {
+  if (!trimmed || startsWithNonPunctuatedWhClauseDeclarative(trimmed)) {
     return undefined
   }
 
-  const summary = /\bas\s+(?:the|a|an)\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
-    trimmed,
-  )?.groups?.summary
+  const summary = new RegExp(
+    `\\bas\\s+(?:the|a|an)\\s+(?<summary>${EXTRACTABLE_TOPIC_SUMMARY_PATTERN})\\s*[.?!。？！]?$`,
+    'i',
+  ).exec(trimmed)?.groups?.summary
   if (!summary) {
     return undefined
   }
@@ -9780,15 +19537,15 @@ function extractAsTopicSummary(text: string) {
 }
 
 function extractCopularTopicSummary(text: string) {
-  const trimmed = text.trim().replace(/^(?:and|but)\s+/i, '')
-  if (!trimmed) {
+  const trimmed = stripLeadingTopicPromptConjunction(text)
+  if (!trimmed || startsWithNonPunctuatedWhClauseDeclarative(trimmed)) {
     return undefined
   }
 
-  const summary =
-    /^(?:.+?)\s+(?:should\s+be|will\s+be|must\s+be|can\s+be|could\s+be|would\s+be|is|are|was|were|serves?\s+as|served\s+as|acts?\s+as|acted\s+as|functions?\s+as|functioned\s+as|remain|remains|remained)\s+(?:the|a|an|our|your|their)\s+(?<summary>[A-Za-z0-9][A-Za-z0-9 _-]*?)\s*[.?!]?$/i.exec(
-      trimmed,
-    )?.groups?.summary
+  const summary = new RegExp(
+    `^(?:.+?)\\s+(?:should\\s+be|will\\s+be|must\\s+be|can\\s+be|could\\s+be|would\\s+be|is|are|was|were|serves?\\s+as|served\\s+as|acts?\\s+as|acted\\s+as|functions?\\s+as|functioned\\s+as|remain|remains|remained)\\s+(?:the|a|an|our|your|their)\\s+(?<summary>${EXTRACTABLE_TOPIC_SUMMARY_PATTERN})\\s*[.?!。？！]?$`,
+    'i',
+  ).exec(trimmed)?.groups?.summary
   if (!summary) {
     return undefined
   }
@@ -9798,6 +19555,7 @@ function extractCopularTopicSummary(text: string) {
 
 const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
   'about',
+  ...SUBORDINATE_CLAUSE_LEADING_WORDS,
   ...QUESTION_CORE_LEADING_TOKENS,
   'he',
   'her',
@@ -9807,6 +19565,7 @@ const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
   'it',
   'me',
   'my',
+  'now',
   'she',
   'that',
   'their',
@@ -9824,19 +19583,62 @@ const LEADING_TOPIC_SUMMARY_REJECT_TOKENS = new Set([
 ])
 
 function extractLeadingTopicSummary(text: string) {
-  const trimmed = text.trim().replace(/^(?:and|but)\s+/i, '')
+  const trimmed = stripLeadingTopicPromptConjunction(text)
   if (!trimmed) {
     return undefined
   }
 
-  const label = new RegExp(`^(?<label>.+?)\\s+${TOPIC_SUMMARY_VERB_PATTERN}\\b.+$`, 'i').exec(
-    trimmed,
-  )?.groups?.label
+  const label = matchLeadingTopicAuthority(trimmed)?.label
   if (!label) {
     return undefined
   }
 
   return normalizeExtractedTopicSummary(label, true)
+}
+
+function matchLeadingTopicAuthority(text: string) {
+  return new RegExp(
+    `^(?<label>.+?)\\s+(?<answer>${TOPIC_SUMMARY_VERB_PATTERN}\\b.+)$`,
+    'i',
+  ).exec(text)?.groups
+}
+
+function topicPredicateIncludesSubstantiveAnswerContent(answer: string) {
+  const stripped = answer
+    .trim()
+    .replace(new RegExp(`^(?:${TOPIC_SUMMARY_VERB_PATTERN})\\b\\s*`, 'i'), '')
+    .replace(
+      /^(?:(?:be|been|being|use|uses|means|requires|starts|with|as|the|a|an|our|your|their)\b\s*)+/i,
+      '',
+    )
+    .replace(/^[\p{P}\p{S}\s]+/gu, '')
+    .trim()
+
+  return /[\p{L}\p{N}]/u.test(stripped)
+}
+
+function textHasIncompleteLeadingTopicAuthority(text: string) {
+  const trimmed = stripLeadingTopicPromptConjunction(text)
+  if (!trimmed) {
+    return false
+  }
+
+  const answer = matchLeadingTopicAuthority(trimmed)?.answer
+  return answer !== undefined && !topicPredicateIncludesSubstantiveAnswerContent(answer)
+}
+
+function assertTopicTextHasSubstantiveLeadingAnswerContent(text: string, unitLabel: string) {
+  if (!textHasIncompleteLeadingTopicAuthority(text)) {
+    return
+  }
+
+  throw new AnswerInterpretationError(
+    `${unitLabel.slice(0, 1).toUpperCase()}${unitLabel.slice(1)} "${text}" in sourceResponse did not include answer text after the topic anchor.`,
+  )
+}
+
+function stripLeadingTopicPromptConjunction(text: string) {
+  return stripLeadingPresentationListMarkers(text.trim().replace(/^(?:and|but)\s+/i, ''))
 }
 
 function extractInferredTopicSummaries(text: string) {

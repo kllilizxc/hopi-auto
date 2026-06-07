@@ -7,7 +7,7 @@ import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
-const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
+export const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
 export const PLANNING_REQUEST_UPDATE_TARGETS = ['goal.md', 'design.md', 'todo.yml'] as const
 const RESERVED_GOAL_UPDATE_TARGETS = new Set([
   'decisions.yml',

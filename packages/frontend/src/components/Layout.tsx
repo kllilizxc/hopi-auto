@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 
 export function Layout() {
   const location = useLocation();
+  const currentGoalKey = readGoalKeyFromPath(location.pathname) ?? 'tutorial';
 
   return (
     <div className="min-h-screen bg-[#1A1A1A] text-gray-200 flex">
@@ -18,7 +19,7 @@ export function Layout() {
 
         <nav className="flex-1 p-4 space-y-2">
           <Link
-            to="/board/tutorial"
+            to={`/board/${currentGoalKey}`}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
               location.pathname.startsWith('/board')
@@ -30,7 +31,7 @@ export function Layout() {
             Kanban Board
           </Link>
           <Link
-            to="/session/example"
+            to={`/session/${currentGoalKey}`}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
               location.pathname.startsWith('/session')
@@ -50,4 +51,13 @@ export function Layout() {
       </main>
     </div>
   );
+}
+
+function readGoalKeyFromPath(pathname: string) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length >= 2 && (parts[0] === 'board' || parts[0] === 'session')) {
+    return decodeURIComponent(parts[1]);
+  }
+
+  return null;
 }

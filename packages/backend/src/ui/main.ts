@@ -273,8 +273,10 @@ interface AssistantActionResult {
     | 'update_preference'
   taskRef?: string
   requestKey?: string
+  request?: GoalPlanningRequest
   taskRefs?: string[]
   requestKeys?: string[]
+  requests?: GoalPlanningRequest[]
   groupKeys?: string[]
   workflowKey?: string
   workflowTaskKey?: string
@@ -282,6 +284,7 @@ interface AssistantActionResult {
     kind: 'planning' | 'planning_batch'
     workflowTaskKey?: string
     groupKey?: string
+    requests?: GoalPlanningRequest[]
     requestKeys: string[]
     taskRefs: string[]
     blockerTaskRefs: string[]
@@ -302,10 +305,12 @@ interface AssistantActionResult {
       kind: 'planning' | 'planning_batch'
       workflowTaskKey?: string
       groupKey?: string
+      requests?: GoalPlanningRequest[]
       requestKeys: string[]
       taskRefs: string[]
       blockerTaskRefs: string[]
     }>
+    requests?: GoalPlanningRequest[]
     groupKeys?: string[]
     requestKeys: string[]
     taskRefs: string[]
@@ -314,6 +319,8 @@ interface AssistantActionResult {
   status?: TaskStatus
   decisionKey?: string
   decisionKeys?: string[]
+  decision?: GoalDecision
+  decisions?: GoalDecision[]
   preferenceKey?: string
   retiredPreferenceKeys?: string[]
   summary: string
@@ -1668,6 +1675,16 @@ function renderPlanningRequest(request: GoalPlanningRequest) {
       ${
         request.workflowKey
           ? `<div class="assistant-summary">Workflow key: ${escapeHtml(request.workflowKey)}</div>`
+          : ''
+      }
+      ${
+        request.workflowSharedDecisionRefs && request.workflowSharedDecisionRefs.length > 0
+          ? `<div class="assistant-summary">Workflow-shared decisions: ${escapeHtml(request.workflowSharedDecisionRefs.join(', '))}</div>`
+          : ''
+      }
+      ${
+        request.workflowSharedAnswers && request.workflowSharedAnswers.length > 0
+          ? `<div class="assistant-summary">Workflow-shared answers: ${escapeHtml(request.workflowSharedAnswers.map((entry) => formatPlanningAnswerSummary(entry)).join(' | '))}</div>`
           : ''
       }
       ${

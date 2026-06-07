@@ -1,6 +1,6 @@
 # HOPI Zero-Context Continuation Guide
 
-Status date: 2026-06-03
+Status date: 2026-06-04
 
 This is the first document a zero-context AI should read before touching the repo.
 
@@ -34,6 +34,7 @@ Current branch/worktree expectations:
 
 - branch: `main`
 - latest functional code slice before this documentation refresh: `c0ac31d feat: surface assistant planning-result creation authority`
+- current worktree may be dirty while the uncommitted 2026-06-04 assistant-result-authority plus embedded answer-interpretation slice is in flight
 - worktree should be clean before handing off
 
 Latest recent slices:
@@ -51,9 +52,11 @@ Current verification posture:
 
 - targeted slices are green
 - `cd packages/backend && bun run typecheck` passes
-- `cd packages/backend && bun run lint` passes
-- `bun run check` still has a known operational caveat: it can run `typecheck`, `lint`, and print a long stream of passing tests, then tail-hang instead of exiting cleanly
-- because of that, treat `bun run check` as useful evidence of broad health, but also capture targeted test evidence for the exact slice you changed
+- `cd packages/backend && bun run lint` currently fails on repo-wide Biome formatting and CRLF noise across many untouched files in the current worktree
+- sandboxed `Bun.serve()` listeners fail with `EADDRINUSE` in this environment, so server-backed Bun tests require an unsandboxed run for reliable verification
+- once unsandboxed, targeted server-backed assistant/runtime tests are green for the 2026-06-04 embedded question/topic span path
+- `bun run check` still has a known operational caveat: it can print a long stream of passing tests, then tail-hang instead of exiting cleanly
+- because of that, treat `bun run check` as useful evidence only when lint is already expected to pass, and also capture targeted test evidence for the exact slice you changed
 
 ## Start Here Checklist
 
@@ -64,9 +67,10 @@ If you are a new AI taking over, do these in order:
    - `git status --short`
    - `git log --oneline -10`
 3. Read [docs/agent-handoff.md](/Users/realizer/Code/hopi-claude/docs/agent-handoff.md), but use it as the exhaustive ledger, not your primary mental model.
-4. Decide which of the two active tracks you are continuing:
+4. Decide which active track you are continuing:
    - assistant/runtime/result/inspection authority seams
    - deeper less-structured answer interpretation
+   - product frontend work inside `packages/frontend`
 5. Before editing, find the shared substrate for that seam and add a failing focused test first.
 6. After implementation, update:
    - this guide only if the global handoff story changed
@@ -98,7 +102,9 @@ The authoritative layers are:
 4. Repo-wide preference substrate
    - `.hopi/preference.md`
 
-There is no database. There is no queue. There is no Express app. There is no Vite path that matters for the product.
+There is no database. There is no queue. There is no Express app.
+
+Frontend authority changed on 2026-06-06: `packages/frontend` is the product frontend package again. Its existing React/Vite codebase is the baseline to preserve and evolve in place. The backend-served UI under `packages/backend/src/ui` is a capability/reference surface, not the frontend to copy wholesale. Do not create a third frontend tree.
 
 ## Code Map
 
@@ -107,7 +113,9 @@ The active implementation lives in `packages/backend`.
 Most important directories:
 
 - [packages/backend/src/server.ts](/Users/realizer/Code/hopi-claude/packages/backend/src/server.ts)
-  - Bun API and Bun-served UI entrypoint
+  - Bun API, SSE endpoint, and backend-served compatibility/reference UI shell
+- [packages/frontend](/Users/realizer/Code/hopi-claude/packages/frontend)
+  - active product frontend package; continue from the existing React/Vite app structure
 - [packages/backend/src/runtime](/Users/realizer/Code/hopi-claude/packages/backend/src/runtime)
   - planning requests, decisions, answer interpretation, reconciliation logic
 - [packages/backend/src/storage](/Users/realizer/Code/hopi-claude/packages/backend/src/storage)
@@ -117,7 +125,7 @@ Most important directories:
 - [packages/backend/src/agent](/Users/realizer/Code/hopi-claude/packages/backend/src/agent)
   - process runners, transcript normalization, transport integration
 - [packages/backend/src/ui](/Users/realizer/Code/hopi-claude/packages/backend/src/ui)
-  - Bun HTML-import product UI
+  - compatibility/reference UI implementation; use it as a capability checklist and API aid, not as the primary frontend structure
 - [packages/backend/src/scheduler](/Users/realizer/Code/hopi-claude/packages/backend/src/scheduler)
   - reconcile loop / deterministic step execution
 
@@ -142,7 +150,7 @@ Most important files when continuing the current authority work:
 
 ## Product Surface Summary
 
-The active Bun API/UI path already supports:
+The backend API plus the existing backend-served UI already support:
 
 - board inspection
 - Goal docs inspection
@@ -155,7 +163,9 @@ The active Bun API/UI path already supports:
 - durable preference lifecycle
 - reconcile-once control
 
-The archived `packages/frontend` tree is not the product path. Do not continue product work there.
+The active frontend product path is now `packages/frontend`. Current frontend work should continue there from its existing React/Vite codebase, while treating `packages/backend/src/ui` only as a capability/reference surface.
+
+Read `packages/frontend/MIGRATION.md` before making frontend changes.
 
 ## What Is Already Done
 
@@ -194,6 +204,7 @@ Pattern:
 Recent examples:
 
 - `request_decision` result authority
+- planning-request result authority
 - planning result creation authority
 - workflow child result/action authority
 - runtime event authority
@@ -205,10 +216,10 @@ If you continue this track, look for:
 - fields that exist in schemas but are not shown by `assistantInspection.ts`
 - fields shown in the UI but not preserved through durable readback
 
-Recommended next seam on this track:
+Current posture on this track:
 
-- inspect workflow child result surfaces for missing child-level creation metadata
-- inspect grouped planning result surfaces for any remaining per-entry creation/reuse authority not surfaced through assistant inspection
+- the earlier workflow child, grouped planning, runtime-event, thread-action, planning-result, decision-result, and planning-request-result authority seams have been substantially covered by the recent 2026-06-03 and 2026-06-04 slices
+- only continue Track A if a fresh inspection finds runtime or durable state that still gets flattened or dropped on assistant result, thread, run, context, or UI surfaces
 
 ### Track B: Deeper Less-Structured Answer Interpretation
 
@@ -223,9 +234,24 @@ The current handoff position is:
 
 - explicit reusable `answerSources` are preferred over weaker raw parsing
 - explicit labels / prompts / keys / matchHints / routes are preferred over looser heuristics
+- one continuous sentence with canonical `What should <summary> be` question anchors is now already covered by the current deterministic question-span family, including leftover decision-topic and planner-answer inference
+- one continuous sentence with conjunction-linked explicit topic clauses is now already covered by the current deterministic `topic_clauses` family when each segment still carries exactly one explicit or inferable topic
 - `sourceResponseFormat: "auto"` should select an already-implemented deterministic surface or fail closed
 
 Only continue this track when the product goal explicitly needs it.
+
+### Track C: Product Frontend Migration
+
+This track is active when the operator asks about frontend progress or startup.
+
+Current posture:
+
+- `packages/frontend` remains the product frontend package.
+- The original frontend baseline has been restored and verifies again through `bun run check`.
+- New frontend work should continue inside the existing React/Vite pages/components in `packages/frontend`, not in a new tree and not by replacing it with the backend UI.
+- `packages/backend/src/ui` remains a capability/reference implementation and backend-served fallback surface.
+
+Use `packages/frontend/MIGRATION.md` as the operating guide for evolving the original frontend codebase in place.
 
 ## Rules For Choosing The Next Slice
 

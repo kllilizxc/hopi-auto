@@ -1,8 +1,10 @@
 import { z } from 'zod'
-import { BLOCKER_KINDS, TASK_STATUSES } from '../domain/board'
+import { ANSWER_CAPTURE_FORMATS } from '../domain/answerCaptureFormat'
+import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from '../domain/board'
 import { INTERPRETABLE_SOURCE_RESPONSE_FORMATS } from '../runtime/answerInterpretation'
 import { DECISION_STATUSES } from '../storage/decisionStore'
 import {
+  PLANNING_REQUEST_STATUSES,
   goalPlanningRequestBlockedByWorkflowKeysSchema,
   goalPlanningRequestUpdateTargetArraySchema,
 } from '../storage/planningRequestStore'
@@ -27,6 +29,62 @@ const interpretablePlanningAnswerArraySchema = z
     }),
   )
   .default([])
+
+const assistantResultPlanningAnswerSchema = z.object({
+  summary: z.string().min(1),
+  answerKey: z.string().min(1).optional(),
+  summaryKey: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: z.array(z.string().min(1)).optional(),
+  captureFormat: z.enum(ANSWER_CAPTURE_FORMATS).optional(),
+  answer: z.string().min(1),
+})
+
+const assistantResultPlanningRequestSchema = z.object({
+  requestKey: z.string().min(1),
+  workflowKey: z.string().min(1).optional(),
+  workflowTaskKey: z.string().min(1).optional(),
+  workflowSharedDecisionRefs: z.array(z.string().min(1)),
+  workflowSharedAnswers: z.array(assistantResultPlanningAnswerSchema),
+  blockedByWorkflowKeys: goalPlanningRequestBlockedByWorkflowKeysSchema,
+  groupKey: z.string().min(1).optional(),
+  groupTaskKey: z.string().min(1).optional(),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  taskRef: z.string().min(1),
+  decisionRefs: z.array(z.string().min(1)),
+  answers: z.array(assistantResultPlanningAnswerSchema),
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  status: z.enum(PLANNING_REQUEST_STATUSES),
+  createdAt: z.string().datetime(),
+  resolvedAt: z.string().datetime().optional(),
+  resolution: z.string().min(1).optional(),
+})
+
+const assistantResultTaskSchema = z.object({
+  ref: z.string().min(1),
+  kind: z.enum(TASK_KINDS),
+  status: z.enum(TASK_STATUSES),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  blockedBy: z.array(
+    z.object({
+      kind: z.enum(BLOCKER_KINDS),
+      ref: z.string().min(1),
+    }),
+  ),
+})
+
+const assistantResultPreferenceEntrySchema = z.object({
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  status: z.enum(['active', 'retired']),
+  summary: z.string().min(1),
+  rationale: z.string().min(1).optional(),
+  retiredReason: z.string().min(1).optional(),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+})
 
 const interpretableAnswerSourceMetadataSchema = {
   answerSourceKey: z.string().min(1),
@@ -140,6 +198,7 @@ const assistantPlanningWorkflowLeafResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('planning'),
     workflowTaskKey: z.string().min(1).optional(),
     groupKey: z.string().min(1).optional(),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
@@ -147,6 +206,7 @@ const assistantPlanningWorkflowLeafResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
@@ -157,6 +217,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
   z.object({
     kind: z.literal('planning'),
     workflowTaskKey: z.string().min(1).optional(),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
@@ -164,6 +225,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
   z.object({
     kind: z.literal('planning_batch'),
     groupKey: z.string().min(1),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
@@ -172,6 +234,7 @@ const assistantDecisionFollowThroughResultSchema = z.discriminatedUnion('kind', 
     kind: z.literal('workflow_batch'),
     workflowKey: z.string().min(1).optional(),
     workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     groupKeys: z.array(z.string().min(1)),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
@@ -191,6 +254,20 @@ const assistantDecisionAnswerSchema = z.object({
   sourceOccurrence: sourceOccurrenceSchema.optional(),
   answerSourceKey: z.string().min(1).optional(),
   answerSourceGroupKey: z.string().min(1).optional(),
+})
+
+const assistantResultDecisionSchema = z.object({
+  decisionKey: z.string().min(1),
+  summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: z.array(z.string().min(1)).optional(),
+  captureFormat: z.enum(ANSWER_CAPTURE_FORMATS).optional(),
+  status: z.enum(DECISION_STATUSES),
+  taskRef: z.string().min(1).optional(),
+  answer: z.string().min(1).optional(),
+  createdAt: z.string().datetime(),
+  resolvedAt: z.string().datetime().optional(),
 })
 
 const resolveDecisionLeafFollowThroughSchema = z.discriminatedUnion('kind', [
@@ -391,17 +468,21 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('move_task'),
     taskRef: z.string().min(1),
     status: z.enum(TASK_STATUSES),
+    previousStatus: z.enum(TASK_STATUSES).optional(),
+    task: assistantResultTaskSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('create_planning_task'),
     taskRef: z.string().min(1),
+    task: assistantResultTaskSchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('request_planning'),
     requestKey: z.string().min(1).optional(),
     taskRef: z.string().min(1),
+    request: assistantResultPlanningRequestSchema.optional(),
     created: z.boolean(),
     taskCreated: z.boolean(),
     resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
@@ -412,6 +493,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     groupKey: z.string().min(1),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
     createdRequestKeys: z.array(z.string().min(1)),
     createdTaskRefs: z.array(z.string().min(1)),
@@ -425,6 +507,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
     workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
     requestKeys: z.array(z.string().min(1)).min(1),
     taskRefs: z.array(z.string().min(1)).min(1),
+    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
     blockerTaskRefs: z.array(z.string().min(1)).min(1),
     createdRequestKeys: z.array(z.string().min(1)),
     createdTaskRefs: z.array(z.string().min(1)),
@@ -434,6 +517,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('request_decision'),
     decisionKey: z.string().min(1),
+    decision: assistantResultDecisionSchema.optional(),
     created: z.boolean(),
     blockerAdded: z.boolean(),
     decisionStatus: z.enum(DECISION_STATUSES),
@@ -442,6 +526,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('record_answer'),
     decisionKey: z.string().min(1),
+    decision: assistantResultDecisionSchema.optional(),
     created: z.boolean(),
     blockerRemoved: z.boolean(),
     resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
@@ -451,6 +536,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('record_answers'),
     decisionKeys: z.array(z.string().min(1)).min(1),
+    decisions: z.array(assistantResultDecisionSchema).min(1).optional(),
     createdDecisionKeys: z.array(z.string().min(1)),
     blockerRemoved: z.boolean(),
     resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
@@ -460,6 +546,7 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('resolve_decision'),
     decisionKey: z.string().min(1),
+    decision: assistantResultDecisionSchema.optional(),
     blockerRemoved: z.boolean(),
     resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     followThrough: assistantDecisionFollowThroughResultSchema.optional(),
@@ -468,16 +555,25 @@ export const assistantActionResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('record_preference'),
     preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+    preferenceSummary: z.string().min(1),
+    rationale: z.string().min(1).optional(),
+    preference: assistantResultPreferenceEntrySchema.optional(),
+    retiredPreferences: z.array(assistantResultPreferenceEntrySchema).optional(),
     retiredPreferenceKeys: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('retire_preference'),
     preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+    reason: z.string().min(1),
+    supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+    preference: assistantResultPreferenceEntrySchema.optional(),
     summary: z.string().min(1),
   }),
   z.object({
     kind: z.literal('update_preference'),
+    content: z.string().min(1),
+    preferences: z.array(assistantResultPreferenceEntrySchema).optional(),
     summary: z.string().min(1),
   }),
 ])

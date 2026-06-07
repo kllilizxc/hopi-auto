@@ -623,6 +623,39 @@ describe('createServer', () => {
     })
   })
 
+  test('rejects direct decision answers through the API when partial matching-middle authority would otherwise fall back to pending clauses', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse:
+        'Keep runtime simple, bun native auth provider handles product login, keep launch reversible',
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          matchHints: ['bun native auth provider handles product login'],
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+        },
+        {
+          decisionKey: 'pilot-scope',
+          summary: 'Choose the pilot scope',
+        },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'sourceResponseFormat auto could not deterministically match decision answer bundle. Provide an explicit sourceResponseFormat. Last probe error: No matching middle run matched decision answer rollout-strategy in sourceResponse.',
+      ),
+    })
+  })
+
   test('rejects direct decision answers through the API when auto-detected topic-closing blocks imply more than one inferred topic summary', async () => {
     const workspaceRoot = rootDir()
     const server = startServer(undefined, workspaceRoot)
@@ -3640,6 +3673,13 @@ describe('createServer', () => {
       blockerRemoved: true,
       followThrough: {
         kind: 'planning',
+        requests: [
+          expect.objectContaining({
+            requestKey: 'PR-1',
+            title: 'Plan follow-through for auth-strategy',
+            requestedUpdates: ['design.md', 'todo.yml'],
+          }),
+        ],
         requestKeys: ['PR-1'],
         taskRefs: ['P-1'],
         blockerTaskRefs: ['P-1'],
@@ -3717,6 +3757,13 @@ describe('createServer', () => {
       blockerRemoved: true,
       followThrough: {
         kind: 'planning',
+        requests: [
+          expect.objectContaining({
+            requestKey: 'PR-1',
+            title: 'Capture auth answer in durable docs',
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md', 'todo.yml'],
+          }),
+        ],
         requestKeys: ['PR-1'],
         taskRefs: ['P-1'],
         blockerTaskRefs: ['P-1'],
@@ -6955,6 +7002,107 @@ describe('createServer', () => {
               summary: 'Pilot scope',
               answer:
                 'Keep support load manageable. The customers in the pilot before broader launch should be five enterprise customers. That keeps the pilot focused.',
+            }),
+          ]),
+        }),
+      ],
+    })
+  })
+
+  test('records multiple durable answers through the API from auto-detected matching middle runs when no stronger topic or question authority exists', async () => {
+    const workspaceRoot = rootDir()
+    const server = startServer(undefined, workspaceRoot)
+
+    const response = await postJson(server, '/api/goals/test/decisions/answers', {
+      sourceResponse:
+        'Keep runtime simple while bun native auth provider handles product login so rollback stays easy while staged rollout phases guide launch sequencing because support load stays calm near enterprise pilot customers stay support focused before launch after validation.',
+      sourceResponseFormat: 'auto',
+      answers: [
+        {
+          decisionKey: 'auth-strategy',
+          summary: 'Choose the auth strategy',
+          prompt: 'Which auth provider should we adopt for the Bun-first product path?',
+          matchHints: [
+            'bun native auth provider handles product',
+            'auth provider handles product login',
+          ],
+        },
+        {
+          decisionKey: 'rollout-strategy',
+          summary: 'Choose the rollout strategy',
+          prompt: 'Should rollout happen in stages or all at once?',
+          matchHints: [
+            'staged rollout phases guide launch',
+            'rollout phases guide launch sequencing',
+          ],
+        },
+      ],
+      followThrough: {
+        kind: 'planning_batch',
+        groupKey: 'auth-rollout-follow-through',
+        answers: [
+          {
+            summary: 'Pilot scope',
+            prompt: 'Which customers should be in the pilot before broader launch?',
+            matchHints: [
+              'enterprise pilot customers stay support focused',
+              'pilot customers stay support focused before launch',
+            ],
+          },
+        ],
+        requests: [
+          {
+            taskKey: 'goal-docs',
+            title: 'Capture auth rollout goal context',
+            description: 'Record the auth and rollout answers across Goal docs.',
+            acceptanceCriteria: ['The auth and rollout answers are durable.'],
+            requestedUpdates: ['goal.md', 'design.md', 'notes/rollout.md'],
+          },
+          {
+            taskKey: 'task-graph',
+            title: 'Decompose auth rollout task graph',
+            description: 'Reflect the auth and rollout answers in todo.yml.',
+            acceptanceCriteria: ['The auth rollout task graph is visible in todo.yml.'],
+            requestedUpdates: ['todo.yml'],
+            blockedByTaskKeys: ['goal-docs'],
+          },
+        ],
+      },
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      resolvedSourceResponseFormat: 'matching_middle_runs',
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          answer:
+            'Keep runtime simple while bun native auth provider handles product login so rollback stays easy',
+        }),
+        expect.objectContaining({
+          decisionKey: 'rollout-strategy',
+          answer:
+            'while staged rollout phases guide launch sequencing because support load stays calm',
+        }),
+      ],
+    })
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'near enterprise pilot customers stay support focused before launch after validation.',
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              summary: 'Pilot scope',
+              answer:
+                'near enterprise pilot customers stay support focused before launch after validation.',
             }),
           ]),
         }),
@@ -11226,7 +11374,7 @@ describe('createServer', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       error:
-        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "matching_closing_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
+        'inferOpenDecisions requires sourceResponseFormat "labeled_sections", "single_pending", "pending_clauses", "pending_paragraphs", "pending_sentences", "pending_conjunctions", "pending_answer_sources", "matching_answer_sources", "matching_runs", "matching_opening_runs", "matching_closing_runs", "matching_middle_runs", "ordered_items", "ordered_blocks", "question_blocks", "question_clauses", "question_spans", "question_middle_spans", "question_closing_spans", "question_closing_blocks", "question_middle_blocks", "inline_topics", "topic_clauses", "topic_sentences", "topic_spans", "topic_middle_spans", "topic_closing_spans", "topic_closing_blocks", "topic_paragraphs", "topic_middle_blocks", or "topic_blocks".',
     })
   })
 
@@ -12795,6 +12943,11 @@ preferences:
         kind: string
         taskRef?: string
         requestKey?: string
+        request?: {
+          requestKey: string
+          title: string
+          requestedUpdates: string[]
+        }
         decisionKey?: string
         preferenceKey?: string
       }>
@@ -12821,14 +12974,35 @@ preferences:
           kind: 'request_planning',
           requestKey: 'PR-1',
           taskRef: 'P-1',
+          request: expect.objectContaining({
+            requestKey: 'PR-1',
+            title: 'Plan database integration',
+            decisionRefs: ['db-provider'],
+            requestedUpdates: ['design.md', 'todo.yml'],
+          }),
         }),
         expect.objectContaining({
           kind: 'record_preference',
           preferenceKey: 'prefer-bun-native-services',
+          preferenceSummary: 'Prefer Bun-native services when they meet the Goal requirements.',
+          rationale: 'The runtime boundary is Bun-first.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-bun-native-services',
+            status: 'active',
+            summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+            rationale: 'The runtime boundary is Bun-first.',
+          }),
         }),
         expect.objectContaining({
           kind: 'retire_preference',
           preferenceKey: 'prefer-deterministic-workflows',
+          reason: 'Structured workflow authority now governs deterministic execution.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-deterministic-workflows',
+            status: 'retired',
+            summary: 'Prefer deterministic workflows.',
+            retiredReason: 'Structured workflow authority now governs deterministic execution.',
+          }),
         }),
       ]),
     )
@@ -12903,6 +13077,15 @@ preferences:
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'request_planning',
+          result: expect.objectContaining({
+            requestKey: 'PR-1',
+            request: expect.objectContaining({
+              requestKey: 'PR-1',
+              title: 'Plan database integration',
+              decisionRefs: ['db-provider'],
+              requestedUpdates: ['design.md', 'todo.yml'],
+            }),
+          }),
         }),
         expect.objectContaining({
           kind: 'action',
@@ -12911,6 +13094,18 @@ preferences:
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'record_preference',
+          result: expect.objectContaining({
+            preferenceKey: 'prefer-bun-native-services',
+            preferenceSummary: 'Prefer Bun-native services when they meet the Goal requirements.',
+            rationale: 'The runtime boundary is Bun-first.',
+            preference: expect.objectContaining({
+              preferenceKey: 'prefer-bun-native-services',
+              status: 'active',
+              summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+              rationale: 'The runtime boundary is Bun-first.',
+            }),
+            retiredPreferenceKeys: [],
+          }),
         }),
         expect.objectContaining({
           kind: 'action',
@@ -12919,6 +13114,16 @@ preferences:
         expect.objectContaining({
           kind: 'action_result',
           actionType: 'retire_preference',
+          result: expect.objectContaining({
+            preferenceKey: 'prefer-deterministic-workflows',
+            reason: 'Structured workflow authority now governs deterministic execution.',
+            preference: expect.objectContaining({
+              preferenceKey: 'prefer-deterministic-workflows',
+              status: 'retired',
+              summary: 'Prefer deterministic workflows.',
+              retiredReason: 'Structured workflow authority now governs deterministic execution.',
+            }),
+          }),
         }),
       ]),
     )
@@ -12955,10 +13160,93 @@ preferences:
         expect.objectContaining({
           kind: 'record_preference',
           preferenceKey: 'prefer-bun-native-services',
+          preferenceSummary: 'Prefer Bun-native services when they meet the Goal requirements.',
+          rationale: 'The runtime boundary is Bun-first.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-bun-native-services',
+            status: 'active',
+            summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+            rationale: 'The runtime boundary is Bun-first.',
+          }),
         }),
         expect.objectContaining({
           kind: 'retire_preference',
           preferenceKey: 'prefer-deterministic-workflows',
+          reason: 'Structured workflow authority now governs deterministic execution.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-deterministic-workflows',
+            status: 'retired',
+            summary: 'Prefer deterministic workflows.',
+            retiredReason: 'Structured workflow authority now governs deterministic execution.',
+          }),
+        }),
+      ]),
+    })
+
+    const threadResponse = await fetch(apiUrl(server, '/api/goals/test/assistant/thread'))
+    expect(threadResponse.status).toBe(200)
+    await expect(threadResponse.json()).resolves.toMatchObject({
+      goalKey: 'test',
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'resolve_decision',
+          result: expect.objectContaining({
+            decisionKey: 'db-provider',
+            decision: expect.objectContaining({
+              decisionKey: 'db-provider',
+              summary: 'Choose the database provider',
+              prompt: 'What should the database provider be?',
+              status: 'resolved',
+              taskRef: 'T-2',
+              answer: 'Use Postgres.',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'request_planning',
+          result: expect.objectContaining({
+            requestKey: 'PR-1',
+            request: expect.objectContaining({
+              requestKey: 'PR-1',
+              title: 'Plan database integration',
+              taskRef: 'P-1',
+              decisionRefs: ['db-provider'],
+              requestedUpdates: ['design.md', 'todo.yml'],
+              status: 'open',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'record_preference',
+          result: expect.objectContaining({
+            preferenceKey: 'prefer-bun-native-services',
+            preferenceSummary: 'Prefer Bun-native services when they meet the Goal requirements.',
+            rationale: 'The runtime boundary is Bun-first.',
+            preference: expect.objectContaining({
+              preferenceKey: 'prefer-bun-native-services',
+              status: 'active',
+              summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+              rationale: 'The runtime boundary is Bun-first.',
+            }),
+            retiredPreferenceKeys: [],
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'action_result',
+          actionType: 'retire_preference',
+          result: expect.objectContaining({
+            preferenceKey: 'prefer-deterministic-workflows',
+            reason: 'Structured workflow authority now governs deterministic execution.',
+            preference: expect.objectContaining({
+              preferenceKey: 'prefer-deterministic-workflows',
+              status: 'retired',
+              summary: 'Prefer deterministic workflows.',
+              retiredReason: 'Structured workflow authority now governs deterministic execution.',
+            }),
+          }),
         }),
       ]),
     })
@@ -13014,18 +13302,49 @@ preferences:
         expect.objectContaining({
           kind: 'resolve_decision',
           decisionKey: 'db-provider',
+          decision: expect.objectContaining({
+            decisionKey: 'db-provider',
+            summary: 'Choose the database provider',
+            prompt: 'What should the database provider be?',
+            status: 'resolved',
+            taskRef: 'T-2',
+            answer: 'Use Postgres.',
+          }),
         }),
         expect.objectContaining({
           kind: 'request_planning',
           taskRef: 'P-1',
+          request: expect.objectContaining({
+            requestKey: 'PR-1',
+            title: 'Plan database integration',
+            taskRef: 'P-1',
+            decisionRefs: ['db-provider'],
+            requestedUpdates: ['design.md', 'todo.yml'],
+            status: 'open',
+          }),
         }),
         expect.objectContaining({
           kind: 'record_preference',
           preferenceKey: 'prefer-bun-native-services',
+          preferenceSummary: 'Prefer Bun-native services when they meet the Goal requirements.',
+          rationale: 'The runtime boundary is Bun-first.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-bun-native-services',
+            status: 'active',
+            summary: 'Prefer Bun-native services when they meet the Goal requirements.',
+            rationale: 'The runtime boundary is Bun-first.',
+          }),
         }),
         expect.objectContaining({
           kind: 'retire_preference',
           preferenceKey: 'prefer-deterministic-workflows',
+          reason: 'Structured workflow authority now governs deterministic execution.',
+          preference: expect.objectContaining({
+            preferenceKey: 'prefer-deterministic-workflows',
+            status: 'retired',
+            summary: 'Prefer deterministic workflows.',
+            retiredReason: 'Structured workflow authority now governs deterministic execution.',
+          }),
         }),
       ]),
     })
@@ -13927,9 +14246,44 @@ await Bun.write(
         expect.objectContaining({
           kind: 'request_planning_workflows',
           workflowKey: 'auth-rollout-follow-through',
+          requests: expect.arrayContaining([
+            expect.objectContaining({
+              requestKey: 'PR-1',
+              title: 'Clarify auth goal context',
+            }),
+            expect.objectContaining({
+              requestKey: 'PR-4',
+              title: 'Review auth rollout readiness',
+            }),
+          ]),
           requestKeys: ['PR-1', 'PR-2', 'PR-3', 'PR-4'],
           taskRefs: ['P-1', 'P-2', 'P-3', 'P-4'],
           blockerTaskRefs: ['P-2', 'P-3', 'P-4'],
+          workflows: expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'planning_batch',
+              groupKey: 'auth-follow-through',
+              requests: expect.arrayContaining([
+                expect.objectContaining({
+                  requestKey: 'PR-1',
+                  title: 'Clarify auth goal context',
+                }),
+                expect.objectContaining({
+                  requestKey: 'PR-2',
+                  title: 'Decompose auth task graph',
+                }),
+              ]),
+            }),
+            expect.objectContaining({
+              kind: 'planning',
+              requests: expect.arrayContaining([
+                expect.objectContaining({
+                  requestKey: 'PR-4',
+                  title: 'Review auth rollout readiness',
+                }),
+              ]),
+            }),
+          ]),
         }),
       ]),
     )
@@ -14496,6 +14850,12 @@ await Bun.write(
         expect.objectContaining({
           kind: 'record_answer',
           decisionKey: 'D-1',
+          decision: expect.objectContaining({
+            decisionKey: 'D-1',
+            summary: 'Choose the rollout strategy',
+            status: 'resolved',
+            answer: 'Use a staged Bun-first rollout.',
+          }),
           created: true,
           blockerRemoved: false,
           followThrough: {
@@ -14764,6 +15124,7 @@ await Bun.write(
 
     expect(firstResponse.status).toBe(200)
     const firstResponseBody = await firstResponse.json()
+    expect(firstResponseBody.assistantRunId).toBeString()
     expect(firstResponseBody.message).toBe(
       'I recorded the auth answer and opened one durable workflow graph.',
     )
@@ -14775,11 +15136,101 @@ await Bun.write(
       followThrough: {
         kind: 'workflow_batch',
         workflowKey: 'auth-rollout-follow-through',
+        requests: expect.arrayContaining([
+          expect.objectContaining({
+            requestKey: 'PR-1',
+            title: 'Capture rollout notes',
+          }),
+          expect.objectContaining({
+            requestKey: 'PR-2',
+            title: 'Validate rollout plan',
+          }),
+        ]),
         groupKeys: ['rollout-follow-through'],
         requestKeys: ['PR-1', 'PR-2', 'PR-3'],
         taskRefs: ['P-1', 'P-2', 'P-3'],
         blockerTaskRefs: ['P-3'],
+        workflows: expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'planning_batch',
+            groupKey: 'rollout-follow-through',
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                requestKey: 'PR-1',
+                title: 'Capture rollout notes',
+              }),
+              expect.objectContaining({
+                requestKey: 'PR-2',
+                title: 'Validate rollout plan',
+              }),
+            ]),
+          }),
+          expect.objectContaining({
+            kind: 'planning',
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                requestKey: 'PR-3',
+                title: 'Review auth rollout readiness',
+              }),
+            ]),
+          }),
+        ]),
       },
+    })
+
+    const firstDetailResponse = await fetch(
+      apiUrl(server, `/api/goals/test/assistant/runs/${firstResponseBody.assistantRunId}`),
+    )
+    expect(firstDetailResponse.status).toBe(200)
+    await expect(firstDetailResponse.json()).resolves.toMatchObject({
+      assistantRunId: firstResponseBody.assistantRunId,
+      actionResults: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'record_answer',
+          followThrough: expect.objectContaining({
+            kind: 'workflow_batch',
+            workflowKey: 'auth-rollout-follow-through',
+            requests: expect.arrayContaining([
+              expect.objectContaining({
+                requestKey: 'PR-1',
+                title: 'Capture rollout notes',
+              }),
+              expect.objectContaining({
+                requestKey: 'PR-2',
+                title: 'Validate rollout plan',
+              }),
+              expect.objectContaining({
+                requestKey: 'PR-3',
+                title: 'Review auth rollout readiness',
+              }),
+            ]),
+            workflows: expect.arrayContaining([
+              expect.objectContaining({
+                kind: 'planning_batch',
+                requests: expect.arrayContaining([
+                  expect.objectContaining({
+                    requestKey: 'PR-1',
+                    title: 'Capture rollout notes',
+                  }),
+                  expect.objectContaining({
+                    requestKey: 'PR-2',
+                    title: 'Validate rollout plan',
+                  }),
+                ]),
+              }),
+              expect.objectContaining({
+                kind: 'planning',
+                requests: expect.arrayContaining([
+                  expect.objectContaining({
+                    requestKey: 'PR-3',
+                    title: 'Review auth rollout readiness',
+                  }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      ]),
     })
 
     const response = await postJson(server, '/api/goals/test/assistant/run', {
@@ -15494,6 +15945,18 @@ await Bun.write(
         expect.objectContaining({
           kind: 'record_answers',
           decisionKeys: ['auth-strategy', 'rollout-strategy'],
+          decisions: expect.arrayContaining([
+            expect.objectContaining({
+              decisionKey: 'auth-strategy',
+              status: 'resolved',
+              answer: 'Use Bun-native auth.',
+            }),
+            expect.objectContaining({
+              decisionKey: 'rollout-strategy',
+              status: 'resolved',
+              answer: 'Use a staged rollout.',
+            }),
+          ]),
           createdDecisionKeys: ['rollout-strategy'],
           blockerRemoved: true,
           followThrough: {

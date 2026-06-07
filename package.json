@@ -6,7 +6,9 @@
   ],
   "scripts": {
     "dev:backend": "cd packages/backend && bun dev",
-    "dev": "bun run dev:backend",
+    "dev:frontend": "cd packages/frontend && bun run dev",
+    "dev": "bun run dev:backend && bun run dev:frontend",
+    "check:frontend": "cd packages/frontend && bun run check",
     "check": "bun run check:backend",
     "check:backend": "cd packages/backend && bun run check"
   }
