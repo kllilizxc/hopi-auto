@@ -21,6 +21,24 @@ describe('createPreferenceStore', () => {
     expect(preferences.entries).toEqual([])
   })
 
+  test('accepts the legacy HOPI preference header and canonicalizes the file', async () => {
+    const rootDir = testRoot()
+    await Bun.write(
+      join(rootDir, '.hopi', 'preference.md'),
+      `# HOPI Preferences
+
+- No saved preferences yet.
+`,
+    )
+    const store = createPreferenceStore(rootDir)
+
+    const preferences = await store.readPreferences()
+    expect(preferences.entries).toEqual([])
+    expect(preferences.content).toContain('# Preferences')
+    expect(preferences.content).toContain('```yaml')
+    expect(preferences.content).toContain('preferences: []')
+  })
+
   test('writes and reads structured preference content with parsed entries', async () => {
     const store = createPreferenceStore(testRoot())
 

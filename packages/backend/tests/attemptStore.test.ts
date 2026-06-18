@@ -58,4 +58,18 @@ describe('createAttemptStore', () => {
     expect(await attempts.get('T-2', 'merge_conflict')).toBe(1)
     expect(await attempts.get('T-2', 'timeout')).toBe(0)
   })
+
+  test('resets all attempt buckets for one task without touching others', async () => {
+    const attempts = createAttemptStore(tmpRoot)
+
+    await attempts.increment('T-1', 'merge_conflict')
+    await attempts.increment('T-1', 'reviewer_rejected')
+    await attempts.increment('T-2', 'merge_conflict')
+
+    await attempts.resetTask('T-1')
+
+    expect(await attempts.get('T-1', 'merge_conflict')).toBe(0)
+    expect(await attempts.get('T-1', 'reviewer_rejected')).toBe(0)
+    expect(await attempts.get('T-2', 'merge_conflict')).toBe(1)
+  })
 })

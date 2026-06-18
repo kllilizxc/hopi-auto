@@ -2,6 +2,10 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { withFileLock } from '../storage/lock'
 import { createProjectPaths } from '../storage/paths'
+import {
+  legacyGoalWriteTracePath,
+  migrateLegacyRuntimeOwnedGoalFileIfNeeded,
+} from '../storage/runtimeOwnedGoalFiles'
 import { type GoalWriteTrace, type GoalWriteTraceEntry, parseWriteTraceEntry } from './writeTrace'
 
 export interface AppendWriteTraceEntryInput {
@@ -39,7 +43,10 @@ export function createWriteTraceStore(rootDir = process.cwd()): WriteTraceStore 
 
   return {
     async readGoalTrace(goalKey) {
-      const entries = await readEntries(paths.writeTracePath(goalKey))
+      const runtimePath = paths.writeTracePath(goalKey)
+      const legacyPath = legacyGoalWriteTracePath(paths, goalKey)
+      await migrateLegacyRuntimeOwnedGoalFileIfNeeded(runtimePath, legacyPath)
+      const entries = await readEntries([legacyPath, runtimePath])
 
       return {
         goalKey,
@@ -47,7 +54,10 @@ export function createWriteTraceStore(rootDir = process.cwd()): WriteTraceStore 
       }
     },
     async listEntries(goalKey, filters = {}) {
-      let entries = (await readEntries(paths.writeTracePath(goalKey))).toReversed()
+      const runtimePath = paths.writeTracePath(goalKey)
+      const legacyPath = legacyGoalWriteTracePath(paths, goalKey)
+      await migrateLegacyRuntimeOwnedGoalFileIfNeeded(runtimePath, legacyPath)
+      let entries = (await readEntries([legacyPath, runtimePath])).toReversed()
 
       if (filters.taskRef) {
         entries = entries.filter((entry) => entry.taskRef === filters.taskRef)
@@ -69,9 +79,11 @@ export function createWriteTraceStore(rootDir = process.cwd()): WriteTraceStore 
     },
     async appendEntry(goalKey, entry) {
       const tracePath = paths.writeTracePath(goalKey)
+      const legacyPath = legacyGoalWriteTracePath(paths, goalKey)
       const lockPath = `${tracePath}.lock`
 
       return withFileLock(lockPath, async () => {
+        await migrateLegacyRuntimeOwnedGoalFileIfNeeded(tracePath, legacyPath)
         await mkdir(dirname(tracePath), { recursive: true })
         const fullEntry = {
           id: crypto.randomUUID(),
@@ -86,20 +98,27 @@ export function createWriteTraceStore(rootDir = process.cwd()): WriteTraceStore 
   }
 }
 
-async function readEntries(tracePath: string) {
-  const file = Bun.file(tracePath)
-  if (!(await file.exists())) {
-    return []
+async function readEntries(tracePaths: string[]) {
+  const entries: GoalWriteTraceEntry[] = []
+  for (const tracePath of tracePaths) {
+    const file = Bun.file(tracePath)
+    if (!(await file.exists())) {
+      continue
+    }
+
+    const raw = await file.text()
+    if (raw.trim() === '') {
+      continue
+    }
+
+    entries.push(
+      ...raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map(parseWriteTraceEntry),
+    )
   }
 
-  const raw = await file.text()
-  if (raw.trim() === '') {
-    return []
-  }
-
-  return raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map(parseWriteTraceEntry)
+  return entries
 }

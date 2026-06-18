@@ -2,6 +2,7 @@ import type { AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import type { BlockerRef } from '../domain/board'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
 import type { BoardStore } from '../storage/boardStore'
+import type { GoalAttachmentRef } from '../storage/goalAttachmentStore'
 import type {
   GoalPlanningRequest,
   GoalPlanningRequestAnswer,
@@ -24,6 +25,7 @@ export interface GoalPlanningRequestInput {
   acceptanceCriteria: string[]
   decisionRefs?: string[]
   answers?: GoalPlanningRequestAnswer[]
+  attachments?: GoalAttachmentRef[]
   requestedUpdates?: GoalPlanningRequestUpdateTarget[]
   blockedBy?: BlockerRef[]
   reuseTaskRef?: string
@@ -72,6 +74,7 @@ export interface GoalPlanningWorkflowInput {
   acceptanceCriteria: string[]
   decisionRefs?: string[]
   answers?: GoalPlanningRequestAnswer[]
+  attachments?: GoalAttachmentRef[]
   requestedUpdates?: GoalPlanningRequestUpdateTarget[]
   blockedBy?: BlockerRef[]
 }
@@ -82,6 +85,7 @@ export interface GoalPlanningWorkflowBatchInput {
   blockedByWorkflowKeys?: string[]
   decisionRefs?: string[]
   answers?: GoalPlanningRequestAnswer[]
+  attachments?: GoalAttachmentRef[]
   requests?: GoalPlanningBatchEntryInput[]
 }
 
@@ -238,9 +242,17 @@ async function requestGoalPlanningInternal(
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
         answers: input.answers,
+        attachments: input.attachments,
         requestedUpdates: input.requestedUpdates,
-      },
+        },
     )
+    await syncPlanningTaskAttachmentLineage(stores.boardStore, {
+      goalKey: input.goalKey,
+      taskRef: enriched.taskRef,
+      attachments: input.attachments,
+      writer: input.writer,
+      reason: input.reason,
+    })
     return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
       created: false,
@@ -275,9 +287,17 @@ async function requestGoalPlanningInternal(
         groupTaskKey: input.groupTaskKey,
         decisionRefs: input.decisionRefs,
         answers: input.answers,
+        attachments: input.attachments,
         requestedUpdates: input.requestedUpdates,
-      },
+        },
     )
+    await syncPlanningTaskAttachmentLineage(stores.boardStore, {
+      goalKey: input.goalKey,
+      taskRef: enriched.taskRef,
+      attachments: input.attachments,
+      writer: input.writer,
+      reason: input.reason,
+    })
     return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
       request: enriched,
       created: false,
@@ -319,9 +339,17 @@ async function requestGoalPlanningInternal(
           groupTaskKey: input.groupTaskKey,
           decisionRefs: input.decisionRefs,
           answers: input.answers,
+          attachments: input.attachments,
           requestedUpdates: input.requestedUpdates,
         },
       )
+      await syncPlanningTaskAttachmentLineage(stores.boardStore, {
+        goalKey: input.goalKey,
+        taskRef: enriched.taskRef,
+        attachments: input.attachments,
+        writer: input.writer,
+        reason: input.reason,
+      })
       return finalizeGoalPlanningRequestResult(stores, input, syncGroupedBlockers, {
         request: enriched,
         created: false,
@@ -365,6 +393,10 @@ async function requestGoalPlanningInternal(
         task.title = input.title
         task.description = input.description
         task.acceptanceCriteria = [...input.acceptanceCriteria]
+        task.attachmentAssetPaths = mergeTaskAttachmentAssetPaths(
+          task.attachmentAssetPaths,
+          input.attachments,
+        )
         return
       }
 
@@ -376,6 +408,10 @@ async function requestGoalPlanningInternal(
           )
       if (existingTask) {
         taskRef = existingTask.ref
+        existingTask.attachmentAssetPaths = mergeTaskAttachmentAssetPaths(
+          existingTask.attachmentAssetPaths,
+          input.attachments,
+        )
         return
       }
 
@@ -389,6 +425,7 @@ async function requestGoalPlanningInternal(
         description: input.description,
         acceptanceCriteria: input.acceptanceCriteria,
         blockedBy: input.blockedBy ?? [],
+        attachmentAssetPaths: mergeTaskAttachmentAssetPaths(undefined, input.attachments),
       })
     },
   )
@@ -408,6 +445,7 @@ async function requestGoalPlanningInternal(
     taskRef,
     decisionRefs: input.decisionRefs,
     answers: input.answers,
+    attachments: input.attachments,
     requestedUpdates: input.requestedUpdates,
   })
 
@@ -444,6 +482,10 @@ async function updateExistingPlanningRequest(
       task.title = input.title
       task.description = input.description
       task.acceptanceCriteria = [...input.acceptanceCriteria]
+      task.attachmentAssetPaths = mergeTaskAttachmentAssetPaths(
+        task.attachmentAssetPaths,
+        input.attachments,
+      )
     },
   )
 
@@ -460,6 +502,7 @@ async function updateExistingPlanningRequest(
     acceptanceCriteria: input.acceptanceCriteria,
     decisionRefs: input.decisionRefs,
     answers: input.answers,
+    attachments: input.attachments,
     requestedUpdates: input.requestedUpdates,
   })
 }
@@ -478,6 +521,7 @@ export async function requestGoalPlanningBatch(
     blockedByWorkflowKeys?: string[]
     decisionRefs?: string[]
     answers?: GoalPlanningRequestAnswer[]
+    attachments?: GoalAttachmentRef[]
     requests: GoalPlanningBatchEntryInput[]
     reuseTaskRefByTaskKey?: Record<string, string>
     writer?: string
@@ -507,6 +551,7 @@ export async function requestGoalPlanningBatch(
         acceptanceCriteria: request.acceptanceCriteria,
         decisionRefs: input.decisionRefs,
         answers: input.answers,
+        attachments: input.attachments,
         requestedUpdates: request.requestedUpdates,
         reuseTaskRef: input.reuseTaskRefByTaskKey?.[request.taskKey],
         writer: input.writer,
@@ -597,6 +642,7 @@ export async function requestGoalPlanningWorkflows(
     reuseGroupKey?: string
     decisionRefs?: string[]
     answers?: GoalPlanningRequestAnswer[]
+    attachments?: GoalAttachmentRef[]
     workflows: GoalPlanningWorkflowLeafInput[]
     writer?: string
     reason?: string
@@ -679,6 +725,7 @@ export async function requestGoalPlanningWorkflows(
                 ...(workflow.decisionRefs ?? []),
               ]),
               answers: mergePlanningRequestAnswers(workflowAnswers, workflow.answers ?? []),
+              attachments: workflow.attachments ?? input.attachments,
               requests: (workflow.requests ?? []).map((request) => ({
                 ...request,
                 blockedBy: isPlanningBatchRootRequest(request)
@@ -700,6 +747,7 @@ export async function requestGoalPlanningWorkflows(
                 ...(workflow.decisionRefs ?? []),
               ]),
               answers: mergePlanningRequestAnswers(workflowAnswers, workflow.answers ?? []),
+              attachments: workflow.attachments ?? input.attachments,
               requests: (workflow.requests ?? []).map((request) => ({
                 ...request,
                 blockedBy: isPlanningBatchRootRequest(request)
@@ -761,6 +809,7 @@ export async function requestGoalPlanningWorkflows(
       acceptanceCriteria: workflow.acceptanceCriteria,
       decisionRefs: uniqueStringValues([...workflowDecisionRefs, ...(workflow.decisionRefs ?? [])]),
       answers: mergePlanningRequestAnswers(workflowAnswers, workflow.answers ?? []),
+      attachments: workflow.attachments ?? input.attachments,
       requestedUpdates: workflow.requestedUpdates,
       blockedBy: mergeBlockerRefs(workflow.blockedBy ?? [], workflowDependencyBlockers),
       reuseTaskRef: currentReusablePlanningTaskRef,
@@ -921,6 +970,7 @@ async function reuseGoalPlanningBatchWorkflow(
     blockedByWorkflowKeys?: string[]
     decisionRefs?: string[]
     answers?: GoalPlanningRequestAnswer[]
+    attachments?: GoalAttachmentRef[]
     requests: GoalPlanningBatchEntryInput[]
     writer?: string
     reason?: string
@@ -942,6 +992,14 @@ async function reuseGoalPlanningBatchWorkflow(
       blockedByWorkflowKeys: rootTaskRefSet.has(request.taskRef) ? input.blockedByWorkflowKeys : [],
       decisionRefs: input.decisionRefs,
       answers: input.answers,
+      attachments: input.attachments,
+    })
+    await syncPlanningTaskAttachmentLineage(stores.boardStore, {
+      goalKey: input.goalKey,
+      taskRef: request.taskRef,
+      attachments: input.attachments,
+      writer: input.writer,
+      reason: input.reason,
     })
   }
 
@@ -956,6 +1014,7 @@ async function reuseGoalPlanningBatchWorkflow(
       blockedByWorkflowKeys: input.blockedByWorkflowKeys,
       decisionRefs: input.decisionRefs,
       answers: input.answers,
+      attachments: input.attachments,
       requests: input.requests,
       writer: input.writer,
       reason: input.reason,
@@ -2136,6 +2195,48 @@ function uniqueRequestsByKey(requests: GoalPlanningRequest[]) {
     unique.push(request)
   }
   return unique
+}
+
+function mergeTaskAttachmentAssetPaths(
+  existing: string[] | undefined,
+  attachments: GoalAttachmentRef[] | undefined,
+) {
+  const nextAttachmentPaths = uniqueStringValues([
+    ...(existing ?? []),
+    ...(attachments ?? []).map((attachment) => attachment.assetPath),
+  ])
+  return nextAttachmentPaths.length > 0 ? nextAttachmentPaths : undefined
+}
+
+async function syncPlanningTaskAttachmentLineage(
+  boardStore: BoardStore,
+  input: {
+    goalKey: string
+    taskRef: string
+    attachments?: GoalAttachmentRef[]
+    writer?: string
+    reason?: string
+  },
+) {
+  if (!input.attachments || input.attachments.length === 0) {
+    return
+  }
+
+  await boardStore.mutateBoard(
+    input.goalKey,
+    input.writer ?? 'planning_request',
+    input.reason ?? `sync planning task attachments ${input.taskRef}`,
+    (board) => {
+      const task = board.items.find((item) => item.ref === input.taskRef)
+      if (!task) {
+        throw new Error(`Task not found: ${input.taskRef}`)
+      }
+      task.attachmentAssetPaths = mergeTaskAttachmentAssetPaths(
+        task.attachmentAssetPaths,
+        input.attachments,
+      )
+    },
+  )
 }
 
 function mergePlanningRequestAnswers(

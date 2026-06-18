@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readlink, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createWorktreeManager } from '../src/runtime/worktreeManager'
 
@@ -25,6 +25,9 @@ describe('createWorktreeManager', () => {
     expect(prepared.baseRef).toBe('HEAD')
     expect(await git(rootDir, ['worktree', 'list', '--porcelain'])).toContain(prepared.path)
     expect(await git(prepared.path, ['rev-parse', '--show-toplevel'])).toBe(prepared.path)
+    const hopiLinkPath = join(prepared.path, '.hopi')
+    expect((await lstat(hopiLinkPath)).isSymbolicLink()).toBeTrue()
+    expect(await readlink(hopiLinkPath)).toBe(join(rootDir, '.hopi'))
   })
 
   test('removes the run worktree and disposable branch during cleanup', async () => {
@@ -45,6 +48,29 @@ describe('createWorktreeManager', () => {
 
     expect(await pathExists(prepared.path)).toBeFalse()
     expect(await git(rootDir, ['branch', '--list', prepared.branch])).toBe('')
+  })
+
+  test('repairs the .hopi symlink when reusing an existing prepared worktree', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const manager = createWorktreeManager(rootDir)
+
+    const prepared = await manager.prepare({
+      goalKey: 'goal-1',
+      taskRef: 'T-2',
+      runId: 'run-reuse',
+    })
+
+    await rm(join(prepared.path, '.hopi'), { recursive: true, force: true })
+
+    const reused = await manager.prepare({
+      goalKey: 'goal-1',
+      taskRef: 'T-2',
+      runId: 'run-reuse',
+    })
+
+    expect(reused.path).toBe(prepared.path)
+    expect((await lstat(join(reused.path, '.hopi'))).isSymbolicLink()).toBeTrue()
+    expect(await readlink(join(reused.path, '.hopi'))).toBe(join(rootDir, '.hopi'))
   })
 })
 

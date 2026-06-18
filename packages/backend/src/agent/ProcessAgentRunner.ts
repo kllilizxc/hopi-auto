@@ -1,6 +1,15 @@
+import { cp, mkdir, stat } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import type { WorktreeManager } from '../runtime/worktreeManager'
+import type { TaskKind } from '../domain/board'
+import type { GoalWriteTraceEntry } from '../runtime/writeTrace'
 import { type WriteTraceRecorder, createWriteTraceRecorder } from '../runtime/writeTraceRecorder'
-import type { AgentOutcome, AgentRunObserver, AgentRunner, AgentStepInput } from './AgentRunner'
+import type {
+  AgentOutcome,
+  AgentRunObserver,
+  AgentRunner,
+  AgentStepInput,
+} from './AgentRunner'
 import { type ProcessTranscriptFormat, normalizeProcessOutputLine } from './vendorTranscript'
 
 export interface ProcessAgentCommand {
@@ -13,6 +22,9 @@ export interface ProcessAgentCommand {
   successArtifactRef?: string
   successArtifactLabel?: string
   outcomeFile?: string
+  canonicalOutcomeFile?: string
+  browserHarnessArtifactDir?: string
+  canonicalBrowserHarnessArtifactDir?: string
 }
 
 export interface ProcessAgentRunnerOptions {
@@ -55,6 +67,13 @@ export class ProcessAgentRunner implements AgentRunner {
       })
     }
 
+    if (command.outcomeFile) {
+      await mkdir(dirname(command.outcomeFile), { recursive: true })
+    }
+    if (command.browserHarnessArtifactDir) {
+      await mkdir(command.browserHarnessArtifactDir, { recursive: true })
+    }
+
     const child = Bun.spawn(command.cmd, {
       cwd,
       stdout: 'pipe',
@@ -65,6 +84,10 @@ export class ProcessAgentRunner implements AgentRunner {
         ...command.env,
       },
     })
+    await observer?.onHeartbeat?.()
+    const heartbeatTimer = setInterval(() => {
+      void observer?.onHeartbeat?.()
+    }, 10_000)
     if (command.stdin !== undefined && child.stdin) {
       child.stdin.write(command.stdin)
       child.stdin.end()
@@ -72,7 +95,9 @@ export class ProcessAgentRunner implements AgentRunner {
 
     const stdoutLines: string[] = []
     const stderrLines: string[] = []
-    const beforeSnapshot = await this.writeTraceRecorder.snapshot(cwd)
+    const beforeSnapshot = await this.writeTraceRecorder.snapshot(cwd, {
+      followHopiSymlink: shouldTrackDurableGoalDocs(input, command.cwdMode),
+    })
 
     const exitCodePromise = child.exited
     await Promise.all([
@@ -100,56 +125,102 @@ export class ProcessAgentRunner implements AgentRunner {
       }),
     ])
 
-    const exitCode = await exitCodePromise
-    const afterSnapshot = await this.writeTraceRecorder.snapshot(cwd)
-    await this.writeTraceRecorder.recordProcessExecution({
-      goalKey: input.goalKey,
-      runId: input.runId,
-      stepId: input.stepId,
-      taskRef: input.taskRef,
-      role: input.role,
-      cwd,
-      command: command.cmd,
-      exitCode,
-      before: beforeSnapshot,
-      after: afterSnapshot,
-    })
+    try {
+      const exitCode = await exitCodePromise
+      const afterSnapshot = await this.writeTraceRecorder.snapshot(cwd, {
+        followHopiSymlink: shouldTrackDurableGoalDocs(input, command.cwdMode),
+      })
+      const traceEntry = await this.writeTraceRecorder.recordProcessExecution({
+        goalKey: input.goalKey,
+        runId: input.runId,
+        stepId: input.stepId,
+        taskRef: input.taskRef,
+        role: input.role,
+        cwd,
+        command: command.cmd,
+        exitCode,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      })
+      if (command.cwdMode === 'worktree' && traceEntry) {
+        assertAllowedWorkflowWrites({
+          role: input.role,
+          taskKind: input.taskKind,
+          entry: traceEntry,
+        })
+      }
+      await syncBrowserHarnessArtifacts(command)
 
-    if (exitCode === 0) {
-      const structuredOutcome = await readStructuredOutcome(command.outcomeFile)
-      if (structuredOutcome) {
-        if (structuredOutcome.artifactRef) {
+      if (exitCode === 0) {
+        const structuredOutcome = await readStructuredOutcome(
+          command.outcomeFile,
+          command.canonicalOutcomeFile,
+        )
+        if (structuredOutcome) {
+          if (structuredOutcome.artifactRef) {
+            await observer?.onEvent?.({
+              kind: 'artifact',
+              ref: structuredOutcome.artifactRef,
+              label: structuredOutcome.artifactLabel ?? 'Process output',
+            })
+          }
+
+          return structuredOutcomeToAgentOutcome(structuredOutcome)
+        }
+
+        if (command.successArtifactRef) {
           await observer?.onEvent?.({
             kind: 'artifact',
-            ref: structuredOutcome.artifactRef,
-            label: structuredOutcome.artifactLabel ?? 'Process output',
+            ref: command.successArtifactRef,
+            label: command.successArtifactLabel ?? 'Process output',
           })
         }
 
-        return structuredOutcomeToAgentOutcome(structuredOutcome)
+        return {
+          kind: 'success',
+          artifactRef: command.successArtifactRef,
+        }
       }
 
-      if (command.successArtifactRef) {
-        await observer?.onEvent?.({
-          kind: 'artifact',
-          ref: command.successArtifactRef,
-          label: command.successArtifactLabel ?? 'Process output',
-        })
-      }
-
+      const detail = stderrLines.at(-1) ?? stdoutLines.at(-1)
       return {
-        kind: 'success',
-        artifactRef: command.successArtifactRef,
+        kind: 'fail',
+        reason: detail
+          ? `process exited with code ${exitCode}: ${detail}`
+          : `process exited with code ${exitCode}`,
       }
+    } finally {
+      clearInterval(heartbeatTimer)
     }
+  }
+}
 
-    const detail = stderrLines.at(-1) ?? stdoutLines.at(-1)
-    return {
-      kind: 'fail',
-      reason: detail
-        ? `process exited with code ${exitCode}: ${detail}`
-        : `process exited with code ${exitCode}`,
-    }
+async function syncBrowserHarnessArtifacts(command: ProcessAgentCommand) {
+  if (
+    !command.browserHarnessArtifactDir ||
+    !command.canonicalBrowserHarnessArtifactDir ||
+    command.browserHarnessArtifactDir === command.canonicalBrowserHarnessArtifactDir
+  ) {
+    return
+  }
+
+  if (!(await pathExists(command.browserHarnessArtifactDir))) {
+    return
+  }
+
+  await mkdir(command.canonicalBrowserHarnessArtifactDir, { recursive: true })
+  await cp(command.browserHarnessArtifactDir, command.canonicalBrowserHarnessArtifactDir, {
+    recursive: true,
+    force: true,
+  })
+}
+
+async function pathExists(path: string) {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -160,7 +231,10 @@ interface StructuredOutcomeFile {
   artifactLabel?: string
 }
 
-async function readStructuredOutcome(outcomeFile: string | undefined) {
+async function readStructuredOutcome(
+  outcomeFile: string | undefined,
+  canonicalOutcomeFile?: string,
+) {
   if (!outcomeFile) {
     return null
   }
@@ -175,7 +249,97 @@ async function readStructuredOutcome(outcomeFile: string | undefined) {
     return null
   }
 
+  if (canonicalOutcomeFile && canonicalOutcomeFile !== outcomeFile) {
+    await mkdir(dirname(canonicalOutcomeFile), { recursive: true })
+    await Bun.write(canonicalOutcomeFile, raw)
+  }
+
   return JSON.parse(raw) as StructuredOutcomeFile
+}
+
+function assertAllowedWorkflowWrites(options: {
+  role: AgentStepInput['role']
+  taskKind: TaskKind
+  entry: GoalWriteTraceEntry
+}) {
+  const forbidden = options.entry.changes
+    .map((change) => classifyWorkflowWrite(change.path, options.role, options.taskKind))
+    .filter((result): result is Exclude<typeof result, null> => result !== null)
+    .map((result) => `${result.path}: ${result.reason}`)
+
+  if (forbidden.length === 0) {
+    return
+  }
+
+  throw new Error(
+    `forbidden ${options.role} worktree writes detected: ${forbidden.join(', ')}`,
+  )
+}
+
+function classifyWorkflowWrite(path: string, role: AgentStepInput['role'], taskKind: TaskKind) {
+  if (path.startsWith('.hopi-runtime/')) {
+    return null
+  }
+
+  if (path.startsWith('.hopi/docs/')) {
+    if (role === 'planner' && taskKind === 'planning') {
+      return null
+    }
+    return {
+      path,
+      reason: 'workflow roles other than planner may not edit durable Goal docs',
+    }
+  }
+
+  if (path === '.hopi/preference.md') {
+    return {
+      path,
+      reason: 'workflow roles may not edit durable preferences',
+    }
+  }
+
+  if (path.startsWith('.hopi/')) {
+    return {
+      path,
+      reason: 'workflow roles may not edit runtime-owned .hopi state from worktrees',
+    }
+  }
+
+  if (role === 'planner') {
+    return {
+      path,
+      reason: 'planner may edit only .hopi/docs/** and step-local runtime output',
+    }
+  }
+
+  if (path.startsWith('scripts/hopi/browser-harness/')) {
+    if ((role === 'generator' || role === 'merger') && taskKind === 'engineering') {
+      return null
+    }
+    return {
+      path,
+      reason: 'only engineering generator or merger may edit scripts/hopi/browser-harness/**',
+    }
+  }
+
+  if (path.startsWith('scripts/hopi/')) {
+    if (role === 'merger' && taskKind === 'engineering') {
+      return null
+    }
+    return {
+      path,
+      reason: 'only engineering merger may edit non-browser scripts/hopi/**',
+    }
+  }
+
+  return null
+}
+
+function shouldTrackDurableGoalDocs(
+  input: Pick<AgentStepInput, 'role' | 'taskKind'>,
+  cwdMode: ProcessAgentCommand['cwdMode'],
+) {
+  return cwdMode === 'worktree' && input.role === 'planner' && input.taskKind === 'planning'
 }
 
 function structuredOutcomeToAgentOutcome(outcome: StructuredOutcomeFile): AgentOutcome {

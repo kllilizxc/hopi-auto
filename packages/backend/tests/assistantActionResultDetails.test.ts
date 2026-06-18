@@ -6,6 +6,46 @@ import {
 } from '../src/assistant/assistantInspection'
 
 describe('formatAssistantActionResultDetails', () => {
+  test('surfaces unified request_planning and resolve_decisions result authority', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'request_planning',
+        mode: 'batch',
+        groupKey: 'auth-follow-through',
+        requestKeys: ['PR-1', 'PR-2'],
+        taskRefs: ['P-1', 'P-2'],
+        blockerTaskRefs: ['P-2'],
+        createdRequestKeys: ['PR-1', 'PR-2'],
+        createdTaskRefs: ['P-1', 'P-2'],
+        summary: 'Requested grouped planning follow-through.',
+      }),
+    ).toEqual([
+      'Planning mode: batch',
+      'Group key: auth-follow-through',
+      'Request keys: PR-1, PR-2',
+      'Task refs: P-1, P-2',
+      'Blocker task refs: P-2',
+      'Created request keys: PR-1, PR-2',
+      'Created task refs: P-1, P-2',
+    ])
+
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'resolve_decisions',
+        summary: 'Resolved 2 durable decisions.',
+        decisionKeys: ['D-1', 'D-2'],
+        createdDecisionKeys: ['D-2'],
+        blockerRemoved: true,
+        resolvedSourceResponseFormat: 'matching_answer_sources',
+      }),
+    ).toEqual([
+      'Decision keys: D-1, D-2',
+      'Created decision keys: D-2',
+      'Decision blocker removed: yes',
+      'Resolved source-response format: matching_answer_sources',
+    ])
+  })
+
   test('surfaces structured task-result authority for move and create planning task actions', () => {
     expect(
       formatAssistantActionResultDetails({
@@ -53,6 +93,34 @@ describe('formatAssistantActionResultDetails', () => {
       'Task detail: P-9 [planning] [planned] Capture rollout notes [blockers=decision:rollout-approval]',
       'Task description P-9: Record rollout details before handoff.',
       'Task acceptance P-9: Rollout notes are durable.',
+    ])
+  })
+
+  test('surfaces cleared retryable blockers for retry task results', () => {
+    expect(
+      formatAssistantActionResultDetails({
+        kind: 'retry_task',
+        taskRef: 'T-4',
+        status: 'planned',
+        clearedBlockers: [{ kind: 'intervention', ref: 'T-4:reviewer_rejected' }],
+        task: {
+          ref: 'T-4',
+          kind: 'engineering',
+          status: 'planned',
+          title: 'Polish deck manager layout',
+          description: 'Retry the reviewer-rejected deck manager polish task.',
+          acceptanceCriteria: ['The deck manager returns to a clean two-pane layout.'],
+          blockedBy: [],
+        },
+        summary: 'Cleared retryable blocker intervention:T-4:reviewer_rejected from T-4.',
+      }),
+    ).toEqual([
+      'Task ref: T-4',
+      'Result status: planned',
+      'Cleared blockers: intervention:T-4:reviewer_rejected',
+      'Task detail: T-4 [engineering] [planned] Polish deck manager layout',
+      'Task description T-4: Retry the reviewer-rejected deck manager polish task.',
+      'Task acceptance T-4: The deck manager returns to a clean two-pane layout.',
     ])
   })
 
@@ -859,6 +927,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'request_planning_workflows',
+        attachmentAssetPaths: [],
         workflowKey: 'auth-rollout-follow-through',
         reuseGroupKey: 'auth-follow-through',
         decisionRefs: ['auth-strategy'],
@@ -940,6 +1009,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'request_planning_batch',
+        attachmentAssetPaths: [],
         groupKey: 'auth-follow-through',
         decisionRefs: ['auth-strategy'],
         answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
@@ -1020,6 +1090,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'request_planning',
+        attachmentAssetPaths: [],
         title: 'Capture rollout notes',
         description: 'Record rollout details before more planning work continues.',
         acceptanceCriteria: ['Rollout notes are durable.'],
@@ -1045,6 +1116,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'request_planning_workflows',
+        attachmentAssetPaths: [],
         workflowKey: 'auth-rollout-follow-through',
         reuseGroupKey: 'auth-follow-through',
         decisionRefs: ['auth-strategy'],
@@ -1135,6 +1207,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'resolve_decision',
+        attachmentAssetPaths: [],
         decisionKey: 'auth-strategy',
         summaryKey: 'auth-strategy',
         prompt: 'Which auth strategy should we adopt for the Bun-first runtime?',
@@ -1173,6 +1246,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'resolve_decision',
+        attachmentAssetPaths: [],
         decisionKey: 'auth-strategy',
         summary: 'Choose the auth strategy',
         summaryKey: 'auth-strategy',
@@ -1200,6 +1274,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'record_answer',
+        attachmentAssetPaths: [],
         summary: 'Choose the auth strategy',
         answer: 'Use Bun-native auth.',
         matchHints: [],
@@ -1256,6 +1331,7 @@ preferences:
     expect(
       formatAssistantActionPresentation({
         kind: 'record_answer',
+        attachmentAssetPaths: [],
         summary: 'Choose the auth strategy',
         answer: 'Use Bun-native auth.',
         matchHints: [],

@@ -1,4 +1,4 @@
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, readlink, rm, stat, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createProjectPaths } from '../storage/paths'
 
@@ -34,14 +34,17 @@ export function createWorktreeManager(rootDir = process.cwd()): WorktreeManager 
       const path = paths.worktreePath(options.goalKey, options.taskRef, options.runId)
       const branch = worktreeBranchName(options.goalKey, options.taskRef, options.runId)
       const baseRef = options.baseRef ?? 'HEAD'
+      const hopiRootPath = join(rootDir, '.hopi')
 
       if (await isPreparedWorktree(path)) {
+        await ensureHopiLink(path, hopiRootPath)
         return { path, branch, baseRef }
       }
 
       await rm(path, { recursive: true, force: true })
       await mkdir(dirname(path), { recursive: true })
       await runGit(rootDir, ['worktree', 'add', '--force', '-b', branch, path, baseRef])
+      await ensureHopiLink(path, hopiRootPath)
 
       return { path, branch, baseRef }
     },
@@ -61,6 +64,33 @@ export function createWorktreeManager(rootDir = process.cwd()): WorktreeManager 
 
 export function worktreeBranchName(goalKey: string, taskRef: string, runId: string) {
   return `hopi/${goalKey}/${taskRef}/${runId}`
+}
+
+async function ensureHopiLink(worktreePath: string, hopiRootPath: string) {
+  const linkPath = join(worktreePath, '.hopi')
+  const existing = await readExistingSymlink(linkPath)
+  if (existing === hopiRootPath) {
+    return
+  }
+
+  if (existing !== null) {
+    await rm(linkPath, { recursive: true, force: true })
+  }
+
+  await symlink(hopiRootPath, linkPath)
+}
+
+async function readExistingSymlink(path: string) {
+  try {
+    const stats = await lstat(path)
+    if (!stats.isSymbolicLink()) {
+      return null
+    }
+
+    return await readlink(path)
+  } catch {
+    return null
+  }
 }
 
 async function isPreparedWorktree(path: string) {

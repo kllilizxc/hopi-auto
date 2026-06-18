@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 
@@ -148,6 +148,41 @@ describe('createWriteTraceStore', () => {
     await expect(store.listEntries(goalKey, { stepId: 'step-1', limit: 1 })).resolves.toMatchObject(
       [{ stepId: 'step-1' }],
     )
+  })
+
+  test('reads and migrates legacy write traces stored under durable goal docs', async () => {
+    const rootDir = testRoot()
+    const store = createWriteTraceStore(rootDir)
+    const legacyPath = join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'write-trace.jsonl')
+    const runtimePath = join(rootDir, '.hopi', 'runtime', 'goals', goalKey, 'write-trace.jsonl')
+    await mkdir(join(rootDir, '.hopi', 'docs', 'goals', goalKey), { recursive: true })
+    await writeFile(
+      legacyPath,
+      `${JSON.stringify({
+        id: 'legacy-1',
+        timestamp: '2026-06-16T00:00:00.000Z',
+        goalKey,
+        runId: 'run-legacy',
+        stepId: 'step-legacy',
+        taskRef: 'T-legacy',
+        role: 'generator',
+        agent: 'process_runner',
+        cwd: '/tmp/legacy',
+        toolName: 'process',
+        callId: 'step-legacy',
+        targetPaths: ['legacy.ts'],
+        changes: [{ path: 'legacy.ts', kind: 'modified' }],
+        argumentSummary: 'legacy',
+        resultSummary: 'exit 0 (1 changed file)',
+      })}\n`,
+      'utf8',
+    )
+
+    await expect(store.readGoalTrace(goalKey)).resolves.toMatchObject({
+      entries: [{ id: 'legacy-1', taskRef: 'T-legacy' }],
+    })
+    expect(await Bun.file(legacyPath).exists()).toBeFalse()
+    expect(await Bun.file(runtimePath).exists()).toBeTrue()
   })
 })
 

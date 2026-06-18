@@ -7,7 +7,7 @@ import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { createProjectPaths } from '../storage/paths'
 import type { AgentRunObserver, AgentRunner, AgentStepInput } from './AgentRunner'
 import { type ProcessAgentCommand, ProcessAgentRunner } from './ProcessAgentRunner'
-import { agentAdapterConfigSchema } from './adapterConfig'
+import { readAndMigrateAgentAdapterConfig, resolveRoleTransportConfig } from './adapterConfig'
 import { resolveConfiguredTransportCommand } from './vendorTransport'
 
 export interface ConfiguredRoleProcessRunnerOptions {
@@ -46,10 +46,7 @@ export class ConfiguredRoleProcessRunner implements AgentRunner {
 
   private async resolveCommand(input: AgentStepInput): Promise<ProcessAgentCommand> {
     const config = await this.readConfig()
-    const roleConfig = config.roles[input.role]
-    if (!roleConfig) {
-      throw new Error(`No adapter configured for role: ${input.role}`)
-    }
+    const roleConfig = resolveRoleTransportConfig(config, input.role)
 
     const board = await this.store.readBoard(input.goalKey)
     const task = board.items.find((item) => item.ref === input.taskRef)
@@ -74,15 +71,6 @@ export class ConfiguredRoleProcessRunner implements AgentRunner {
   }
 
   private async readConfig() {
-    const raw = await Bun.file(this.paths.adapterConfigPath()).text()
-    const parsed = agentAdapterConfigSchema.safeParse(JSON.parse(raw))
-    if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join(', ')
-      throw new Error(`Invalid adapter config: ${issues}`)
-    }
-
-    return parsed.data
+    return readAndMigrateAgentAdapterConfig(this.paths.adapterConfigPath())
   }
 }

@@ -9,6 +9,8 @@ import {
   type GoalRunHistory,
   type GoalRunSummary,
   type RunStatus,
+  type RunStepMessage,
+  type RunTranscriptEntry,
   type RunStepEventInput,
   type RunStepMessageInput,
   type StepOutcome,
@@ -26,6 +28,10 @@ export interface StartStepOptions {
   role: AgentRole
   statusBefore: TaskStatus
   message?: RunStepMessageInput
+  refs?: {
+    runId?: string
+    stepId?: string
+  }
 }
 
 export interface FinishStepOptions {
@@ -50,9 +56,45 @@ export interface RunHistoryStore {
     event: RunStepEventInput
   }): Promise<GoalRun>
   finishStep(options: FinishStepOptions): Promise<GoalRun>
+  recoverStep(options: {
+    goalKey: string
+    runId: string
+    stepId: string
+    statusAfter: TaskStatus
+    message?: RunStepMessageInput
+  }): Promise<GoalRun | null>
 }
 
-export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore {
+export type RunHistoryObservedEntry =
+  | {
+      kind: 'message'
+      goalKey: string
+      runId: string
+      taskRef: string
+      taskKind: TaskKind
+      stepId: string
+      stepRole: AgentRole
+      message: RunStepMessage
+    }
+  | {
+      kind: 'transcript'
+      goalKey: string
+      runId: string
+      taskRef: string
+      taskKind: TaskKind
+      stepId: string
+      stepRole: AgentRole
+      entry: RunTranscriptEntry
+    }
+
+export interface RunHistoryStoreObserver {
+  onEntry(entry: RunHistoryObservedEntry): Promise<void> | void
+}
+
+export function createRunHistoryStore(
+  rootDir = process.cwd(),
+  observer?: RunHistoryStoreObserver,
+): RunHistoryStore {
   const paths = createProjectPaths(rootDir)
 
   return {
@@ -80,8 +122,10 @@ export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore 
           options.taskKind,
           options.statusBefore,
           now,
+          options.refs?.runId,
         )
-        const stepId = crypto.randomUUID()
+        const stepId = options.refs?.stepId ?? crypto.randomUUID()
+        const storedMessage = options.message ? createStoredMessage(options.message, now) : null
         run.steps.push({
           stepId,
           role: options.role,
@@ -89,9 +133,21 @@ export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore 
           startedAt: now,
           outcome: 'running',
           transcript: [],
-          messages: options.message ? [createStoredMessage(options.message, now)] : [],
+          messages: storedMessage ? [storedMessage] : [],
         })
         await writeRunHistory(historyPath, history)
+        if (storedMessage) {
+          await observer?.onEntry({
+            kind: 'message',
+            goalKey: options.goalKey,
+            runId: run.runId,
+            taskRef: options.taskRef,
+            taskKind: options.taskKind,
+            stepId,
+            stepRole: options.role,
+            message: storedMessage,
+          })
+        }
         return { runId: run.runId, stepId }
       })
     },
@@ -112,8 +168,19 @@ export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore 
         }
 
         const now = new Date().toISOString()
-        applyStepEvent(step, options.event, now)
+        const observed = applyStepEvent(step, options.event, now)
         await writeRunHistory(historyPath, history)
+        if (observed) {
+          await observer?.onEntry({
+            ...observed,
+            goalKey: options.goalKey,
+            runId: run.runId,
+            taskRef: run.taskRef,
+            taskKind: run.taskKind,
+            stepId: step.stepId,
+            stepRole: step.role,
+          })
+        }
         return run
       })
     },
@@ -137,8 +204,9 @@ export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore 
         step.statusAfter = options.statusAfter
         step.endedAt = now
         step.outcome = options.outcome
+        const storedMessage = options.message ? createStoredMessage(options.message, now) : null
         if (options.message) {
-          step.messages.push(createStoredMessage(options.message, now))
+          step.messages.push(storedMessage!)
         }
 
         if (options.runStatus) {
@@ -149,6 +217,64 @@ export function createRunHistoryStore(rootDir = process.cwd()): RunHistoryStore 
         }
 
         await writeRunHistory(historyPath, history)
+        if (storedMessage) {
+          await observer?.onEntry({
+            kind: 'message',
+            goalKey: options.goalKey,
+            runId: run.runId,
+            taskRef: run.taskRef,
+            taskKind: run.taskKind,
+            stepId: step.stepId,
+            stepRole: step.role,
+            message: storedMessage,
+          })
+        }
+        return run
+      })
+    },
+    async recoverStep(options) {
+      const historyPath = paths.runHistoryPath(options.goalKey)
+      const lockPath = `${historyPath}.lock`
+
+      return withFileLock(lockPath, async () => {
+        const history = await readRunHistory(historyPath, options.goalKey)
+        const run = history.runs.find((item) => item.runId === options.runId)
+        if (!run) {
+          return null
+        }
+
+        const step = run.steps.find((item) => item.stepId === options.stepId)
+        if (!step || step.outcome !== 'running') {
+          return run
+        }
+
+        const now = new Date().toISOString()
+        step.statusAfter = options.statusAfter
+        step.endedAt = now
+        step.outcome = 'system_error'
+        const storedMessage = options.message ? createStoredMessage(options.message, now) : null
+        if (storedMessage) {
+          step.messages.push(storedMessage)
+        }
+
+        run.status = 'system_error'
+        run.endedAt = now
+        run.finalTaskStatus = options.statusAfter
+        run.terminalOutcome = 'system_error'
+
+        await writeRunHistory(historyPath, history)
+        if (storedMessage) {
+          await observer?.onEntry({
+            kind: 'message',
+            goalKey: options.goalKey,
+            runId: run.runId,
+            taskRef: run.taskRef,
+            taskKind: run.taskKind,
+            stepId: step.stepId,
+            stepRole: step.role,
+            message: storedMessage,
+          })
+        }
         return run
       })
     },
@@ -182,15 +308,28 @@ function selectRunForStep(
   taskKind: TaskKind,
   statusBefore: TaskStatus,
   startedAt: string,
+  preferredRunId?: string,
 ) {
+  const activeRuns = history.runs.filter((run) => run.taskRef === taskRef && run.status === 'active')
+
   if (statusBefore === 'planned') {
-    return createRun(history, taskRef, taskKind, startedAt)
+    orphanActiveRuns(activeRuns, startedAt)
+    return createRun(history, taskRef, taskKind, startedAt, preferredRunId)
   }
 
-  const existing = history.runs.findLast(
-    (run) => run.taskRef === taskRef && run.status === 'active',
+  const existing = activeRuns.findLast((run) =>
+    canContinueRunAtStatus(run, statusBefore),
   )
-  return existing ?? createRun(history, taskRef, taskKind, startedAt)
+  if (existing) {
+    orphanActiveRuns(
+      activeRuns.filter((run) => run.runId !== existing.runId),
+      startedAt,
+    )
+    return existing
+  }
+
+  orphanActiveRuns(activeRuns, startedAt)
+  return createRun(history, taskRef, taskKind, startedAt, preferredRunId)
 }
 
 function createRun(
@@ -198,9 +337,11 @@ function createRun(
   taskRef: string,
   taskKind: TaskKind,
   startedAt: string,
+  runId?: string,
 ) {
+  const resolvedRunId = runId ?? crypto.randomUUID()
   const run: GoalRun = {
-    runId: crypto.randomUUID(),
+    runId: resolvedRunId,
     taskRef,
     taskKind,
     startedAt,
@@ -211,40 +352,89 @@ function createRun(
   return run
 }
 
+function canContinueRunAtStatus(run: GoalRun, statusBefore: TaskStatus) {
+  return effectiveRunTaskStatus(run) === statusBefore
+}
+
+function effectiveRunTaskStatus(run: GoalRun): TaskStatus | null {
+  const lastStep = run.steps.at(-1)
+  if (!lastStep) {
+    return null
+  }
+
+  return lastStep.statusAfter ?? lastStep.statusBefore
+}
+
+function orphanActiveRuns(runs: GoalRun[], endedAt: string) {
+  for (const run of runs) {
+    if (run.status !== 'active') {
+      continue
+    }
+
+    run.status = 'system_error'
+    run.endedAt = endedAt
+    run.finalTaskStatus = effectiveRunTaskStatus(run) ?? run.finalTaskStatus
+    run.terminalOutcome = 'system_error'
+
+    for (const step of run.steps) {
+      if (step.outcome !== 'running') {
+        continue
+      }
+
+      step.outcome = 'system_error'
+      step.endedAt = endedAt
+      step.statusAfter ??= step.statusBefore
+    }
+  }
+}
+
 function applyStepEvent(
   step: GoalRun['steps'][number],
   event: RunStepEventInput,
   createdAt: string,
-) {
+):
+  | {
+      kind: 'message'
+      message: RunStepMessage
+    }
+  | {
+      kind: 'transcript'
+      entry: RunTranscriptEntry
+    }
+  | null {
   if (event.kind === 'transcript') {
-    step.transcript.push(
-      createStoredTranscript(
-        {
-          transport: event.transport,
-          kind: event.entryKind,
-          summary: event.summary,
-          toolName: event.toolName,
-          toolInvocationKey: event.toolInvocationKey,
-          vendorEventType: event.vendorEventType,
-        },
-        createdAt,
-      ),
+    const entry = createStoredTranscript(
+      {
+        transport: event.transport,
+        kind: event.entryKind,
+        summary: event.summary,
+        toolName: event.toolName,
+        toolInvocationKey: event.toolInvocationKey,
+        vendorEventType: event.vendorEventType,
+      },
+      createdAt,
     )
-    return
+    step.transcript.push(entry)
+    return {
+      kind: 'transcript',
+      entry,
+    }
   }
 
   if (event.kind === 'message') {
-    step.messages.push(
-      createStoredMessage(
-        {
-          kind: event.level,
-          role: event.role,
-          content: event.content,
-        },
-        createdAt,
-      ),
+    const message = createStoredMessage(
+      {
+        kind: event.level,
+        role: event.role,
+        content: event.content,
+      },
+      createdAt,
     )
-    return
+    step.messages.push(message)
+    return {
+      kind: 'message',
+      message,
+    }
   }
 
   if (!step.execution) {
@@ -259,11 +449,12 @@ function applyStepEvent(
       branch: event.branch,
       baseBranch: event.baseBranch,
     }
-    return
+    return null
   }
 
   step.execution.artifacts.push({
     ref: event.ref,
     label: event.label,
   })
+  return null
 }

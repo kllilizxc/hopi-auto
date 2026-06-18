@@ -20,6 +20,7 @@ export async function inspectPlanningFollowThroughEvidence(options: {
   taskRef: string
   planningRequests: PlanningRequestStore
   writeTraces: WriteTraceStore
+  fallbackRequestedUpdates?: GoalPlanningRequestUpdateTarget[]
 }): Promise<PlanningFollowThroughEvidence> {
   const requestSet = await options.planningRequests.ensureGoalPlanningRequests(options.goalKey)
   const relevantRequests = requestSet.requests.filter(
@@ -30,7 +31,22 @@ export async function inspectPlanningFollowThroughEvidence(options: {
     limit: 40,
   })
 
-  return summarizePlanningFollowThroughEvidence(relevantRequests, traces)
+  const evidence = summarizePlanningFollowThroughEvidence(relevantRequests, traces)
+  if (evidence.requestedUpdates.length > 0 || !options.fallbackRequestedUpdates?.length) {
+    return evidence
+  }
+
+  const requestedUpdates = mergeOrderedUpdateTargets(options.fallbackRequestedUpdates)
+  const observedUpdates = requestedUpdates.filter((target) =>
+    traces.some((entry) => traceTouchesRequestedUpdate(entry, target)),
+  )
+
+  return {
+    ...evidence,
+    requestedUpdates,
+    observedUpdates,
+    missingUpdates: requestedUpdates.filter((target) => !observedUpdates.includes(target)),
+  }
 }
 
 export function summarizePlanningFollowThroughEvidence(

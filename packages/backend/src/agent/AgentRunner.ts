@@ -59,6 +59,7 @@ export interface AgentStepInput {
 
 export interface AgentRunObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
+  onHeartbeat?(): Promise<void> | void
 }
 
 export interface AgentRunner {

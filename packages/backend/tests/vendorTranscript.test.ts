@@ -84,6 +84,83 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
+  test('drops empty Codex lifecycle status events that carry no meaningful payload', () => {
+    const entries = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'reasoning',
+          },
+        },
+      }),
+    })
+
+    expect(entries).toEqual([])
+  })
+
+  test('normalizes current Codex command_execution started/completed events into tool rows', () => {
+    const toolStarted = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'item_1',
+          type: 'command_execution',
+          command: '/usr/bin/zsh -lc pwd',
+          aggregated_output: '',
+          exit_code: null,
+          status: 'in_progress',
+        },
+      }),
+    })
+
+    const toolCompleted = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_1',
+          type: 'command_execution',
+          command: '/usr/bin/zsh -lc pwd',
+          aggregated_output: '/home/kllilizxc/Code/hopi-auto\n',
+          exit_code: 0,
+          status: 'completed',
+        },
+      }),
+    })
+
+    expect(toolStarted).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_call',
+        toolName: 'command',
+        toolInvocationKey: 'item_1',
+        summary: 'Tool call: command (/usr/bin/zsh -lc pwd)',
+        vendorEventType: 'item.started',
+      },
+    ])
+    expect(toolCompleted).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_result',
+        toolName: 'command',
+        toolInvocationKey: 'item_1',
+        summary: '/home/kllilizxc/Code/hopi-auto',
+        vendorEventType: 'item.completed',
+      },
+    ])
+  })
+
   test('normalizes Claude stream-json assistant text, tool use, and tool result blocks', () => {
     const assistant = normalizeProcessOutputLine({
       format: 'claude_stream_json',

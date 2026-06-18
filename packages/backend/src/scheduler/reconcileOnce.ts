@@ -2,17 +2,29 @@ import type { AgentOutcome, AgentRole, AgentRunner, AgentRuntimeEvent } from '..
 import type { BlockerRef, FailureKind, TaskItem, TaskStatus } from '../domain/board'
 import type { AttemptStore } from '../runtime/attemptStore'
 import { type GitMergeExecutor, createGitMergeExecutor } from '../runtime/gitMergeExecutor'
+import {
+  type LaneParallelismInput,
+  executionLaneForStatus,
+  normalizeLaneParallelism,
+} from '../runtime/laneParallelism'
 import { inspectPlanningFollowThroughEvidence } from '../runtime/planningFollowThroughEvidence'
 import {
   resolvePlanningRequestsForTask,
   syncGroupedPlanningEngineeringBlockers,
 } from '../runtime/planningRequest'
+import {
+  inspectBrowserHarnessAcceptanceCriteria,
+  inspectEngineeringTaskDecomposition,
+} from '../runtime/taskGraphPolicy'
+import type { ExecutionStateStore } from '../runtime/executionStateStore'
+import type { RunningTaskRegistry } from '../runtime/runningTaskRegistry'
 import type { RunStatus, StepOutcome } from '../runtime/runHistory'
 import type { RunHistoryStore } from '../runtime/runHistoryStore'
 import { type WriteTraceStore, createWriteTraceStore } from '../runtime/writeTraceStore'
 import type { BoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
 import {
+  type GoalPlanningRequestUpdateTarget,
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
@@ -25,6 +37,11 @@ export interface ReconcileOptions {
   writeTraces?: WriteTraceStore
   attempts: AttemptStore
   history?: RunHistoryStore
+  runningTasks?: RunningTaskRegistry
+  execution?: ExecutionStateStore
+  workerId?: string
+  maxParallel?: number
+  laneParallelism?: LaneParallelismInput
   runner: AgentRunner
   mergeExecutor?: GitMergeExecutor
   writer?: string
@@ -51,6 +68,10 @@ interface OutcomeResolution {
 
 const DEFAULT_MAX_ATTEMPTS = 3
 const DEFAULT_WRITER = 'scheduler'
+const LEGACY_BOOTSTRAP_PLANNING_UPDATES: GoalPlanningRequestUpdateTarget[] = [
+  'design.md',
+  'todo.yml',
+]
 
 export async function reconcileOnce(options: ReconcileOptions): Promise<ReconcileResult> {
   const writer = options.writer ?? DEFAULT_WRITER
@@ -73,151 +94,431 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
     return { kind: 'idle' }
   }
 
-  const board = await options.store.readBoard(options.goalKey)
-  const task = board.items.find(isDispatchableTask)
-  if (!task) {
+  const selected = await selectDispatchableTask({
+    board: await options.store.readBoard(options.goalKey),
+    goalKey: options.goalKey,
+    rootDir: options.store.paths.rootDir,
+    runningTasks: options.runningTasks,
+    execution: options.execution,
+    workerId: options.workerId,
+    maxParallel: options.maxParallel,
+    laneParallelism: options.laneParallelism,
+  })
+  if (!selected) {
     return { kind: 'idle' }
   }
 
-  const step = stepForTask(task)
-  if (!step) {
-    return { kind: 'idle' }
-  }
-
+  const { task, step, executionLease, runningLease } = selected
   const from = task.status
-  await setTaskStatus(options.store, options.goalKey, writer, task.ref, 'in_progress')
 
-  let runRef: {
-    runId: string
-    stepId: string
-  } = {
-    runId: crypto.randomUUID(),
-    stepId: crypto.randomUUID(),
-  }
-  if (options.history) {
-    try {
-      runRef = await options.history.startStep({
-        goalKey: options.goalKey,
-        taskRef: task.ref,
-        taskKind: task.kind,
-        role: step.role,
-        statusBefore: from,
-        message: statusMessage(`${step.role} dispatched for ${task.ref}`),
-      })
-    } catch (error) {
-      await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
-      throw error
-    }
-  }
-
-  let outcome: AgentOutcome
+  let executionFinalized = false
   try {
-    outcome = await options.runner.run(
-      {
-        goalKey: options.goalKey,
-        runId: runRef.runId,
-        stepId: runRef.stepId,
-        taskRef: task.ref,
-        taskKind: task.kind,
-        role: step.role,
-      },
-      {
-        onEvent: async (event) => {
-          await options.history?.recordStepEvent({
+    if (from === 'planned') {
+      await setTaskStatus(options.store, options.goalKey, writer, task.ref, 'in_progress')
+    }
+
+    let runRef: {
+      runId: string
+      stepId: string
+    } = {
+      runId: crypto.randomUUID(),
+      stepId: crypto.randomUUID(),
+    }
+    if (options.history) {
+      try {
+        runRef = await options.history.startStep({
+          goalKey: options.goalKey,
+          taskRef: task.ref,
+          taskKind: task.kind,
+          role: step.role,
+          statusBefore: from,
+          message: statusMessage(`${step.role} dispatched for ${task.ref}`),
+          refs: executionLease ? { stepId: executionLease.executionId } : undefined,
+        })
+        if (executionLease && executionLease.executionId !== runRef.stepId) {
+          await options.execution?.bindRunStepRefs(options.goalKey, executionLease.executionId, runRef)
+        } else if (executionLease) {
+          await options.execution?.bindRunStepRefs(options.goalKey, executionLease.executionId, runRef)
+        }
+      } catch (error) {
+        await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
+        if (executionLease) {
+          await options.execution?.finishTaskExecution({
+            goalKey: options.goalKey,
+            executionId: executionLease.executionId,
+            outcome: 'system_error',
+          })
+        }
+        throw error
+      }
+    }
+
+    let outcome: AgentOutcome
+    let forcedResolution: OutcomeResolution | undefined
+    try {
+      const runMergeScript = mergeExecutor.runMergeScript
+      const finalizeMergedRun = mergeExecutor.finalizeMergedRun
+      const supportsScriptFirstMerge =
+        step.role === 'merger' &&
+        typeof runMergeScript === 'function' &&
+        typeof finalizeMergedRun === 'function'
+
+      if (supportsScriptFirstMerge) {
+        const initialAttempt = await runMergeScript({
+          goalKey: options.goalKey,
+          taskRef: task.ref,
+          taskKind: task.kind,
+          runId: runRef.runId,
+          stepId: runRef.stepId,
+        })
+        await recordMergeScriptAttempt(options.history, {
+          goalKey: options.goalKey,
+          runId: runRef.runId,
+          stepId: runRef.stepId,
+          attempt: initialAttempt,
+          phase: 'initial',
+        })
+
+        if (initialAttempt.result?.kind === 'merged') {
+          await finalizeMergedRun({
+            goalKey: options.goalKey,
+            taskRef: task.ref,
+            taskKind: task.kind,
+            runId: runRef.runId,
+            stepId: runRef.stepId,
+          })
+          outcome = { kind: 'success' }
+        } else if (initialAttempt.result?.kind === 'merge_conflict') {
+          outcome = {
+            kind: 'merge_conflict',
+            artifactRef:
+              initialAttempt.result.artifactRef ?? `branch:${task.ref}:${runRef.runId}`,
+          }
+          forcedResolution = {
+            to: step.mergeConflictTo ?? from,
+            failureKind: 'merge_conflict',
+            blocker: {
+              kind: 'merge_conflict',
+              ref: initialAttempt.result.artifactRef ?? `branch:${task.ref}:${runRef.runId}`,
+            },
+          }
+        } else {
+          outcome = await options.runner.run(
+            {
+              goalKey: options.goalKey,
+              runId: runRef.runId,
+              stepId: runRef.stepId,
+              taskRef: task.ref,
+              taskKind: task.kind,
+              role: step.role,
+            },
+            {
+              onEvent: async (event) => {
+                await options.history?.recordStepEvent({
+                  goalKey: options.goalKey,
+                  runId: runRef.runId,
+                  stepId: runRef.stepId,
+                  event: historyEventForRuntimeEvent(event),
+                })
+              },
+              onHeartbeat: async () => {
+                if (executionLease) {
+                  await options.execution?.heartbeatTaskExecution(
+                    options.goalKey,
+                    executionLease.executionId,
+                  )
+                }
+              },
+            },
+          )
+
+          if (outcome.kind === 'success') {
+            const verificationAttempt = await runMergeScript({
+              goalKey: options.goalKey,
+              taskRef: task.ref,
+              taskKind: task.kind,
+              runId: runRef.runId,
+              stepId: runRef.stepId,
+            })
+            await recordMergeScriptAttempt(options.history, {
+              goalKey: options.goalKey,
+              runId: runRef.runId,
+              stepId: runRef.stepId,
+              attempt: verificationAttempt,
+              phase: 'verification',
+            })
+
+            if (verificationAttempt.result?.kind === 'merged') {
+              await finalizeMergedRun({
+                goalKey: options.goalKey,
+                taskRef: task.ref,
+                taskKind: task.kind,
+                runId: runRef.runId,
+                stepId: runRef.stepId,
+              })
+            } else if (verificationAttempt.result) {
+              outcome = {
+                kind: 'merge_conflict',
+                artifactRef:
+                  verificationAttempt.result.artifactRef ??
+                  `branch:${task.ref}:${runRef.runId}`,
+              }
+              if (verificationAttempt.result.kind === 'merge_conflict') {
+                forcedResolution = {
+                  to: step.mergeConflictTo ?? from,
+                  failureKind: 'merge_conflict',
+                  blocker: {
+                    kind: 'merge_conflict',
+                    ref:
+                      verificationAttempt.result.artifactRef ??
+                      `branch:${task.ref}:${runRef.runId}`,
+                  },
+                }
+              }
+            } else {
+              throw new Error(
+                `merge script verification failed: ${firstNonEmpty(
+                  verificationAttempt.parseError,
+                  verificationAttempt.stderr.trim(),
+                  verificationAttempt.stdout.trim(),
+                  `exit ${verificationAttempt.exitCode}`,
+                )}`,
+              )
+            }
+          }
+        }
+      } else {
+        outcome = await options.runner.run(
+          {
             goalKey: options.goalKey,
             runId: runRef.runId,
             stepId: runRef.stepId,
-            event: historyEventForRuntimeEvent(event),
-          })
-        },
-      },
-    )
+            taskRef: task.ref,
+            taskKind: task.kind,
+            role: step.role,
+          },
+          {
+            onEvent: async (event) => {
+              await options.history?.recordStepEvent({
+                goalKey: options.goalKey,
+                runId: runRef.runId,
+                stepId: runRef.stepId,
+                event: historyEventForRuntimeEvent(event),
+              })
+            },
+            onHeartbeat: async () => {
+              if (executionLease) {
+                await options.execution?.heartbeatTaskExecution(
+                  options.goalKey,
+                  executionLease.executionId,
+                )
+              }
+            },
+          },
+        )
 
-    if (step.role === 'merger' && outcome.kind === 'success') {
-      outcome = await mergeExecutor.completeMerge({
+        if (step.role === 'merger' && outcome.kind === 'success') {
+          outcome = await mergeExecutor.completeMerge({
+            goalKey: options.goalKey,
+            taskRef: task.ref,
+            taskKind: task.kind,
+            runId: runRef.runId,
+            stepId: runRef.stepId,
+          })
+        }
+      }
+    } catch (error) {
+      await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
+      await finishHistoryStep(options.history, runRef, {
+        goalKey: options.goalKey,
+        statusAfter: from,
+        outcome: 'system_error',
+        runStatus: 'system_error',
+        message: statusMessage(errorMessage(error)),
+      })
+      if (executionLease) {
+        await options.execution?.finishTaskExecution({
+          goalKey: options.goalKey,
+          executionId: executionLease.executionId,
+          outcome: 'system_error',
+        })
+        executionFinalized = true
+      }
+      throw error
+    }
+
+    const resolution =
+      forcedResolution ??
+      (await resolveOutcome(task, from, step, outcome, options.attempts, maxAttempts))
+    const validated = await validatePlanningFollowThroughIfNeeded({
+      goalKey: options.goalKey,
+      task,
+      step,
+      outcome,
+      resolution,
+      attempts: options.attempts,
+      maxAttempts,
+      store: options.store,
+      planningRequests,
+      writeTraces,
+    })
+    try {
+      await finalizeTask(options.store, options.goalKey, writer, task.ref, validated.resolution)
+    } catch (error) {
+      await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
+      await finishHistoryStep(options.history, runRef, {
+        goalKey: options.goalKey,
+        statusAfter: from,
+        outcome: 'system_error',
+        runStatus: 'system_error',
+        message: statusMessage(errorMessage(error)),
+      })
+      if (executionLease) {
+        await options.execution?.finishTaskExecution({
+          goalKey: options.goalKey,
+          executionId: executionLease.executionId,
+          outcome: 'system_error',
+        })
+        executionFinalized = true
+      }
+      throw error
+    }
+
+    if (task.kind === 'planning' && validated.resolution.to === 'done') {
+      await resolvePlanningRequestsForTask(
+        {
+          boardStore: options.store,
+          planningRequests,
+        },
+        {
+          goalKey: options.goalKey,
+          taskRef: task.ref,
+          resolution: `Planning task ${task.ref} completed.`,
+          writer,
+        },
+      )
+      await syncGroupedPlanningEngineeringBlockers(
+        {
+          boardStore: options.store,
+          planningRequests,
+        },
+        {
+          goalKey: options.goalKey,
+          writer,
+          reason: `sync grouped planning blockers after ${task.ref}`,
+        },
+      )
+    }
+
+    await finishHistoryStep(options.history, runRef, {
+      goalKey: options.goalKey,
+      statusAfter: validated.resolution.to,
+      outcome: stepOutcomeForAgentOutcome(validated.outcome),
+      runStatus: runStatusForResolution(validated.resolution),
+      message: statusMessage(messageForOutcome(task.ref, validated.outcome, validated.resolution.to)),
+    })
+    if (executionLease) {
+      await options.execution?.finishTaskExecution({
+        goalKey: options.goalKey,
+        executionId: executionLease.executionId,
+        outcome: executionOutcomeForAgentOutcome(validated.outcome),
+      })
+      executionFinalized = true
+    }
+
+    if (validated.resolution.blocker) {
+      return { kind: 'blocked', taskRef: task.ref, blocker: validated.resolution.blocker }
+    }
+
+    return { kind: 'advanced', taskRef: task.ref, from, to: validated.resolution.to }
+  } finally {
+    runningLease?.release()
+    if (executionLease && !executionFinalized) {
+      await options.execution?.finishTaskExecution({
+        goalKey: options.goalKey,
+        executionId: executionLease.executionId,
+        outcome: 'system_error',
+      }).catch(() => undefined)
+    }
+  }
+}
+
+async function selectDispatchableTask(options: {
+  board: { items: TaskItem[] }
+  goalKey: string
+  rootDir: string
+  runningTasks?: RunningTaskRegistry
+  execution?: ExecutionStateStore
+  workerId?: string
+  maxParallel?: number
+  laneParallelism?: LaneParallelismInput
+}): Promise<{
+  task: TaskItem
+  step: DispatchStep
+  executionLease?: Awaited<ReturnType<ExecutionStateStore['acquireTaskExecution']>>
+  runningLease?: ReturnType<RunningTaskRegistry['acquire']>
+} | null> {
+  const laneParallelism = normalizeLaneParallelism(options.laneParallelism, options.maxParallel)
+  for (const task of options.board.items) {
+    if (!isDispatchableTask(task)) {
+      continue
+    }
+
+    const step = stepForTask(task)
+    if (!step) {
+      continue
+    }
+
+    const lane = executionLaneForStatus(task.status)
+    if (!lane) {
+      continue
+    }
+
+    if (options.execution && options.workerId) {
+      const executionLease = await options.execution.acquireTaskExecution({
         goalKey: options.goalKey,
         taskRef: task.ref,
         taskKind: task.kind,
-        runId: runRef.runId,
+        role: step.role,
+        lane,
+        statusBefore: task.status,
+        workerId: options.workerId,
+        laneLimit: laneParallelism[lane],
+        roleLimit: roleParallelismLimit(step.role),
       })
+      if (executionLease) {
+        return { task, step, executionLease }
+      }
+      continue
     }
-  } catch (error) {
-    await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
-    await finishHistoryStep(options.history, runRef, {
+
+    if (!options.runningTasks) {
+      return { task, step }
+    }
+
+    const runningLease = options.runningTasks.acquire({
+      rootDir: options.rootDir,
       goalKey: options.goalKey,
-      statusAfter: from,
-      outcome: 'system_error',
-      runStatus: 'system_error',
-      message: statusMessage(errorMessage(error)),
+      taskRef: task.ref,
+      role: step.role,
+      lane,
+      laneLimit: laneParallelism[lane],
+      roleLimit: roleParallelismLimit(step.role),
     })
-    throw error
+    if (runningLease) {
+      return { task, step, runningLease }
+    }
   }
 
-  const resolution = await resolveOutcome(task, from, step, outcome, options.attempts, maxAttempts)
-  const validated = await validatePlanningFollowThroughIfNeeded({
-    goalKey: options.goalKey,
-    task,
-    step,
-    outcome,
-    resolution,
-    attempts: options.attempts,
-    maxAttempts,
-    planningRequests,
-    writeTraces,
-  })
-  try {
-    await finalizeTask(options.store, options.goalKey, writer, task.ref, validated.resolution)
-  } catch (error) {
-    await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
-    await finishHistoryStep(options.history, runRef, {
-      goalKey: options.goalKey,
-      statusAfter: from,
-      outcome: 'system_error',
-      runStatus: 'system_error',
-      message: statusMessage(errorMessage(error)),
-    })
-    throw error
+  return null
+}
+
+function roleParallelismLimit(role: AgentRole) {
+  if (role === 'planner') {
+    return 1
   }
 
-  if (task.kind === 'planning' && validated.resolution.to === 'done') {
-    await resolvePlanningRequestsForTask(
-      {
-        boardStore: options.store,
-        planningRequests,
-      },
-      {
-        goalKey: options.goalKey,
-        taskRef: task.ref,
-        resolution: `Planning task ${task.ref} completed.`,
-        writer,
-      },
-    )
-    await syncGroupedPlanningEngineeringBlockers(
-      {
-        boardStore: options.store,
-        planningRequests,
-      },
-      {
-        goalKey: options.goalKey,
-        writer,
-        reason: `sync grouped planning blockers after ${task.ref}`,
-      },
-    )
-  }
-
-  await finishHistoryStep(options.history, runRef, {
-    goalKey: options.goalKey,
-    statusAfter: validated.resolution.to,
-    outcome: stepOutcomeForAgentOutcome(validated.outcome),
-    runStatus: runStatusForResolution(validated.resolution),
-    message: statusMessage(messageForOutcome(task.ref, validated.outcome, validated.resolution.to)),
-  })
-
-  if (validated.resolution.blocker) {
-    return { kind: 'blocked', taskRef: task.ref, blocker: validated.resolution.blocker }
-  }
-
-  return { kind: 'advanced', taskRef: task.ref, from, to: validated.resolution.to }
+  return undefined
 }
 
 async function cleanupResolvedBlockers(
@@ -303,7 +604,7 @@ function isDispatchableTask(task: TaskItem) {
 }
 
 function stepForTask(task: TaskItem): DispatchStep | null {
-  if (task.status === 'planned') {
+  if (task.status === 'planned' || task.status === 'in_progress') {
     return {
       role: task.kind === 'planning' ? 'planner' : 'generator',
       successTo: 'in_review',
@@ -322,7 +623,7 @@ function stepForTask(task: TaskItem): DispatchStep | null {
     return {
       role: 'merger',
       successTo: 'done',
-      mergeConflictTo: 'planned',
+      mergeConflictTo: 'merging',
     }
   }
 
@@ -379,6 +680,7 @@ async function validatePlanningFollowThroughIfNeeded(options: {
   resolution: OutcomeResolution
   attempts: AttemptStore
   maxAttempts: number
+  store: BoardStore
   planningRequests: PlanningRequestStore
   writeTraces: WriteTraceStore
 }) {
@@ -398,8 +700,45 @@ async function validatePlanningFollowThroughIfNeeded(options: {
     taskRef: options.task.ref,
     planningRequests: options.planningRequests,
     writeTraces: options.writeTraces,
+    fallbackRequestedUpdates: defaultPlanningRequestedUpdates(options.task),
   })
   if (evidence.missingUpdates.length === 0) {
+    if (evidence.requestedUpdates.includes('todo.yml')) {
+      const board = await options.store.readBoard(options.goalKey)
+      const issues = inspectEngineeringTaskDecomposition(board)
+      if (issues.length > 0) {
+        return {
+          outcome: {
+            kind: 'fail' as const,
+            reason: `Invalid engineering task decomposition: ${issues.map((issue) => issue.message).join(' ')}`,
+          },
+          resolution: await resolveFailure({
+            task: options.task,
+            attempts: options.attempts,
+            maxAttempts: options.maxAttempts,
+            failureKind: 'planning_task_graph_invalid',
+            retryStatus: 'planned',
+          }),
+        }
+      }
+      const browserHarnessIssues = inspectBrowserHarnessAcceptanceCriteria(board)
+      if (browserHarnessIssues.length > 0) {
+        return {
+          outcome: {
+            kind: 'fail' as const,
+            reason: `Invalid engineering Browser Harness acceptance: ${browserHarnessIssues.map((issue) => issue.message).join(' ')}`,
+          },
+          resolution: await resolveFailure({
+            task: options.task,
+            attempts: options.attempts,
+            maxAttempts: options.maxAttempts,
+            failureKind: 'planning_task_graph_invalid',
+            retryStatus: 'planned',
+          }),
+        }
+      }
+    }
+
     return {
       outcome: options.outcome,
       resolution: options.resolution,
@@ -419,6 +758,16 @@ async function validatePlanningFollowThroughIfNeeded(options: {
       retryStatus: 'planned',
     }),
   }
+}
+
+function defaultPlanningRequestedUpdates(
+  task: TaskItem,
+): GoalPlanningRequestUpdateTarget[] | undefined {
+  if (task.ref === 'plan-goal') {
+    return [...LEGACY_BOOTSTRAP_PLANNING_UPDATES]
+  }
+
+  return undefined
 }
 
 async function resolveFailure(options: {
@@ -552,6 +901,25 @@ function stepOutcomeForAgentOutcome(outcome: AgentOutcome): StepOutcome {
   }
 }
 
+function executionOutcomeForAgentOutcome(outcome: AgentOutcome) {
+  if (outcome.kind === 'success') {
+    return 'succeeded' as const
+  }
+  if (outcome.kind === 'reject') {
+    return 'rejected' as const
+  }
+  if (outcome.kind === 'timeout') {
+    return 'timed_out' as const
+  }
+  if (outcome.kind === 'merge_conflict') {
+    return 'merge_conflict' as const
+  }
+  if (outcome.kind === 'fail') {
+    return 'failed' as const
+  }
+  return 'system_error' as const
+}
+
 function messageForOutcome(taskRef: string, outcome: AgentOutcome, statusAfter: TaskStatus) {
   switch (outcome.kind) {
     case 'success':
@@ -611,6 +979,99 @@ function historyEventForRuntimeEvent(event: AgentRuntimeEvent) {
     ref: event.ref,
     label: event.label,
   }
+}
+
+async function recordMergeScriptAttempt(
+  history: RunHistoryStore | undefined,
+  options: {
+    goalKey: string
+    runId: string
+    stepId: string
+    attempt: NonNullable<GitMergeExecutor['runMergeScript']> extends (
+      options: any,
+    ) => Promise<infer TResult>
+      ? TResult
+      : never
+    phase: 'initial' | 'verification'
+  },
+) {
+  if (!history) {
+    return
+  }
+
+  const toolInvocationKey = `merge-script:${options.phase}:${options.runId}:${options.stepId}`
+  const commandSummary = `command (${options.attempt.command.join(' ')})`
+  const resultSummary = summarizeMergeScriptAttempt(options.attempt, options.phase)
+  await history.recordStepEvent({
+    goalKey: options.goalKey,
+    runId: options.runId,
+    stepId: options.stepId,
+    event: {
+      kind: 'transcript',
+      transport: 'process',
+      entryKind: 'tool_call',
+      summary: commandSummary,
+      toolName: 'command',
+      toolInvocationKey,
+      vendorEventType: 'merge_script',
+    },
+  })
+  await history.recordStepEvent({
+    goalKey: options.goalKey,
+    runId: options.runId,
+    stepId: options.stepId,
+    event: {
+      kind: 'transcript',
+      transport: 'process',
+      entryKind: 'tool_result',
+      summary: resultSummary,
+      toolName: 'command',
+      toolInvocationKey,
+      vendorEventType: 'merge_script',
+    },
+  })
+}
+
+function summarizeMergeScriptAttempt(
+  attempt: Awaited<ReturnType<NonNullable<GitMergeExecutor['runMergeScript']>>>,
+  phase: 'initial' | 'verification',
+) {
+  const parts = [`${phase} merge script`]
+  if (attempt.result) {
+    parts.push(`${attempt.result.kind}: ${attempt.result.reason}`)
+  } else if (attempt.parseError) {
+    parts.push(`invalid output: ${attempt.parseError}`)
+  } else {
+    parts.push(`exit ${attempt.exitCode}`)
+  }
+
+  const stdout = attempt.stdout.trim()
+  if (stdout) {
+    parts.push(`stdout=${truncateHistorySummary(stdout)}`)
+  }
+  const stderr = attempt.stderr.trim()
+  if (stderr) {
+    parts.push(`stderr=${truncateHistorySummary(stderr)}`)
+  }
+
+  return parts.join(' | ')
+}
+
+function truncateHistorySummary(content: string, maxLength = 240) {
+  if (content.length <= maxLength) {
+    return content
+  }
+  return `${content.slice(0, maxLength)}...[truncated]`
+}
+
+function firstNonEmpty(...values: Array<string | undefined>) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value
+    }
+  }
+
+  return ''
 }
 
 function errorMessage(error: unknown) {

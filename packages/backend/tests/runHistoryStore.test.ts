@@ -148,6 +148,161 @@ describe('createRunHistoryStore', () => {
     })
   })
 
+  test('starts a fresh run when a stale active run no longer matches the current stage', async () => {
+    const store = createRunHistoryStore(testRoot())
+
+    const generated = await store.startStep({
+      goalKey,
+      taskRef: 'T-2',
+      taskKind: 'engineering',
+      role: 'generator',
+      statusBefore: 'planned',
+      message: systemMessage('generator dispatched'),
+    })
+    await store.finishStep({
+      goalKey,
+      runId: generated.runId,
+      stepId: generated.stepId,
+      statusAfter: 'in_review',
+      outcome: 'success',
+      message: systemMessage('generator succeeded'),
+    })
+
+    const reviewed = await store.startStep({
+      goalKey,
+      taskRef: 'T-2',
+      taskKind: 'engineering',
+      role: 'reviewer',
+      statusBefore: 'in_review',
+      message: systemMessage('reviewer dispatched'),
+    })
+    await store.finishStep({
+      goalKey,
+      runId: reviewed.runId,
+      stepId: reviewed.stepId,
+      statusAfter: 'merging',
+      outcome: 'success',
+      message: systemMessage('reviewer accepted'),
+    })
+
+    const merging = await store.startStep({
+      goalKey,
+      taskRef: 'T-2',
+      taskKind: 'engineering',
+      role: 'merger',
+      statusBefore: 'merging',
+      message: systemMessage('merger dispatched'),
+    })
+
+    const restarted = await store.startStep({
+      goalKey,
+      taskRef: 'T-2',
+      taskKind: 'engineering',
+      role: 'generator',
+      statusBefore: 'planned',
+      message: systemMessage('generator restarted'),
+    })
+
+    expect(restarted.runId).not.toBe(generated.runId)
+
+    const history = await store.readGoalHistory(goalKey)
+    expect(history.runs).toHaveLength(2)
+    expect(history.runs[0]).toMatchObject({
+      runId: generated.runId,
+      status: 'system_error',
+      finalTaskStatus: 'merging',
+      terminalOutcome: 'system_error',
+      steps: [
+        { role: 'generator', outcome: 'success' },
+        { role: 'reviewer', outcome: 'success' },
+        { stepId: merging.stepId, role: 'merger', outcome: 'system_error', statusAfter: 'merging' },
+      ],
+    })
+    expect(history.runs[1]).toMatchObject({
+      runId: restarted.runId,
+      status: 'active',
+      steps: [{ role: 'generator', outcome: 'running', statusBefore: 'planned' }],
+    })
+  })
+
+  test('keeps merger retries inside the same active run while the task remains in merging', async () => {
+    const store = createRunHistoryStore(testRoot())
+
+    const generated = await store.startStep({
+      goalKey,
+      taskRef: 'T-3',
+      taskKind: 'engineering',
+      role: 'generator',
+      statusBefore: 'planned',
+      message: systemMessage('generator dispatched'),
+    })
+    await store.finishStep({
+      goalKey,
+      runId: generated.runId,
+      stepId: generated.stepId,
+      statusAfter: 'in_review',
+      outcome: 'success',
+      message: systemMessage('generator succeeded'),
+    })
+
+    const reviewed = await store.startStep({
+      goalKey,
+      taskRef: 'T-3',
+      taskKind: 'engineering',
+      role: 'reviewer',
+      statusBefore: 'in_review',
+      message: systemMessage('reviewer dispatched'),
+    })
+    await store.finishStep({
+      goalKey,
+      runId: reviewed.runId,
+      stepId: reviewed.stepId,
+      statusAfter: 'merging',
+      outcome: 'success',
+      message: systemMessage('reviewer accepted'),
+    })
+
+    const firstMerge = await store.startStep({
+      goalKey,
+      taskRef: 'T-3',
+      taskKind: 'engineering',
+      role: 'merger',
+      statusBefore: 'merging',
+      message: systemMessage('merger dispatched'),
+    })
+    await store.finishStep({
+      goalKey,
+      runId: firstMerge.runId,
+      stepId: firstMerge.stepId,
+      statusAfter: 'merging',
+      outcome: 'merge_conflict',
+      message: systemMessage('merge conflict: branch:task/T-3'),
+    })
+
+    const retryMerge = await store.startStep({
+      goalKey,
+      taskRef: 'T-3',
+      taskKind: 'engineering',
+      role: 'merger',
+      statusBefore: 'merging',
+      message: systemMessage('merger retried'),
+    })
+
+    expect(retryMerge.runId).toBe(generated.runId)
+
+    const run = await store.readRun(goalKey, generated.runId)
+    expect(run).toMatchObject({
+      runId: generated.runId,
+      status: 'active',
+      steps: [
+        { role: 'generator', outcome: 'success', statusAfter: 'in_review' },
+        { role: 'reviewer', outcome: 'success', statusAfter: 'merging' },
+        { role: 'merger', outcome: 'merge_conflict', statusAfter: 'merging' },
+        { role: 'merger', outcome: 'running', statusBefore: 'merging' },
+      ],
+    })
+  })
+
   test('records structured step evidence while a step is running', async () => {
     const store = createRunHistoryStore(testRoot())
 

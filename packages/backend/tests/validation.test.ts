@@ -63,6 +63,27 @@ describe('validateBoard', () => {
     expect(board.items[0]?.blockedBy).toEqual([])
   })
 
+  test('canonicalizes legacy pending task status to planned', () => {
+    const raw = {
+      version: 1,
+      goal: { goalKey: 'g', title: 'Goal' },
+      items: [
+        {
+          ref: 'T-1',
+          kind: 'engineering',
+          status: 'pending',
+          title: 'Implement atomic writes',
+          description: 'Make writes safe under concurrent calls.',
+          acceptanceCriteria: ['Concurrent writes do not corrupt todo.yml.'],
+        },
+      ],
+    }
+
+    const board = validateBoard(raw)
+
+    expect(board.items[0]?.status).toBe('planned')
+  })
+
   test('rejects duplicate task refs', () => {
     const raw = {
       version: 1,

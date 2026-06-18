@@ -62,10 +62,18 @@ describe('ConfiguredRoleProcessRunner', () => {
 
     const trace = await createWriteTraceStore(rootDir).readGoalTrace(goalKey)
     expect(trace.entries).toHaveLength(1)
-    expect(trace.entries[0]).toMatchObject({
-      taskRef: 'T-1',
-      targetPaths: ['generated.txt'],
-      changes: [{ path: 'generated.txt', kind: 'added' }],
+    expect(trace.entries[0]?.taskRef).toBe('T-1')
+    expect(trace.entries[0]?.targetPaths).toContain('generated.txt')
+    expect(trace.entries[0]?.targetPaths).toContain(
+      '.hopi-runtime/goals/goal-1/runs/run-1/step-1/outcome.json',
+    )
+    expect(trace.entries[0]?.changes).toContainEqual({
+      path: 'generated.txt',
+      kind: 'added',
+    })
+    expect(trace.entries[0]?.changes).toContainEqual({
+      path: '.hopi-runtime/goals/goal-1/runs/run-1/step-1/outcome.json',
+      kind: 'added',
     })
   })
 
@@ -92,7 +100,7 @@ describe('ConfiguredRoleProcessRunner', () => {
             '${CONTEXT_FILE}',
             '${OUTCOME_FILE}',
           ],
-          cwdMode: 'worktree',
+          cwdMode: 'root',
         },
       },
     })
@@ -119,6 +127,23 @@ describe('ConfiguredRoleProcessRunner', () => {
     )
     expect(context).toContain('Role: reviewer')
     expect(context).toContain('Do not edit .hopi/docs/**')
+
+    const migrated = JSON.parse(
+      await Bun.file(join(rootDir, '.hopi', 'runtime', 'agent-adapters.json')).text(),
+    ) as {
+      version: number
+      defaults?: {
+        transport?: string
+      }
+      roles: {
+        reviewer?: {
+          cwdMode?: string
+        }
+      }
+    }
+    expect(migrated.version).toBe(3)
+    expect(migrated.defaults?.transport).toBe('codex')
+    expect(migrated.roles.reviewer?.cwdMode).toBe('worktree')
   })
 
   test('supports the built-in codex transport with a bundled prompt and typed outcome file', async () => {

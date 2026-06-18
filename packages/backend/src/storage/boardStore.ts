@@ -4,6 +4,10 @@ import type { BoardEvent, TodoBoard } from '../domain/board'
 import { parseBoardYaml, stringifyBoardYaml, validateBoard } from '../domain/validation'
 import { withFileLock } from './lock'
 import { type ProjectPaths, createProjectPaths } from './paths'
+import {
+  legacyGoalEventsPath,
+  migrateLegacyRuntimeOwnedGoalFileIfNeeded,
+} from './runtimeOwnedGoalFiles'
 
 export interface BoardStore {
   paths: ProjectPaths
@@ -29,6 +33,10 @@ export function createBoardStore(rootDir = process.cwd()): BoardStore {
       await mkdir(paths.goalDir(goalKey), { recursive: true })
 
       return withFileLock(paths.lockPath(goalKey), async () => {
+        await migrateLegacyRuntimeOwnedGoalFileIfNeeded(
+          paths.eventsPath(goalKey),
+          legacyGoalEventsPath(paths, goalKey),
+        )
         const board = await readBoardAtPath(paths.todoPath(goalKey), goalKey)
         mutate(board)
         const nextBoard = validateBoard(board)
@@ -43,7 +51,10 @@ export function createBoardStore(rootDir = process.cwd()): BoardStore {
       })
     },
     async appendEvent(goalKey: string, event) {
-      await mkdir(paths.goalDir(goalKey), { recursive: true })
+      await migrateLegacyRuntimeOwnedGoalFileIfNeeded(
+        paths.eventsPath(goalKey),
+        legacyGoalEventsPath(paths, goalKey),
+      )
       return appendEventAtPath(paths.eventsPath(goalKey), event)
     },
   }

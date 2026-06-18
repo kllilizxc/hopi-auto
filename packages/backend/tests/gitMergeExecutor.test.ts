@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createGitMergeExecutor } from '../src/runtime/gitMergeExecutor'
 import { createWorktreeManager } from '../src/runtime/worktreeManager'
@@ -33,7 +33,7 @@ describe('createGitMergeExecutor', () => {
     })
 
     expect(result).toEqual({ kind: 'success' })
-    expect(await readFile(join(rootDir, 'feature.txt'), 'utf8')).toBe('merged output\n')
+    expect((await readFile(join(rootDir, 'feature.txt'), 'utf8')).trim()).toBe('merged output')
     expect(await pathExists(prepared.path)).toBeFalse()
     expect(await git(rootDir, ['branch', '--list', prepared.branch])).toBe('')
   })
@@ -94,6 +94,70 @@ describe('createGitMergeExecutor', () => {
     expect(await git(rootDir, ['diff', '--name-only', '--diff-filter=U'])).toBe('')
   })
 
+  test('prefers the worktree merge script and does not bootstrap one into root', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const worktrees = createWorktreeManager(rootDir)
+    const prepared = await worktrees.prepare({
+      goalKey,
+      taskRef: 'T-4',
+      runId: 'run-4',
+    })
+    const worktreeScript = join(prepared.path, 'scripts', 'hopi', 'merge-task.sh')
+    await mkdir(join(prepared.path, 'scripts', 'hopi'), { recursive: true })
+    await writeFile(
+      worktreeScript,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '{"kind":"merged","reason":"used worktree script"}'
+`,
+      'utf8',
+    )
+    await chmod(worktreeScript, 0o755)
+
+    const executor = createGitMergeExecutor(rootDir)
+    const attempt = await executor.runMergeScript!({
+      goalKey,
+      taskRef: 'T-4',
+      taskKind: 'engineering',
+      runId: 'run-4',
+      stepId: 'step-4',
+    })
+
+    expect(attempt.scriptPath).toBe(worktreeScript)
+    expect(attempt.result).toEqual({
+      kind: 'merged',
+      reason: 'used worktree script',
+    })
+    expect(await pathExists(join(rootDir, 'scripts', 'hopi', 'merge-task.sh'))).toBeFalse()
+  })
+
+  test('reports dirty root source files as a deterministic merge_conflict blocker', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const worktrees = createWorktreeManager(rootDir)
+    await worktrees.prepare({
+      goalKey,
+      taskRef: 'T-5',
+      runId: 'run-5',
+    })
+    await writeFile(join(rootDir, 'dirty.ts'), 'const dirty = true\n', 'utf8')
+
+    const executor = createGitMergeExecutor(rootDir)
+    const attempt = await executor.runMergeScript!({
+      goalKey,
+      taskRef: 'T-5',
+      taskKind: 'engineering',
+      runId: 'run-5',
+      stepId: 'step-5',
+    })
+
+    expect(attempt.result).toEqual({
+      kind: 'merge_conflict',
+      reason: 'Root workspace has local changes blocking merge: dirty.ts',
+      artifactRef: 'dirty.ts',
+      artifactLabel: 'root-workspace-dirty',
+    })
+  })
+
   test('allows planning merger success without a run branch', async () => {
     const rootDir = await initGitRepo(testRoot())
     const executor = createGitMergeExecutor(rootDir)
@@ -106,6 +170,28 @@ describe('createGitMergeExecutor', () => {
         runId: 'run-planning',
       }),
     ).resolves.toEqual({ kind: 'success' })
+  })
+
+  test('treats a planning run branch as a durable-doc no-op and still cleans the run worktree', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const worktrees = createWorktreeManager(rootDir)
+    const prepared = await worktrees.prepare({
+      goalKey,
+      taskRef: 'P-2',
+      runId: 'run-planning',
+    })
+
+    const executor = createGitMergeExecutor(rootDir)
+    const result = await executor.completeMerge({
+      goalKey,
+      taskRef: 'P-2',
+      taskKind: 'planning',
+      runId: 'run-planning',
+    })
+
+    expect(result).toEqual({ kind: 'success' })
+    expect(await pathExists(prepared.path)).toBeFalse()
+    expect(await git(rootDir, ['branch', '--list', prepared.branch])).toBe('')
   })
 })
 

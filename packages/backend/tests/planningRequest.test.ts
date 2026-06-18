@@ -252,6 +252,54 @@ describe('requestGoalPlanning', () => {
     })
   })
 
+  test('persists attachment refs on planning requests', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const planningRequests = createPlanningRequestStore(rootDir)
+    const attachments = [
+      {
+        assetPath: 'assets/assistant/upload-1/layout.png',
+        fileName: 'layout.png',
+        mediaType: 'image/png' as const,
+        sizeBytes: 4,
+        createdAt: '2026-06-14T00:00:00.000Z',
+      },
+    ]
+
+    const result = await requestGoalPlanning(
+      {
+        boardStore,
+        planningRequests,
+      },
+      {
+        goalKey: 'goal-1',
+        title: 'Plan UI cleanup',
+        description: 'Use the screenshot to plan the UI changes.',
+        acceptanceCriteria: ['The UI cleanup plan is durable.'],
+        requestedUpdates: ['design.md', 'todo.yml'],
+        attachments,
+      },
+    )
+
+    expect(result.request.attachments).toEqual(attachments)
+    await expect(planningRequests.readGoalPlanningRequests('goal-1')).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          attachments: [expect.objectContaining({ assetPath: attachments[0]?.assetPath })],
+        }),
+      ],
+    })
+    await expect(boardStore.readBoard('goal-1')).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          ref: 'P-1',
+          attachmentAssetPaths: [attachments[0]?.assetPath],
+        }),
+      ],
+    })
+  })
+
   test('creates grouped planning follow-through across multiple visible planning tasks', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

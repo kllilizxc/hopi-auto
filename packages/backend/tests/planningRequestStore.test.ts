@@ -176,6 +176,57 @@ describe('createPlanningRequestStore', () => {
     ).rejects.toThrow('Invalid requested update target')
   })
 
+  test('normalizes legacy planner-written request statuses and rewrites canonical workflow state', async () => {
+    const rootDir = testRoot()
+    const store = createPlanningRequestStore(rootDir)
+    const planningRequestsPath = join(
+      rootDir,
+      '.hopi',
+      'docs',
+      'goals',
+      goalKey,
+      'planning-requests.yml',
+    )
+
+    await Bun.write(
+      planningRequestsPath,
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-1
+    title: Plan deck UX
+    description: Capture the durable planning split.
+    acceptanceCriteria:
+      - The plan is durable.
+    taskRef: plan-goal
+    requestedUpdates:
+      - design.md
+      - todo.yml
+    status: planned
+    handledByTaskRefs:
+      - task-1
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+
+    await expect(store.readGoalPlanningRequests(goalKey)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          requestKey: 'PR-1',
+          status: 'open',
+          requestedUpdates: ['design.md', 'todo.yml'],
+        }),
+      ],
+    })
+
+    await store.ensureGoalPlanningRequests(goalKey)
+
+    await expect(Bun.file(planningRequestsPath).text()).resolves.toContain('status: open')
+    await expect(Bun.file(planningRequestsPath).text()).resolves.not.toContain(
+      'handledByTaskRefs',
+    )
+  })
+
   test('supports stable planning request group keys', async () => {
     const store = createPlanningRequestStore(testRoot())
 

@@ -3,6 +3,7 @@ import { ANSWER_CAPTURE_FORMATS } from '../domain/answerCaptureFormat'
 import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES } from '../domain/board'
 import { INTERPRETABLE_SOURCE_RESPONSE_FORMATS } from '../runtime/answerInterpretation'
 import { DECISION_STATUSES } from '../storage/decisionStore'
+import { goalAttachmentRefArraySchema, goalAttachmentRefSchema } from '../storage/goalAttachmentStore'
 import {
   PLANNING_REQUEST_STATUSES,
   goalPlanningRequestBlockedByWorkflowKeysSchema,
@@ -55,6 +56,7 @@ const assistantResultPlanningRequestSchema = z.object({
   taskRef: z.string().min(1),
   decisionRefs: z.array(z.string().min(1)),
   answers: z.array(assistantResultPlanningAnswerSchema),
+  attachments: goalAttachmentRefArraySchema,
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   status: z.enum(PLANNING_REQUEST_STATUSES),
   createdAt: z.string().datetime(),
@@ -75,6 +77,7 @@ const assistantResultTaskSchema = z.object({
       ref: z.string().min(1),
     }),
   ),
+  attachmentAssetPaths: z.array(z.string().min(1)).optional(),
 })
 
 const assistantResultPreferenceEntrySchema = z.object({
@@ -266,6 +269,7 @@ const assistantResultDecisionSchema = z.object({
   status: z.enum(DECISION_STATUSES),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  attachments: goalAttachmentRefArraySchema,
   createdAt: z.string().datetime(),
   resolvedAt: z.string().datetime().optional(),
 })
@@ -322,102 +326,96 @@ const resolveDecisionFollowThroughSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
-export const assistantActionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('move_task'),
-    taskRef: z.string().min(1),
-    status: z.enum(['planned', 'in_review', 'merging', 'done']),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('create_planning_task'),
-    title: z.string().min(1),
-    description: z.string(),
-    acceptanceCriteria: z.array(z.string().min(1)).min(1),
-    blockedBy: z
-      .array(
-        z.object({
-          kind: z.enum(BLOCKER_KINDS),
-          ref: z.string().min(1),
-        }),
-      )
-      .default([]),
-  }),
-  z.object({
-    kind: z.literal('request_planning'),
-    groupKey: z.string().min(1).optional(),
-    title: z.string().min(1),
-    description: z.string(),
-    acceptanceCriteria: z.array(z.string().min(1)).min(1),
-    decisionRefs: z.array(z.string().min(1)).default([]),
-    answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    sourceResponse: z.string().min(1).optional(),
-    inferRemainingAnswers: z.boolean().optional(),
-    answers: interpretablePlanningAnswerArraySchema,
-    requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
-    blockedBy: z
-      .array(
-        z.object({
-          kind: z.enum(BLOCKER_KINDS),
-          ref: z.string().min(1),
-        }),
-      )
-      .default([]),
-  }),
-  z.object({
-    kind: z.literal('request_planning_batch'),
-    groupKey: z.string().min(1),
-    decisionRefs: z.array(z.string().min(1)).default([]),
-    answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    sourceResponse: z.string().min(1).optional(),
-    inferRemainingAnswers: z.boolean().optional(),
-    answers: interpretablePlanningAnswerArraySchema,
-    requests: z.array(assistantPlanningBatchEntrySchema).min(1),
-  }),
-  z.object({
-    kind: z.literal('request_planning_workflows'),
-    workflowKey: z.string().min(1).optional(),
-    reuseTaskRef: z.string().min(1).optional(),
-    reuseGroupKey: z.string().min(1).optional(),
-    decisionRefs: z.array(z.string().min(1)).default([]),
-    answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    sourceResponse: z.string().min(1).optional(),
-    inferRemainingAnswers: z.boolean().optional(),
-    answers: interpretablePlanningAnswerArraySchema,
-    workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
-  }),
-  z.object({
-    kind: z.literal('request_decision'),
-    decisionKey: z.string().min(1),
-    summary: z.string().min(1),
-    summaryKey: z.string().min(1).optional(),
-    prompt: z.string().min(1).optional(),
-    matchHints: matchHintArraySchema,
-    taskRef: z.string().min(1).optional(),
-  }),
-  z.object({
-    kind: z.literal('record_answer'),
-    summary: z.string().min(1),
-    summaryKey: z.string().min(1).optional(),
-    prompt: z.string().min(1).optional(),
-    matchHints: matchHintArraySchema,
-    decisionKey: z.string().min(1).optional(),
-    taskRef: z.string().min(1).optional(),
-    answer: z.string().min(1).optional(),
-    sourceExcerpt: z.string().min(1).optional(),
-    sourceOccurrence: sourceOccurrenceSchema.optional(),
-    answerSourceKey: z.string().min(1).optional(),
-    answerSourceGroupKey: z.string().min(1).optional(),
-    answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    sourceResponse: z.string().min(1).optional(),
-    followThrough: resolveDecisionFollowThroughSchema.optional(),
-  }),
-  z.object({
-    kind: z.literal('record_answers'),
+const retryTaskActionSchema = z.object({
+  kind: z.literal('retry_task'),
+  taskRef: z.string().min(1),
+  reason: z.string().min(1),
+  clearBlockers: z
+    .array(
+      z.object({
+        kind: z.enum(['intervention', 'merge_conflict']),
+        ref: z.string().min(1),
+      }),
+    )
+    .default([]),
+})
+
+const requestPlanningSingleActionSchema = z.object({
+  kind: z.literal('request_planning'),
+  mode: z.literal('single').optional(),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  groupKey: z.string().min(1).optional(),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
+  requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
+  blockedBy: z
+    .array(
+      z.object({
+        kind: z.enum(BLOCKER_KINDS),
+        ref: z.string().min(1),
+      }),
+    )
+    .default([]),
+})
+
+const requestPlanningBatchActionSchema = z.object({
+  kind: z.literal('request_planning'),
+  mode: z.literal('batch'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  groupKey: z.string().min(1),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
+  requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+})
+
+const requestPlanningWorkflowActionSchema = z.object({
+  kind: z.literal('request_planning'),
+  mode: z.literal('workflow'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  workflowKey: z.string().min(1).optional(),
+  reuseTaskRef: z.string().min(1).optional(),
+  reuseGroupKey: z.string().min(1).optional(),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
+  workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
+})
+
+const requestPlanningActionSchema = z.union([
+  requestPlanningSingleActionSchema,
+  requestPlanningBatchActionSchema,
+  requestPlanningWorkflowActionSchema,
+])
+
+const requestDecisionActionSchema = z.object({
+  kind: z.literal('request_decision'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  decisionKey: z.string().min(1),
+  summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
+  taskRef: z.string().min(1).optional(),
+})
+
+const resolveDecisionsActionSchema = z
+  .object({
+    kind: z.literal('resolve_decisions'),
+    attachmentAssetPaths: z.array(z.string().min(1)).default([]),
     answerSources: interpretableAnswerSourceArraySchema,
     sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
     sourceResponse: z.string().min(1).optional(),
@@ -425,157 +423,374 @@ export const assistantActionSchema = z.discriminatedUnion('kind', [
     inferDecisionTopics: z.boolean().default(false),
     answers: z.array(assistantDecisionAnswerSchema).default([]),
     followThrough: resolveDecisionFollowThroughSchema.optional(),
-  }),
-  z.object({
-    kind: z.literal('resolve_decision'),
-    decisionKey: z.string().min(1),
-    summary: z.string().min(1).optional(),
-    summaryKey: z.string().min(1).optional(),
-    prompt: z.string().min(1).optional(),
-    matchHints: matchHintArraySchema,
-    taskRef: z.string().min(1).optional(),
-    answer: z.string().min(1).optional(),
-    sourceExcerpt: z.string().min(1).optional(),
-    sourceOccurrence: sourceOccurrenceSchema.optional(),
-    answerSourceKey: z.string().min(1).optional(),
-    answerSourceGroupKey: z.string().min(1).optional(),
-    answerSources: interpretableAnswerSourceArraySchema,
-    sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    sourceResponse: z.string().min(1).optional(),
-    followThrough: resolveDecisionFollowThroughSchema.optional(),
-  }),
-  z.object({
-    kind: z.literal('record_preference'),
-    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
-    summary: z.string().min(1),
-    rationale: z.string().min(1).optional(),
-    supersedes: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
-  }),
-  z.object({
-    kind: z.literal('retire_preference'),
-    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
-    reason: z.string().min(1),
-    supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
-  }),
-  z.object({
-    kind: z.literal('update_preference'),
-    content: z.string().min(1),
-  }),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.answers.length === 0 &&
+      !value.inferOpenDecisions &&
+      !value.inferDecisionTopics
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'resolve_decisions requires at least one explicit answer or an inference flag.',
+        path: ['answers'],
+      })
+    }
+  })
+
+const setPreferenceUpsertActionSchema = z.object({
+  kind: z.literal('set_preference'),
+  mode: z.literal('upsert').optional(),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+  summary: z.string().min(1),
+  rationale: z.string().min(1).optional(),
+  supersedes: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
+})
+
+const setPreferenceRetireActionSchema = z.object({
+  kind: z.literal('set_preference'),
+  mode: z.literal('retire'),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  reason: z.string().min(1),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+})
+
+const setPreferenceActionSchema = z.union([
+  setPreferenceUpsertActionSchema,
+  setPreferenceRetireActionSchema,
 ])
 
-export const assistantActionResultSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('move_task'),
-    taskRef: z.string().min(1),
-    status: z.enum(TASK_STATUSES),
-    previousStatus: z.enum(TASK_STATUSES).optional(),
-    task: assistantResultTaskSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('create_planning_task'),
-    taskRef: z.string().min(1),
-    task: assistantResultTaskSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('request_planning'),
-    requestKey: z.string().min(1).optional(),
-    taskRef: z.string().min(1),
-    request: assistantResultPlanningRequestSchema.optional(),
-    created: z.boolean(),
-    taskCreated: z.boolean(),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('request_planning_batch'),
-    groupKey: z.string().min(1),
-    requestKeys: z.array(z.string().min(1)).min(1),
-    taskRefs: z.array(z.string().min(1)).min(1),
-    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
-    blockerTaskRefs: z.array(z.string().min(1)).min(1),
-    createdRequestKeys: z.array(z.string().min(1)),
-    createdTaskRefs: z.array(z.string().min(1)),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('request_planning_workflows'),
-    workflowKey: z.string().min(1).optional(),
-    groupKeys: z.array(z.string().min(1)),
-    workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
-    requestKeys: z.array(z.string().min(1)).min(1),
-    taskRefs: z.array(z.string().min(1)).min(1),
-    requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
-    blockerTaskRefs: z.array(z.string().min(1)).min(1),
-    createdRequestKeys: z.array(z.string().min(1)),
-    createdTaskRefs: z.array(z.string().min(1)),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('request_decision'),
-    decisionKey: z.string().min(1),
-    decision: assistantResultDecisionSchema.optional(),
-    created: z.boolean(),
-    blockerAdded: z.boolean(),
-    decisionStatus: z.enum(DECISION_STATUSES),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('record_answer'),
-    decisionKey: z.string().min(1),
-    decision: assistantResultDecisionSchema.optional(),
-    created: z.boolean(),
-    blockerRemoved: z.boolean(),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('record_answers'),
-    decisionKeys: z.array(z.string().min(1)).min(1),
-    decisions: z.array(assistantResultDecisionSchema).min(1).optional(),
-    createdDecisionKeys: z.array(z.string().min(1)),
-    blockerRemoved: z.boolean(),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('resolve_decision'),
-    decisionKey: z.string().min(1),
-    decision: assistantResultDecisionSchema.optional(),
-    blockerRemoved: z.boolean(),
-    resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
-    followThrough: assistantDecisionFollowThroughResultSchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('record_preference'),
-    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
-    preferenceSummary: z.string().min(1),
-    rationale: z.string().min(1).optional(),
-    preference: assistantResultPreferenceEntrySchema.optional(),
-    retiredPreferences: z.array(assistantResultPreferenceEntrySchema).optional(),
-    retiredPreferenceKeys: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('retire_preference'),
-    preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
-    reason: z.string().min(1),
-    supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
-    preference: assistantResultPreferenceEntrySchema.optional(),
-    summary: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('update_preference'),
-    content: z.string().min(1),
-    preferences: z.array(assistantResultPreferenceEntrySchema).optional(),
-    summary: z.string().min(1),
-  }),
+const legacyMoveTaskActionSchema = z.object({
+  kind: z.literal('move_task'),
+  taskRef: z.string().min(1),
+  status: z.enum(['planned', 'in_review', 'merging', 'done']),
+  reason: z.string().min(1),
+})
+
+const legacyCreatePlanningTaskActionSchema = z.object({
+  kind: z.literal('create_planning_task'),
+  title: z.string().min(1),
+  description: z.string(),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  blockedBy: z
+    .array(
+      z.object({
+        kind: z.enum(BLOCKER_KINDS),
+        ref: z.string().min(1),
+      }),
+    )
+    .default([]),
+})
+
+const legacyRequestPlanningBatchActionSchema = z.object({
+  kind: z.literal('request_planning_batch'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  groupKey: z.string().min(1),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
+  requests: z.array(assistantPlanningBatchEntrySchema).min(1),
+})
+
+const legacyRequestPlanningWorkflowsActionSchema = z.object({
+  kind: z.literal('request_planning_workflows'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  workflowKey: z.string().min(1).optional(),
+  reuseTaskRef: z.string().min(1).optional(),
+  reuseGroupKey: z.string().min(1).optional(),
+  decisionRefs: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferRemainingAnswers: z.boolean().optional(),
+  answers: interpretablePlanningAnswerArraySchema,
+  workflows: z.array(assistantPlanningWorkflowLeafSchema).min(1),
+})
+
+const legacyRecordAnswerActionSchema = z.object({
+  kind: z.literal('record_answer'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  summary: z.string().min(1),
+  summaryKey: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
+  decisionKey: z.string().min(1).optional(),
+  taskRef: z.string().min(1).optional(),
+  answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
+  sourceOccurrence: sourceOccurrenceSchema.optional(),
+  answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  followThrough: resolveDecisionFollowThroughSchema.optional(),
+})
+
+const legacyRecordAnswersActionSchema = z.object({
+  kind: z.literal('record_answers'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  inferOpenDecisions: z.boolean().default(false),
+  inferDecisionTopics: z.boolean().default(false),
+  answers: z.array(assistantDecisionAnswerSchema).default([]),
+  followThrough: resolveDecisionFollowThroughSchema.optional(),
+})
+
+const legacyResolveDecisionActionSchema = z.object({
+  kind: z.literal('resolve_decision'),
+  attachmentAssetPaths: z.array(z.string().min(1)).default([]),
+  decisionKey: z.string().min(1),
+  summary: z.string().min(1).optional(),
+  summaryKey: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  matchHints: matchHintArraySchema,
+  taskRef: z.string().min(1).optional(),
+  answer: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
+  sourceOccurrence: sourceOccurrenceSchema.optional(),
+  answerSourceKey: z.string().min(1).optional(),
+  answerSourceGroupKey: z.string().min(1).optional(),
+  answerSources: interpretableAnswerSourceArraySchema,
+  sourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  sourceResponse: z.string().min(1).optional(),
+  followThrough: resolveDecisionFollowThroughSchema.optional(),
+})
+
+const legacyRecordPreferenceActionSchema = z.object({
+  kind: z.literal('record_preference'),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+  summary: z.string().min(1),
+  rationale: z.string().min(1).optional(),
+  supersedes: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
+})
+
+const legacyRetirePreferenceActionSchema = z.object({
+  kind: z.literal('retire_preference'),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  reason: z.string().min(1),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+})
+
+const legacyUpdatePreferenceActionSchema = z.object({
+  kind: z.literal('update_preference'),
+  content: z.string().min(1),
+})
+
+export const assistantActionSchema = z.union([
+  retryTaskActionSchema,
+  requestPlanningActionSchema,
+  requestDecisionActionSchema,
+  resolveDecisionsActionSchema,
+  setPreferenceActionSchema,
+  legacyMoveTaskActionSchema,
+  legacyCreatePlanningTaskActionSchema,
+  legacyRequestPlanningBatchActionSchema,
+  legacyRequestPlanningWorkflowsActionSchema,
+  legacyRecordAnswerActionSchema,
+  legacyRecordAnswersActionSchema,
+  legacyResolveDecisionActionSchema,
+  legacyRecordPreferenceActionSchema,
+  legacyRetirePreferenceActionSchema,
+  legacyUpdatePreferenceActionSchema,
+])
+
+const retryTaskActionResultSchema = z.object({
+  kind: z.literal('retry_task'),
+  taskRef: z.string().min(1),
+  status: z.enum(TASK_STATUSES),
+  clearedBlockers: z.array(
+    z.object({
+      kind: z.enum(['intervention', 'merge_conflict']),
+      ref: z.string().min(1),
+    }),
+  ),
+  task: assistantResultTaskSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const requestPlanningActionResultSchema = z.object({
+  kind: z.literal('request_planning'),
+  mode: z.enum(['single', 'batch', 'workflow']).optional(),
+  requestKey: z.string().min(1).optional(),
+  taskRef: z.string().min(1).optional(),
+  request: assistantResultPlanningRequestSchema.optional(),
+  created: z.boolean().optional(),
+  taskCreated: z.boolean().optional(),
+  groupKey: z.string().min(1).optional(),
+  workflowKey: z.string().min(1).optional(),
+  groupKeys: z.array(z.string().min(1)).optional(),
+  workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1).optional(),
+  requestKeys: z.array(z.string().min(1)).optional(),
+  taskRefs: z.array(z.string().min(1)).optional(),
+  requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
+  blockerTaskRefs: z.array(z.string().min(1)).optional(),
+  createdRequestKeys: z.array(z.string().min(1)).optional(),
+  createdTaskRefs: z.array(z.string().min(1)).optional(),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const requestDecisionActionResultSchema = z.object({
+  kind: z.literal('request_decision'),
+  decisionKey: z.string().min(1),
+  decision: assistantResultDecisionSchema.optional(),
+  created: z.boolean(),
+  blockerAdded: z.boolean(),
+  decisionStatus: z.enum(DECISION_STATUSES),
+  summary: z.string().min(1),
+})
+
+const resolveDecisionsActionResultSchema = z.object({
+  kind: z.literal('resolve_decisions'),
+  decisionKeys: z.array(z.string().min(1)).min(1),
+  decisions: z.array(assistantResultDecisionSchema).min(1).optional(),
+  createdDecisionKeys: z.array(z.string().min(1)),
+  blockerRemoved: z.boolean(),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  followThrough: assistantDecisionFollowThroughResultSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const setPreferenceActionResultSchema = z.object({
+  kind: z.literal('set_preference'),
+  mode: z.enum(['upsert', 'retire']).optional(),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  preferenceSummary: z.string().min(1).optional(),
+  rationale: z.string().min(1).optional(),
+  reason: z.string().min(1).optional(),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+  preference: assistantResultPreferenceEntrySchema.optional(),
+  retiredPreferences: z.array(assistantResultPreferenceEntrySchema).optional(),
+  retiredPreferenceKeys: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)).default([]),
+  summary: z.string().min(1),
+})
+
+const legacyMoveTaskActionResultSchema = z.object({
+  kind: z.literal('move_task'),
+  taskRef: z.string().min(1),
+  status: z.enum(TASK_STATUSES),
+  previousStatus: z.enum(TASK_STATUSES).optional(),
+  task: assistantResultTaskSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyCreatePlanningTaskActionResultSchema = z.object({
+  kind: z.literal('create_planning_task'),
+  taskRef: z.string().min(1),
+  task: assistantResultTaskSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyRequestPlanningBatchActionResultSchema = z.object({
+  kind: z.literal('request_planning_batch'),
+  groupKey: z.string().min(1),
+  requestKeys: z.array(z.string().min(1)).min(1),
+  taskRefs: z.array(z.string().min(1)).min(1),
+  requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
+  blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  createdRequestKeys: z.array(z.string().min(1)),
+  createdTaskRefs: z.array(z.string().min(1)),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyRequestPlanningWorkflowsActionResultSchema = z.object({
+  kind: z.literal('request_planning_workflows'),
+  workflowKey: z.string().min(1).optional(),
+  groupKeys: z.array(z.string().min(1)),
+  workflows: z.array(assistantPlanningWorkflowLeafResultSchema).min(1),
+  requestKeys: z.array(z.string().min(1)).min(1),
+  taskRefs: z.array(z.string().min(1)).min(1),
+  requests: z.array(assistantResultPlanningRequestSchema).min(1).optional(),
+  blockerTaskRefs: z.array(z.string().min(1)).min(1),
+  createdRequestKeys: z.array(z.string().min(1)),
+  createdTaskRefs: z.array(z.string().min(1)),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyRecordAnswerActionResultSchema = z.object({
+  kind: z.literal('record_answer'),
+  decisionKey: z.string().min(1),
+  decision: assistantResultDecisionSchema.optional(),
+  created: z.boolean(),
+  blockerRemoved: z.boolean(),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  followThrough: assistantDecisionFollowThroughResultSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyRecordAnswersActionResultSchema = z.object({
+  kind: z.literal('record_answers'),
+  decisionKeys: z.array(z.string().min(1)).min(1),
+  decisions: z.array(assistantResultDecisionSchema).min(1).optional(),
+  createdDecisionKeys: z.array(z.string().min(1)),
+  blockerRemoved: z.boolean(),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  followThrough: assistantDecisionFollowThroughResultSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyResolveDecisionActionResultSchema = z.object({
+  kind: z.literal('resolve_decision'),
+  decisionKey: z.string().min(1),
+  decision: assistantResultDecisionSchema.optional(),
+  blockerRemoved: z.boolean(),
+  resolvedSourceResponseFormat: interpretableSourceResponseFormatSchema.optional(),
+  followThrough: assistantDecisionFollowThroughResultSchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyRecordPreferenceActionResultSchema = z.object({
+  kind: z.literal('record_preference'),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  preferenceSummary: z.string().min(1),
+  rationale: z.string().min(1).optional(),
+  preference: assistantResultPreferenceEntrySchema.optional(),
+  retiredPreferences: z.array(assistantResultPreferenceEntrySchema).optional(),
+  retiredPreferenceKeys: z.array(z.string().regex(PREFERENCE_KEY_PATTERN)),
+  summary: z.string().min(1),
+})
+
+const legacyRetirePreferenceActionResultSchema = z.object({
+  kind: z.literal('retire_preference'),
+  preferenceKey: z.string().regex(PREFERENCE_KEY_PATTERN),
+  reason: z.string().min(1),
+  supersededBy: z.string().regex(PREFERENCE_KEY_PATTERN).optional(),
+  preference: assistantResultPreferenceEntrySchema.optional(),
+  summary: z.string().min(1),
+})
+
+const legacyUpdatePreferenceActionResultSchema = z.object({
+  kind: z.literal('update_preference'),
+  content: z.string().min(1),
+  preferences: z.array(assistantResultPreferenceEntrySchema).optional(),
+  summary: z.string().min(1),
+})
+
+export const assistantActionResultSchema = z.union([
+  retryTaskActionResultSchema,
+  requestPlanningActionResultSchema,
+  requestDecisionActionResultSchema,
+  resolveDecisionsActionResultSchema,
+  setPreferenceActionResultSchema,
+  legacyMoveTaskActionResultSchema,
+  legacyCreatePlanningTaskActionResultSchema,
+  legacyRequestPlanningBatchActionResultSchema,
+  legacyRequestPlanningWorkflowsActionResultSchema,
+  legacyRecordAnswerActionResultSchema,
+  legacyRecordAnswersActionResultSchema,
+  legacyResolveDecisionActionResultSchema,
+  legacyRecordPreferenceActionResultSchema,
+  legacyRetirePreferenceActionResultSchema,
+  legacyUpdatePreferenceActionResultSchema,
 ])
 
 export const ASSISTANT_RUN_STATUSES = ['completed', 'failed'] as const
@@ -590,6 +805,7 @@ export interface GoalAssistantRunRecord {
   startedAt: string
   endedAt: string
   requestContent: string
+  attachments: z.infer<typeof goalAttachmentRefSchema>[]
   status: GoalAssistantRunStatus
   message: string
   actions: GoalAssistantAction[]
@@ -615,6 +831,7 @@ export interface GoalAssistantRunBundleFile {
 export interface GoalAssistantRunBundle {
   goalKey: string
   assistantRunId: string
+  attachments: z.infer<typeof goalAttachmentRefSchema>[]
   context: GoalAssistantRunBundleFile
   prompt: GoalAssistantRunBundleFile
   outcome: GoalAssistantRunBundleFile
@@ -627,6 +844,7 @@ const goalAssistantRunRecordSchema = z.object({
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime(),
   requestContent: z.string().min(1),
+  attachments: goalAttachmentRefArraySchema,
   status: z.enum(ASSISTANT_RUN_STATUSES),
   message: z.string(),
   actions: z.array(assistantActionSchema).default([]),

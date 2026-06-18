@@ -7,6 +7,7 @@ import { ProcessAgentRunner } from '../src/agent/ProcessAgentRunner'
 import type { TaskItem } from '../src/domain/board'
 import { createAttemptStore } from '../src/runtime/attemptStore'
 import { createRunHistoryStore } from '../src/runtime/runHistoryStore'
+import { RunningTaskRegistry } from '../src/runtime/runningTaskRegistry'
 import { createWorktreeManager } from '../src/runtime/worktreeManager'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { reconcileOnce } from '../src/scheduler/reconcileOnce'
@@ -236,6 +237,480 @@ describe('reconcileOnce', () => {
     })
   })
 
+  test('marks planned generator work as in_progress while the agent is running', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'planned' })])
+
+    const runner: AgentRunner = {
+      async run() {
+        await expect(readTask(store, 'T-1')).resolves.toMatchObject({
+          status: 'in_progress',
+        })
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'planned',
+      to: 'in_review',
+    })
+  })
+
+  test('continues in_progress generator work instead of treating it as idle', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'in_progress' })])
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runner: new MockAgentRunner({
+          'T-1:generator': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'in_progress',
+      to: 'in_review',
+    })
+
+    await expect(readTask(store, 'T-1')).resolves.toMatchObject({ status: 'in_review' })
+  })
+
+  test('keeps reviewer work in the in_review lane while the agent is running', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'in_review' })])
+
+    const runner: AgentRunner = {
+      async run() {
+        await expect(readTask(store, 'T-1')).resolves.toMatchObject({
+          status: 'in_review',
+        })
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'in_review',
+      to: 'merging',
+    })
+  })
+
+  test('keeps merger work in the merging lane while the agent is running', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
+
+    const runner: AgentRunner = {
+      async run() {
+        await expect(readTask(store, 'T-1')).resolves.toMatchObject({
+          status: 'merging',
+        })
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        mergeExecutor: {
+          async completeMerge() {
+            return { kind: 'success' }
+          },
+        },
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'merging',
+      to: 'done',
+    })
+  })
+
+  test('completes a merger step without launching the merger agent when the merge script already succeeds', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
+    let finalized = false
+    let runnerCalled = false
+
+    const runner: AgentRunner = {
+      async run() {
+        runnerCalled = true
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        mergeExecutor: {
+          async runMergeScript() {
+            return {
+              attemptedAt: '2026-06-16T00:00:00.000Z',
+              scriptPath: '/repo/scripts/hopi/merge-task.sh',
+              command: ['bash', '/repo/scripts/hopi/merge-task.sh'],
+              stdout: '{"kind":"merged","reason":"merged"}\n',
+              stderr: '',
+              exitCode: 0,
+              result: {
+                kind: 'merged',
+                reason: 'merged',
+              },
+            }
+          },
+          async finalizeMergedRun() {
+            finalized = true
+          },
+          async completeMerge() {
+            throw new Error('completeMerge should not be used when script-first merge is available')
+          },
+        },
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'merging',
+      to: 'done',
+    })
+
+    expect(runnerCalled).toBeFalse()
+    expect(finalized).toBeTrue()
+  })
+
+  test('falls back to the merger agent when the merge script requests merger handling and verifies the script afterward', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
+    let finalized = false
+    let mergeScriptCalls = 0
+    let runnerCalls = 0
+
+    const runner: AgentRunner = {
+      async run() {
+        runnerCalls += 1
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        mergeExecutor: {
+          async runMergeScript() {
+            mergeScriptCalls += 1
+            if (mergeScriptCalls === 1) {
+              return {
+                attemptedAt: '2026-06-16T00:00:00.000Z',
+                scriptPath: '/repo/scripts/hopi/merge-task.sh',
+                command: ['bash', '/repo/scripts/hopi/merge-task.sh'],
+                stdout: '{"kind":"needs_merger","reason":"root has overlap"}\n',
+                stderr: '',
+                exitCode: 0,
+                result: {
+                  kind: 'needs_merger',
+                  reason: 'root has overlap',
+                },
+              }
+            }
+
+            return {
+              attemptedAt: '2026-06-16T00:01:00.000Z',
+              scriptPath: '/repo/scripts/hopi/merge-task.sh',
+              command: ['bash', '/repo/scripts/hopi/merge-task.sh'],
+              stdout: '{"kind":"merged","reason":"merged after fixer"}\n',
+              stderr: '',
+              exitCode: 0,
+              result: {
+                kind: 'merged',
+                reason: 'merged after fixer',
+              },
+            }
+          },
+          async finalizeMergedRun() {
+            finalized = true
+          },
+          async completeMerge() {
+            throw new Error('completeMerge should not be used when script-first merge is available')
+          },
+        },
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'merging',
+      to: 'done',
+    })
+
+    expect(runnerCalls).toBe(1)
+    expect(mergeScriptCalls).toBe(2)
+    expect(finalized).toBeTrue()
+  })
+
+  test('blocks immediately without launching the merger agent when the initial merge script reports a deterministic merge_conflict', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
+    let runnerCalled = false
+
+    const runner: AgentRunner = {
+      async run() {
+        runnerCalled = true
+        return { kind: 'success' }
+      },
+    }
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        mergeExecutor: {
+          async runMergeScript() {
+            return {
+              attemptedAt: '2026-06-16T00:00:00.000Z',
+              scriptPath: '/repo/.hopi/runtime/fallback-merge.sh',
+              command: ['bash', '/repo/.hopi/runtime/fallback-merge.sh'],
+              stdout:
+                '{"kind":"merge_conflict","reason":"Root workspace has local changes blocking merge: src/game/ui/deckbuilder/DeckManagementPanel.ts","artifactRef":"src/game/ui/deckbuilder/DeckManagementPanel.ts","artifactLabel":"root-workspace-dirty"}\n',
+              stderr: '',
+              exitCode: 0,
+              result: {
+                kind: 'merge_conflict',
+                reason:
+                  'Root workspace has local changes blocking merge: src/game/ui/deckbuilder/DeckManagementPanel.ts',
+                artifactRef: 'src/game/ui/deckbuilder/DeckManagementPanel.ts',
+                artifactLabel: 'root-workspace-dirty',
+              },
+            }
+          },
+          async finalizeMergedRun() {
+            throw new Error('finalizeMergedRun should not be called for deterministic blockers')
+          },
+          async completeMerge() {
+            throw new Error('completeMerge should not be used when script-first merge is available')
+          },
+        },
+        runner,
+      }),
+    ).resolves.toEqual({
+      kind: 'blocked',
+      taskRef: 'T-1',
+      blocker: {
+        kind: 'merge_conflict',
+        ref: 'src/game/ui/deckbuilder/DeckManagementPanel.ts',
+      },
+    })
+
+    expect(runnerCalled).toBeFalse()
+  })
+
+  test('prevents a second reconcile step while one task is running for the goal', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'T-1', status: 'planned' }),
+      task({ ref: 'T-2', status: 'planned' }),
+    ])
+    const runningTasks = new RunningTaskRegistry()
+    let releaseRunner!: () => void
+    let startedRunner!: () => void
+    const runnerStarted = new Promise<void>((resolve) => {
+      startedRunner = resolve
+    })
+    const runnerReleased = new Promise<void>((resolve) => {
+      releaseRunner = resolve
+    })
+    const runner: AgentRunner = {
+      async run() {
+        startedRunner()
+        await runnerReleased
+        return { kind: 'success' }
+      },
+    }
+
+    const first = reconcileOnce({
+      goalKey,
+      store,
+      attempts: createAttemptStore(rootDir),
+      runningTasks,
+      laneParallelism: {
+        in_progress: 1,
+        in_review: 1,
+        merging: 1,
+      },
+      runner,
+    })
+    await runnerStarted
+
+    expect(runningTasks.get(rootDir, goalKey)).toMatchObject({
+      taskRef: 'T-1',
+      role: 'generator',
+    })
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runningTasks,
+        laneParallelism: {
+          in_progress: 1,
+          in_review: 1,
+          merging: 1,
+        },
+        runner: new MockAgentRunner(),
+      }),
+    ).resolves.toEqual({ kind: 'idle' })
+    await expect(readTask(store, 'T-2')).resolves.toMatchObject({ status: 'planned' })
+
+    releaseRunner()
+    await expect(first).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'planned',
+      to: 'in_review',
+    })
+    expect(runningTasks.get(rootDir, goalKey)).toBeUndefined()
+  })
+
+  test('allows multiple different running tasks when maxParallel permits it', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'T-1', status: 'planned' }),
+      task({ ref: 'T-2', status: 'planned' }),
+    ])
+    const runningTasks = new RunningTaskRegistry()
+    let releaseRunners!: () => void
+    let startedFirst!: () => void
+    let startedSecond!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      startedFirst = resolve
+    })
+    const secondStarted = new Promise<void>((resolve) => {
+      startedSecond = resolve
+    })
+    const runnersReleased = new Promise<void>((resolve) => {
+      releaseRunners = resolve
+    })
+    const startedTaskRefs: string[] = []
+    const runner: AgentRunner = {
+      async run(input) {
+        startedTaskRefs.push(input.taskRef)
+        if (startedTaskRefs.length === 1) {
+          startedFirst()
+        }
+        if (startedTaskRefs.length === 2) {
+          startedSecond()
+        }
+        await runnersReleased
+        return { kind: 'success' }
+      },
+    }
+
+    const first = reconcileOnce({
+      goalKey,
+      store,
+      attempts: createAttemptStore(rootDir),
+      runningTasks,
+      maxParallel: 2,
+      runner,
+    })
+    await firstStarted
+    const second = reconcileOnce({
+      goalKey,
+      store,
+      attempts: createAttemptStore(rootDir),
+      runningTasks,
+      maxParallel: 2,
+      runner,
+    })
+    await secondStarted
+
+    expect(runningTasks.list(rootDir, goalKey).map((task) => task.taskRef).sort()).toEqual([
+      'T-1',
+      'T-2',
+    ])
+
+    releaseRunners()
+    await expect(first).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'planned',
+      to: 'in_review',
+    })
+    await expect(second).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-2',
+      from: 'planned',
+      to: 'in_review',
+    })
+    expect(runningTasks.list(rootDir, goalKey)).toEqual([])
+  })
+
+  test('does not dispatch a second planner while one planner task is already running', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-1', kind: 'planning', status: 'planned' }),
+      task({ ref: 'P-2', kind: 'planning', status: 'planned' }),
+      task({ ref: 'T-1', kind: 'engineering', status: 'planned' }),
+    ])
+    const runningTasks = new RunningTaskRegistry()
+    const plannerLease = runningTasks.acquire({
+      rootDir,
+      goalKey,
+      taskRef: 'P-1',
+      role: 'planner',
+      lane: 'in_progress',
+      laneLimit: 3,
+      roleLimit: 1,
+    })
+    if (!plannerLease) {
+      throw new Error('Expected planner lease')
+    }
+
+    const result = await reconcileOnce({
+      goalKey,
+      store,
+      attempts: createAttemptStore(rootDir),
+      runningTasks,
+      maxParallel: 3,
+      runner: new MockAgentRunner(),
+      writer: 'test',
+    })
+
+    expect(result).toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'planned',
+      to: 'in_review',
+    })
+    plannerLease.release()
+  })
+
   test('returns engineering reviewer rejections to planned', async () => {
     const rootDir = testRoot()
     const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'in_review' })])
@@ -287,7 +762,7 @@ describe('reconcileOnce', () => {
     })
   })
 
-  test('retries merge conflicts by returning engineering tasks to planned', async () => {
+  test('retries merge conflicts while keeping engineering tasks in merging', async () => {
     const rootDir = testRoot()
     const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
     const attempts = createAttemptStore(rootDir)
@@ -297,6 +772,11 @@ describe('reconcileOnce', () => {
         goalKey,
         store,
         attempts,
+        mergeExecutor: {
+          async completeMerge() {
+            throw new Error('completeMerge should not be used for agent merge-conflict retry tests')
+          },
+        },
         runner: new MockAgentRunner({
           'T-1:merger': [{ outcome: { kind: 'merge_conflict', artifactRef: 'patch-1' } }],
         }),
@@ -305,11 +785,11 @@ describe('reconcileOnce', () => {
       kind: 'advanced',
       taskRef: 'T-1',
       from: 'merging',
-      to: 'planned',
+      to: 'merging',
     })
 
     await expect(readTask(store, 'T-1')).resolves.toMatchObject({
-      status: 'planned',
+      status: 'merging',
       blockedBy: [],
     })
     await expect(attempts.get('T-1', 'merge_conflict')).resolves.toBe(1)
@@ -324,6 +804,13 @@ describe('reconcileOnce', () => {
         goalKey,
         store,
         attempts: createAttemptStore(rootDir),
+        mergeExecutor: {
+          async completeMerge() {
+            throw new Error(
+              'completeMerge should not be used for agent merge-conflict blocker tests',
+            )
+          },
+        },
         runner: new MockAgentRunner({
           'T-1:merger': [{ outcome: { kind: 'merge_conflict', artifactRef: 'patch-1' } }],
         }),
@@ -336,7 +823,7 @@ describe('reconcileOnce', () => {
     })
 
     await expect(readTask(store, 'T-1')).resolves.toMatchObject({
-      status: 'planned',
+      status: 'merging',
       blockedBy: [{ kind: 'merge_conflict', ref: 'patch-1' }],
     })
   })
@@ -376,7 +863,7 @@ describe('reconcileOnce', () => {
     })
 
     await expect(readTask(store, 'T-1')).resolves.toMatchObject({ status: 'done' })
-    expect(await Bun.file(join(rootDir, 'merged.txt')).text()).toBe('merged by executor\n')
+    expect((await Bun.file(join(rootDir, 'merged.txt')).text()).trim()).toBe('merged by executor')
     expect(await pathExists(prepared.path)).toBeFalse()
     await expect(history.readGoalHistory(goalKey)).resolves.toMatchObject({
       runs: [
@@ -390,7 +877,7 @@ describe('reconcileOnce', () => {
     })
   })
 
-  test('routes merge executor conflicts through the existing retry path', async () => {
+  test('routes merge executor conflicts back into merging retry state', async () => {
     const rootDir = await initGitRepo(testRoot())
     const store = await seedBoard(rootDir, [task({ ref: 'T-1', status: 'merging' })])
     const history = createRunHistoryStore(rootDir)
@@ -425,11 +912,11 @@ describe('reconcileOnce', () => {
       kind: 'advanced',
       taskRef: 'T-1',
       from: 'merging',
-      to: 'planned',
+      to: 'merging',
     })
 
     await expect(readTask(store, 'T-1')).resolves.toMatchObject({
-      status: 'planned',
+      status: 'merging',
       blockedBy: [],
     })
     expect(await pathExists(prepared.path)).toBeTrue()
@@ -460,6 +947,66 @@ describe('reconcileOnce', () => {
     })
 
     await expect(readTask(store, 'P-1')).resolves.toMatchObject({ status: 'in_review' })
+  })
+
+  test('retries planner failures before the attempt budget is exhausted', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-2', kind: 'planning', status: 'planned' }),
+    ])
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'P-2:planner': [{ outcome: { kind: 'fail', reason: 'missing planning output' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-2',
+      from: 'planned',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'P-2')).resolves.toMatchObject({
+      status: 'planned',
+      blockedBy: [],
+    })
+    await expect(attempts.get('P-2', 'agent_failed')).resolves.toBe(1)
+  })
+
+  test('writes an intervention blocker when planner failure budget is exhausted', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-3', kind: 'planning', status: 'planned' }),
+    ])
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        maxAttempts: 1,
+        runner: new MockAgentRunner({
+          'P-3:planner': [{ outcome: { kind: 'fail', reason: 'missing planning output' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'blocked',
+      taskRef: 'P-3',
+      blocker: { kind: 'intervention', ref: 'P-3:agent_failed' },
+    })
+
+    await expect(readTask(store, 'P-3')).resolves.toMatchObject({
+      status: 'planned',
+      blockedBy: [{ kind: 'intervention', ref: 'P-3:agent_failed' }],
+    })
+    await expect(attempts.get('P-3', 'agent_failed')).resolves.toBe(1)
   })
 
   test('marks planning tasks done after merge success', async () => {
@@ -655,6 +1202,215 @@ requests:
     ).text()
     expect(planningRequests).toContain('- goal.md')
     expect(planningRequests).toContain('status: open')
+  })
+
+  test('returns planning review work to planned when todo decomposition leaves overlapping engineering surfaces unordered', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-2', kind: 'planning', status: 'in_review' }),
+      task({
+        ref: 'T-1',
+        status: 'planned',
+        title: 'Reshape deck editor shell',
+        description: 'Rebuild `DeckManagementPanel` around the reference shell.',
+        acceptanceCriteria: ['`DeckManagementPanel` exposes the split-pane shell.'],
+      }),
+      task({
+        ref: 'T-2',
+        status: 'planned',
+        title: 'Preserve keyboard interactions',
+        description: 'Keep IME and focus behavior inside `DeckManagementPanel`.',
+        acceptanceCriteria: ['`DeckManagementPanel` keeps rename/search intact.'],
+      }),
+    ])
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-2
+    title: Reshape deck task graph
+    description: Record the new task graph durably.
+    acceptanceCriteria:
+      - The task graph is durable.
+    taskRef: P-2
+    requestedUpdates:
+      - todo.yml
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-planner',
+      stepId: 'step-planner',
+      taskRef: 'P-2',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner',
+      targetPaths: ['.hopi/docs/goals/goal-1/todo.yml'],
+      changes: [{ path: '.hopi/docs/goals/goal-1/todo.yml', kind: 'modified' }],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (1 changed file)',
+    })
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'P-2:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-2',
+      from: 'in_review',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'P-2')).resolves.toMatchObject({ status: 'planned' })
+    await expect(attempts.get('P-2', 'planning_task_graph_invalid')).resolves.toBe(1)
+  })
+
+  test('returns planning review work to planned when UI tasks lack Browser Harness acceptance', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'P-4', kind: 'planning', status: 'in_review' }),
+      task({
+        ref: 'T-7',
+        status: 'planned',
+        title: 'Polish deck manager layout',
+        description: 'Adjust the visible panel layout and buttons.',
+        acceptanceCriteria: ['The deck manager panel balance is improved.'],
+      }),
+    ])
+    await Bun.write(
+      join(rootDir, '.hopi', 'docs', 'goals', goalKey, 'planning-requests.yml'),
+      `version: 1
+goalKey: ${goalKey}
+requests:
+  - requestKey: PR-4
+    title: Add UI verification
+    description: Record a UI task graph.
+    acceptanceCriteria:
+      - The UI task graph is durable.
+    taskRef: P-4
+    requestedUpdates:
+      - todo.yml
+    status: open
+    createdAt: 2026-06-01T00:00:00.000Z
+`,
+    )
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-planner-browser',
+      stepId: 'step-planner-browser',
+      taskRef: 'P-4',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-planner-browser',
+      targetPaths: ['.hopi/docs/goals/goal-1/todo.yml'],
+      changes: [{ path: '.hopi/docs/goals/goal-1/todo.yml', kind: 'modified' }],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (1 changed file)',
+    })
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'P-4:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'P-4',
+      from: 'in_review',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'P-4')).resolves.toMatchObject({ status: 'planned' })
+    await expect(attempts.get('P-4', 'planning_task_graph_invalid')).resolves.toBe(1)
+  })
+
+  test('returns legacy bootstrap planning review to planned when durable bootstrap evidence is missing', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'plan-goal', kind: 'planning', status: 'in_review' }),
+    ])
+    const attempts = createAttemptStore(rootDir)
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts,
+        runner: new MockAgentRunner({
+          'plan-goal:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'plan-goal',
+      from: 'in_review',
+      to: 'planned',
+    })
+
+    await expect(readTask(store, 'plan-goal')).resolves.toMatchObject({ status: 'planned' })
+    await expect(attempts.get('plan-goal', 'planning_follow_through_missing')).resolves.toBe(1)
+  })
+
+  test('allows legacy bootstrap planning review to continue when durable bootstrap evidence exists', async () => {
+    const rootDir = testRoot()
+    const store = await seedBoard(rootDir, [
+      task({ ref: 'plan-goal', kind: 'planning', status: 'in_review' }),
+    ])
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry(goalKey, {
+      runId: 'run-bootstrap',
+      stepId: 'step-bootstrap',
+      taskRef: 'plan-goal',
+      role: 'planner',
+      agent: 'process_runner',
+      cwd: '/tmp/root',
+      toolName: 'process',
+      callId: 'step-bootstrap',
+      targetPaths: ['.hopi/docs/goals/goal-1/design.md', '.hopi/docs/goals/goal-1/todo.yml'],
+      changes: [
+        { path: '.hopi/docs/goals/goal-1/design.md', kind: 'modified' },
+        { path: '.hopi/docs/goals/goal-1/todo.yml', kind: 'modified' },
+      ],
+      argumentSummary: 'bun run planner',
+      resultSummary: 'exit 0 (2 changed files)',
+    })
+
+    await expect(
+      reconcileOnce({
+        goalKey,
+        store,
+        attempts: createAttemptStore(rootDir),
+        runner: new MockAgentRunner({
+          'plan-goal:reviewer': [{ outcome: { kind: 'success' } }],
+        }),
+      }),
+    ).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'plan-goal',
+      from: 'in_review',
+      to: 'merging',
+    })
+
+    await expect(readTask(store, 'plan-goal')).resolves.toMatchObject({ status: 'merging' })
   })
 
   test('appends reviewer work to the same active run', async () => {

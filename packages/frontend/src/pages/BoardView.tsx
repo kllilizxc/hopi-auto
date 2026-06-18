@@ -7,7 +7,8 @@ import {
   AlertCircle,
   MessageSquare,
   RefreshCw,
-  FileText,
+  Play,
+  Square,
   GitBranch,
   FolderKanban,
   Scale,
@@ -16,7 +17,17 @@ import {
   Trash2,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { AssistantPanel } from '../components/AssistantPanel';
+import {
+  pickPreferredTaskRun,
+  sortGoalRunsForRecency,
+  sortTaskRunsForPresentation,
+} from '../lib/runSelection';
+import {
+  AssistantPanel,
+  type AssistantPanelProactiveMessage,
+} from '../components/AssistantPanel';
+import { ScrollContainer } from '../components/ScrollContainer';
+import { TaskRunHistoryModal } from '../components/TaskRunHistoryModal';
 import {
   type AgentRole,
   answerGoalDecision,
@@ -45,20 +56,21 @@ import {
   type GoalPlanningWorkflowCreateInput,
   type GoalPlanningWorkflowLeafState,
   type GoalPlanningWorkflowState,
-  type GoalWriteTraceEntry,
   type GoalEvent,
   createGoalTask,
   createGoalDecision,
   createGoalPlanningRequest,
   createGoalPlanningWorkflow,
-  type GoalDocsSnapshot,
   type PreferenceEntry,
   type PreferenceDocument,
-  type ReconcileResult,
+  type AutomationStatus,
   moveGoalTask,
   recordPreference,
+  readGoalAutomation,
   resolveGoalDecision,
   retirePreference,
+  startGoalAutomation,
+  stopGoalAutomation,
   type TaskKind,
   type TaskStatus,
   type TodoBoard,
@@ -67,14 +79,12 @@ import {
   openGoalEventStream,
   readGoalBoard,
   readGoalDecisions,
-  readGoalDocs,
   readGoalPlanningRequests,
   readGoalPlanningWorkflow,
   readGoalPlanningWorkflows,
   readPreferences,
   readGoalRun,
   readGoalRuns,
-  readGoalWriteTraces,
   reconcileGoal,
 } from '../lib/api';
 
@@ -212,14 +222,6 @@ const BLOCKER_KIND_OPTIONS: BlockerKind[] = [
 ];
 
 const PREFERENCE_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const WRITE_TRACE_ROLE_FILTERS: Array<AgentRole | 'all'> = [
-  'all',
-  'planner',
-  'generator',
-  'reviewer',
-  'merger',
-];
-const WRITE_TRACE_LIMIT_OPTIONS: Array<number | 'all'> = ['all', 20, 50, 100, 200];
 
 type ExistingPlanningMutationAuthoritySnapshot = {
   existingRequestKeys: string[];
@@ -4134,15 +4136,26 @@ const DEFAULT_ANSWER_BUNDLE_DRAFT: AnswerBundleDraft = {
   answersJson: '',
 };
 
-export function BoardView() {
-  const { goalKey } = useParams<{ goalKey: string }>();
+interface BoardViewProps {
+  goalKey?: string
+  projectKey?: string
+  mvpMode?: boolean
+}
+
+export function BoardView({
+  goalKey: goalKeyProp,
+  projectKey: projectKeyProp,
+  mvpMode = false,
+}: BoardViewProps = {}) {
+  const routeParams = useParams<{ goalKey: string; projectKey: string }>();
+  const goalKey = goalKeyProp ?? routeParams.goalKey;
+  const projectKey = projectKeyProp ?? routeParams.projectKey;
+  const goalScope = projectKey ?? '__legacy__';
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
-  const [lastReconcileSummary, setLastReconcileSummary] = useState<string | null>(null);
+  const [isTaskHistoryModalOpen, setIsTaskHistoryModalOpen] = useState(false);
   const [selectedTaskRef, setSelectedTaskRef] = useState<string | null>(null);
   const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | null>(null);
   const [selectedTaskRunStepId, setSelectedTaskRunStepId] = useState<string | null>(null);
-  const [taskWriteTraceRoleFilter, setTaskWriteTraceRoleFilter] = useState<AgentRole | 'all'>('all');
-  const [taskWriteTraceLimit, setTaskWriteTraceLimit] = useState<number | 'all'>('all');
   const [decisionDraft, setDecisionDraft] = useState({
     decisionKey: '',
     summary: '',
@@ -4229,6 +4242,14 @@ export function BoardView() {
     supersededBy: '',
   });
   const queryClient = useQueryClient();
+  const goalQueryKey = (key: string, ...rest: Array<string | number | null>) => [
+    key,
+    goalScope,
+    goalKey,
+    ...rest,
+  ];
+  const invalidateGoalKey = (key: string, ...rest: Array<string | number | null>) =>
+    queryClient.invalidateQueries({ queryKey: goalQueryKey(key, ...rest) });
 
   const queueWorkflowSelection = (workflowKey?: string | null) => {
     const nextWorkflowKey = workflowKey?.trim() ?? '';
@@ -4245,61 +4266,49 @@ export function BoardView() {
   };
 
   const { data: board, isLoading, error, refetch } = useQuery<TodoBoard>({
-    queryKey: ['board', goalKey],
+    queryKey: goalQueryKey('board'),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key');
       }
 
-      return readGoalBoard(goalKey);
-    },
-    enabled: Boolean(goalKey),
-  });
-
-  const { data: docs } = useQuery<GoalDocsSnapshot>({
-    queryKey: ['goal-docs', goalKey],
-    queryFn: async () => {
-      if (!goalKey) {
-        throw new Error('Missing goal key');
-      }
-
-      return readGoalDocs(goalKey);
+      return readGoalBoard(goalKey, projectKey);
     },
     enabled: Boolean(goalKey),
   });
 
   const { data: decisions } = useQuery<GoalDecisionSet>({
-    queryKey: ['goal-decisions', goalKey],
+    queryKey: goalQueryKey('goal-decisions'),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key');
       }
 
-      return readGoalDecisions(goalKey);
+      return readGoalDecisions(goalKey, projectKey);
     },
     enabled: Boolean(goalKey),
   });
 
   const { data: planningRequests } = useQuery<GoalPlanningRequestSet>({
-    queryKey: ['planning-requests', goalKey],
+    queryKey: goalQueryKey('planning-requests'),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key');
       }
 
-      return readGoalPlanningRequests(goalKey);
+      return readGoalPlanningRequests(goalKey, projectKey);
     },
     enabled: Boolean(goalKey),
   });
 
   const { data: workflows } = useQuery<{ goalKey: string; workflows: GoalPlanningWorkflowState[] }>({
-    queryKey: ['planning-workflows', goalKey],
+    queryKey: goalQueryKey('planning-workflows'),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key');
       }
 
-      return readGoalPlanningWorkflows(goalKey);
+      return readGoalPlanningWorkflows(goalKey, projectKey);
     },
     enabled: Boolean(goalKey),
   });
@@ -4309,13 +4318,13 @@ export function BoardView() {
 
   const { data: selectedWorkflowDetail, isLoading: isSelectedWorkflowLoading, error: selectedWorkflowError } =
     useQuery<GoalPlanningWorkflowState>({
-      queryKey: ['planning-workflow-detail', goalKey, selectedWorkflowKey],
+      queryKey: goalQueryKey('planning-workflow-detail', selectedWorkflowKey),
       queryFn: async () => {
         if (!goalKey || !selectedWorkflowKey) {
           throw new Error('Missing workflow selection');
         }
 
-        return readGoalPlanningWorkflow(goalKey, selectedWorkflowKey);
+        return readGoalPlanningWorkflow(goalKey, selectedWorkflowKey, projectKey);
       },
       enabled: Boolean(goalKey && selectedWorkflowKey),
     });
@@ -4323,78 +4332,44 @@ export function BoardView() {
   const { data: preferences } = useQuery<PreferenceDocument>({
     queryKey: ['preferences'],
     queryFn: readPreferences,
+    enabled: !mvpMode,
+  });
+
+  const automationQuery = useQuery<{ status: AutomationStatus }>({
+    queryKey: goalQueryKey('automation'),
+    queryFn: async () => {
+      if (!goalKey || !projectKey) {
+        throw new Error('Missing project or goal key');
+      }
+
+      return readGoalAutomation(projectKey, goalKey);
+    },
+    enabled: Boolean(projectKey && goalKey),
+    refetchOnWindowFocus: false,
   });
 
   const taskRunsQuery = useQuery<{ goalKey: string; runs: GoalRunSummary[] }>({
-    queryKey: ['goal-runs', goalKey],
+    queryKey: goalQueryKey('goal-runs'),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key');
       }
 
-      return readGoalRuns(goalKey);
+      return readGoalRuns(goalKey, projectKey);
     },
-    enabled: Boolean(goalKey && selectedTaskRef),
+    enabled: Boolean(goalKey),
   });
 
   const taskRunDetailQuery = useQuery<GoalRunDetail>({
-    queryKey: ['goal-run-detail', goalKey, selectedTaskRunId],
+    queryKey: goalQueryKey('goal-run-detail', selectedTaskRunId),
     queryFn: async () => {
       if (!goalKey || !selectedTaskRunId) {
         throw new Error('Missing task run selection');
       }
 
-      return readGoalRun(goalKey, selectedTaskRunId);
+      return readGoalRun(goalKey, selectedTaskRunId, projectKey);
     },
     enabled: Boolean(goalKey && selectedTaskRunId),
-  });
-
-  const taskWriteTraceQuery = useQuery<{ goalKey: string; entries: GoalWriteTraceEntry[] }>({
-    queryKey: [
-      'task-write-traces',
-      goalKey,
-      selectedTaskRef,
-      taskWriteTraceRoleFilter,
-      taskWriteTraceLimit,
-    ],
-    queryFn: async () => {
-      if (!goalKey || !selectedTaskRef) {
-        throw new Error('Missing task selection');
-      }
-
-      return readGoalWriteTraces(goalKey, {
-        taskRef: selectedTaskRef,
-        role: taskWriteTraceRoleFilter === 'all' ? undefined : taskWriteTraceRoleFilter,
-        limit: taskWriteTraceLimit === 'all' ? undefined : taskWriteTraceLimit,
-      });
-    },
-    enabled: Boolean(goalKey && selectedTaskRef),
-  });
-
-  const selectedTaskRunWriteTraceQuery = useQuery<{ goalKey: string; entries: GoalWriteTraceEntry[] }>({
-    queryKey: [
-      'task-run-write-traces',
-      goalKey,
-      selectedTaskRef,
-      selectedTaskRunId,
-      selectedTaskRunStepId,
-      taskWriteTraceRoleFilter,
-      taskWriteTraceLimit,
-    ],
-    queryFn: async () => {
-      if (!goalKey || !selectedTaskRef || !selectedTaskRunId) {
-        throw new Error('Missing task run selection');
-      }
-
-      return readGoalWriteTraces(goalKey, {
-        taskRef: selectedTaskRef,
-        runId: selectedTaskRunId,
-        stepId: selectedTaskRunStepId ?? undefined,
-        role: taskWriteTraceRoleFilter === 'all' ? undefined : taskWriteTraceRoleFilter,
-        limit: taskWriteTraceLimit === 'all' ? undefined : taskWriteTraceLimit,
-      });
-    },
-    enabled: Boolean(goalKey && selectedTaskRef && selectedTaskRunId),
   });
 
   const reconcileMutation = useMutation({
@@ -4403,20 +4378,48 @@ export function BoardView() {
         throw new Error('Missing goal key');
       }
 
-      return reconcileGoal(goalKey);
+      return reconcileGoal(goalKey, projectKey);
     },
-    onSuccess: async (result: ReconcileResult) => {
-      setLastReconcileSummary(summarizeReconcileResult(result));
+    onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-runs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-run-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-write-traces', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-run-write-traces', goalKey] }),
+        invalidateGoalKey('board'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('goal-runs'),
+        invalidateGoalKey('goal-run-detail'),
       ]);
+    },
+  });
+
+  const startAutomationMutation = useMutation({
+    mutationFn: async () => {
+      if (!projectKey || !goalKey) {
+        throw new Error('Missing project or goal key');
+      }
+
+      return startGoalAutomation(projectKey, goalKey);
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        invalidateGoalKey('automation'),
+        invalidateGoalKey('board'),
+        invalidateGoalKey('goal-runs'),
+        invalidateGoalKey('goal-run-detail'),
+      ]);
+    },
+  });
+
+  const stopAutomationMutation = useMutation({
+    mutationFn: async () => {
+      if (!projectKey || !goalKey) {
+        throw new Error('Missing project or goal key');
+      }
+
+      return stopGoalAutomation(projectKey, goalKey);
+    },
+    onSuccess: async () => {
+      await invalidateGoalKey('automation');
     },
   });
 
@@ -4433,7 +4436,7 @@ export function BoardView() {
         throw new Error('Missing goal key');
       }
 
-      return createGoalDecision(goalKey, input);
+      return createGoalDecision(goalKey, input, projectKey);
     },
     onSuccess: async () => {
       setDecisionDraft({
@@ -4445,11 +4448,11 @@ export function BoardView() {
         taskRef: '',
       });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['goal-decisions', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
+        invalidateGoalKey('goal-decisions'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('board'),
       ]);
     },
   });
@@ -4473,6 +4476,7 @@ export function BoardView() {
         goalKey,
         input.decision.decisionKey,
         materializeDecisionResolutionInput(input.decision, input.resolutionDraft, followThrough),
+        projectKey,
       );
 
       return result.followThrough
@@ -4499,12 +4503,12 @@ export function BoardView() {
         [variables.decision.decisionKey]: { ...DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT },
       }));
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['goal-decisions', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-requests', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
+        invalidateGoalKey('goal-decisions'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-requests'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('board'),
       ]);
     },
   });
@@ -4524,6 +4528,7 @@ export function BoardView() {
         const result = await answerGoalDecision(
           goalKey,
           materializeSingleDecisionAnswerInput(input.draft, followThrough),
+          projectKey,
         );
         return result.followThrough
           ? {
@@ -4546,6 +4551,7 @@ export function BoardView() {
           followThrough,
           decisions?.decisions ?? [],
         ),
+        projectKey,
       );
       return result.followThrough
         ? {
@@ -4565,12 +4571,12 @@ export function BoardView() {
       setAnswerBundleDraft({ ...DEFAULT_ANSWER_BUNDLE_DRAFT });
       setAnswerBundleFollowThroughDraft({ ...DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['goal-decisions', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-requests', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
+        invalidateGoalKey('goal-decisions'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-requests'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('board'),
       ]);
     },
   });
@@ -4598,7 +4604,7 @@ export function BoardView() {
       }
 
       const { existingTaskRefs, ...requestInput } = input;
-      const result = await createGoalPlanningRequest(goalKey, requestInput);
+      const result = await createGoalPlanningRequest(goalKey, requestInput, projectKey);
       return {
         ...result,
         taskCreated: !existingTaskRefs.includes(result.taskRef),
@@ -4622,11 +4628,11 @@ export function BoardView() {
         blockedByJson: '',
       });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['planning-requests', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
+        invalidateGoalKey('planning-requests'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('board'),
       ]);
     },
   });
@@ -4640,7 +4646,7 @@ export function BoardView() {
         throw new Error('Missing goal key');
       }
 
-      const result = await createGoalPlanningWorkflow(goalKey, input.workflow);
+      const result = await createGoalPlanningWorkflow(goalKey, input.workflow, projectKey);
       return enrichWorkflowCreateResultWithReuse(result, input.existingState);
     },
     onSuccess: async (result) => {
@@ -4672,11 +4678,11 @@ export function BoardView() {
       });
       queueWorkflowSelection(nextWorkflowKey);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['planning-requests', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
+        invalidateGoalKey('planning-requests'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('board'),
       ]);
     },
   });
@@ -4696,7 +4702,7 @@ export function BoardView() {
         blockedBy: input.blockedByJson.trim()
           ? parseBlockerRefsJson(input.blockedByJson, 'Task blockers')
           : undefined,
-      });
+      }, projectKey);
     },
     onSuccess: async (result, variables) => {
       setTaskCreateDraft({ ...DEFAULT_TASK_CREATE_DRAFT });
@@ -4707,14 +4713,12 @@ export function BoardView() {
         reason: 'manual transition',
       });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-runs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-run-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-write-traces', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-run-write-traces', goalKey] }),
+        invalidateGoalKey('board'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('goal-runs'),
+        invalidateGoalKey('goal-run-detail'),
       ]);
     },
   });
@@ -4728,7 +4732,7 @@ export function BoardView() {
       return moveGoalTask(goalKey, input.taskRef, {
         status: input.status,
         reason: input.reason.trim() || 'manual transition',
-      });
+      }, projectKey);
     },
     onSuccess: async (result, variables) => {
       const movedTask = result.items.find((item) => item.ref === variables.taskRef);
@@ -4738,14 +4742,12 @@ export function BoardView() {
         reason: 'manual transition',
       }));
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['board', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-runs', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['goal-run-detail', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-write-traces', goalKey] }),
-        queryClient.invalidateQueries({ queryKey: ['task-run-write-traces', goalKey] }),
+        invalidateGoalKey('board'),
+        invalidateGoalKey('goal-docs'),
+        invalidateGoalKey('planning-workflows'),
+        invalidateGoalKey('planning-workflow-detail'),
+        invalidateGoalKey('goal-runs'),
+        invalidateGoalKey('goal-run-detail'),
       ]);
     },
   });
@@ -4886,9 +4888,11 @@ export function BoardView() {
       return;
     }
 
-    const runsForTask = [...(taskRunsQuery.data?.runs ?? [])]
-      .filter((run) => run.taskRef === selectedTaskRef)
-      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+    const runsForTask = sortGoalRunsForRecency(
+      (taskRunsQuery.data?.runs ?? []).filter((run) => run.taskRef === selectedTaskRef),
+    );
+    const selectedTaskStatus =
+      (board?.items ?? []).find((item) => item.ref === selectedTaskRef)?.status ?? null
 
     if (runsForTask.length === 0) {
       if (selectedTaskRunId !== null) {
@@ -4898,14 +4902,28 @@ export function BoardView() {
     }
 
     if (!selectedTaskRunId) {
-      setSelectedTaskRunId(runsForTask[0]?.runId ?? null);
+      setSelectedTaskRunId(
+        pickPreferredTaskRun(
+          taskRunsQuery.data?.runs ?? [],
+          selectedTaskRef,
+          null,
+          selectedTaskStatus,
+        )?.runId ?? null,
+      );
       return;
     }
 
     if (!runsForTask.some((run) => run.runId === selectedTaskRunId)) {
-      setSelectedTaskRunId(runsForTask[0]?.runId ?? null);
+      setSelectedTaskRunId(
+        pickPreferredTaskRun(
+          taskRunsQuery.data?.runs ?? [],
+          selectedTaskRef,
+          null,
+          selectedTaskStatus,
+        )?.runId ?? null,
+      );
     }
-  }, [selectedTaskRef, selectedTaskRunId, taskRunsQuery.data?.runs]);
+  }, [board?.items, selectedTaskRef, selectedTaskRunId, taskRunsQuery.data?.runs]);
 
   useEffect(() => {
     if (selectedTaskRunStepId !== null) {
@@ -4918,39 +4936,53 @@ export function BoardView() {
       return undefined;
     }
 
+    const matchesGoalEvent = (data: GoalEvent) =>
+      data.goalKey === goalKey && (projectKey ? data.projectKey === projectKey : !data.projectKey);
+    const scopedGoalQueryKey = (key: string, ...rest: Array<string | number | null>) => [
+      key,
+      goalScope,
+      goalKey,
+      ...rest,
+    ];
+
     const evtSource = openGoalEventStream();
     evtSource.onmessage = (event) => {
       const data = JSON.parse(event.data) as GoalEvent;
-      if (data.type === 'board_changed' && data.goalKey === goalKey) {
+      if (data.type === 'board_changed' && matchesGoalEvent(data)) {
         refetch();
-        void queryClient.invalidateQueries({ queryKey: ['goal-runs', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['goal-run-detail', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['task-write-traces', goalKey] });
-        void queryClient.invalidateQueries({ queryKey: ['task-run-write-traces', goalKey] });
+        void queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-runs') });
+        void queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-run-detail') });
+        void queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-docs') });
+        void queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('planning-workflows') });
+        void queryClient.invalidateQueries({
+          queryKey: scopedGoalQueryKey('planning-workflow-detail'),
+        });
       }
-      if (data.type === 'decisions_changed' && data.goalKey === goalKey) {
+      if (data.type === 'decisions_changed' && matchesGoalEvent(data)) {
         void Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['goal-decisions', goalKey] }),
-          queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
+          queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-decisions') }),
+          queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-docs') }),
         ]);
       }
-      if (data.type === 'planning_requests_changed' && data.goalKey === goalKey) {
+      if (data.type === 'planning_requests_changed' && matchesGoalEvent(data)) {
         void Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['planning-requests', goalKey] }),
-          queryClient.invalidateQueries({ queryKey: ['planning-workflows', goalKey] }),
-          queryClient.invalidateQueries({ queryKey: ['planning-workflow-detail', goalKey] }),
-          queryClient.invalidateQueries({ queryKey: ['goal-docs', goalKey] }),
+          queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('planning-requests') }),
+          queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('planning-workflows') }),
+          queryClient.invalidateQueries({
+            queryKey: scopedGoalQueryKey('planning-workflow-detail'),
+          }),
+          queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('goal-docs') }),
         ]);
+      }
+      if (data.type === 'automation_changed' && matchesGoalEvent(data)) {
+        void queryClient.invalidateQueries({ queryKey: scopedGoalQueryKey('automation') });
       }
       if (data.type === 'preferences_changed') {
         void queryClient.invalidateQueries({ queryKey: ['preferences'] });
       }
     };
     return () => evtSource.close();
-  }, [goalKey, queryClient, refetch]);
+  }, [goalKey, goalScope, projectKey, queryClient, refetch]);
 
   if (isLoading) {
     return (
@@ -5021,10 +5053,34 @@ export function BoardView() {
       )
     : [];
   const selectedTaskRuns = selectedTask
-    ? [...((taskRunsQuery.data?.runs ?? []).filter((run) => run.taskRef === selectedTask.ref))].sort(
-        (left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt),
+    ? sortTaskRunsForPresentation(
+        (taskRunsQuery.data?.runs ?? []).filter((run) => run.taskRef === selectedTask.ref),
+        selectedTask.status,
       )
     : [];
+
+  const handleTaskCardClick = (task: TodoTaskItem) => {
+    setSelectedTaskRef(task.ref);
+
+    const preferredRun = pickPreferredTaskRun(
+      taskRunsQuery.data?.runs ?? [],
+      task.ref,
+      null,
+      task.status,
+    );
+    setSelectedTaskRunId(preferredRun?.runId ?? null);
+    setSelectedTaskRunStepId(null);
+
+    if (!mvpMode) {
+      return;
+    }
+
+    if (!goalKey) {
+      return;
+    }
+
+    setIsTaskHistoryModalOpen(true);
+  };
   const selectedTaskRunDetail =
     selectedTaskRunId && taskRunDetailQuery.data?.runId === selectedTaskRunId
       ? taskRunDetailQuery.data
@@ -5106,15 +5162,99 @@ export function BoardView() {
   const reusablePreferenceKeySuggestions = buildReusablePreferenceKeySuggestions(
     preferences?.entries ?? [],
   );
+  const totalTaskCount = board?.items.length ?? 0;
+  const doneTaskCount = (board?.items ?? []).filter((item) => item.status === 'done').length;
+  const blockedTasks = (board?.items ?? []).filter((item) => item.blockedBy.length > 0);
+  const attentionBlockedTasks = blockedTasks.filter(hasActionRequiredBlocker);
+  const blockedTaskCount = attentionBlockedTasks.length;
+  const runningTaskCount = (board?.items ?? []).filter((item) => item.running).length;
+  const runnableTaskCount = (board?.items ?? []).filter(isRunnableTask).length;
+  const taskDisplayIdByRef = buildTaskDisplayIdMap(board?.items ?? []);
+  const taskByRef = new Map((board?.items ?? []).map((task) => [task.ref, task] as const));
+  const automationStatus = automationQuery.data?.status;
+  const automationState = automationStatus?.state ?? 'idle';
+  const reconcileEnabled = automationStatus?.reconcileEnabled ?? false;
+  const automationDisplayState = automationState === 'idle' ? 'paused' : automationState;
+  const automationStateLabel =
+    automationState === 'running' && !reconcileEnabled
+      ? 'running · reconcile off'
+      : automationDisplayState;
+  const automationStateClass =
+    automationDisplayState === 'running'
+      ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+      : automationDisplayState === 'blocked' || automationDisplayState === 'failed'
+        ? 'border-red-500/30 bg-red-500/10 text-red-200'
+        : 'border-[#444] bg-[#202020] text-gray-200';
+  const canStartAutomation =
+    Boolean(projectKey) &&
+    runnableTaskCount > 0 &&
+    (automationState !== 'running' || !reconcileEnabled);
+  const canStopAutomation = automationState === 'running' && reconcileEnabled;
+  const assistantProactiveMessage = buildAssistantProactiveMessage({
+    goalKey: board?.goal.goalKey ?? goalKey ?? 'goal',
+    automationDisplayState,
+    reconcileEnabled,
+    automationError: automationStatus?.error,
+    totalTaskCount,
+    doneTaskCount,
+    blockedTaskCount,
+    blockedTasks: attentionBlockedTasks,
+    runnableTaskCount,
+    runningTaskCount,
+    timestamp:
+      automationStatus?.endedAt ??
+      automationStatus?.startedAt ??
+      new Date().toISOString(),
+  });
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#1A1A1A] relative">
       <header className="px-6 py-4 border-b border-[#333] shrink-0 flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-white">{board?.goal.title}</h2>
-          <p className="text-sm text-gray-400 mt-1">Goal Key: <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-purple-400">{board?.goal.goalKey}</code></p>
+          <p className="text-sm text-gray-400 mt-1">
+            Goal Key: <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-purple-400">{board?.goal.goalKey}</code>
+            {projectKey && (
+              <>
+                {' '}· Project: <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-amber-300">{projectKey}</code>
+              </>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-3">
+          {projectKey && (
+              <>
+              <div className={cn('rounded-lg border px-3 py-2 text-xs font-semibold uppercase tracking-wide', automationStateClass)}>
+                {automationStateLabel}
+                {automationStatus?.stepCount ? ` · ${automationStatus.stepCount} step(s)` : ''}
+              </div>
+              <button
+                onClick={() => startAutomationMutation.mutate()}
+                disabled={startAutomationMutation.isPending || !canStartAutomation}
+                title={canStartAutomation ? 'Resume automation' : 'No runnable tasks'}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors font-medium disabled:opacity-60"
+              >
+                {startAutomationMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                Start
+              </button>
+              <button
+                onClick={() => stopAutomationMutation.mutate()}
+                disabled={stopAutomationMutation.isPending || !canStopAutomation}
+                className="flex items-center gap-2 px-4 py-2 bg-[#252525] hover:bg-[#2f2f2f] text-gray-200 rounded-lg transition-colors font-medium disabled:opacity-60"
+              >
+                {stopAutomationMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Square className="w-4 h-4" />
+                )}
+                Stop
+              </button>
+            </>
+          )}
           <button
             onClick={() => reconcileMutation.mutate()}
             disabled={reconcileMutation.isPending}
@@ -5137,10 +5277,14 @@ export function BoardView() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
-        <div className="flex gap-6 h-full min-w-max pb-4">
+      <ScrollContainer
+        axis="horizontal"
+        className="flex-1"
+        viewportClassName="h-full p-6"
+      >
+        <div className="flex h-full min-h-0 min-w-max gap-6">
           {STATUS_COLUMNS.map((col) => (
-            <div key={col.id} className="w-80 flex flex-col shrink-0">
+            <div key={col.id} className="w-80 h-full min-h-0 shrink-0 overflow-hidden flex flex-col">
               <div className="flex items-center justify-between mb-4">
                 <h3 className={cn("text-sm font-semibold px-3 py-1 border rounded-full uppercase tracking-wider", col.color)}>
                   {col.label}
@@ -5150,383 +5294,367 @@ export function BoardView() {
                 </span>
               </div>
 
-              <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 pb-2">
-                {itemsByStatus[col.id]?.map((task) => (
-                  <TaskCard
-                    key={task.ref}
-                    task={task}
-                    selected={task.ref === selectedTaskRef}
-                    onClick={() => setSelectedTaskRef(task.ref)}
-                  />
-                ))}
-              </div>
+              <ScrollContainer
+                axis="vertical"
+                className="flex-1 min-h-0 overflow-hidden"
+                viewportClassName="h-full pr-2"
+              >
+                <div className="flex flex-col gap-3">
+                  {itemsByStatus[col.id]?.map((task) => (
+                    <TaskCard
+                      key={task.ref}
+                      task={task}
+                      displayId={taskDisplayIdByRef.get(task.ref) ?? task.ref}
+                      taskDisplayIdByRef={taskDisplayIdByRef}
+                      taskByRef={taskByRef}
+                      selected={task.ref === selectedTaskRef}
+                      onClick={() => handleTaskCardClick(task)}
+                    />
+                  ))}
+                </div>
+              </ScrollContainer>
             </div>
           ))}
         </div>
-      </div>
+      </ScrollContainer>
 
-      <div className="border-t border-[#333] bg-[#151515] px-6 py-5 space-y-4 shrink-0">
-        {lastReconcileSummary && (
-          <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-            {lastReconcileSummary}
+      {!mvpMode && (
+        <div className="border-t border-[#333] bg-[#151515] px-6 py-5 space-y-4 shrink-0 overflow-y-auto">
+          <div className="grid gap-4 xl:grid-cols-2">
+            <DecisionPanel
+              decisions={decisions?.decisions ?? []}
+              decisionDraft={decisionDraft}
+              onDecisionDraftChange={(field, value) =>
+                setDecisionDraft((current) => ({ ...current, [field]: value }))
+              }
+              onCreateDecision={() =>
+                createDecisionMutation.mutate({
+                  decisionKey: decisionDraft.decisionKey || undefined,
+                  summary: decisionDraft.summary.trim(),
+                  summaryKey: decisionDraft.summaryKey.trim() || undefined,
+                  prompt: decisionDraft.prompt.trim() || undefined,
+                  matchHints: parseListInput(decisionDraft.matchHints),
+                  taskRef: decisionDraft.taskRef.trim() || undefined,
+                })
+              }
+              createPending={createDecisionMutation.isPending}
+              createError={createDecisionMutation.error}
+              decisionResolutionDrafts={decisionResolutionDrafts}
+              decisionFollowThroughDrafts={decisionFollowThroughDrafts}
+              onDecisionResolutionDraftChange={(decisionKey, field, value) =>
+                setDecisionResolutionDrafts((current) => ({
+                  ...current,
+                  [decisionKey]: {
+                    ...(current[decisionKey] ?? DEFAULT_DECISION_RESOLUTION_DRAFT),
+                    [field]: value,
+                  },
+                }))
+              }
+              onDecisionFollowThroughChange={(decisionKey, field, value) =>
+                setDecisionFollowThroughDrafts((current) => ({
+                  ...current,
+                  [decisionKey]: {
+                    ...(current[decisionKey] ?? DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT),
+                    [field]: value,
+                  },
+                }))
+              }
+              onResolveDecision={(decision) =>
+                resolveDecisionMutation.mutate({
+                  decision,
+                  resolutionDraft:
+                    decisionResolutionDrafts[decision.decisionKey] ??
+                    DEFAULT_DECISION_RESOLUTION_DRAFT,
+                  followThroughDraft:
+                    decisionFollowThroughDrafts[decision.decisionKey] ??
+                    DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT,
+                  existingState: currentPlanningMutationAuthoritySnapshot,
+                })
+              }
+              resolvePendingDecisionKey={
+                resolveDecisionMutation.isPending
+                  ? resolveDecisionMutation.variables?.decision.decisionKey ?? null
+                  : null
+              }
+              resolveError={resolveDecisionMutation.error}
+              createResult={createDecisionMutation.data}
+              resolveResultDecisionKey={
+                resolveDecisionMutation.variables?.decision.decisionKey ?? null
+              }
+              resolveResult={resolveDecisionMutation.data}
+              reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
+              reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
+              reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
+              reusableTaskRefSuggestions={reusableTaskRefSuggestions}
+              reusableBlockerSuggestions={reusableBlockerSuggestions}
+              reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
+              reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
+              reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
+              reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
+              reusableBatchRequestGroupSuggestions={reusableBatchRequestGroupSuggestions}
+              reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
+              reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
+              reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
+              reusableDecisionWorkflowChildSuggestions={
+                reusableDecisionWorkflowChildSuggestions
+              }
+              reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
+              reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
+            />
+            <PlanningRequestPanel
+              requests={planningRequests?.requests ?? []}
+              tasks={board?.items ?? []}
+              planningDraft={planningDraft}
+              onPlanningDraftChange={(field, value) =>
+                setPlanningDraft((current) => ({ ...current, [field]: value }))
+              }
+              onPlanningDraftPrefill={(patch) =>
+                setPlanningDraft((current) => ({ ...current, ...patch }))
+              }
+              onCreatePlanningRequest={() =>
+                createPlanningRequestMutation.mutate({
+                  ...materializePlanningRequestInput(planningDraft),
+                  existingTaskRefs: (board?.items ?? []).map((task) => task.ref),
+                })
+              }
+              createPending={createPlanningRequestMutation.isPending}
+              createError={createPlanningRequestMutation.error}
+              createResult={createPlanningRequestMutation.data}
+              reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
+              reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
+              reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
+              reusableDecisionRefSuggestions={reusableDecisionRefSuggestions}
+              reusableBlockerSuggestions={reusableBlockerSuggestions}
+              reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
+              reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
+              reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
+            />
           </div>
-        )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <DocCard
-            title="goal.md"
-            subtitle={docs?.goal.path ?? 'Goal snapshot'}
-            status={docs?.goal.status}
-            content={docs?.goal.content}
-          />
-          <DocCard
-            title="design.md"
-            subtitle={docs?.design.path ?? 'Design snapshot'}
-            status={docs?.design.status}
-            content={docs?.design.content}
-          />
-        </div>
-
-        <div className="grid gap-4 xl:grid-cols-2">
-          <DecisionPanel
-            decisions={decisions?.decisions ?? []}
-            decisionDraft={decisionDraft}
-            onDecisionDraftChange={(field, value) =>
-              setDecisionDraft((current) => ({ ...current, [field]: value }))
-            }
-            onCreateDecision={() =>
-              createDecisionMutation.mutate({
-                decisionKey: decisionDraft.decisionKey || undefined,
-                summary: decisionDraft.summary.trim(),
-                summaryKey: decisionDraft.summaryKey.trim() || undefined,
-                prompt: decisionDraft.prompt.trim() || undefined,
-                matchHints: parseListInput(decisionDraft.matchHints),
-                taskRef: decisionDraft.taskRef.trim() || undefined,
-              })
-            }
-            createPending={createDecisionMutation.isPending}
-            createError={createDecisionMutation.error}
-            decisionResolutionDrafts={decisionResolutionDrafts}
-            decisionFollowThroughDrafts={decisionFollowThroughDrafts}
-            onDecisionResolutionDraftChange={(decisionKey, field, value) =>
-              setDecisionResolutionDrafts((current) => ({
-                ...current,
-                [decisionKey]: {
-                  ...(current[decisionKey] ?? DEFAULT_DECISION_RESOLUTION_DRAFT),
+          <div className="grid gap-4">
+            <AnswerBundlePanel
+              draft={answerBundleDraft}
+              decisions={decisions?.decisions ?? []}
+              onDraftChange={(patch) =>
+                setAnswerBundleDraft((current) => ({
+                  ...current,
+                  ...patch,
+                }))
+              }
+              followThroughDraft={answerBundleFollowThroughDraft}
+              onFollowThroughChange={(field, value) =>
+                setAnswerBundleFollowThroughDraft((current) => ({
+                  ...current,
                   [field]: value,
-                },
-              }))
-            }
-            onDecisionFollowThroughChange={(decisionKey, field, value) =>
-              setDecisionFollowThroughDrafts((current) => ({
-                ...current,
-                [decisionKey]: {
-                  ...(current[decisionKey] ?? DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT),
-                  [field]: value,
-                },
-              }))
-            }
-            onResolveDecision={(decision) =>
-              resolveDecisionMutation.mutate({
-                decision,
-                resolutionDraft:
-                  decisionResolutionDrafts[decision.decisionKey] ??
-                  DEFAULT_DECISION_RESOLUTION_DRAFT,
-                followThroughDraft:
-                  decisionFollowThroughDrafts[decision.decisionKey] ??
-                  DEFAULT_DECISION_FOLLOW_THROUGH_DRAFT,
-                existingState: currentPlanningMutationAuthoritySnapshot,
-              })
-            }
-            resolvePendingDecisionKey={
-              resolveDecisionMutation.isPending
-                ? resolveDecisionMutation.variables?.decision.decisionKey ?? null
-                : null
-            }
-            resolveError={resolveDecisionMutation.error}
-            createResult={createDecisionMutation.data}
-            resolveResultDecisionKey={resolveDecisionMutation.variables?.decision.decisionKey ?? null}
-            resolveResult={resolveDecisionMutation.data}
-            reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
-            reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
-            reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
-            reusableTaskRefSuggestions={reusableTaskRefSuggestions}
-            reusableBlockerSuggestions={reusableBlockerSuggestions}
-            reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
-            reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
-            reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
-            reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
-            reusableBatchRequestGroupSuggestions={
-              reusableBatchRequestGroupSuggestions
-            }
-            reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
-            reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
-            reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
-            reusableDecisionWorkflowChildSuggestions={
-              reusableDecisionWorkflowChildSuggestions
-            }
-            reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
-            reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
-          />
-          <PlanningRequestPanel
-            requests={planningRequests?.requests ?? []}
-            tasks={board?.items ?? []}
-            planningDraft={planningDraft}
-            onPlanningDraftChange={(field, value) =>
-              setPlanningDraft((current) => ({ ...current, [field]: value }))
-            }
-            onPlanningDraftPrefill={(patch) =>
-              setPlanningDraft((current) => ({ ...current, ...patch }))
-            }
-            onCreatePlanningRequest={() =>
-              createPlanningRequestMutation.mutate({
-                ...materializePlanningRequestInput(planningDraft),
-                existingTaskRefs: (board?.items ?? []).map((task) => task.ref),
-              })
-            }
-            createPending={createPlanningRequestMutation.isPending}
-            createError={createPlanningRequestMutation.error}
-            createResult={createPlanningRequestMutation.data}
-            reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
-            reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
-            reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
-            reusableDecisionRefSuggestions={reusableDecisionRefSuggestions}
-            reusableBlockerSuggestions={reusableBlockerSuggestions}
-            reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
-            reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
-            reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
-          />
-        </div>
+                }))
+              }
+              onSubmit={() =>
+                answerBundleMutation.mutate({
+                  draft: answerBundleDraft,
+                  followThroughDraft: answerBundleFollowThroughDraft,
+                  existingState: currentPlanningMutationAuthoritySnapshot,
+                })
+              }
+              submitPending={answerBundleMutation.isPending}
+              submitError={answerBundleMutation.error}
+              submitResult={answerBundleMutation.data}
+              reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
+              reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
+              reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
+              reusableDecisionAnswerSuggestions={reusableDecisionAnswerSuggestions}
+              reusableTaskRefSuggestions={reusableTaskRefSuggestions}
+              reusableBlockerSuggestions={reusableBlockerSuggestions}
+              reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
+              reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
+              reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
+              reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
+              reusableBatchRequestGroupSuggestions={reusableBatchRequestGroupSuggestions}
+              reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
+              reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
+              reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
+              reusableDecisionWorkflowChildSuggestions={
+                reusableDecisionWorkflowChildSuggestions
+              }
+              reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
+              reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
+            />
+          </div>
 
-        <div className="grid gap-4">
-          <AnswerBundlePanel
-            draft={answerBundleDraft}
-            decisions={decisions?.decisions ?? []}
-            onDraftChange={(patch) =>
-              setAnswerBundleDraft((current) => ({
-                ...current,
-                ...patch,
-              }))
-            }
-            followThroughDraft={answerBundleFollowThroughDraft}
-            onFollowThroughChange={(field, value) =>
-              setAnswerBundleFollowThroughDraft((current) => ({
-                ...current,
-                [field]: value,
-              }))
-            }
-            onSubmit={() =>
-              answerBundleMutation.mutate({
-                draft: answerBundleDraft,
-                followThroughDraft: answerBundleFollowThroughDraft,
-                existingState: currentPlanningMutationAuthoritySnapshot,
-              })
-            }
-            submitPending={answerBundleMutation.isPending}
-            submitError={answerBundleMutation.error}
-            submitResult={answerBundleMutation.data}
-            reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
-            reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
-            reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
-            reusableDecisionAnswerSuggestions={reusableDecisionAnswerSuggestions}
-            reusableTaskRefSuggestions={reusableTaskRefSuggestions}
-            reusableBlockerSuggestions={reusableBlockerSuggestions}
-            reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
-            reusablePlanningGroupKeySuggestions={reusablePlanningGroupKeySuggestions}
-            reusablePlanningGroupTaskKeySuggestions={reusablePlanningGroupTaskKeySuggestions}
-            reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
-            reusableBatchRequestGroupSuggestions={
-              reusableBatchRequestGroupSuggestions
-            }
-            reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
-            reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
-            reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
-            reusableDecisionWorkflowChildSuggestions={
-              reusableDecisionWorkflowChildSuggestions
-            }
-            reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
-            reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
-          />
-        </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <WorkflowPanel
+              workflows={workflows?.workflows ?? []}
+              tasks={board?.items ?? []}
+              selectedWorkflowKey={selectedWorkflowKey}
+              selectedWorkflow={selectedWorkflowDetail ?? null}
+              workflowDetailLoading={isSelectedWorkflowLoading}
+              workflowDetailError={selectedWorkflowError as Error | null}
+              workflowDraft={workflowDraft}
+              onWorkflowDraftChange={(field, value) =>
+                setWorkflowDraft((current) => ({ ...current, [field]: value }))
+              }
+              onCreateWorkflow={() =>
+                createWorkflowMutation.mutate({
+                  workflow: materializeWorkflowMutationInput(workflowDraft),
+                  existingState: currentPlanningMutationAuthoritySnapshot,
+                })
+              }
+              createPending={createWorkflowMutation.isPending}
+              createError={createWorkflowMutation.error}
+              createResult={createWorkflowMutation.data}
+              reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
+              reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
+              reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
+              reusableDecisionRefSuggestions={reusableDecisionRefSuggestions}
+              reusableBlockerSuggestions={reusableBlockerSuggestions}
+              reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
+              reusablePlanningGroupTaskKeySuggestions={
+                reusablePlanningGroupTaskKeySuggestions
+              }
+              reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
+              reusableBatchRequestGroupSuggestions={reusableBatchRequestGroupSuggestions}
+              reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
+              reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
+              reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
+              reusableWorkflowChildSuggestions={reusableWorkflowChildSuggestions}
+              reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
+              reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
+              onPrefillWorkflowKey={(workflowKey) =>
+                setWorkflowDraft((current) => ({ ...current, workflowKey }))
+              }
+              onSelectWorkflow={handleSelectWorkflow}
+              onPrefillReuseTaskRef={(taskRef, workflowKey) =>
+                setWorkflowDraft((current) => ({
+                  ...current,
+                  workflowKey,
+                  reuseTaskRef: taskRef,
+                  reuseGroupKey: '',
+                }))
+              }
+              onPrefillReuseGroupKey={(groupKey, workflowKey) =>
+                setWorkflowDraft((current) => ({
+                  ...current,
+                  workflowKey,
+                  reuseTaskRef: '',
+                  reuseGroupKey: groupKey,
+                  childKind: 'planning_batch',
+                  groupKey,
+                }))
+              }
+            />
+            <PreferencePanel
+              document={preferences}
+              reusablePreferenceKeySuggestions={reusablePreferenceKeySuggestions}
+              preferenceEditor={preferenceEditor}
+              preferenceEditorDirty={preferenceEditorDirty}
+              onPreferenceEditorChange={(value) => {
+                setPreferenceEditor(value);
+                setPreferenceEditorDirty(true);
+              }}
+              onSavePreferences={() => savePreferencesMutation.mutate(preferenceEditor)}
+              savePending={savePreferencesMutation.isPending}
+              saveError={savePreferencesMutation.error}
+              preferenceDraft={preferenceDraft}
+              onPreferenceDraftChange={(field, value) =>
+                setPreferenceDraft((current) => ({ ...current, [field]: value }))
+              }
+              onRecordPreference={() =>
+                recordPreferenceMutation.mutate({
+                  preferenceKey: preferenceDraft.preferenceKey.trim() || undefined,
+                  summary: preferenceDraft.summary.trim(),
+                  rationale: preferenceDraft.rationale.trim() || undefined,
+                  supersedes: parseListInput(preferenceDraft.supersedes),
+                })
+              }
+              recordPending={recordPreferenceMutation.isPending}
+              recordError={recordPreferenceMutation.error}
+              saveResult={savePreferencesMutation.data}
+              recordResult={recordPreferenceMutation.data}
+              recordResultPreferenceKey={
+                recordPreferenceMutation.variables?.preferenceKey?.trim() || null
+              }
+              recordResultSummary={
+                recordPreferenceMutation.variables?.summary?.trim() || null
+              }
+              retireDraft={retireDraft}
+              onRetireDraftChange={(field, value) =>
+                setRetireDraft((current) => ({ ...current, [field]: value }))
+              }
+              onRetirePreference={() =>
+                retirePreferenceMutation.mutate({
+                  preferenceKey: retireDraft.preferenceKey,
+                  reason: retireDraft.reason.trim(),
+                  supersededBy: retireDraft.supersededBy.trim() || undefined,
+                })
+              }
+              retirePending={retirePreferenceMutation.isPending}
+              retireError={retirePreferenceMutation.error}
+              retireResult={retirePreferenceMutation.data}
+              retireResultPreferenceKey={retirePreferenceMutation.variables?.preferenceKey ?? null}
+            />
+          </div>
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          <WorkflowPanel
-            workflows={workflows?.workflows ?? []}
-            tasks={board?.items ?? []}
-            selectedWorkflowKey={selectedWorkflowKey}
-            selectedWorkflow={selectedWorkflowDetail ?? null}
-            workflowDetailLoading={isSelectedWorkflowLoading}
-            workflowDetailError={selectedWorkflowError as Error | null}
-            workflowDraft={workflowDraft}
-            onWorkflowDraftChange={(field, value) =>
-              setWorkflowDraft((current) => ({ ...current, [field]: value }))
-            }
-            onCreateWorkflow={() =>
-              createWorkflowMutation.mutate({
-                workflow: materializeWorkflowMutationInput(workflowDraft),
-                existingState: currentPlanningMutationAuthoritySnapshot,
-              })
-            }
-            createPending={createWorkflowMutation.isPending}
-            createError={createWorkflowMutation.error}
-            createResult={createWorkflowMutation.data}
-            reusableAnswerSourceSuggestions={reusableAnswerSourceSuggestions}
-            reusablePlanningAnswerSuggestions={reusablePlanningAnswerSuggestions}
-            reusablePlanningRequestSuggestions={reusablePlanningRequestSuggestions}
-            reusableDecisionRefSuggestions={reusableDecisionRefSuggestions}
-            reusableBlockerSuggestions={reusableBlockerSuggestions}
-            reusablePlanningRequestKeySuggestions={reusablePlanningRequestKeySuggestions}
-            reusablePlanningGroupTaskKeySuggestions={
-              reusablePlanningGroupTaskKeySuggestions
-            }
-            reusableBatchRequestSuggestions={reusableBatchRequestSuggestions}
-            reusableBatchRequestGroupSuggestions={
-              reusableBatchRequestGroupSuggestions
-            }
-            reusableWorkflowKeySuggestions={reusableWorkflowKeySuggestions}
-            reusableWorkflowContextSuggestions={reusableWorkflowContextSuggestions}
-            reusableWorkflowGraphSuggestions={reusableWorkflowGraphSuggestions}
-            reusableWorkflowChildSuggestions={reusableWorkflowChildSuggestions}
-            reusableWorkflowTaskRefSuggestions={reusableWorkflowTaskRefSuggestions}
-            reusableWorkflowGroupKeySuggestions={reusableWorkflowGroupKeySuggestions}
-            onPrefillWorkflowKey={(workflowKey) =>
-              setWorkflowDraft((current) => ({ ...current, workflowKey }))
-            }
-            onSelectWorkflow={handleSelectWorkflow}
-            onPrefillReuseTaskRef={(taskRef, workflowKey) =>
-              setWorkflowDraft((current) => ({
-                ...current,
-                workflowKey,
-                reuseTaskRef: taskRef,
-                reuseGroupKey: '',
-              }))
-            }
-            onPrefillReuseGroupKey={(groupKey, workflowKey) =>
-              setWorkflowDraft((current) => ({
-                ...current,
-                workflowKey,
-                reuseTaskRef: '',
-                reuseGroupKey: groupKey,
-                childKind: 'planning_batch',
-                groupKey,
-              }))
-            }
-          />
-          <PreferencePanel
-            document={preferences}
-            reusablePreferenceKeySuggestions={reusablePreferenceKeySuggestions}
-            preferenceEditor={preferenceEditor}
-            preferenceEditorDirty={preferenceEditorDirty}
-            onPreferenceEditorChange={(value) => {
-              setPreferenceEditor(value);
-              setPreferenceEditorDirty(true);
-            }}
-            onSavePreferences={() => savePreferencesMutation.mutate(preferenceEditor)}
-            savePending={savePreferencesMutation.isPending}
-            saveError={savePreferencesMutation.error}
-            preferenceDraft={preferenceDraft}
-            onPreferenceDraftChange={(field, value) =>
-              setPreferenceDraft((current) => ({ ...current, [field]: value }))
-            }
-            onRecordPreference={() =>
-              recordPreferenceMutation.mutate({
-                preferenceKey: preferenceDraft.preferenceKey.trim() || undefined,
-                summary: preferenceDraft.summary.trim(),
-                rationale: preferenceDraft.rationale.trim() || undefined,
-                supersedes: parseListInput(preferenceDraft.supersedes),
-              })
-            }
-            recordPending={recordPreferenceMutation.isPending}
-            recordError={recordPreferenceMutation.error}
-            saveResult={savePreferencesMutation.data}
-            recordResult={recordPreferenceMutation.data}
-            recordResultPreferenceKey={
-              recordPreferenceMutation.variables?.preferenceKey?.trim() || null
-            }
-            recordResultSummary={recordPreferenceMutation.variables?.summary?.trim() || null}
-            retireDraft={retireDraft}
-            onRetireDraftChange={(field, value) =>
-              setRetireDraft((current) => ({ ...current, [field]: value }))
-            }
-            onRetirePreference={() =>
-              retirePreferenceMutation.mutate({
-                preferenceKey: retireDraft.preferenceKey,
-                reason: retireDraft.reason.trim(),
-                supersededBy: retireDraft.supersededBy.trim() || undefined,
-              })
-            }
-            retirePending={retirePreferenceMutation.isPending}
-            retireError={retirePreferenceMutation.error}
-            retireResult={retirePreferenceMutation.data}
-            retireResultPreferenceKey={retirePreferenceMutation.variables?.preferenceKey ?? null}
-          />
+          <div className="grid gap-4">
+            <TaskActionsPanel
+              tasks={board?.items ?? []}
+              createDraft={taskCreateDraft}
+              onCreateDraftChange={(field, value) =>
+                setTaskCreateDraft((current) => ({ ...current, [field]: value }))
+              }
+              onCreateTask={() => createTaskMutation.mutate(taskCreateDraft)}
+              createPending={createTaskMutation.isPending}
+              createError={createTaskMutation.error}
+              createResult={createdTaskResult}
+              moveDraft={taskMoveDraft}
+              onMoveDraftChange={(field, value) =>
+                setTaskMoveDraft((current) => ({ ...current, [field]: value }))
+              }
+              onSelectMoveTask={(taskRef) => {
+                const selectedTask = (board?.items ?? []).find((item) => item.ref === taskRef);
+                setTaskMoveDraft((current) => ({
+                  ...current,
+                  taskRef,
+                  status: selectedTask?.status ?? current.status,
+                }));
+              }}
+              onMoveTask={() => moveTaskMutation.mutate(taskMoveDraft)}
+              movePending={moveTaskMutation.isPending}
+              moveError={moveTaskMutation.error}
+              moveResult={movedTaskResult}
+              reusableBlockerSuggestions={reusableBlockerSuggestions}
+            />
+            <TaskAuthorityPanel
+              task={selectedTask}
+              showSessionDiagnostics={!mvpMode}
+              linkedDecisions={selectedTaskDecisions}
+              linkedPlanningRequests={selectedTaskPlanningRequests}
+              linkedWorkflows={selectedTaskWorkflows}
+              dependentTasks={selectedTaskDependents}
+            />
+          </div>
         </div>
-
-        <div className="grid gap-4">
-          <TaskActionsPanel
-            tasks={board?.items ?? []}
-            createDraft={taskCreateDraft}
-            onCreateDraftChange={(field, value) =>
-              setTaskCreateDraft((current) => ({ ...current, [field]: value }))
-            }
-            onCreateTask={() => createTaskMutation.mutate(taskCreateDraft)}
-            createPending={createTaskMutation.isPending}
-            createError={createTaskMutation.error}
-            createResult={createdTaskResult}
-            moveDraft={taskMoveDraft}
-            onMoveDraftChange={(field, value) =>
-              setTaskMoveDraft((current) => ({ ...current, [field]: value }))
-            }
-            onSelectMoveTask={(taskRef) => {
-              const selectedTask = (board?.items ?? []).find((item) => item.ref === taskRef);
-              setTaskMoveDraft((current) => ({
-                ...current,
-                taskRef,
-                status: selectedTask?.status ?? current.status,
-              }));
-            }}
-            onMoveTask={() => moveTaskMutation.mutate(taskMoveDraft)}
-            movePending={moveTaskMutation.isPending}
-            moveError={moveTaskMutation.error}
-            moveResult={movedTaskResult}
-            reusableBlockerSuggestions={reusableBlockerSuggestions}
-          />
-          <TaskAuthorityPanel
-            task={selectedTask}
-            linkedDecisions={selectedTaskDecisions}
-            linkedPlanningRequests={selectedTaskPlanningRequests}
-            linkedWorkflows={selectedTaskWorkflows}
-            dependentTasks={selectedTaskDependents}
-            writeTraceRoleFilter={taskWriteTraceRoleFilter}
-            onWriteTraceRoleFilterChange={setTaskWriteTraceRoleFilter}
-            writeTraceLimit={taskWriteTraceLimit}
-            onWriteTraceLimitChange={setTaskWriteTraceLimit}
-            taskRuns={selectedTaskRuns}
-            selectedTaskRunId={selectedTaskRunId}
-            onSelectTaskRun={(runId) => setSelectedTaskRunId(runId)}
-            selectedTaskRunStepId={selectedTaskRunStepId}
-            onSelectTaskRunStep={(stepId) => setSelectedTaskRunStepId(stepId)}
-            taskRunsLoading={taskRunsQuery.isLoading}
-            taskRunsError={taskRunsQuery.error as Error | null}
-            taskRunDetail={selectedTaskRunDetail}
-            taskRunDetailLoading={taskRunDetailQuery.isLoading}
-            taskRunDetailError={taskRunDetailQuery.error as Error | null}
-            selectedTaskRunWriteTraces={selectedTaskRunWriteTraceQuery.data?.entries ?? []}
-            selectedTaskRunWriteTraceLoading={selectedTaskRunWriteTraceQuery.isLoading}
-            selectedTaskRunWriteTraceError={
-              selectedTaskRunWriteTraceQuery.error as Error | null
-            }
-            writeTraces={taskWriteTraceQuery.data?.entries ?? []}
-            writeTraceLoading={taskWriteTraceQuery.isLoading}
-            writeTraceError={taskWriteTraceQuery.error as Error | null}
-          />
-        </div>
-      </div>
+      )}
 
       <AssistantPanel
         goalKey={board?.goal.goalKey || ''}
+        projectKey={projectKey}
         isOpen={isAssistantOpen}
         onClose={() => setIsAssistantOpen(false)}
+        proactiveMessage={assistantProactiveMessage}
+      />
+      <TaskRunHistoryModal
+        goalKey={board?.goal.goalKey || ''}
+        projectKey={projectKey}
+        isOpen={isTaskHistoryModalOpen}
+        task={selectedTask}
+        runs={selectedTaskRuns}
+        selectedRunId={selectedTaskRunId}
+        onSelectRunId={setSelectedTaskRunId}
+        runDetail={selectedTaskRunDetail}
+        runDetailLoading={taskRunDetailQuery.isLoading}
+        runDetailError={taskRunDetailQuery.error as Error | null}
+        selectedStepId={selectedTaskRunStepId}
+        onSelectStepId={setSelectedTaskRunStepId}
+        onClose={() => setIsTaskHistoryModalOpen(false)}
       />
     </div>
   );
@@ -5534,61 +5662,397 @@ export function BoardView() {
 
 function TaskCard({
   task,
+  displayId,
+  taskDisplayIdByRef,
+  taskByRef,
   selected,
   onClick,
 }: {
   task: TodoTaskItem;
+  displayId: string;
+  taskDisplayIdByRef: Map<string, string>;
+  taskByRef: Map<string, TodoTaskItem>;
   selected: boolean;
   onClick: () => void;
 }) {
-  const isBlocked = task.blockedBy.length > 0;
+  const requiresAttention = hasActionRequiredBlocker(task);
+  const waitingOnDependency = hasDependencyOnlyBlocker(task);
+  const runningRole = task.running ? runningRoleForTask(task) : null;
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "w-full p-4 rounded-xl border transition-all cursor-pointer group shadow-sm text-left",
-        isBlocked
-          ? "bg-[#2a1616] border-red-900/50 hover:border-red-500/50"
+        "group w-full rounded-xl border px-4 py-3.5 text-left transition-all shadow-sm",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40 focus-visible:ring-offset-0",
+        requiresAttention
+          ? "bg-[#261818] border-red-900/50 hover:border-red-500/50 hover:bg-[#2b1a1a]"
+          : waitingOnDependency
+            ? "bg-[#24211a] border-amber-900/40 hover:border-amber-500/40 hover:bg-[#29241d]"
           : "bg-[#222] border-[#333] hover:border-purple-500/50 hover:bg-[#252525]",
         selected && "ring-1 ring-purple-500/40 border-purple-500/50 bg-[#252525]",
       )}
     >
-      <div className="flex justify-between items-start mb-2 gap-2">
-        <span className="text-xs font-mono text-gray-500 bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-          {task.ref}
-        </span>
-        <span className="text-[10px] font-bold text-gray-400 bg-[#1A1A1A] px-2 py-0.5 rounded-full uppercase shrink-0">
-          {task.kind}
-        </span>
-        {isBlocked && (
-          <span className="text-[10px] font-bold text-red-400 bg-red-400/10 px-2 py-0.5 rounded-full uppercase shrink-0 flex items-center gap-1 animate-pulse">
-            <AlertCircle className="w-3 h-3" />
-            Intervention Needed
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <h4
+            title={task.title}
+            className="flex-1 text-[15px] font-medium leading-6 text-gray-100 transition-colors group-hover:text-purple-300 line-clamp-3"
+          >
+            {task.title}
+          </h4>
+          <span className="inline-flex shrink-0 items-center rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] leading-none text-gray-300">
+            {displayId}
           </span>
+        </div>
+
+        {task.description && (
+          <p
+            title={task.description}
+            className="text-[13px] leading-6 text-gray-400 line-clamp-4"
+          >
+            {task.description}
+          </p>
         )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase leading-none",
+              task.kind === 'planning'
+                ? "border-blue-400/20 bg-blue-500/10 text-blue-300"
+                : "border-white/10 bg-white/5 text-gray-300",
+            )}
+          >
+            {task.kind}
+          </span>
+
+          {runningRole && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-yellow-400/20 bg-yellow-400/10 px-2 py-1 text-[10px] font-semibold uppercase leading-none text-yellow-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Running {runningRole}
+            </span>
+          )}
+
+          {requiresAttention && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-red-400/20 bg-red-400/10 px-2 py-1 text-[10px] font-semibold uppercase leading-none text-red-300">
+              <AlertCircle className="h-3 w-3" />
+              Attention needed
+            </span>
+          )}
+
+          {waitingOnDependency && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold uppercase leading-none text-amber-300">
+              <GitBranch className="h-3 w-3" />
+              Waiting on dependency
+            </span>
+          )}
+        </div>
       </div>
 
-      <h4 className="text-sm font-medium text-gray-200 mb-3 leading-snug group-hover:text-purple-300 transition-colors">
-        {task.title}
-      </h4>
-
-      {task.description && (
-        <p className="text-xs text-gray-400 leading-relaxed mb-3 line-clamp-3">{task.description}</p>
-      )}
-
       {task.blockedBy.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-auto">
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-white/5 pt-3">
           {task.blockedBy.map((blocker) => (
-            <span key={`${blocker.kind}:${blocker.ref}`} className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded border border-blue-400/20">
-              {blocker.kind}: {blocker.ref}
-            </span>
+            <TaskBlockerPill
+              key={`${blocker.kind}:${blocker.ref}`}
+              blocker={blocker}
+              taskDisplayIdByRef={taskDisplayIdByRef}
+              taskByRef={taskByRef}
+            />
           ))}
         </div>
       )}
     </button>
   );
+}
+
+function runningRoleForTask(task: TodoTaskItem): AgentRole {
+  if (task.status === 'in_review') {
+    return 'reviewer';
+  }
+  if (task.status === 'merging') {
+    return 'merger';
+  }
+  if (task.kind === 'planning') {
+    return 'planner';
+  }
+  return 'generator';
+}
+
+function TaskBlockerPill({
+  blocker,
+  taskDisplayIdByRef,
+  taskByRef,
+}: {
+  blocker: BlockerRef;
+  taskDisplayIdByRef: Map<string, string>;
+  taskByRef: Map<string, TodoTaskItem>;
+}) {
+  const blockedTask = blocker.kind === 'task' ? taskByRef.get(blocker.ref) ?? null : null;
+  const blockedTaskDisplayId =
+    blocker.kind === 'task' ? taskDisplayIdByRef.get(blocker.ref) ?? blocker.ref : null;
+  const title =
+    blocker.kind === 'task' && blockedTask
+      ? `${blocker.kind}: ${blockedTaskDisplayId} · ${blockedTask.title}`
+      : `${blocker.kind}: ${blocker.ref}`;
+  const label =
+    blocker.kind === 'task'
+      ? `task: ${blockedTaskDisplayId}${blockedTask ? ` · ${blockedTask.title}` : ''}`
+      : `${blocker.kind}: ${blocker.ref}`;
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex max-w-full items-center rounded-md border px-2 py-1 text-[10px] font-mono leading-none",
+        blocker.kind === 'task'
+          ? "border-amber-400/20 bg-amber-400/10 text-amber-300"
+          : "border-red-400/20 bg-red-400/10 text-red-300",
+      )}
+    >
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+function buildTaskDisplayIdMap(tasks: TodoTaskItem[]) {
+  const displayIdByRef = new Map<string, string>();
+  const planningSlots = new Set<number>();
+  const engineeringSlots = new Set<number>();
+
+  for (const task of tasks) {
+    const explicit = parseExplicitTaskDisplayId(task.ref, task.kind);
+    if (!explicit) {
+      continue;
+    }
+    displayIdByRef.set(task.ref, explicit.id);
+    explicit.kind === 'planning'
+      ? planningSlots.add(explicit.index)
+      : engineeringSlots.add(explicit.index);
+  }
+
+  let nextPlanningIndex = 1;
+  let nextEngineeringIndex = 1;
+
+  for (const task of tasks) {
+    if (displayIdByRef.has(task.ref)) {
+      continue;
+    }
+
+    if (task.kind === 'planning') {
+      while (planningSlots.has(nextPlanningIndex)) {
+        nextPlanningIndex += 1;
+      }
+      displayIdByRef.set(task.ref, `P-${nextPlanningIndex}`);
+      planningSlots.add(nextPlanningIndex);
+      nextPlanningIndex += 1;
+      continue;
+    }
+
+    while (engineeringSlots.has(nextEngineeringIndex)) {
+      nextEngineeringIndex += 1;
+    }
+    displayIdByRef.set(task.ref, `E-${nextEngineeringIndex}`);
+    engineeringSlots.add(nextEngineeringIndex);
+    nextEngineeringIndex += 1;
+  }
+
+  return displayIdByRef;
+}
+
+function parseExplicitTaskDisplayId(ref: string, kind: TaskKind) {
+  const match = ref.trim().toUpperCase().match(/^([A-Z])-(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const prefix = match[1];
+  const index = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(index) || index <= 0) {
+    return null;
+  }
+
+  if (kind === 'planning' && prefix === 'P') {
+    return { id: `P-${index}`, index, kind: 'planning' as const };
+  }
+  if (kind === 'engineering' && prefix === 'E') {
+    return { id: `E-${index}`, index, kind: 'engineering' as const };
+  }
+
+  return null;
+}
+
+function hasActionRequiredBlocker(task: TodoTaskItem) {
+  return task.blockedBy.some(
+    (blocker) => blocker.kind === 'decision' || blocker.kind === 'merge_conflict' || blocker.kind === 'intervention',
+  );
+}
+
+function hasDependencyOnlyBlocker(task: TodoTaskItem) {
+  return task.blockedBy.length > 0 && task.blockedBy.every((blocker) => blocker.kind === 'task');
+}
+
+function isRunnableTask(task: TodoTaskItem) {
+  return (
+    task.blockedBy.length === 0 &&
+    (task.status === 'planned' ||
+      task.status === 'in_progress' ||
+      task.status === 'in_review' ||
+      task.status === 'merging')
+  );
+}
+
+function buildAssistantProactiveMessage(input: {
+  goalKey: string;
+  automationDisplayState: 'paused' | 'running' | 'blocked' | 'failed';
+  reconcileEnabled: boolean;
+  automationError?: string;
+  totalTaskCount: number;
+  doneTaskCount: number;
+  blockedTaskCount: number;
+  blockedTasks: TodoTaskItem[];
+  runnableTaskCount: number;
+  runningTaskCount: number;
+  timestamp: string;
+}): AssistantPanelProactiveMessage | null {
+  const blockedSummary = summarizeBlockedTasks(input.blockedTasks);
+  const baseId = [
+    input.goalKey,
+    input.automationDisplayState,
+    input.totalTaskCount,
+    input.doneTaskCount,
+    input.blockedTaskCount,
+    blockedSummary.join('|'),
+    input.runnableTaskCount,
+    input.runningTaskCount,
+    input.automationError ?? '',
+    input.timestamp,
+  ].join(':');
+
+  if (input.automationDisplayState === 'running') {
+    if (!input.reconcileEnabled) {
+      return {
+        id: `assistant-status:${baseId}`,
+        label: 'Status update',
+        content: `Current status: running. Active session work is still finishing, but reconcile is paused for new steps.`,
+        details: [
+          ...(blockedSummary.length > 0
+            ? [`Blocked tasks waiting for attention: ${blockedSummary.join(' | ')}`]
+            : []),
+          'Wait for the current reviewer or merger session to finish, or press Start to resume reconcile immediately.',
+        ],
+        timestamp: input.timestamp,
+      };
+    }
+
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content: `Current status: running. ${input.runningTaskCount || input.runnableTaskCount} task(s) are actively moving through the workflow.`,
+      details: [
+        ...(blockedSummary.length > 0
+          ? [`Blocked tasks waiting for attention: ${blockedSummary.join(' | ')}`]
+          : []),
+        'Open a task card to inspect the latest generator, reviewer, or merger history.',
+        'Use Stop if you want to pause the loop before the current steps finish.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  if (input.automationDisplayState === 'blocked') {
+    return null;
+  }
+
+  if (input.automationDisplayState === 'failed') {
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content: `Current status: failed. The automation loop stopped on a system error.`,
+      details: [
+        input.automationError ? `Latest error: ${input.automationError}` : 'Open the latest task run to inspect the failure details.',
+        'After the error is fixed, press Start to retry from the current task state.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  if (input.totalTaskCount === 0) {
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content: 'Current status: paused. This goal does not have any tasks yet.',
+      details: [
+        'Create or seed a task before starting automation.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  if (input.doneTaskCount === input.totalTaskCount) {
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content: `Current status: paused. All ${input.totalTaskCount} task(s) are done, so nothing is runnable right now.`,
+      details: [
+        'Review the completed session history from the task cards.',
+        'If more work is needed, move a task back to planned or create a new engineering task.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  if (input.runnableTaskCount > 0) {
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content:
+        input.blockedTaskCount > 0
+          ? `Current status: paused. ${input.runnableTaskCount} task(s) are ready to run, and ${input.blockedTaskCount} task(s) are blocked.`
+          : `Current status: paused. ${input.runnableTaskCount} task(s) are ready to run.`,
+      details: [
+        ...blockedSummary,
+        'Press Start to resume automation.',
+        'Open a task card first if you want to inspect the latest session history before resuming.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  if (input.blockedTaskCount > 0) {
+    return {
+      id: `assistant-status:${baseId}`,
+      label: 'Status update',
+      content: `Current status: paused. ${input.blockedTaskCount} task(s) are blocked, so nothing is runnable right now.`,
+      details: [
+        ...blockedSummary,
+        'Resolve the blocker refs on those cards first.',
+        'After the blockers clear, press Start to resume automation.',
+      ],
+      timestamp: input.timestamp,
+    };
+  }
+
+  return {
+    id: `assistant-status:${baseId}`,
+    label: 'Status update',
+    content: 'Current status: paused. Nothing is runnable at the moment.',
+    details: [
+      'Review task states and reopen or create work before starting automation.',
+    ],
+    timestamp: input.timestamp,
+  };
+}
+
+function summarizeBlockedTasks(tasks: TodoTaskItem[]) {
+  return tasks.slice(0, 3).map((task) => {
+    const blockers = task.blockedBy
+      .slice(0, 2)
+      .map((blocker) => `${blocker.kind}:${blocker.ref}`)
+      .join(', ');
+    return `${task.title} [${blockers}]`;
+  });
 }
 
 function TaskActionsPanel({
@@ -5851,56 +6315,18 @@ function TaskActionsPanel({
 
 function TaskAuthorityPanel({
   task,
+  showSessionDiagnostics,
   linkedDecisions,
   linkedPlanningRequests,
   linkedWorkflows,
   dependentTasks,
-  writeTraceRoleFilter,
-  onWriteTraceRoleFilterChange,
-  writeTraceLimit,
-  onWriteTraceLimitChange,
-  taskRuns,
-  selectedTaskRunId,
-  onSelectTaskRun,
-  selectedTaskRunStepId,
-  onSelectTaskRunStep,
-  taskRunsLoading,
-  taskRunsError,
-  taskRunDetail,
-  taskRunDetailLoading,
-  taskRunDetailError,
-  selectedTaskRunWriteTraces,
-  selectedTaskRunWriteTraceLoading,
-  selectedTaskRunWriteTraceError,
-  writeTraces,
-  writeTraceLoading,
-  writeTraceError,
 }: {
   task: TodoTaskItem | null;
+  showSessionDiagnostics: boolean;
   linkedDecisions: GoalDecision[];
   linkedPlanningRequests: GoalPlanningRequest[];
   linkedWorkflows: GoalPlanningWorkflowState[];
   dependentTasks: TodoTaskItem[];
-  writeTraceRoleFilter: AgentRole | 'all';
-  onWriteTraceRoleFilterChange: (value: AgentRole | 'all') => void;
-  writeTraceLimit: number | 'all';
-  onWriteTraceLimitChange: (value: number | 'all') => void;
-  taskRuns: GoalRunSummary[];
-  selectedTaskRunId: string | null;
-  onSelectTaskRun: (runId: string) => void;
-  selectedTaskRunStepId: string | null;
-  onSelectTaskRunStep: (stepId: string | null) => void;
-  taskRunsLoading: boolean;
-  taskRunsError: Error | null;
-  taskRunDetail: GoalRunDetail | null;
-  taskRunDetailLoading: boolean;
-  taskRunDetailError: Error | null;
-  selectedTaskRunWriteTraces: GoalWriteTraceEntry[];
-  selectedTaskRunWriteTraceLoading: boolean;
-  selectedTaskRunWriteTraceError: Error | null;
-  writeTraces: GoalWriteTraceEntry[];
-  writeTraceLoading: boolean;
-  writeTraceError: Error | null;
 }) {
   return (
     <SurfaceCard
@@ -6205,594 +6631,18 @@ function TaskAuthorityPanel({
             </div>
           </div>
 
-          <div className="rounded-xl border border-[#303030] bg-[#191919] p-4">
-            <div className="mb-3 text-sm font-medium text-white">Task Run History</div>
-            {taskRunsError ? (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs text-red-200">
-                {taskRunsError.message}
-              </div>
-            ) : taskRunsLoading ? (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading task-scoped workflow runs...
-              </div>
-            ) : taskRuns.length === 0 ? (
-              <div className="text-xs text-gray-500">
-                No durable workflow runs currently target this task.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {taskRuns.map((run) => (
-                  <button
-                    type="button"
-                    key={run.runId}
-                    onClick={() => onSelectTaskRun(run.runId)}
-                    className={cn(
-                      'w-full rounded-lg border bg-[#111] px-3 py-3 text-left transition-colors',
-                      run.runId === selectedTaskRunId
-                        ? 'border-purple-500/40 bg-purple-500/10'
-                        : 'border-[#2c2c2c] hover:border-purple-500/30',
-                    )}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className="text-sm text-white">{run.runId}</div>
-                        <div className="mt-1 text-xs font-mono text-gray-500">
-                          {run.taskKind} · {formatTimestamp(run.startedAt)}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-                            summarizeRunStatusClasses(run.status),
-                          )}
-                        >
-                          {run.status}
-                        </span>
-                        {run.finalTaskStatus && (
-                          <span className="rounded-full border border-[#3a3a3a] bg-[#191919] px-2 py-0.5 text-[10px] font-bold uppercase text-gray-300">
-                            task {run.finalTaskStatus}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-2 space-y-1 text-xs text-gray-400">
-                      <div>{run.stepCount} step(s)</div>
-                      {run.terminalOutcome && <div>Terminal outcome: {run.terminalOutcome}</div>}
-                      {run.endedAt && <div>Ended: {formatTimestamp(run.endedAt)}</div>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {taskRunDetailError ? (
-              <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs text-red-200">
-                {taskRunDetailError.message}
-              </div>
-            ) : taskRunDetailLoading ? (
-              <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading selected run detail...
-              </div>
-            ) : taskRunDetail ? (
-              <div className="mt-3 rounded-lg border border-[#2c2c2c] bg-[#111] px-3 py-3">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <div className="text-sm text-white">Selected Run Detail</div>
-                    <div className="mt-1 text-xs font-mono text-gray-500">
-                      {taskRunDetail.runId} · {taskRunDetail.taskKind}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={cn(
-                        'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-                        summarizeRunStatusClasses(taskRunDetail.status),
-                      )}
-                    >
-                      {taskRunDetail.status}
-                    </span>
-                    {taskRunDetail.finalTaskStatus && (
-                      <span className="rounded-full border border-[#3a3a3a] bg-[#191919] px-2 py-0.5 text-[10px] font-bold uppercase text-gray-300">
-                        task {taskRunDetail.finalTaskStatus}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-2 space-y-1 text-xs text-gray-400">
-                  <div>Started: {formatTimestamp(taskRunDetail.startedAt)}</div>
-                  {taskRunDetail.endedAt && <div>Ended: {formatTimestamp(taskRunDetail.endedAt)}</div>}
-                  {taskRunDetail.terminalOutcome && (
-                    <div>Terminal outcome: {taskRunDetail.terminalOutcome}</div>
-                  )}
-                </div>
-                <div className="mt-3 space-y-3">
-                  {taskRunDetail.steps.map((step) => (
-                    <div
-                      key={step.stepId}
-                      className={cn(
-                        'rounded-lg border bg-[#161616] px-3 py-3',
-                        step.stepId === selectedTaskRunStepId
-                          ? 'border-purple-500/40'
-                          : 'border-[#252525]',
-                      )}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <div className="text-sm text-white">{step.stepId}</div>
-                          <div className="mt-1 text-xs font-mono text-gray-500">
-                            {step.role} · {formatTimestamp(step.startedAt)}
-                          </div>
-                        </div>
-                        <span
-                          className={cn(
-                            'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-                            summarizeStepOutcomeClasses(step.outcome),
-                          )}
-                        >
-                          {step.outcome}
-                        </span>
-                      </div>
-                      <div className="mt-2 space-y-1 text-xs text-gray-400">
-                        <div>
-                          Status: {step.statusBefore}
-                          {step.statusAfter ? ` → ${step.statusAfter}` : ''}
-                        </div>
-                        <div>
-                          Messages: {step.messages.length} · Transcript: {step.transcript.length}
-                          {' '}· Artifacts: {step.execution?.artifacts.length ?? 0}
-                        </div>
-                        {step.execution?.worktree?.path && (
-                          <div>Worktree: {step.execution.worktree.path}</div>
-                        )}
-                        {step.endedAt && <div>Ended: {formatTimestamp(step.endedAt)}</div>}
-                      </div>
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSelectTaskRunStep(
-                              step.stepId === selectedTaskRunStepId ? null : step.stepId,
-                            )
-                          }
-                          className={cn(
-                            'rounded-lg border px-3 py-1.5 text-[11px] font-medium transition',
-                            step.stepId === selectedTaskRunStepId
-                              ? 'border-purple-500/40 bg-purple-500/10 text-purple-200'
-                              : 'border-[#343434] bg-[#111] text-gray-200 hover:border-purple-500/40 hover:text-white',
-                          )}
-                        >
-                          {step.stepId === selectedTaskRunStepId
-                            ? 'Showing step-scoped writes'
-                            : 'Filter write traces to this step'}
-                        </button>
-                      </div>
-                      {step.stepId === selectedTaskRunStepId && (
-                        <div className="mt-3 space-y-3 rounded-lg border border-[#2c2c2c] bg-[#111] px-3 py-3">
-                          {(step.execution?.worktree?.path ||
-                            step.execution?.worktree?.branch ||
-                            step.execution?.worktree?.baseBranch) && (
-                            <div className="space-y-1">
-                              <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                                Worktree Authority
-                              </div>
-                              <div className="space-y-1 text-xs text-gray-400">
-                                {step.execution?.worktree?.path && (
-                                  <div>Path: {step.execution.worktree.path}</div>
-                                )}
-                                {step.execution?.worktree?.branch && (
-                                  <div>Branch: {step.execution.worktree.branch}</div>
-                                )}
-                                {step.execution?.worktree?.baseBranch && (
-                                  <div>Base branch: {step.execution.worktree.baseBranch}</div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          {step.transcript.length > 0 && (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                                Transcript Entries
-                              </div>
-                              <div className="space-y-2">
-                                {step.transcript.map((entry) => (
-                                  <div
-                                    key={`${step.stepId}:transcript:${entry.entryId}`}
-                                    className="rounded-lg border border-[#252525] bg-[#161616] px-3 py-2"
-                                  >
-                                    <div className="flex flex-wrap items-start justify-between gap-2">
-                                      <div className="text-xs text-gray-200">
-                                        {entry.transport}:{entry.kind}
-                                      </div>
-                                      <div className="text-[10px] font-mono text-gray-500">
-                                        {formatTimestamp(entry.createdAt)}
-                                      </div>
-                                    </div>
-                                    <div className="mt-1 text-xs text-gray-400">
-                                      {entry.summary}
-                                    </div>
-                                    {(entry.toolName ||
-                                      entry.toolInvocationKey ||
-                                      entry.vendorEventType) && (
-                                      <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-gray-500">
-                                        {entry.toolName && <span>tool={entry.toolName}</span>}
-                                        {entry.toolInvocationKey && (
-                                          <span>invocation={entry.toolInvocationKey}</span>
-                                        )}
-                                        {entry.vendorEventType && (
-                                          <span>vendor={entry.vendorEventType}</span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {step.messages.length > 0 && (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                                Step Messages
-                              </div>
-                              <div className="space-y-2">
-                                {step.messages.map((message) => (
-                                  <div
-                                    key={`${step.stepId}:message:${message.messageId}`}
-                                    className="rounded-lg border border-[#252525] bg-[#161616] px-3 py-2"
-                                  >
-                                    <div className="flex flex-wrap items-start justify-between gap-2">
-                                      <div className="text-xs text-gray-200">
-                                        {message.kind}:{message.role}
-                                      </div>
-                                      <div className="text-[10px] font-mono text-gray-500">
-                                        {formatTimestamp(message.createdAt)}
-                                      </div>
-                                    </div>
-                                    <div className="mt-1 whitespace-pre-wrap text-xs text-gray-400">
-                                      {message.content}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {(step.execution?.artifacts.length ?? 0) > 0 && (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                                Artifacts
-                              </div>
-                              <div className="space-y-2">
-                                {step.execution?.artifacts.map((artifact) => (
-                                  <div
-                                    key={`${step.stepId}:artifact:${artifact.ref}`}
-                                    className="rounded-lg border border-[#252525] bg-[#161616] px-3 py-2"
-                                  >
-                                    <div className="text-xs text-gray-200">{artifact.label}</div>
-                                    <div className="mt-1 text-[10px] font-mono text-gray-500">
-                                      {artifact.ref}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 rounded-lg border border-[#252525] bg-[#161616] px-3 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm text-white">Selected Run Write Traces</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {selectedTaskRunStepId
-                          ? `Scoped to ${selectedTaskRunStepId} inside ${taskRunDetail.runId}.`
-                          : `Scoped to ${taskRunDetail.runId}.`}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500">
-                        <span>Role</span>
-                        <select
-                          value={writeTraceRoleFilter}
-                          onChange={(event) =>
-                            onWriteTraceRoleFilterChange(
-                              event.target.value as AgentRole | 'all',
-                            )
-                          }
-                          className="rounded-lg border border-[#343434] bg-[#111] px-2 py-1 text-[11px] normal-case text-gray-200 outline-none transition focus:border-purple-500/50"
-                        >
-                          {WRITE_TRACE_ROLE_FILTERS.map((role) => (
-                            <option key={role} value={role}>
-                              {role}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500">
-                        <span>Limit</span>
-                        <select
-                          value={String(writeTraceLimit)}
-                          onChange={(event) =>
-                            onWriteTraceLimitChange(
-                              event.target.value === 'all'
-                                ? 'all'
-                                : Number.parseInt(event.target.value, 10),
-                            )
-                          }
-                          className="rounded-lg border border-[#343434] bg-[#111] px-2 py-1 text-[11px] normal-case text-gray-200 outline-none transition focus:border-purple-500/50"
-                        >
-                          {WRITE_TRACE_LIMIT_OPTIONS.map((limit) => (
-                            <option key={String(limit)} value={String(limit)}>
-                              {limit}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <span className="rounded-full border border-[#3a3a3a] bg-[#111] px-2 py-0.5 text-[10px] font-mono text-gray-300">
-                        {taskRunDetail.runId}
-                      </span>
-                      {selectedTaskRunStepId && (
-                        <>
-                          <span className="rounded-full border border-purple-500/20 bg-purple-500/10 px-2 py-0.5 text-[10px] font-mono text-purple-200">
-                            {selectedTaskRunStepId}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onSelectTaskRunStep(null)}
-                            className="rounded-lg border border-[#343434] bg-[#111] px-2 py-1 text-[11px] font-medium text-gray-200 transition hover:border-purple-500/40 hover:text-white"
-                          >
-                            Show run writes
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {selectedTaskRunWriteTraceError ? (
-                    <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs text-red-200">
-                      {selectedTaskRunWriteTraceError.message}
-                    </div>
-                  ) : selectedTaskRunWriteTraceLoading ? (
-                    <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading selected-run write traces...
-                    </div>
-                  ) : selectedTaskRunWriteTraces.length === 0 ? (
-                    <div className="mt-3 text-xs text-gray-500">
-                      {selectedTaskRunStepId
-                        ? 'No durable write traces currently match this selected run step.'
-                        : 'No durable write traces currently match this selected run.'}
-                    </div>
-                  ) : (
-                    <div className="mt-3 space-y-3">
-                      {selectedTaskRunWriteTraces.map((entry) => (
-                        <div
-                          key={`${taskRunDetail.runId}:${entry.id}`}
-                          className="rounded-lg border border-[#2c2c2c] bg-[#111] px-3 py-3"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <div className="text-sm text-white">{entry.toolName}</div>
-                              <div className="mt-1 text-xs font-mono text-gray-500">
-                                {entry.role} · {entry.agent} · {formatTimestamp(entry.timestamp)}
-                              </div>
-                            </div>
-                            <span className="rounded-full border border-[#3a3a3a] bg-[#191919] px-2 py-0.5 text-[10px] font-mono text-gray-300">
-                              {entry.stepId}
-                            </span>
-                          </div>
-                          <div className="mt-2 space-y-1 text-xs text-gray-400">
-                            <div>Call: {entry.callId}</div>
-                            <div className="break-all">Cwd: {entry.cwd}</div>
-                            {entry.argumentSummary && <div>Args: {entry.argumentSummary}</div>}
-                            {entry.resultSummary && <div>Result: {entry.resultSummary}</div>}
-                          </div>
-                          {entry.targetPaths.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {entry.targetPaths.map((path) => (
-                                <span
-                                  key={`${entry.id}:run-target:${path}`}
-                                  className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-cyan-200"
-                                >
-                                  {path}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {entry.changes.length > 0 && (
-                            <div className="mt-2 space-y-1 text-xs text-gray-400">
-                              {entry.changes.map((change, index) => (
-                                <div key={`${entry.id}:run-change:${index}`}>
-                                  {change.kind}: {change.path}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="rounded-xl border border-[#303030] bg-[#191919] p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm font-medium text-white">Task Write Traces</div>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500">
-                  <span>Role</span>
-                  <select
-                    value={writeTraceRoleFilter}
-                    onChange={(event) =>
-                      onWriteTraceRoleFilterChange(event.target.value as AgentRole | 'all')
-                    }
-                    className="rounded-lg border border-[#343434] bg-[#111] px-2 py-1 text-[11px] normal-case text-gray-200 outline-none transition focus:border-purple-500/50"
-                  >
-                    {WRITE_TRACE_ROLE_FILTERS.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500">
-                  <span>Limit</span>
-                  <select
-                    value={String(writeTraceLimit)}
-                    onChange={(event) =>
-                      onWriteTraceLimitChange(
-                        event.target.value === 'all'
-                          ? 'all'
-                          : Number.parseInt(event.target.value, 10),
-                      )
-                    }
-                    className="rounded-lg border border-[#343434] bg-[#111] px-2 py-1 text-[11px] normal-case text-gray-200 outline-none transition focus:border-purple-500/50"
-                  >
-                    {WRITE_TRACE_LIMIT_OPTIONS.map((limit) => (
-                      <option key={String(limit)} value={String(limit)}>
-                        {limit}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+          {showSessionDiagnostics && (
+            <div className="rounded-xl border border-[#303030] bg-[#191919] p-4">
+              <div className="text-sm font-medium text-white">Run Diagnostics</div>
+              <div className="mt-2 text-xs leading-6 text-gray-500">
+                Workflow session history is opened from task cards. This authority panel now stays
+                focused on durable task state instead of inline run logs.
               </div>
             </div>
-            {writeTraceError ? (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs text-red-200">
-                {writeTraceError.message}
-              </div>
-            ) : writeTraceLoading ? (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading task-scoped write traces...
-              </div>
-            ) : writeTraces.length === 0 ? (
-              <div className="text-xs text-gray-500">
-                No durable write traces currently reference this task.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {writeTraces.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="rounded-lg border border-[#2c2c2c] bg-[#111] px-3 py-3"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className="text-sm text-white">{entry.toolName}</div>
-                        <div className="mt-1 text-xs font-mono text-gray-500">
-                          {entry.role} · {entry.agent} · {formatTimestamp(entry.timestamp)}
-                        </div>
-                      </div>
-                      <div className="rounded-full border border-[#3a3a3a] bg-[#191919] px-2 py-0.5 text-[10px] font-mono text-gray-300">
-                        {entry.runId}
-                      </div>
-                    </div>
-                    <div className="mt-2 space-y-1 text-xs text-gray-400">
-                      <div>Step: {entry.stepId}</div>
-                      <div>Call: {entry.callId}</div>
-                      <div className="break-all">Cwd: {entry.cwd}</div>
-                      {entry.argumentSummary && <div>Args: {entry.argumentSummary}</div>}
-                      {entry.resultSummary && <div>Result: {entry.resultSummary}</div>}
-                    </div>
-                    {entry.targetPaths.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {entry.targetPaths.map((path) => (
-                          <span
-                            key={`${entry.id}:target:${path}`}
-                            className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-cyan-200"
-                          >
-                            {path}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {entry.changes.length > 0 && (
-                      <div className="mt-2 space-y-1 text-xs text-gray-400">
-                        {entry.changes.map((change, index) => (
-                          <div key={`${entry.id}:change:${index}`}>
-                            {change.kind}: {change.path}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
     </SurfaceCard>
-  );
-}
-
-function DocCard({
-  title,
-  subtitle,
-  status,
-  content,
-}: {
-  title: string;
-  subtitle: string;
-  status?: GoalDocsSnapshot['goal']['status'];
-  content?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const normalizedContent = content?.trim() || 'Loading document snapshot...';
-  const hasOverflow =
-    normalizedContent !== 'Loading document snapshot...' &&
-    (normalizedContent.split('\n').length > 6 || normalizedContent.length > 480);
-
-  return (
-    <div className="rounded-2xl border border-[#2f2f2f] bg-[#1D1D1D] p-4">
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <div className="flex items-center gap-2 text-white font-medium">
-            <FileText className="w-4 h-4 text-purple-400" />
-            {title}
-          </div>
-          <p className="mt-1 text-xs text-gray-500 break-all">{subtitle}</p>
-        </div>
-        {status && (
-          <span
-            className={cn(
-              'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-              status === 'curated'
-                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                : 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300',
-            )}
-          >
-            {status}
-          </span>
-        )}
-      </div>
-
-      <pre
-        className={cn(
-          'm-0 whitespace-pre-wrap break-words text-xs leading-6 text-gray-400 font-mono',
-          !expanded && 'line-clamp-6',
-        )}
-      >
-        {normalizedContent}
-      </pre>
-      {hasOverflow && (
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setExpanded((current) => !current)}
-            className="rounded-lg border border-[#343434] bg-[#111] px-3 py-1.5 text-[11px] font-medium text-gray-300 transition hover:border-purple-500/40 hover:text-white"
-          >
-            {expanded ? 'Collapse doc' : 'Show full doc'}
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -6875,9 +6725,15 @@ function SourceResponseFormatGuidance({
             Insert a deterministic skeleton for this format, then replace the placeholder content
             with the current reply text.
           </div>
-          <pre className="mt-3 overflow-x-auto rounded-lg border border-[#252525] bg-[#161616] px-3 py-3 text-xs leading-5 text-gray-300 whitespace-pre-wrap">
-            {template}
-          </pre>
+          <ScrollContainer
+            axis="both"
+            className="mt-3 rounded-lg border border-[#252525] bg-[#161616]"
+            viewportClassName="max-h-72 px-3 py-3"
+          >
+            <pre className="min-h-full whitespace-pre-wrap text-xs leading-5 text-gray-300">
+              {template}
+            </pre>
+          </ScrollContainer>
           {onApplyTemplate && (
             <button
               type="button"
@@ -6919,9 +6775,15 @@ function SourceResponseFormatGuidance({
                 Insert a deterministic skeleton seeded from the current consumer authority instead
                 of rebuilding the labels or order by hand.
               </div>
-              <pre className="mt-3 overflow-x-auto rounded-lg border border-[#252525] bg-[#161616] px-3 py-3 text-xs leading-5 text-gray-300 whitespace-pre-wrap">
-                {contextualTemplate}
-              </pre>
+              <ScrollContainer
+                axis="both"
+                className="mt-3 rounded-lg border border-[#252525] bg-[#161616]"
+                viewportClassName="max-h-72 px-3 py-3"
+              >
+                <pre className="min-h-full whitespace-pre-wrap text-xs leading-5 text-gray-300">
+                  {contextualTemplate}
+                </pre>
+              </ScrollContainer>
               {onApplyTemplate && (
                 <button
                   type="button"
@@ -6965,9 +6827,15 @@ function SourceResponseFormatGuidance({
                     Recommended deterministic surface:{' '}
                     {formatSourceResponseFormatLabel(recommendedContextualTemplate.format)}.
                   </div>
-                  <pre className="mt-3 overflow-x-auto rounded-lg border border-[#252525] bg-[#161616] px-3 py-3 text-xs leading-5 text-gray-300 whitespace-pre-wrap">
-                    {recommendedContextualTemplate.template}
-                  </pre>
+                  <ScrollContainer
+                    axis="both"
+                    className="mt-3 rounded-lg border border-[#252525] bg-[#161616]"
+                    viewportClassName="max-h-72 px-3 py-3"
+                  >
+                    <pre className="min-h-full whitespace-pre-wrap text-xs leading-5 text-gray-300">
+                      {recommendedContextualTemplate.template}
+                    </pre>
+                  </ScrollContainer>
                   {onApplyFormatTemplate ? (
                     <button
                       type="button"
@@ -7714,47 +7582,6 @@ function ReusablePlanningRequestSuggestionList({
   );
 }
 
-function summarizeReconcileResult(result: ReconcileResult) {
-  if (result.kind === 'idle') {
-    return 'Reconcile found no dispatchable work.';
-  }
-  if (result.kind === 'advanced') {
-    return `${result.taskRef} advanced from ${result.from} to ${result.to}.`;
-  }
-  return `${result.taskRef} is blocked by ${result.blocker.kind}:${result.blocker.ref}.`;
-}
-
-function summarizeRunStatusClasses(status: GoalRunSummary['status']) {
-  switch (status) {
-    case 'completed':
-      return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
-    case 'blocked':
-    case 'system_error':
-      return 'border-red-500/20 bg-red-500/10 text-red-300';
-    case 'retryable':
-      return 'border-orange-500/20 bg-orange-500/10 text-orange-300';
-    default:
-      return 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
-  }
-}
-
-function summarizeStepOutcomeClasses(outcome: GoalRunDetail['steps'][number]['outcome']) {
-  switch (outcome) {
-    case 'success':
-      return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
-    case 'running':
-      return 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
-    case 'reject':
-    case 'fail':
-    case 'timeout':
-    case 'merge_conflict':
-    case 'system_error':
-      return 'border-red-500/20 bg-red-500/10 text-red-300';
-    default:
-      return 'border-gray-500/20 bg-gray-500/10 text-gray-300';
-  }
-}
-
 function DecisionPanel({
   decisions,
   decisionDraft,
@@ -8448,6 +8275,22 @@ function DecisionPanel({
                                         followThroughDraft,
                                       ).length,
                                     explicitDecisionKeys: [decision.decisionKey],
+                                  }),
+                                  ...listQuestionBlockStructureIssues({
+                                    format: resolutionDraft.sourceResponseFormat,
+                                    sourceResponse: resolutionDraft.sourceResponse,
+                                  }),
+                                  ...listQuestionBlockUnconsumedIssues({
+                                    format: resolutionDraft.sourceResponseFormat,
+                                    sourceResponse: resolutionDraft.sourceResponse,
+                                    explicitDecisionAnswerCount: 1,
+                                    explicitPlanningAnswerCount:
+                                      buildPlanningAnswerEditorItemsFromDecisionFollowThroughDraft(
+                                        followThroughDraft,
+                                      ).length,
+                                    explicitDecisionKeys: [decision.decisionKey],
+                                    inferRemainingAnswers:
+                                      followThroughDraft.inferRemainingAnswers,
                                   }),
                                   ...listInlineTopicStructureIssues({
                                     format: resolutionDraft.sourceResponseFormat,
@@ -22719,6 +22562,28 @@ function materializePlanningRequestInput(draft: {
         'Planning source response left unconsumed ordered units.',
     );
   }
+  const questionBlockStructureIssues = listQuestionBlockStructureIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+  });
+  if (questionBlockStructureIssues.length > 0) {
+    throw new Error(
+      questionBlockStructureIssues[0] ??
+        'Planning source response has invalid question-block structure.',
+    );
+  }
+  const questionBlockUnconsumedIssues = listQuestionBlockUnconsumedIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+    explicitPlanningAnswerCount: answers?.length ?? 0,
+    inferRemainingAnswers: draft.inferRemainingAnswers,
+  });
+  if (questionBlockUnconsumedIssues.length > 0) {
+    throw new Error(
+      questionBlockUnconsumedIssues[0] ??
+        'Planning source response left unconsumed question blocks.',
+    );
+  }
 
   if (
     draft.inferRemainingAnswers &&
@@ -22983,6 +22848,29 @@ function materializeWorkflowMutationInput(draft: {
     throw new Error(
       orderedUnconsumedIssues[0] ??
         'Workflow source response left unconsumed ordered units.',
+    );
+  }
+  const questionBlockStructureIssues = listQuestionBlockStructureIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+  });
+  if (questionBlockStructureIssues.length > 0) {
+    throw new Error(
+      questionBlockStructureIssues[0] ??
+        'Workflow source response has invalid question-block structure.',
+    );
+  }
+  const questionBlockUnconsumedIssues = listQuestionBlockUnconsumedIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+    explicitPlanningAnswerCount:
+      buildPlanningAnswerEditorItemsFromWorkflowDraft(draft).length,
+    inferRemainingAnswers: draft.inferRemainingAnswers,
+  });
+  if (questionBlockUnconsumedIssues.length > 0) {
+    throw new Error(
+      questionBlockUnconsumedIssues[0] ??
+        'Workflow source response left unconsumed question blocks.',
     );
   }
   const remainingAnswerSourceAuthorityIssues =
@@ -23271,6 +23159,35 @@ function materializeDecisionResolutionInput(
     throw new Error(
       orderedUnconsumedIssues[0] ??
         'Decision resolve source response left unconsumed ordered units.',
+    );
+  }
+  const questionBlockStructureIssues = listQuestionBlockStructureIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+  });
+  if (questionBlockStructureIssues.length > 0) {
+    throw new Error(
+      questionBlockStructureIssues[0] ??
+        'Decision resolve source response has invalid question-block structure.',
+    );
+  }
+  const questionBlockUnconsumedIssues = listQuestionBlockUnconsumedIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+    explicitDecisionAnswerCount: 1,
+    explicitPlanningAnswerCount: followThroughPlanningAnswers.length,
+    explicitDecisionKeys: [decision.decisionKey],
+    inferRemainingAnswers:
+      Boolean(
+        followThrough &&
+          'inferRemainingAnswers' in followThrough &&
+          followThrough.inferRemainingAnswers,
+      ),
+  });
+  if (questionBlockUnconsumedIssues.length > 0) {
+    throw new Error(
+      questionBlockUnconsumedIssues[0] ??
+        'Decision resolve source response left unconsumed question blocks.',
     );
   }
 
@@ -23600,6 +23517,35 @@ function materializeSingleDecisionAnswerInput(
         'Single decision source response left unconsumed ordered units.',
     );
   }
+  const questionBlockStructureIssues = listQuestionBlockStructureIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+  });
+  if (questionBlockStructureIssues.length > 0) {
+    throw new Error(
+      questionBlockStructureIssues[0] ??
+        'Single decision source response has invalid question-block structure.',
+    );
+  }
+  const questionBlockUnconsumedIssues = listQuestionBlockUnconsumedIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+    explicitDecisionAnswerCount: 1,
+    explicitPlanningAnswerCount: followThroughPlanningAnswers.length,
+    explicitDecisionKeys: [draft.decisionKey].filter(Boolean),
+    inferRemainingAnswers:
+      Boolean(
+        followThrough &&
+          'inferRemainingAnswers' in followThrough &&
+          followThrough.inferRemainingAnswers,
+      ),
+  });
+  if (questionBlockUnconsumedIssues.length > 0) {
+    throw new Error(
+      questionBlockUnconsumedIssues[0] ??
+        'Single decision source response left unconsumed question blocks.',
+    );
+  }
   if (
     !answer &&
     !sourceExcerpt &&
@@ -23908,6 +23854,42 @@ function materializeDecisionAnswerBatchInput(
     throw new Error(
       orderedUnconsumedIssues[0] ??
         'Shared decision-answer source response left unconsumed ordered units.',
+    );
+  }
+  const questionBlockStructureIssues = listQuestionBlockStructureIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+  });
+  if (questionBlockStructureIssues.length > 0) {
+    throw new Error(
+      questionBlockStructureIssues[0] ??
+        'Shared decision-answer source response has invalid question-block structure.',
+    );
+  }
+  const questionBlockUnconsumedIssues = listQuestionBlockUnconsumedIssues({
+    format: draft.sourceResponseFormat,
+    sourceResponse: draft.sourceResponse,
+    explicitDecisionAnswerCount: answers.length,
+    explicitPlanningAnswerCount: followThroughPlanningAnswers.length,
+    explicitDecisionKeys: answers
+      .map((answer) => answer.decisionKey?.trim())
+      .filter((value): value is string => Boolean(value)),
+    inferOpenDecisions: draft.inferOpenDecisions,
+    inferDecisionTopics: draft.inferDecisionTopics,
+    inferRemainingAnswers:
+      Boolean(
+        followThrough &&
+          'inferRemainingAnswers' in followThrough &&
+          followThrough.inferRemainingAnswers,
+      ),
+    openDecisionKeys: decisions
+      .filter((decision) => decision.status === 'open')
+      .map((decision) => decision.decisionKey),
+  });
+  if (questionBlockUnconsumedIssues.length > 0) {
+    throw new Error(
+      questionBlockUnconsumedIssues[0] ??
+        'Shared decision-answer source response left unconsumed question blocks.',
     );
   }
   const remainingAnswerSourceAuthorityIssues =
@@ -25025,6 +25007,26 @@ function isAnswerBundleSubmitDisabled(
       return true;
     }
     if (
+      listQuestionBlockStructureIssues({
+        format: draft.sourceResponseFormat,
+        sourceResponse: draft.sourceResponse,
+      }).length > 0
+    ) {
+      return true;
+    }
+    if (
+      listQuestionBlockUnconsumedIssues({
+        format: draft.sourceResponseFormat,
+        sourceResponse: draft.sourceResponse,
+        explicitDecisionAnswerCount: 1,
+        explicitPlanningAnswerCount: followThroughPlanningAnswerItems.length,
+        explicitDecisionKeys: [draft.decisionKey].filter(Boolean),
+        inferRemainingAnswers: followThroughDraft.inferRemainingAnswers,
+      }).length > 0
+    ) {
+      return true;
+    }
+    if (
       followThroughDraft.inferRemainingAnswers &&
       (!formatSupportsInferRemainingAnswers(draft.sourceResponseFormat) ||
         !hasInterpretationInputForSelectedFormat(
@@ -25235,6 +25237,33 @@ function isAnswerBundleSubmitDisabled(
         .map((entry) => entry.decisionKey?.trim())
         .filter((value): value is string => Boolean(value)),
       inferOpenDecisions: draft.inferOpenDecisions,
+      openDecisionKeys: decisions
+        .filter((decision) => decision.status === 'open')
+        .map((decision) => decision.decisionKey),
+    }).length > 0
+  ) {
+    return true;
+  }
+  if (
+    listQuestionBlockStructureIssues({
+      format: draft.sourceResponseFormat,
+      sourceResponse: draft.sourceResponse,
+    }).length > 0
+  ) {
+    return true;
+  }
+  if (
+    listQuestionBlockUnconsumedIssues({
+      format: draft.sourceResponseFormat,
+      sourceResponse: draft.sourceResponse,
+      explicitDecisionAnswerCount: batchAnswerEntries.length,
+      explicitPlanningAnswerCount: followThroughPlanningAnswerItems.length,
+      explicitDecisionKeys: batchAnswerEntries
+        .map((entry) => entry.decisionKey?.trim())
+        .filter((value): value is string => Boolean(value)),
+      inferOpenDecisions: draft.inferOpenDecisions,
+      inferDecisionTopics: draft.inferDecisionTopics,
+      inferRemainingAnswers: followThroughDraft.inferRemainingAnswers,
       openDecisionKeys: decisions
         .filter((decision) => decision.status === 'open')
         .map((decision) => decision.decisionKey),
@@ -25580,6 +25609,26 @@ function isResolveDecisionSubmitDisabled(
       explicitDecisionAnswerCount: 1,
       explicitPlanningAnswerCount: followThroughPlanningAnswerItems.length,
       explicitDecisionKeys: [decision.decisionKey],
+    }).length > 0
+  ) {
+    return true;
+  }
+  if (
+    listQuestionBlockStructureIssues({
+      format: draft.sourceResponseFormat,
+      sourceResponse: draft.sourceResponse,
+    }).length > 0
+  ) {
+    return true;
+  }
+  if (
+    listQuestionBlockUnconsumedIssues({
+      format: draft.sourceResponseFormat,
+      sourceResponse: draft.sourceResponse,
+      explicitDecisionAnswerCount: 1,
+      explicitPlanningAnswerCount: followThroughPlanningAnswerItems.length,
+      explicitDecisionKeys: [decision.decisionKey],
+      inferRemainingAnswers: followThroughDraft.inferRemainingAnswers,
     }).length > 0
   ) {
     return true;

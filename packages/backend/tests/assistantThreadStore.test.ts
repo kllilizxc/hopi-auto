@@ -69,6 +69,7 @@ describe('createAssistantThreadStore', () => {
               matchHints: ['launch cohort'],
             },
           ],
+          attachments: [],
           requestedUpdates: ['goal.md', 'design.md'],
           status: 'open',
           createdAt: '2026-06-04T00:00:00.000Z',
@@ -102,6 +103,37 @@ describe('createAssistantThreadStore', () => {
             resolvedSourceResponseFormat: 'matching_answer_sources',
             summary: 'Requested planning follow-through in PR-1 for P-1.',
           },
+        },
+      ],
+    })
+  })
+
+  test('dedupes durable system messages by dedupeKey', async () => {
+    const store = createAssistantThreadStore(testRoot())
+
+    const first = await store.appendSystemMessage(goalKey, {
+      label: 'Blocked task',
+      content: 'Automation blocked on T-1.',
+      details: ['Blocker: merge_conflict · src/app.ts'],
+      dedupeKey: 'blocked:T-1:merge_conflict:src/app.ts:1',
+    })
+    const second = await store.appendSystemMessage(goalKey, {
+      label: 'Blocked task',
+      content: 'Automation blocked on T-1.',
+      details: ['Blocker: merge_conflict · src/app.ts'],
+      dedupeKey: 'blocked:T-1:merge_conflict:src/app.ts:1',
+    })
+
+    expect(second).toEqual(first)
+    await expect(store.readThread(goalKey)).resolves.toMatchObject({
+      goalKey,
+      entries: [
+        {
+          kind: 'system_message',
+          label: 'Blocked task',
+          content: 'Automation blocked on T-1.',
+          details: ['Blocker: merge_conflict · src/app.ts'],
+          dedupeKey: 'blocked:T-1:merge_conflict:src/app.ts:1',
         },
       ],
     })
@@ -347,6 +379,7 @@ preferences:
       summary: 'Request planning: Capture rollout notes',
       action: {
         kind: 'request_planning',
+        attachmentAssetPaths: [],
         title: 'Capture rollout notes',
         description: 'Record rollout details before more planning work continues.',
         acceptanceCriteria: ['Rollout notes are durable.'],

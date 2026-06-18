@@ -259,9 +259,12 @@ type AssistantAction = GoalAssistantAction
 
 interface AssistantActionResult {
   kind:
-    | 'move_task'
-    | 'create_planning_task'
     | 'request_planning'
+    | 'resolve_decisions'
+    | 'set_preference'
+    | 'move_task'
+    | 'retry_task'
+    | 'create_planning_task'
     | 'request_planning_batch'
     | 'request_planning_workflows'
     | 'request_decision'
@@ -271,6 +274,7 @@ interface AssistantActionResult {
     | 'record_preference'
     | 'retire_preference'
     | 'update_preference'
+  mode?: 'single' | 'batch' | 'workflow' | 'upsert' | 'retire'
   taskRef?: string
   requestKey?: string
   request?: GoalPlanningRequest
@@ -324,6 +328,10 @@ interface AssistantActionResult {
   preferenceKey?: string
   retiredPreferenceKeys?: string[]
   summary: string
+  clearedBlockers?: Array<{
+    kind: 'intervention' | 'merge_conflict'
+    ref: string
+  }>
 }
 
 interface AssistantEvent {

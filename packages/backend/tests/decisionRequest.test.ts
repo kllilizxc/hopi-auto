@@ -163,6 +163,44 @@ describe('requestGoalDecision', () => {
     })
   })
 
+  test('persists attachment refs on requested decisions', async () => {
+    const rootDir = testRoot()
+    const boardStore = createBoardStore(rootDir)
+    const decisions = createDecisionStore(rootDir)
+    const attachments = [
+      {
+        assetPath: 'assets/assistant/upload-1/layout.png',
+        fileName: 'layout.png',
+        mediaType: 'image/png' as const,
+        sizeBytes: 4,
+        createdAt: '2026-06-14T00:00:00.000Z',
+      },
+    ]
+
+    const result = await requestGoalDecision(
+      {
+        boardStore,
+        decisions,
+      },
+      {
+        goalKey: 'goal-1',
+        decisionKey: 'auth-strategy',
+        summary: 'Choose the auth strategy',
+        attachments,
+      },
+    )
+
+    expect(result.decision.attachments).toEqual(attachments)
+    await expect(decisions.readGoalDecisions('goal-1')).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'auth-strategy',
+          attachments: [expect.objectContaining({ assetPath: attachments[0]?.assetPath })],
+        }),
+      ],
+    })
+  })
+
   test('enriches grouped sibling planning requests with the same decision lineage', async () => {
     const rootDir = testRoot()
     const boardStore = createBoardStore(rootDir)

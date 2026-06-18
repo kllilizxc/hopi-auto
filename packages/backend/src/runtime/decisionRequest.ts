@@ -1,6 +1,7 @@
 import type { AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import type { BoardStore } from '../storage/boardStore'
 import type { DecisionStore, GoalDecision } from '../storage/decisionStore'
+import type { GoalAttachmentRef } from '../storage/goalAttachmentStore'
 import type {
   GoalPlanningRequest,
   GoalPlanningRequestAnswer,
@@ -24,6 +25,7 @@ export interface GoalDecisionRequestInput {
   matchHints?: string[]
   decisionKey?: string
   taskRef?: string
+  attachments?: GoalAttachmentRef[]
   writer?: string
   reason?: string
 }
@@ -53,6 +55,7 @@ export interface GoalDecisionAnswerEntryInput {
   decisionKey?: string
   taskRef?: string
   answer: string
+  attachments?: GoalAttachmentRef[]
 }
 
 export interface GoalDecisionAnswerBatchResult {
@@ -173,6 +176,7 @@ export async function requestGoalDecision(
         summaryKey: input.summaryKey,
         prompt: input.prompt,
         matchHints: input.matchHints,
+        attachments: input.attachments,
       })
     : await stores.decisions.createDecision(input.goalKey, {
         decisionKey: input.decisionKey,
@@ -181,6 +185,7 @@ export async function requestGoalDecision(
         prompt: input.prompt,
         matchHints: input.matchHints,
         taskRef: input.taskRef,
+        attachments: input.attachments,
       })
   let blockerAdded = false
 
@@ -248,6 +253,7 @@ export async function resolveGoalDecision(
     prompt?: string
     matchHints?: string[]
     captureFormat?: AnswerCaptureFormat
+    attachments?: GoalAttachmentRef[]
     followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
@@ -259,6 +265,7 @@ export async function resolveGoalDecision(
     prompt: input.prompt,
     matchHints: input.matchHints,
     captureFormat: input.captureFormat,
+    attachments: input.attachments,
   })
   const followThrough = await createDecisionResolutionFollowThrough(
     stores,
@@ -325,6 +332,7 @@ export async function answerGoalDecision(
     decisionKey?: string
     taskRef?: string
     answer: string
+    attachments?: GoalAttachmentRef[]
     followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
@@ -344,6 +352,7 @@ export async function answerGoalDecision(
         answer: input.answer,
       },
     ],
+    attachments: input.attachments,
     followThrough: input.followThrough,
     writer: input.writer,
     reason: input.reason,
@@ -370,6 +379,7 @@ export async function answerGoalDecisions(
   input: {
     goalKey: string
     answers: GoalDecisionAnswerEntryInput[]
+    attachments?: GoalAttachmentRef[]
     followThrough?: GoalDecisionFollowThroughInput
     writer?: string
     reason?: string
@@ -395,6 +405,7 @@ export async function answerGoalDecisions(
         prompt: answer.prompt,
         matchHints: answer.matchHints,
         taskRef: answer.taskRef,
+        attachments: input.attachments,
       }))
     const resolved = await stores.decisions.resolveDecision(input.goalKey, decision.decisionKey, {
       answer: answer.answer,
@@ -402,6 +413,7 @@ export async function answerGoalDecisions(
       prompt: answer.prompt,
       matchHints: answer.matchHints,
       captureFormat: answer.captureFormat,
+      attachments: input.attachments,
     })
     if (!existing) {
       createdDecisionKeys.push(resolved.decisionKey)

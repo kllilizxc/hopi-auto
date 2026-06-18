@@ -4,6 +4,11 @@ import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { ANSWER_CAPTURE_FORMATS, type AnswerCaptureFormat } from '../domain/answerCaptureFormat'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
+import {
+  type GoalAttachmentRef,
+  goalAttachmentRefArraySchema,
+  mergeGoalAttachmentRefs,
+} from './goalAttachmentStore'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
@@ -21,6 +26,7 @@ export interface GoalDecision {
   status: GoalDecisionStatus
   taskRef?: string
   answer?: string
+  attachments: GoalAttachmentRef[]
   createdAt: string
   resolvedAt?: string
 }
@@ -43,12 +49,18 @@ export interface DecisionStore {
       prompt?: string
       matchHints?: string[]
       taskRef?: string
+      attachments?: GoalAttachmentRef[]
     },
   ): Promise<GoalDecision>
   enrichDecision(
     goalKey: string,
     decisionKey: string,
-    input: { summaryKey?: string; prompt?: string; matchHints?: string[] },
+    input: {
+      summaryKey?: string
+      prompt?: string
+      matchHints?: string[]
+      attachments?: GoalAttachmentRef[]
+    },
   ): Promise<GoalDecision>
   resolveDecision(
     goalKey: string,
@@ -59,6 +71,7 @@ export interface DecisionStore {
       prompt?: string
       matchHints?: string[]
       captureFormat?: AnswerCaptureFormat
+      attachments?: GoalAttachmentRef[]
     },
   ): Promise<GoalDecision>
 }
@@ -78,6 +91,7 @@ const GoalDecisionSchema = z.object({
   status: z.enum(DECISION_STATUSES),
   taskRef: z.string().min(1).optional(),
   answer: z.string().min(1).optional(),
+  attachments: goalAttachmentRefArraySchema,
   createdAt: z.string().datetime(),
   resolvedAt: z.string().datetime().optional(),
 })
@@ -128,6 +142,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
           ...(matchHints ? { matchHints } : {}),
           status: 'open',
           taskRef: input.taskRef,
+          attachments: mergeGoalAttachmentRefs([], input.attachments ?? []),
           createdAt,
         }
         current.decisions.push(decision)
@@ -147,7 +162,8 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         const changed =
           mergeDecisionSummaryKey(decision, input.summaryKey) ||
           backfillDecisionPrompt(decision, input.prompt) ||
-          mergeDecisionMatchHints(decision, input.matchHints)
+          mergeDecisionMatchHints(decision, input.matchHints) ||
+          mergeDecisionAttachments(decision, input.attachments)
         if (changed) {
           await writeDecisionSet(decisionPath, current)
         }
@@ -166,6 +182,7 @@ export function createDecisionStore(rootDir = process.cwd()): DecisionStore {
         mergeDecisionSummaryKey(decision, input.summaryKey)
         backfillDecisionPrompt(decision, input.prompt)
         mergeDecisionMatchHints(decision, input.matchHints)
+        mergeDecisionAttachments(decision, input.attachments)
         decision.status = 'resolved'
         decision.answer = input.answer
         if (input.captureFormat) {
@@ -263,6 +280,25 @@ function mergeDecisionSummaryKey(decision: GoalDecision, incoming: string | unde
   }
   throw new Error(
     `Decision summaryKey conflict for ${decision.decisionKey}: ${decision.summaryKey} != ${nextSummaryKey}`,
+  )
+}
+
+function mergeDecisionAttachments(
+  decision: GoalDecision,
+  incoming: GoalAttachmentRef[] | undefined,
+) {
+  const nextAttachments = mergeGoalAttachmentRefs(decision.attachments ?? [], incoming ?? [])
+  if (sameDecisionAttachmentRefs(decision.attachments ?? [], nextAttachments)) {
+    return false
+  }
+  decision.attachments = nextAttachments
+  return true
+}
+
+function sameDecisionAttachmentRefs(left: GoalAttachmentRef[], right: GoalAttachmentRef[]) {
+  return (
+    left.length === right.length &&
+    left.every((attachment, index) => attachment.assetPath === right[index]?.assetPath)
   )
 }
 

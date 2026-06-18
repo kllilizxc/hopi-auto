@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { createRoleProcessContextBuilder } from '../src/runtime/roleProcessContext'
 import { createRunHistoryStore } from '../src/runtime/runHistoryStore'
+import { PROJECT_MERGE_SCRIPT_RELATIVE_PATH, mergeScriptAttemptPath } from '../src/runtime/gitMergeExecutor'
 import { createWriteTraceStore } from '../src/runtime/writeTraceStore'
 import { createDecisionStore } from '../src/storage/decisionStore'
+import { createProjectPaths } from '../src/storage/paths'
 import { createPlanningRequestStore } from '../src/storage/planningRequestStore'
 import { createPreferenceStore } from '../src/storage/preferenceStore'
 
@@ -40,8 +42,18 @@ describe('createRoleProcessContextBuilder', () => {
     expect(bundle.designFile).toContain('.hopi/docs/goals/goal-1/design.md')
     expect(bundle.contextFile).toContain('.hopi/runtime/goals/goal-1/runs/run-1/step-1/context.md')
     expect(bundle.promptFile).toContain('.hopi/runtime/goals/goal-1/runs/run-1/step-1/prompt.md')
-    expect(bundle.outcomeFile).toContain(
+    expect(bundle.canonicalOutcomeFile).toContain(
       '.hopi/runtime/goals/goal-1/runs/run-1/step-1/outcome.json',
+    )
+    expect(bundle.outcomeFile).toContain(
+      '.hopi/worktrees/goal-1/T-1/run-1/.hopi-runtime/goals/goal-1/runs/run-1/step-1/outcome.json',
+    )
+    expect(bundle.browserHarnessDir).toBe('scripts/hopi/browser-harness')
+    expect(bundle.browserHarnessArtifactDir).toContain(
+      '.hopi/worktrees/goal-1/T-1/run-1/.hopi-runtime/goals/goal-1/runs/run-1/step-1/browser-harness',
+    )
+    expect(bundle.canonicalBrowserHarnessArtifactDir).toContain(
+      '.hopi/runtime/goals/goal-1/runs/run-1/step-1/browser-harness',
     )
 
     await expect(Bun.file(bundle.goalFile).text()).resolves.toContain('# Goal One')
@@ -63,6 +75,13 @@ describe('createRoleProcessContextBuilder', () => {
     expect(prompt).toContain('## Bundled Context')
     expect(prompt).toContain('Role: generator')
     expect(prompt).toContain('Task Ref: T-1')
+    expect(prompt).toContain('## Role Completion Policy')
+    expect(prompt).toContain('## Browser Harness Capability')
+    expect(prompt).toContain('browser-harness <<')
+    expect(prompt).toContain('$HOPI_BROWSER_HARNESS_ARTIFACT_DIR')
+    expect(prompt).toContain(
+      'Treat every acceptance criterion and any "Latest Reviewer Findings To Address" prose as a hard completion gate.',
+    )
   })
 
   test('gives planner work the durable goal-doc write boundary', async () => {
@@ -117,10 +136,17 @@ requests:
       },
     })
 
+    expect(bundle.extraWritableRoots).toEqual([
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2'),
+    ])
+
     const context = await readFile(bundle.contextFile, 'utf8')
     const prompt = await readFile(bundle.promptFile, 'utf8')
     expect(context).toContain('Role: planner')
-    expect(context).toContain('Planner may edit goal.md and design.md')
+    expect(context).toContain('Planner may edit goal.md, design.md, todo.yml')
+    expect(context).toContain(
+      'Do not edit decisions.yml, planning-requests.yml, events.jsonl, write-trace.jsonl; those files are runtime-owned workflow state.',
+    )
     expect(context).not.toContain('Do not edit .hopi/docs/**')
     expect(context).toContain('.hopi/docs/goals/goal-2/todo.yml')
     expect(context).toContain('.hopi/docs/goals/goal-2/decisions.yml')
@@ -142,6 +168,9 @@ requests:
     expect(context).toContain('active | prefer-incremental-rollouts | Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
+      'Do not edit decisions.yml, planning-requests.yml, events.jsonl, write-trace.jsonl; those files are runtime-owned workflow state.',
+    )
+    expect(prompt).toContain(
       'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',
     )
     expect(prompt).toContain(
@@ -155,6 +184,45 @@ requests:
     )
     expect(prompt).toContain(
       'If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.',
+    )
+    expect(prompt).toContain('## Planner Task Decomposition Rules')
+    expect(prompt).toContain(
+      'Default to one engineering task unless there is a clear parallelism or sequencing benefit.',
+    )
+    expect(prompt).toContain(
+      'Every engineering task must name its primary implementation surface in backticks inside the task description',
+    )
+    expect(prompt).toContain(
+      'If two engineering tasks would touch the same primary surface, merge them into one task or add a `blockedBy` task dependency so they do not run in parallel.',
+    )
+    expect(prompt).toContain(
+      'Preserve/no-regression concerns should usually stay in acceptance criteria or a serial hardening pass, not as a parallel task on the same surface.',
+    )
+    expect(prompt).toContain(
+      'For UI, layout, visual, interaction, routing, browser state, keyboard/IME, responsive, screenshot, modal, panel, button, tab/filter, form, or input work, every engineering task must include at least one acceptance criterion beginning with `Browser harness:`.',
+    )
+    expect(prompt).toContain(
+      'Planner must not create or edit `scripts/hopi/browser-harness/**`; those project scripts are engineering assets produced by generator/reviewer/merger worktrees.',
+    )
+    expect(prompt).toContain(
+      'If the repo does not already contain a suitable project scenario, do not require one to pre-exist; make the engineering task say the generator must create or update the scenario under `scripts/hopi/browser-harness/scenarios/`.',
+    )
+    expect(prompt).toContain('## todo.yml Canonical Literals')
+    expect(prompt).toContain('Allowed task kind literals: planning | engineering')
+    expect(prompt).toContain(
+      'Allowed task status literals: planned | in_progress | in_review | merging | done',
+    )
+    expect(prompt).toContain(
+      'Allowed blockedBy.kind literals: task | decision | merge_conflict | intervention',
+    )
+    expect(prompt).toContain(
+      'If a YAML list item in description or acceptanceCriteria starts with backticks or another YAML-reserved leading character, quote it or write it with `>-`; never start a bare list item with ``.',
+    )
+    expect(prompt).toContain(
+      'Do not invent synonyms such as pending, queued, active, blocked, or review_pending.',
+    )
+    expect(prompt).toContain(
+      'planning-requests.yml is runtime-owned and must not be edited. For reference only, its status literals are open | resolved.',
     )
   })
 
@@ -291,6 +359,119 @@ requests:
     expect(prompt).toContain(
       'If a relevant planning request targets another Goal-local path, create or update that durable document before returning success.',
     )
+  })
+
+  test('passes referenced Goal images into planner multimodal input and context', async () => {
+    const rootDir = testRoot()
+    const plannerAttachment = {
+      assetPath: 'assets/assistant/upload-1/reference-layout.png',
+      fileName: 'reference-layout.png',
+      mediaType: 'image/png' as const,
+      sizeBytes: 4,
+      createdAt: '2026-06-14T00:00:00.000Z',
+    }
+    const decisionAttachment = {
+      assetPath: 'assets/assistant/upload-2/visual-anchor.webp',
+      fileName: 'visual-anchor.webp',
+      mediaType: 'image/webp' as const,
+      sizeBytes: 4,
+      createdAt: '2026-06-14T00:01:00.000Z',
+    }
+    await writeGoalAsset(rootDir, 'goal-2c', plannerAttachment.assetPath)
+    await writeGoalAsset(rootDir, 'goal-2c', decisionAttachment.assetPath)
+    await createDecisionStore(rootDir).createDecision('goal-2c', {
+      decisionKey: 'visual-reference',
+      summary: 'Use the reference layout as the visual anchor',
+      taskRef: 'P-9',
+      attachments: [decisionAttachment],
+    })
+    await createPlanningRequestStore(rootDir).createRequest('goal-2c', {
+      requestKey: 'PR-1',
+      title: 'Plan reference-aligned editor',
+      description: 'Use the uploaded screenshots to reshape the editor plan.',
+      acceptanceCriteria: ['The reference-aligned editor plan is durable.'],
+      taskRef: 'P-9',
+      decisionRefs: ['visual-reference'],
+      attachments: [plannerAttachment],
+      requestedUpdates: ['design.md', 'todo.yml'],
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-2c',
+      goalTitle: 'Goal Two C',
+      runId: 'run-2c',
+      stepId: 'step-2c',
+      role: 'planner',
+      task: {
+        ref: 'P-9',
+        kind: 'planning',
+        status: 'planned',
+        title: 'Plan reference-aligned editor',
+        description: 'Reshape the editor docs and tasks around the uploaded images.',
+        acceptanceCriteria: ['Planner receives the real image inputs.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(bundle.imageFiles).toEqual([
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2c', plannerAttachment.assetPath),
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2c', decisionAttachment.assetPath),
+    ])
+    expect(context).toContain('## Relevant Goal Images')
+    expect(context).toContain(plannerAttachment.assetPath)
+    expect(context).toContain('Sources: planning request PR-1')
+    expect(context).toContain(decisionAttachment.assetPath)
+    expect(context).toContain('Sources: decision visual-reference')
+    expect(context).toContain(
+      `Attachment assets: ${plannerAttachment.assetPath}`,
+    )
+    expect(context).toContain(
+      `Attachment assets: ${decisionAttachment.assetPath}`,
+    )
+    expect(prompt).toContain(
+      'When a task materially depends on a referenced Goal image, keep the exact Goal-local asset path(s) under attachmentAssetPaths on that task row.',
+    )
+    expect(prompt).toContain(
+      'attachmentAssetPaths is optional, but when present every value must be an exact Goal-local asset path under assets/.',
+    )
+  })
+
+  test('passes task attachmentAssetPaths into engineering multimodal input and context', async () => {
+    const rootDir = testRoot()
+    const assetPath = 'assets/assistant/upload-3/editor-reference.png'
+    await writeGoalAsset(rootDir, 'goal-2d', assetPath)
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-2d',
+      goalTitle: 'Goal Two D',
+      runId: 'run-2d',
+      stepId: 'step-2d',
+      role: 'generator',
+      task: {
+        ref: 'T-2d',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Implement reference-aligned editor shell',
+        description: 'Use the reference image while implementing the new editor shell.',
+        acceptanceCriteria: ['Generator receives the real image input.'],
+        blockedBy: [],
+        attachmentAssetPaths: [assetPath],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+
+    expect(bundle.imageFiles).toEqual([
+      join(rootDir, '.hopi', 'docs', 'goals', 'goal-2d', assetPath),
+    ])
+    expect(context).toContain('## Relevant Goal Images')
+    expect(context).toContain(assetPath)
+    expect(context).toContain('Sources: task attachmentAssetPaths')
   })
 
   test('includes relevant earlier write traces in the context bundle', async () => {
@@ -467,6 +648,12 @@ requests:
     expect(prompt).toContain(
       'If there are no relevant traces or the traces do not support the claimed work, prefer reject or fail over blind acceptance.',
     )
+    expect(prompt).toContain(
+      'When rejecting generator work, write the reject reason in natural language that the next generator can act on directly.',
+    )
+    expect(prompt).toContain(
+      'State what still exists and what must change next; do not stop at generic wording like "still not aligned" or "needs polish".',
+    )
   })
 
   test('includes prior run history artifacts and transcript evidence for engineering review', async () => {
@@ -567,6 +754,135 @@ requests:
     )
   })
 
+  test('surfaces latest reviewer reject findings to the next generator prompt', async () => {
+    const rootDir = testRoot()
+    const history = createRunHistoryStore(rootDir)
+    const paths = createProjectPaths(rootDir)
+
+    const rejectedReview = await history.startStep({
+      goalKey: 'goal-6b',
+      taskRef: 'T-6b',
+      taskKind: 'engineering',
+      role: 'reviewer',
+      statusBefore: 'in_review',
+      message: {
+        kind: 'system',
+        role: 'system',
+        content: 'reviewer dispatched for T-6b',
+      },
+    })
+    await history.finishStep({
+      goalKey: 'goal-6b',
+      runId: rejectedReview.runId,
+      stepId: rejectedReview.stepId,
+      statusAfter: 'planned',
+      outcome: 'reject',
+      message: {
+        kind: 'system',
+        role: 'system',
+        content: 'T-6b returned to planned after review rejection',
+      },
+    })
+    await Bun.write(
+      paths.runtimeOutcomePath('goal-6b', rejectedReview.runId, rejectedReview.stepId),
+      `${JSON.stringify(
+        {
+          kind: 'reject',
+          reason:
+            'The saved-deck controls still render as a full-height third pane, and refreshEditor still reserves a persistent summary slab.',
+          artifactRef: 'src/game/ui/deckbuilder/DeckManagementPanel.ts',
+          artifactLabel: 'DeckManagementPanel review',
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-6b',
+      goalTitle: 'Goal Six B',
+      runId: 'run-generator',
+      stepId: 'step-generator',
+      role: 'generator',
+      task: {
+        ref: 'T-6b',
+        kind: 'engineering',
+        status: 'planned',
+        title: 'Refine deck-manager layout',
+        description: 'Apply the reviewer-requested deck-manager layout fixes.',
+        acceptanceCriteria: ['The latest reviewer findings are visible in the next generator prompt.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Latest Reviewer Findings To Address')
+    expect(context).toContain(rejectedReview.runId)
+    expect(context).toContain(rejectedReview.stepId)
+    expect(context).toContain(
+      'The saved-deck controls still render as a full-height third pane, and refreshEditor still reserves a persistent summary slab.',
+    )
+    expect(context).toContain('Review artifact: src/game/ui/deckbuilder/DeckManagementPanel.ts (DeckManagementPanel review)')
+    expect(prompt).toContain('## Latest Reviewer Findings To Address')
+    expect(prompt).toContain(
+      'If the reviewer called out a specific remaining structure, pane, slab, function, or region, do not return success while it still exists in the code.',
+    )
+  })
+
+  test('filters runtime and build-artifact noise out of relevant write traces', async () => {
+    const rootDir = testRoot()
+    const traces = createWriteTraceStore(rootDir)
+    await traces.appendEntry('goal-6c', {
+      runId: 'run-6c',
+      stepId: 'step-generator',
+      taskRef: 'T-6c',
+      role: 'generator',
+      agent: 'process_runner',
+      cwd: '/tmp/worktree',
+      toolName: 'process',
+      callId: 'step-generator',
+      targetPaths: [
+        'src/game/ui/deckbuilder/DeckManagementPanel.ts',
+        '.hopi/runtime/goals/goal-6c/run-history.json',
+        '.hopi/worktrees/goal-6c/T-6c/run-6c/dist/index.html',
+      ],
+      changes: [
+        { path: 'src/game/ui/deckbuilder/DeckManagementPanel.ts', kind: 'modified' },
+        { path: '.hopi/runtime/goals/goal-6c/run-history.json', kind: 'modified' },
+        { path: '.hopi/worktrees/goal-6c/T-6c/run-6c/dist/index.html', kind: 'added' },
+      ],
+      argumentSummary: 'bun run generator',
+      resultSummary: 'exit 0 (3 changed files)',
+    })
+
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-6c',
+      goalTitle: 'Goal Six C',
+      runId: 'run-6c',
+      stepId: 'step-reviewer',
+      role: 'reviewer',
+      task: {
+        ref: 'T-6c',
+        kind: 'engineering',
+        status: 'in_review',
+        title: 'Review focused source changes',
+        description: 'Review only the meaningful source-side write traces.',
+        acceptanceCriteria: ['Noise paths are filtered out of relevant write traces.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+
+    expect(context).toContain('src/game/ui/deckbuilder/DeckManagementPanel.ts')
+    expect(context).not.toContain('.hopi/runtime/goals/goal-6c/run-history.json')
+    expect(context).not.toContain('.hopi/worktrees/goal-6c/T-6c/run-6c/dist/index.html')
+  })
+
   test('gives planning reviewer prompt explicit durable follow-through policy', async () => {
     const rootDir = testRoot()
     await Bun.write(
@@ -652,6 +968,9 @@ requests:
     expect(prompt).toContain(
       'If there is no durable planning evidence or the docs and task graph do not reflect the requested follow-through, prefer reject or fail over blind acceptance.',
     )
+    expect(prompt).toContain(
+      'When reviewing planning work, accept Browser Harness follow-through when the downstream engineering task clearly names visible verification and either references an existing repo scenario or explicitly requires the generator to create/update one; do not reject planning solely because the scenario asset does not exist yet.',
+    )
   })
 
   test('warns merger when engineering work has no durable write-trace evidence', async () => {
@@ -687,6 +1006,76 @@ requests:
     )
     expect(prompt).toContain(
       'Merger must not return success blindly when engineering write-trace evidence is missing.',
+    )
+  })
+
+  test('surfaces merge script diagnostics in engineering merger context', async () => {
+    const rootDir = testRoot()
+    const builder = createRoleProcessContextBuilder(rootDir)
+    const scriptPath = join(rootDir, PROJECT_MERGE_SCRIPT_RELATIVE_PATH)
+    await mkdir(dirname(scriptPath), { recursive: true })
+    await Bun.write(
+      scriptPath,
+      '#!/usr/bin/env bash\nprintf \'%s\\n\' \'{"kind":"merge_conflict","reason":"root has overlap"}\'\n',
+    )
+    const attemptPath = mergeScriptAttemptPath(rootDir, {
+      goalKey: 'goal-5b',
+      runId: 'run-5b',
+      stepId: 'step-merger',
+    })
+    await mkdir(dirname(attemptPath), { recursive: true })
+    await Bun.write(
+      attemptPath,
+      `${JSON.stringify(
+        {
+          attemptedAt: '2026-06-16T00:00:00.000Z',
+          scriptPath,
+          command: ['bash', scriptPath, 'goal-5b', 'T-5b'],
+          stdout: '{"kind":"merge_conflict","reason":"root has overlap"}\n',
+          stderr: 'local changes in DeckManagementPanel.ts\n',
+          exitCode: 0,
+          result: {
+            kind: 'merge_conflict',
+            reason: 'root has overlap',
+            artifactRef: 'branch:hopi/goal-5b/T-5b/run-5b',
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-5b',
+      goalTitle: 'Goal Five B',
+      runId: 'run-5b',
+      stepId: 'step-merger',
+      role: 'merger',
+      task: {
+        ref: 'T-5b',
+        kind: 'engineering',
+        status: 'merging',
+        title: 'Merge auth implementation',
+        description: 'Merge the task through the project merge script.',
+        acceptanceCriteria: ['Merger sees the latest script diagnostics.'],
+        blockedBy: [],
+      },
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+
+    expect(context).toContain('## Merge Script Attempt To Resolve')
+    expect(context).toContain(scriptPath)
+    expect(context).toContain('Latest script result: merge_conflict | root has overlap')
+    expect(context).toContain('### Current merge script')
+    expect(context).toContain('### Latest merge script stdout')
+    expect(context).toContain('### Latest merge script stderr')
+    expect(prompt).toContain(
+      'Merger must let the project merge script attempt the merge first and treat its result as the primary deterministic signal.',
+    )
+    expect(prompt).toContain(
+      'Merger may reconcile worktree product files when necessary, but success is only valid if the merge script succeeds afterward.',
     )
   })
 
@@ -750,4 +1139,10 @@ requests:
 
 function testRoot() {
   return join(tmpBase, crypto.randomUUID())
+}
+
+async function writeGoalAsset(rootDir: string, goalKey: string, assetPath: string) {
+  const absolutePath = join(rootDir, '.hopi', 'docs', 'goals', goalKey, assetPath)
+  await mkdir(dirname(absolutePath), { recursive: true })
+  await Bun.write(absolutePath, 'img')
 }

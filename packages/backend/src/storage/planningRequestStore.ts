@@ -3,17 +3,49 @@ import { dirname, posix as pathPosix } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { ANSWER_CAPTURE_FORMATS, type AnswerCaptureFormat } from '../domain/answerCaptureFormat'
+import { TASK_STATUSES } from '../domain/board'
 import { resolveCanonicalPromptFromSummary } from '../domain/canonicalPrompt'
+import {
+  type GoalAttachmentRef,
+  goalAttachmentRefArraySchema,
+  mergeGoalAttachmentRefs,
+} from './goalAttachmentStore'
 import { withFileLock } from './lock'
 import { createProjectPaths } from './paths'
 
 export const PLANNING_REQUEST_STATUSES = ['open', 'resolved'] as const
 export const PLANNING_REQUEST_UPDATE_TARGETS = ['goal.md', 'design.md', 'todo.yml'] as const
-const RESERVED_GOAL_UPDATE_TARGETS = new Set([
+export const RESERVED_GOAL_STATE_FILES = [
   'decisions.yml',
   'planning-requests.yml',
   'events.jsonl',
   'write-trace.jsonl',
+] as const
+const RESERVED_GOAL_UPDATE_TARGETS: ReadonlySet<string> = new Set(RESERVED_GOAL_STATE_FILES)
+const LEGACY_OPEN_PLANNING_REQUEST_STATUS_ALIASES: ReadonlySet<string> = new Set(
+  TASK_STATUSES.filter((status) => status !== 'done'),
+)
+const LEGACY_PLANNING_REQUEST_KEYS = new Set([
+  'requestKey',
+  'workflowKey',
+  'workflowTaskKey',
+  'workflowSharedDecisionRefs',
+  'workflowSharedAnswers',
+  'blockedByWorkflowKeys',
+  'groupKey',
+  'groupTaskKey',
+  'title',
+  'description',
+  'acceptanceCriteria',
+  'taskRef',
+  'decisionRefs',
+  'answers',
+  'attachments',
+  'requestedUpdates',
+  'status',
+  'createdAt',
+  'resolvedAt',
+  'resolution',
 ])
 
 export type GoalPlanningRequestStatus = (typeof PLANNING_REQUEST_STATUSES)[number]
@@ -44,6 +76,7 @@ export interface GoalPlanningRequest {
   taskRef: string
   decisionRefs: string[]
   answers: GoalPlanningRequestAnswer[]
+  attachments: GoalAttachmentRef[]
   requestedUpdates: GoalPlanningRequestUpdateTarget[]
   status: GoalPlanningRequestStatus
   createdAt: string
@@ -77,6 +110,7 @@ export interface PlanningRequestStore {
       taskRef: string
       decisionRefs?: string[]
       answers?: GoalPlanningRequestAnswer[]
+      attachments?: GoalAttachmentRef[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -93,6 +127,7 @@ export interface PlanningRequestStore {
       groupTaskKey?: string
       decisionRefs?: string[]
       answers?: GoalPlanningRequestAnswer[]
+      attachments?: GoalAttachmentRef[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -112,6 +147,7 @@ export interface PlanningRequestStore {
       acceptanceCriteria: string[]
       decisionRefs?: string[]
       answers?: GoalPlanningRequestAnswer[]
+      attachments?: GoalAttachmentRef[]
       requestedUpdates?: GoalPlanningRequestUpdateTarget[]
     },
   ): Promise<GoalPlanningRequest>
@@ -225,6 +261,7 @@ const GoalPlanningRequestSchema = z.object({
   taskRef: z.string().min(1),
   decisionRefs: z.array(z.string().min(1)).default([]),
   answers: goalPlanningRequestAnswerArraySchema,
+  attachments: goalAttachmentRefArraySchema,
   requestedUpdates: goalPlanningRequestUpdateTargetArraySchema,
   status: z.enum(PLANNING_REQUEST_STATUSES),
   createdAt: z.string().datetime(),
@@ -243,22 +280,22 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
 
   return {
     async readGoalPlanningRequests(goalKey) {
-      return readPlanningRequestSet(paths.planningRequestsPath(goalKey), goalKey)
+      return (await readPlanningRequestSet(paths.planningRequestsPath(goalKey), goalKey)).set
     },
     async ensureGoalPlanningRequests(goalKey) {
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
       const file = Bun.file(planningRequestsPath)
-      if (!(await file.exists())) {
-        await writePlanningRequestSet(planningRequestsPath, current)
+      if (!(await file.exists()) || current.canonicalize) {
+        await writePlanningRequestSet(planningRequestsPath, current.set)
       }
-      return current
+      return current.set
     },
     async createRequest(goalKey, input) {
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
       return withFileLock(lockPath, async () => {
-        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const { set: current } = await readPlanningRequestSet(planningRequestsPath, goalKey)
         const requestKey = input.requestKey ?? nextPlanningRequestKey(current.requests)
         if (current.requests.some((request) => request.requestKey === requestKey)) {
           throw new Error(`Planning request already exists: ${requestKey}`)
@@ -292,6 +329,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           input.workflowSharedAnswers,
         )
         const blockedByWorkflowKeys = normalizeBlockedByWorkflowKeys(input.blockedByWorkflowKeys)
+        const attachments = normalizeGoalPlanningRequestAttachments(input.attachments)
 
         const request: GoalPlanningRequest = {
           requestKey,
@@ -308,6 +346,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           taskRef: input.taskRef,
           decisionRefs: mergeUniqueValues([], input.decisionRefs ?? []),
           answers,
+          attachments,
           requestedUpdates,
           status: 'open',
           createdAt: new Date().toISOString(),
@@ -321,7 +360,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
       return withFileLock(lockPath, async () => {
-        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const { set: current } = await readPlanningRequestSet(planningRequestsPath, goalKey)
         const request = current.requests.find((item) => item.requestKey === requestKey)
         if (!request) {
           throw new Error(`Planning request not found: ${requestKey}`)
@@ -332,6 +371,10 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
           normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
+        )
+        const nextAttachments = mergeGoalAttachmentRefs(
+          request.attachments ?? [],
+          normalizeGoalPlanningRequestAttachments(input.attachments),
         )
         const nextBlockedByWorkflowKeys = resolveBlockedByWorkflowKeys(
           request.blockedByWorkflowKeys,
@@ -385,6 +428,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           nextGroupTaskKey !== request.groupTaskKey ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
           !samePlanningRequestAnswerArray(request.answers, nextAnswers) ||
+          !sameGoalAttachmentRefArray(request.attachments ?? [], nextAttachments) ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.workflowKey = nextWorkflowKey
@@ -396,6 +440,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.groupTaskKey = nextGroupTaskKey
           request.decisionRefs = nextDecisionRefs
           request.answers = nextAnswers
+          request.attachments = nextAttachments
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
         }
@@ -406,7 +451,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
       return withFileLock(lockPath, async () => {
-        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const { set: current } = await readPlanningRequestSet(planningRequestsPath, goalKey)
         const request = current.requests.find((item) => item.requestKey === requestKey)
         if (!request) {
           throw new Error(`Planning request not found: ${requestKey}`)
@@ -417,6 +462,10 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
         const nextRequestedUpdates = mergeUniqueValues(
           request.requestedUpdates,
           normalizeGoalPlanningRequestUpdateTargets(input.requestedUpdates),
+        )
+        const nextAttachments = mergeGoalAttachmentRefs(
+          request.attachments ?? [],
+          normalizeGoalPlanningRequestAttachments(input.attachments),
         )
         const nextBlockedByWorkflowKeys = resolveBlockedByWorkflowKeys(
           request.blockedByWorkflowKeys,
@@ -473,6 +522,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           !sameStringArray(request.acceptanceCriteria, input.acceptanceCriteria) ||
           nextDecisionRefs.length !== request.decisionRefs.length ||
           !samePlanningRequestAnswerArray(request.answers, nextAnswers) ||
+          !sameGoalAttachmentRefArray(request.attachments ?? [], nextAttachments) ||
           nextRequestedUpdates.length !== request.requestedUpdates.length
         if (changed) {
           request.workflowKey = nextWorkflowKey
@@ -487,6 +537,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
           request.acceptanceCriteria = [...input.acceptanceCriteria]
           request.decisionRefs = nextDecisionRefs
           request.answers = nextAnswers
+          request.attachments = nextAttachments
           request.requestedUpdates = nextRequestedUpdates
           await writePlanningRequestSet(planningRequestsPath, current)
         }
@@ -497,7 +548,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
       return withFileLock(lockPath, async () => {
-        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const { set: current } = await readPlanningRequestSet(planningRequestsPath, goalKey)
         const request = current.requests.find((item) => item.requestKey === requestKey)
         if (!request) {
           throw new Error(`Planning request not found: ${requestKey}`)
@@ -514,7 +565,7 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
       const planningRequestsPath = paths.planningRequestsPath(goalKey)
       const lockPath = `${planningRequestsPath}.lock`
       return withFileLock(lockPath, async () => {
-        const current = await readPlanningRequestSet(planningRequestsPath, goalKey)
+        const { set: current } = await readPlanningRequestSet(planningRequestsPath, goalKey)
         const nextWorkflowSharedDecisionRefs = normalizeWorkflowSharedDecisionRefs(
           input.workflowSharedDecisionRefs,
         )
@@ -574,18 +625,25 @@ export function createPlanningRequestStore(rootDir = process.cwd()): PlanningReq
 async function readPlanningRequestSet(
   planningRequestsPath: string,
   goalKey: string,
-): Promise<GoalPlanningRequestSet> {
+): Promise<{ set: GoalPlanningRequestSet; canonicalize: boolean }> {
   const file = Bun.file(planningRequestsPath)
   if (!(await file.exists())) {
-    return emptyPlanningRequestSet(goalKey)
+    return {
+      set: emptyPlanningRequestSet(goalKey),
+      canonicalize: false,
+    }
   }
 
   const raw = await file.text()
   if (raw.trim() === '') {
-    return emptyPlanningRequestSet(goalKey)
+    return {
+      set: emptyPlanningRequestSet(goalKey),
+      canonicalize: false,
+    }
   }
 
-  const parsed = GoalPlanningRequestSetSchema.safeParse(parse(raw))
+  const normalized = normalizePlanningRequestSetInput(parse(raw))
+  const parsed = GoalPlanningRequestSetSchema.safeParse(normalized.value)
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
@@ -593,7 +651,10 @@ async function readPlanningRequestSet(
     throw new Error(`Invalid planning-requests.yml format: ${issues}`)
   }
 
-  return parsed.data
+  return {
+    set: parsed.data,
+    canonicalize: normalized.canonicalize,
+  }
 }
 
 function emptyPlanningRequestSet(goalKey: string): GoalPlanningRequestSet {
@@ -644,14 +705,94 @@ function normalizeGoalPlanningRequestAnswers(values: GoalPlanningRequestAnswer[]
   return mergePlanningRequestAnswers([], values ?? [])
 }
 
+function normalizeGoalPlanningRequestAttachments(values: GoalAttachmentRef[] | undefined) {
+  return mergeGoalAttachmentRefs([], values ?? [])
+}
+
 function normalizeGoalPlanningRequestAnswerKey(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
 }
 
+function normalizePlanningRequestSetInput(input: unknown): {
+  value: unknown
+  canonicalize: boolean
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { value: input, canonicalize: false }
+  }
+
+  const rawRequests = (input as { requests?: unknown }).requests
+  if (!Array.isArray(rawRequests)) {
+    return { value: input, canonicalize: false }
+  }
+
+  let canonicalize = false
+  const requests = rawRequests.map((rawRequest) => {
+    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)) {
+      return rawRequest
+    }
+
+    let request = rawRequest as Record<string, unknown>
+    const normalizedStatus = normalizeLegacyPlanningRequestStatusAlias(request.status)
+    if (normalizedStatus && normalizedStatus !== request.status) {
+      request = { ...request, status: normalizedStatus }
+      canonicalize = true
+    }
+
+    if (Object.keys(request).some((key) => !LEGACY_PLANNING_REQUEST_KEYS.has(key))) {
+      canonicalize = true
+    }
+
+    return request
+  })
+
+  if (!canonicalize) {
+    return { value: input, canonicalize: false }
+  }
+
+  return {
+    value: {
+      ...(input as Record<string, unknown>),
+      requests,
+    },
+    canonicalize: true,
+  }
+}
+
+function normalizeLegacyPlanningRequestStatusAlias(
+  value: unknown,
+): GoalPlanningRequestStatus | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'open' || normalized === 'resolved') {
+    return normalized
+  }
+
+  if (LEGACY_OPEN_PLANNING_REQUEST_STATUS_ALIASES.has(normalized as (typeof TASK_STATUSES)[number])) {
+    return 'open'
+  }
+
+  if (normalized === 'done') {
+    return 'resolved'
+  }
+
+  return undefined
+}
+
 function normalizeGoalPlanningRequestSummaryKey(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+function sameGoalAttachmentRefArray(left: GoalAttachmentRef[], right: GoalAttachmentRef[]) {
+  return (
+    left.length === right.length &&
+    left.every((attachment, index) => attachment.assetPath === right[index]?.assetPath)
+  )
 }
 
 function normalizeGoalPlanningRequestMatchHints(values: string[] | undefined) {

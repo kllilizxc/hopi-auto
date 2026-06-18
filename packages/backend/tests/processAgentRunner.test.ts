@@ -201,6 +201,197 @@ describe('ProcessAgentRunner', () => {
     })
   })
 
+  test('records planner writes under .hopi/docs through the worktree symlink', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    await mkdir(join(rootDir, '.hopi', 'docs', 'goals', 'goal-1'), { recursive: true })
+    await writeFile(join(rootDir, '.hopi', 'docs', 'goals', 'goal-1', 'design.md'), 'before\n', 'utf8')
+    const runner = new ProcessAgentRunner({
+      rootDir,
+      worktrees: createWorktreeManager(rootDir),
+      resolveCommand() {
+        return {
+          cmd: ['bun', '-e', "await Bun.write('.hopi/docs/goals/goal-1/design.md', 'after\\n')"],
+          cwdMode: 'worktree',
+        }
+      },
+    })
+
+    await expect(
+      runner.run({
+        ...stepInput(),
+        taskKind: 'planning',
+        role: 'planner',
+      }),
+    ).resolves.toEqual({ kind: 'success' })
+
+    await expect(Bun.file(join(rootDir, '.hopi', 'docs', 'goals', 'goal-1', 'design.md')).text()).resolves.toBe(
+      'after\n',
+    )
+    await expect(createWriteTraceStore(rootDir).readGoalTrace('goal-1')).resolves.toMatchObject({
+      goalKey: 'goal-1',
+      entries: [
+        {
+          role: 'planner',
+          targetPaths: ['.hopi/docs/goals/goal-1/design.md'],
+          changes: [{ path: '.hopi/docs/goals/goal-1/design.md', kind: 'modified' }],
+        },
+      ],
+    })
+  })
+
+  test('ignores concurrent Goal-doc drift while tracing non-planner worktree writes', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    await mkdir(join(rootDir, '.hopi', 'docs', 'goals', 'goal-1'), { recursive: true })
+    const todoPath = join(rootDir, '.hopi', 'docs', 'goals', 'goal-1', 'todo.yml')
+    await writeFile(todoPath, 'version: 1\ngoal:\n  goalKey: goal-1\n  title: Goal 1\nitems: []\n', 'utf8')
+
+    const runner = new ProcessAgentRunner({
+      rootDir,
+      worktrees: createWorktreeManager(rootDir),
+      resolveCommand() {
+        return {
+          cmd: [
+            'bun',
+            '-e',
+            "await new Promise((resolve) => setTimeout(resolve, 100)); await Bun.write('marker.txt', 'ok\\n')",
+          ],
+          cwdMode: 'worktree',
+        }
+      },
+    })
+
+    const drift = new Promise<void>((resolve) => {
+      setTimeout(async () => {
+        await Bun.write(
+          todoPath,
+          'version: 1\ngoal:\n  goalKey: goal-1\n  title: Goal 1\nitems:\n  - ref: T-1\n    kind: engineering\n    status: planned\n    title: Task T-1\n    blockedBy: []\n',
+        )
+        resolve()
+      }, 20)
+    })
+
+    await expect(runner.run(stepInput())).resolves.toEqual({ kind: 'success' })
+    await drift
+    await expect(createWriteTraceStore(rootDir).readGoalTrace('goal-1')).resolves.toMatchObject({
+      goalKey: 'goal-1',
+      entries: [
+        {
+          role: 'generator',
+          targetPaths: ['marker.txt'],
+          changes: [{ path: 'marker.txt', kind: 'added' }],
+        },
+      ],
+    })
+  })
+
+  test('allows generator to create project Browser Harness scenarios in its worktree', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const runner = new ProcessAgentRunner({
+      rootDir,
+      worktrees: createWorktreeManager(rootDir),
+      resolveCommand() {
+        return {
+          cmd: [
+            'bun',
+            '-e',
+            "await Bun.write('scripts/hopi/browser-harness/scenarios/layout.py', 'print(\"ok\")\\n')",
+          ],
+          cwdMode: 'worktree',
+        }
+      },
+    })
+
+    await expect(runner.run(stepInput())).resolves.toEqual({ kind: 'success' })
+    await expect(createWriteTraceStore(rootDir).readGoalTrace('goal-1')).resolves.toMatchObject({
+      entries: [
+        {
+          role: 'generator',
+          targetPaths: ['scripts/hopi/browser-harness/scenarios/layout.py'],
+        },
+      ],
+    })
+  })
+
+  test('fails closed when planner creates project Browser Harness scenarios', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const runner = new ProcessAgentRunner({
+      rootDir,
+      worktrees: createWorktreeManager(rootDir),
+      resolveCommand() {
+        return {
+          cmd: [
+            'bun',
+            '-e',
+            "await Bun.write('scripts/hopi/browser-harness/scenarios/layout.py', 'print(\"planner\")\\n')",
+          ],
+          cwdMode: 'worktree',
+        }
+      },
+    })
+
+    await expect(
+      runner.run({
+        ...stepInput(),
+        taskKind: 'planning',
+        role: 'planner',
+      }),
+    ).rejects.toThrow('forbidden planner worktree writes detected')
+  })
+
+  test('syncs Browser Harness artifacts from worktree runtime to canonical runtime', async () => {
+    const rootDir = await initGitRepo(testRoot())
+    const worktreeArtifactDir = join(
+      rootDir,
+      '.hopi',
+      'worktrees',
+      'goal-1',
+      'T-1',
+      'run-1',
+      '.hopi-runtime',
+      'goals',
+      'goal-1',
+      'runs',
+      'run-1',
+      'step-1',
+      'browser-harness',
+    )
+    const canonicalArtifactDir = join(
+      rootDir,
+      '.hopi',
+      'runtime',
+      'goals',
+      'goal-1',
+      'runs',
+      'run-1',
+      'step-1',
+      'browser-harness',
+    )
+    const runner = new ProcessAgentRunner({
+      rootDir,
+      worktrees: createWorktreeManager(rootDir),
+      resolveCommand() {
+        return {
+          cmd: [
+            'bun',
+            '-e',
+            "await Bun.write(`${process.env.HOPI_BROWSER_HARNESS_ARTIFACT_DIR}/layout.txt`, 'verified\\n')",
+          ],
+          cwdMode: 'worktree',
+          browserHarnessArtifactDir: worktreeArtifactDir,
+          canonicalBrowserHarnessArtifactDir: canonicalArtifactDir,
+          env: {
+            HOPI_BROWSER_HARNESS_ARTIFACT_DIR: worktreeArtifactDir,
+          },
+        }
+      },
+    })
+
+    await expect(runner.run(stepInput())).resolves.toEqual({ kind: 'success' })
+    await expect(Bun.file(join(canonicalArtifactDir, 'layout.txt')).text()).resolves.toBe(
+      'verified\n',
+    )
+  })
+
   test('records a durable write trace for root-mode file writes', async () => {
     const rootDir = await initGitRepo(testRoot())
     const runner = new ProcessAgentRunner({
@@ -302,6 +493,7 @@ describe('ProcessAgentRunner', () => {
       },
     ])
   })
+
 })
 
 function stepInput() {

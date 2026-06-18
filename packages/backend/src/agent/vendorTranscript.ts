@@ -49,6 +49,10 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     objectValue(objectValue(objectValue(parsed)?.params)?.item)
   const itemType = stringValue(item?.type)
 
+  if (itemType === 'command_execution') {
+    return normalizeCodexCommandExecutionEvent(eventType, item)
+  }
+
   if (itemType === 'agent_message') {
     const text = extractText(item)
     return text
@@ -82,6 +86,19 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     ]
   }
 
+  const itemText = extractText(item)
+  if (itemText) {
+    return [
+      transcriptEvent('codex', 'status', itemText, {
+        vendorEventType: eventType ?? 'item/completed',
+      }),
+    ]
+  }
+
+  if (shouldIgnoreCodexLifecycleStatus(eventType)) {
+    return []
+  }
+
   if (eventType) {
     return [
       transcriptEvent('codex', 'status', humanizeEventType(eventType), {
@@ -91,6 +108,48 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   return [transcriptEvent('codex', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function normalizeCodexCommandExecutionEvent(
+  eventType: string | undefined,
+  item: Record<string, unknown> | undefined,
+): AgentRuntimeEvent[] {
+  const normalizedEventType = normalizeEventType(eventType)
+  const commandDetail =
+    stringValue(item?.command) ?? extractCommandDetail(item ?? {})
+  const invocationKey = stringValue(item?.id) ?? extractToolInvocationKey(item, 'tool_call')
+  const toolName = 'command'
+
+  if (normalizedEventType === 'item.started') {
+    return [
+      transcriptEvent('codex', 'tool_call', `Tool call: ${toolName}${commandDetail ? ` (${commandDetail})` : ''}`, {
+        toolName,
+        toolInvocationKey: invocationKey ?? undefined,
+        vendorEventType: eventType ?? 'item.started',
+      }),
+    ]
+  }
+
+  if (normalizedEventType === 'item.completed') {
+    return [
+      transcriptEvent(
+        'codex',
+        'tool_result',
+        extractCodexCommandExecutionResult(item, commandDetail),
+        {
+          toolName,
+          toolInvocationKey: invocationKey ?? undefined,
+          vendorEventType: eventType ?? 'item.completed',
+        },
+      ),
+    ]
+  }
+
+  return [
+    transcriptEvent('codex', 'status', humanizeEventType(eventType ?? 'command execution'), {
+      vendorEventType: eventType,
+    }),
+  ]
 }
 
 function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
@@ -472,6 +531,7 @@ function extractText(value: unknown): string | undefined {
     stringValue(record.text) ??
     stringValue(record.content) ??
     stringValue(record.message) ??
+    stringValue(record.aggregated_output) ??
     extractText(record.content) ??
     extractText(record.message) ??
     extractText(record.result)
@@ -480,6 +540,34 @@ function extractText(value: unknown): string | undefined {
 
 function humanizeEventType(eventType: string) {
   return compactSummary(eventType.replaceAll(/[./_]+/g, ' '))
+}
+
+function normalizeEventType(eventType: string | undefined) {
+  return eventType?.trim().toLowerCase().replaceAll('/', '.')
+}
+
+function shouldIgnoreCodexLifecycleStatus(eventType: string | undefined) {
+  const normalized = normalizeEventType(eventType)
+  return normalized === 'item.completed' || normalized === 'item.started'
+}
+
+function extractCodexCommandExecutionResult(
+  item: Record<string, unknown> | undefined,
+  commandDetail: string | undefined,
+) {
+  const aggregatedOutput = stringValue(item?.aggregated_output)
+  if (aggregatedOutput) {
+    return aggregatedOutput
+  }
+
+  const exitCode = typeof item?.exit_code === 'number' ? item.exit_code : null
+  if (exitCode !== null) {
+    return exitCode === 0
+      ? `Command completed successfully.${commandDetail ? ` (${commandDetail})` : ''}`
+      : `Command exited with code ${exitCode}.${commandDetail ? ` (${commandDetail})` : ''}`
+  }
+
+  return `Command completed.${commandDetail ? ` (${commandDetail})` : ''}`
 }
 
 function compactSummary(value: string) {

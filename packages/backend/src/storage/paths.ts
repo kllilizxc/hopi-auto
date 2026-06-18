@@ -3,6 +3,8 @@ import { join } from 'node:path'
 export interface ProjectPaths {
   rootDir: string
   goalDir(goalKey: string): string
+  goalAssetsDir(goalKey: string): string
+  goalAssetPath(goalKey: string, assetPath: string): string
   goalMarkdownPath(goalKey: string): string
   designMarkdownPath(goalKey: string): string
   todoPath(goalKey: string): string
@@ -29,6 +31,9 @@ export interface ProjectPaths {
   runtimeOutcomePath(goalKey: string, runId: string, stepId: string): string
   attemptsPath(): string
   runHistoryPath(goalKey: string): string
+  executionStatePath(goalKey: string): string
+  actionRequiredNotificationsPath(goalKey: string): string
+  workerLeasesPath(): string
   worktreesDir(): string
   worktreePath(goalKey: string, taskRef: string, runId: string): string
 }
@@ -38,6 +43,12 @@ export function createProjectPaths(rootDir = process.cwd()): ProjectPaths {
     rootDir,
     goalDir(goalKey: string) {
       return join(rootDir, '.hopi', 'docs', 'goals', goalKey)
+    },
+    goalAssetsDir(goalKey: string) {
+      return join(this.goalDir(goalKey), 'assets')
+    },
+    goalAssetPath(goalKey: string, assetPath: string) {
+      return join(this.goalDir(goalKey), assetPath)
     },
     goalMarkdownPath(goalKey: string) {
       return join(this.goalDir(goalKey), 'goal.md')
@@ -55,10 +66,10 @@ export function createProjectPaths(rootDir = process.cwd()): ProjectPaths {
       return join(this.goalDir(goalKey), 'planning-requests.yml')
     },
     eventsPath(goalKey: string) {
-      return join(this.goalDir(goalKey), 'events.jsonl')
+      return join(this.runtimeGoalDir(goalKey), 'events.jsonl')
     },
     writeTracePath(goalKey: string) {
-      return join(this.goalDir(goalKey), 'write-trace.jsonl')
+      return join(this.runtimeGoalDir(goalKey), 'write-trace.jsonl')
     },
     preferencePath() {
       return join(rootDir, '.hopi', 'preference.md')
@@ -116,6 +127,15 @@ export function createProjectPaths(rootDir = process.cwd()): ProjectPaths {
     },
     runHistoryPath(goalKey: string) {
       return join(this.runtimeGoalDir(goalKey), 'run-history.json')
+    },
+    executionStatePath(goalKey: string) {
+      return join(this.runtimeGoalDir(goalKey), 'execution-state.json')
+    },
+    actionRequiredNotificationsPath(goalKey: string) {
+      return join(this.runtimeGoalDir(goalKey), 'notifications.json')
+    },
+    workerLeasesPath() {
+      return join(this.runtimeDir(), 'worker-leases.json')
     },
     worktreesDir() {
       return join(rootDir, '.hopi', 'worktrees')

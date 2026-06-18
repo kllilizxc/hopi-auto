@@ -72,6 +72,16 @@ async function acquireLock(
       await handle.close()
       return
     } catch (error) {
+      if (isMissingFileError(error)) {
+        await mkdir(dirname(lockPath), { recursive: true })
+        if (attempt === retries) {
+          throw error
+        }
+        await Bun.sleep(delayMs)
+        delayMs *= 2
+        continue
+      }
+
       if (!isFileExistsError(error)) {
         throw error
       }

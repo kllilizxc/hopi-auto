@@ -6,6 +6,7 @@ export const FAILURE_KINDS = [
   'reviewer_rejected',
   'merge_conflict',
   'planning_follow_through_missing',
+  'planning_task_graph_invalid',
   'timeout',
 ] as const
 
@@ -27,6 +28,7 @@ export interface TaskItem {
   description: string
   acceptanceCriteria: string[]
   blockedBy: BlockerRef[]
+  attachmentAssetPaths?: string[]
 }
 
 export interface TodoBoard {

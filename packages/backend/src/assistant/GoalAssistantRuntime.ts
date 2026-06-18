@@ -2,10 +2,13 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/AgentRunner'
-import { agentAdapterConfigSchema } from '../agent/adapterConfig'
+import {
+  readAndMigrateAgentAdapterConfig,
+  resolveAssistantTransportConfig,
+} from '../agent/adapterConfig'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { resolveConfiguredTransportCommand } from '../agent/vendorTransport'
-import type { TaskItem, TaskStatus } from '../domain/board'
+import type { BlockerRef, TaskItem, TaskStatus } from '../domain/board'
 import {
   listInterpretableFollowThroughAnswerCandidateGroups,
   materializeInterpretedDecisionBundle,
@@ -17,6 +20,7 @@ import {
   type AssistantThreadStore,
   createAssistantThreadStore,
 } from '../runtime/assistantThreadStore'
+import { type AttemptStore, createAttemptStore } from '../runtime/attemptStore'
 import {
   answerGoalDecision,
   answerGoalDecisions,
@@ -31,6 +35,12 @@ import {
 } from '../runtime/planningRequest'
 import { type BoardStore, createBoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
+import {
+  type GoalAttachmentRef,
+  type GoalAttachmentStore,
+  createGoalAttachmentStore,
+  mergeGoalAttachmentRefs,
+} from '../storage/goalAttachmentStore'
 import { createProjectPaths } from '../storage/paths'
 import {
   type PlanningRequestStore,
@@ -58,12 +68,26 @@ const assistantOutcomeSchema = z.object({
   actions: z.array(assistantActionSchema).default([]),
 })
 
+const RETRYABLE_ASSISTANT_BLOCKER_KINDS = new Set<BlockerRef['kind']>([
+  'intervention',
+  'merge_conflict',
+])
+
 export interface GoalAssistantRuntime {
   isConfigured(): Promise<boolean>
-  run(input: { goalKey: string; content: string }): Promise<GoalAssistantRunRecord>
+  run(input: {
+    goalKey: string
+    content: string
+    images?: File[]
+    attachments?: GoalAttachmentRef[]
+    appendUserMessage?: boolean
+    onRunStarted?(assistantRunId: string): Promise<void> | void
+    onEvent?(event: AgentRuntimeEvent, assistantRunId: string): Promise<void> | void
+  }): Promise<GoalAssistantRunRecord>
 }
 
 export class GoalAssistantNotConfiguredError extends Error {}
+export class GoalAssistantAttachmentTransportError extends Error {}
 
 export function createGoalAssistantRuntime(
   rootDir = process.cwd(),
@@ -72,6 +96,7 @@ export function createGoalAssistantRuntime(
   planningRequests: PlanningRequestStore = createPlanningRequestStore(rootDir),
   preferences: PreferenceStore = createPreferenceStore(rootDir),
   threadStore: AssistantThreadStore = createAssistantThreadStore(rootDir),
+  attachments: GoalAttachmentStore = createGoalAttachmentStore(rootDir),
   contextBuilder: GoalAssistantContextBuilder = createGoalAssistantContextBuilder(
     rootDir,
     boardStore,
@@ -80,36 +105,58 @@ export function createGoalAssistantRuntime(
     preferences,
     threadStore,
   ),
+  attempts: AttemptStore = createAttemptStore(rootDir),
 ): GoalAssistantRuntime {
   const paths = createProjectPaths(rootDir)
 
   return {
     async isConfigured() {
       const config = await readAdapterConfig(paths.adapterConfigPath())
-      return Boolean(config?.assistant)
+      return Boolean(config)
     },
     async run(input) {
       const config = await readAdapterConfig(paths.adapterConfigPath())
-      if (!config?.assistant) {
+      if (!config) {
         throw new GoalAssistantNotConfiguredError('Goal assistant is not configured.')
       }
-      if (config.assistant.cwdMode !== 'root') {
+      const assistantConfig = resolveAssistantTransportConfig(config)
+      if (assistantConfig.cwdMode !== 'root') {
         throw new Error('Goal assistant transports must use root cwdMode.')
+      }
+      if (
+        ((input.images?.length ?? 0) > 0 || (input.attachments?.length ?? 0) > 0) &&
+        assistantConfig.transport !== 'codex'
+      ) {
+        throw new GoalAssistantAttachmentTransportError(
+          'Goal assistant image attachments require a Codex assistant transport.',
+        )
       }
 
       const assistantRunId = crypto.randomUUID()
       const startedAt = new Date().toISOString()
+      await input.onRunStarted?.(assistantRunId)
       const events: AgentRuntimeEvent[] = []
       const actionResults: GoalAssistantActionResult[] = []
-      await threadStore.appendUserMessage(input.goalKey, input.content)
+      const persistedAttachments = mergeGoalAttachmentRefs(
+        input.attachments?.length
+          ? await attachments.resolveGoalAttachments(input.goalKey, input.attachments)
+          : [],
+        input.images && input.images.length > 0
+          ? await attachments.persistAssistantImages(input.goalKey, input.images)
+          : [],
+      )
+      if (input.appendUserMessage !== false) {
+        await threadStore.appendUserMessage(input.goalKey, input.content, persistedAttachments)
+      }
 
       try {
         const bundle = await contextBuilder.prepareBundle({
           goalKey: input.goalKey,
           assistantRunId,
+          attachments: persistedAttachments,
         })
         const command = await resolveConfiguredTransportCommand({
-          config: config.assistant,
+          config: assistantConfig,
           bundle,
           input: {
             goalKey: input.goalKey,
@@ -118,10 +165,13 @@ export function createGoalAssistantRuntime(
             role: 'assistant',
           },
         })
-        const outcome = await runAssistantCommand(rootDir, command, events)
+        const outcome = await runAssistantCommand(rootDir, command, events, async (event) => {
+          await input.onEvent?.(event, assistantRunId)
+        })
         await threadStore.appendEntry(input.goalKey, {
           kind: 'assistant_message',
           content: outcome.message,
+          mergeKey: assistantRunMergeKey(assistantRunId),
         })
 
         for (const action of outcome.actions) {
@@ -136,6 +186,8 @@ export function createGoalAssistantRuntime(
             decisions,
             planningRequests,
             preferences,
+            availableAttachments: persistedAttachments,
+            attempts,
           })
           actionResults.push(result)
           await threadStore.appendEntry(input.goalKey, {
@@ -153,6 +205,7 @@ export function createGoalAssistantRuntime(
           startedAt,
           endedAt,
           requestContent: input.content,
+          attachments: persistedAttachments,
           status: 'completed',
           message: outcome.message,
           actions: outcome.actions,
@@ -169,6 +222,7 @@ export function createGoalAssistantRuntime(
           startedAt,
           endedAt,
           requestContent: input.content,
+          attachments: persistedAttachments,
           status: 'failed',
           message: '',
           actions: [],
@@ -190,8 +244,414 @@ async function applyAssistantAction(
     decisions: DecisionStore
     planningRequests: PlanningRequestStore
     preferences: PreferenceStore
+    availableAttachments: GoalAttachmentRef[]
+    attempts: AttemptStore
   },
 ): Promise<GoalAssistantActionResult> {
+  if (action.kind === 'retry_task') {
+    let retriedTask: TaskItem | undefined
+    let clearedBlockers: Array<{ kind: 'intervention' | 'merge_conflict'; ref: string }> = []
+    await stores.boardStore.mutateBoard(
+      goalKey,
+      'assistant',
+      `assistant retry ${action.taskRef}`,
+      (board) => {
+        const task = board.items.find((item) => item.ref === action.taskRef)
+        if (!task) {
+          throw new Error(`Task not found: ${action.taskRef}`)
+        }
+        if (task.status === 'done') {
+          throw new Error(`Cannot retry completed task: ${action.taskRef}`)
+        }
+
+        const retryableBlockers = task.blockedBy.filter((blocker) =>
+          RETRYABLE_ASSISTANT_BLOCKER_KINDS.has(blocker.kind),
+        )
+        if (retryableBlockers.length === 0) {
+          throw new Error(`Task ${action.taskRef} has no retryable blockers to clear.`)
+        }
+
+        const blockersToClear =
+          action.clearBlockers.length === 0
+            ? retryableBlockers
+            : action.clearBlockers.map((requested) => {
+                const match = task.blockedBy.find(
+                  (blocker) =>
+                    blocker.kind === requested.kind && blocker.ref === requested.ref,
+                )
+                if (!match) {
+                  throw new Error(
+                    `Task ${action.taskRef} does not have blocker ${requested.kind}:${requested.ref}.`,
+                  )
+                }
+                return match
+              })
+
+        const blockerKeys = new Set(
+          blockersToClear.map((blocker) => `${blocker.kind}:${blocker.ref}`),
+        )
+        task.blockedBy = task.blockedBy.filter(
+          (blocker) => !blockerKeys.has(`${blocker.kind}:${blocker.ref}`),
+        )
+        clearedBlockers = blockersToClear.map((blocker) => ({
+          kind: blocker.kind as 'intervention' | 'merge_conflict',
+          ref: blocker.ref,
+        }))
+        retriedTask = cloneTaskItem(task)
+      },
+    )
+    await stores.attempts.resetTask(action.taskRef)
+
+    return {
+      kind: 'retry_task',
+      taskRef: action.taskRef,
+      status: retriedTask?.status ?? 'planned',
+      clearedBlockers,
+      task: retriedTask,
+      summary:
+        clearedBlockers.length === 1
+          ? `Cleared retryable blocker ${clearedBlockers[0]!.kind}:${clearedBlockers[0]!.ref} from ${action.taskRef}.`
+          : `Cleared ${clearedBlockers.length} retryable blockers from ${action.taskRef}.`,
+    }
+  }
+
+  if (action.kind === 'request_planning') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
+    if (action.mode === 'batch') {
+      const materialized = materializeInterpretedPlanningBatchInput(
+        {
+          groupKey: action.groupKey,
+          decisionRefs: action.decisionRefs,
+          answers: action.answers,
+          requests: action.requests,
+          inferRemainingAnswers: action.inferRemainingAnswers,
+        },
+        action.sourceResponse,
+        action.answerSources,
+        action.sourceResponseFormat,
+      )
+      const result = await requestGoalPlanningBatch(
+        {
+          boardStore: stores.boardStore,
+          planningRequests: stores.planningRequests,
+        },
+        {
+          goalKey,
+          groupKey: materialized.groupKey,
+          decisionRefs: materialized.decisionRefs,
+          answers: materialized.answers,
+          attachments: actionAttachments,
+          requests: materialized.requests,
+          writer: 'assistant',
+          reason: `assistant request planning batch ${materialized.groupKey}`,
+        },
+      )
+
+      return {
+        kind: 'request_planning',
+        mode: 'batch',
+        groupKey: result.groupKey,
+        requestKeys: result.entries.map((entry) => entry.requestKey),
+        taskRefs: result.entries.map((entry) => entry.taskRef),
+        requests: result.requests,
+        blockerTaskRefs: await listGroupedPlanningSinkTaskRefs(
+          {
+            boardStore: stores.boardStore,
+            planningRequests: stores.planningRequests,
+          },
+          {
+            goalKey,
+            groupKey: result.groupKey,
+          },
+        ),
+        createdRequestKeys: result.entries
+          .filter((entry) => entry.created)
+          .map((entry) => entry.requestKey),
+        createdTaskRefs: result.entries
+          .filter((entry) => entry.taskCreated)
+          .map((entry) => entry.taskRef),
+        resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
+        summary: `Requested grouped planning follow-through ${result.groupKey} across ${result.entries.map((entry) => entry.taskRef).join(', ')}.`,
+      }
+    }
+
+    if (action.mode === 'workflow') {
+      const materialized = materializeInterpretedPlanningWorkflowBatchInput(
+        {
+          workflowKey: action.workflowKey,
+          reuseTaskRef: action.reuseTaskRef,
+          reuseGroupKey: action.reuseGroupKey,
+          decisionRefs: action.decisionRefs,
+          answers: action.answers,
+          workflows: action.workflows,
+          inferRemainingAnswers: action.inferRemainingAnswers,
+        },
+        action.sourceResponse,
+        action.answerSources,
+        action.sourceResponseFormat,
+      )
+      const result = await requestGoalPlanningWorkflows(
+        {
+          boardStore: stores.boardStore,
+          planningRequests: stores.planningRequests,
+        },
+        {
+          goalKey,
+          workflowKey: materialized.workflowKey,
+          reuseTaskRef: materialized.reuseTaskRef,
+          reuseGroupKey: materialized.reuseGroupKey,
+          decisionRefs: materialized.decisionRefs,
+          answers: materialized.answers,
+          attachments: actionAttachments,
+          workflows: [...materialized.workflows] as Parameters<
+            typeof requestGoalPlanningWorkflows
+          >[1]['workflows'],
+          writer: 'assistant',
+          reason: 'assistant request planning workflows',
+        },
+      )
+
+      return {
+        kind: 'request_planning',
+        mode: 'workflow',
+        workflowKey: result.workflowKey,
+        groupKeys: result.groupKeys,
+        workflows: result.workflows,
+        requestKeys: result.requestKeys,
+        taskRefs: result.taskRefs,
+        requests: result.requests,
+        blockerTaskRefs: result.blockerTaskRefs,
+        createdRequestKeys: result.createdRequestKeys,
+        createdTaskRefs: result.createdTaskRefs,
+        resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
+        summary: result.workflowKey
+          ? `Updated planning workflow ${result.workflowKey} across ${result.taskRefs.join(', ')}.`
+          : `Requested planning workflows across ${result.taskRefs.join(', ')}.`,
+      }
+    }
+
+    const materialized = materializeInterpretedPlanningInput(
+      {
+        groupKey: action.groupKey,
+        title: action.title,
+        description: action.description,
+        acceptanceCriteria: action.acceptanceCriteria,
+        decisionRefs: action.decisionRefs,
+        answers: action.answers,
+        requestedUpdates: action.requestedUpdates,
+        blockedBy: action.blockedBy,
+        inferRemainingAnswers: action.inferRemainingAnswers,
+      },
+      action.sourceResponse,
+      action.answerSources,
+      action.sourceResponseFormat,
+    )
+    const result = await requestGoalPlanning(
+      {
+        boardStore: stores.boardStore,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        groupKey: materialized.groupKey,
+        title: materialized.title,
+        description: materialized.description,
+        acceptanceCriteria: materialized.acceptanceCriteria,
+        decisionRefs: materialized.decisionRefs,
+        answers: materialized.answers,
+        attachments: actionAttachments,
+        requestedUpdates: materialized.requestedUpdates,
+        blockedBy: materialized.blockedBy,
+        writer: 'assistant',
+        reason: `assistant request planning ${materialized.title}`,
+      },
+    )
+
+    return {
+      kind: 'request_planning',
+      mode: 'single',
+      requestKey: result.request.requestKey,
+      taskRef: result.request.taskRef,
+      request: result.request,
+      created: result.created,
+      taskCreated: result.taskCreated,
+      resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
+      summary: result.created
+        ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
+        : `Planning request already open in ${result.request.requestKey} for ${result.request.taskRef}.`,
+    }
+  }
+
+  if (action.kind === 'request_decision') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
+    const result = await requestGoalDecision(
+      {
+        boardStore: stores.boardStore,
+        decisions: stores.decisions,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        decisionKey: action.decisionKey,
+        summary: action.summary,
+        summaryKey: action.summaryKey,
+        prompt: action.prompt,
+        matchHints: action.matchHints,
+        taskRef: action.taskRef,
+        attachments: actionAttachments,
+        writer: 'assistant',
+        reason: `assistant request decision ${action.decisionKey}`,
+      },
+    )
+
+    if (result.decision.status === 'resolved') {
+      return {
+        kind: 'request_decision',
+        decisionKey: result.decision.decisionKey,
+        decision: result.decision,
+        created: result.created,
+        blockerAdded: result.blockerAdded,
+        decisionStatus: result.decision.status,
+        summary: `Decision ${result.decision.decisionKey} is already resolved.`,
+      }
+    }
+
+    return {
+      kind: 'request_decision',
+      decisionKey: result.decision.decisionKey,
+      decision: result.decision,
+      created: result.created,
+      blockerAdded: result.blockerAdded,
+      decisionStatus: result.decision.status,
+      summary: result.blockerAdded
+        ? `Requested decision ${result.decision.decisionKey} and linked it to ${action.taskRef}.`
+        : result.created
+          ? `Requested decision ${result.decision.decisionKey}.`
+          : `Decision ${result.decision.decisionKey} is already open.`,
+    }
+  }
+
+  if (action.kind === 'resolve_decisions') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
+    const current = await stores.decisions.readGoalDecisions(goalKey)
+    const materialized = materializeInterpretedDecisionBundle({
+      answers: action.answers,
+      openDecisions: current.decisions
+        .filter((decision) => decision.status === 'open')
+        .map((decision) => ({
+          decisionKey: decision.decisionKey,
+          summary: decision.summary,
+          summaryKey: decision.summaryKey,
+          prompt: decision.prompt,
+          matchHints: decision.matchHints,
+          taskRef: decision.taskRef,
+        })),
+      inferOpenDecisions: action.inferOpenDecisions ?? false,
+      sourceResponse: action.sourceResponse,
+      answerSources: action.answerSources,
+      sourceResponseFormat: action.sourceResponseFormat,
+      inferDecisionTopics: action.inferDecisionTopics ?? false,
+      knownDecisions: current.decisions.map((decision) => ({
+        decisionKey: decision.decisionKey,
+        summary: decision.summary,
+        summaryKey: decision.summaryKey,
+        prompt: decision.prompt,
+        matchHints: decision.matchHints,
+        taskRef: decision.taskRef,
+      })),
+      followThrough: action.followThrough,
+      reservedAnswerCandidates: listInterpretableFollowThroughAnswerCandidateGroups(
+        action.followThrough,
+      ),
+    })
+    const result = await answerGoalDecisions(
+      {
+        boardStore: stores.boardStore,
+        decisions: stores.decisions,
+        planningRequests: stores.planningRequests,
+      },
+      {
+        goalKey,
+        answers: materialized.answers,
+        attachments: actionAttachments,
+        followThrough: materialized.followThrough,
+        writer: 'assistant',
+        reason: `assistant resolve decisions ${materialized.answers
+          .map((answer) => answer.decisionKey ?? answer.summary)
+          .join(', ')}`,
+      },
+    )
+    return {
+      kind: 'resolve_decisions',
+      decisionKeys: result.decisions.map((decision) => decision.decisionKey),
+      decisions: result.decisions,
+      createdDecisionKeys: result.createdDecisionKeys,
+      blockerRemoved: result.blockerRemoved,
+      resolvedSourceResponseFormat: materialized.sourceResponseFormat,
+      followThrough: result.followThrough,
+      summary: summarizeResolvedDecisionsResult(result),
+    }
+  }
+
+  if (action.kind === 'set_preference') {
+    if (action.mode === 'retire') {
+      const document = await stores.preferences.retirePreference({
+        preferenceKey: action.preferenceKey,
+        reason: action.reason,
+        supersededBy: action.supersededBy,
+      })
+      return {
+        kind: 'set_preference',
+        mode: 'retire',
+        preferenceKey: action.preferenceKey,
+        reason: action.reason,
+        supersededBy: action.supersededBy,
+        preference: (() => {
+          const entry = document.entries.find((item) => item.preferenceKey === action.preferenceKey)
+          return entry ? clonePreferenceEntry(entry) : undefined
+        })(),
+        retiredPreferenceKeys: [action.preferenceKey],
+        summary: `Retired durable preference: ${action.preferenceKey}`,
+      }
+    }
+
+    const document = await stores.preferences.recordPreference({
+      preferenceKey: action.preferenceKey,
+      summary: action.summary,
+      rationale: action.rationale,
+      supersedes: action.supersedes,
+    })
+    const preferenceKey = action.preferenceKey ?? slugifyPreferenceSummary(action.summary)
+    return {
+      kind: 'set_preference',
+      mode: 'upsert',
+      preferenceKey,
+      preferenceSummary: action.summary,
+      rationale: action.rationale,
+      preference: (() => {
+        const entry = document.entries.find((item) => item.preferenceKey === preferenceKey)
+        return entry ? clonePreferenceEntry(entry) : undefined
+      })(),
+      retiredPreferences:
+        action.supersedes && action.supersedes.length > 0
+          ? document.entries
+              .filter((entry) => action.supersedes?.includes(entry.preferenceKey))
+              .map((entry) => clonePreferenceEntry(entry))
+          : undefined,
+      retiredPreferenceKeys: action.supersedes ?? [],
+      summary: `Recorded durable preference: ${action.summary}`,
+    }
+  }
+
   if (action.kind === 'move_task') {
     let previousStatus: TaskStatus | undefined
     let movedTask: TaskItem | undefined
@@ -239,7 +699,7 @@ async function applyAssistantAction(
           title: action.title,
           description: action.description,
           acceptanceCriteria: action.acceptanceCriteria,
-          blockedBy: action.blockedBy,
+          blockedBy: action.blockedBy ?? [],
         }
         board.items.push(task)
         createdTask = cloneTaskItem(task)
@@ -254,58 +714,11 @@ async function applyAssistantAction(
     }
   }
 
-  if (action.kind === 'request_planning') {
-    const materialized = materializeInterpretedPlanningInput(
-      {
-        groupKey: action.groupKey,
-        title: action.title,
-        description: action.description,
-        acceptanceCriteria: action.acceptanceCriteria,
-        decisionRefs: action.decisionRefs,
-        answers: action.answers,
-        requestedUpdates: action.requestedUpdates,
-        blockedBy: action.blockedBy,
-        inferRemainingAnswers: action.inferRemainingAnswers,
-      },
-      action.sourceResponse,
-      action.answerSources,
-      action.sourceResponseFormat,
-    )
-    const result = await requestGoalPlanning(
-      {
-        boardStore: stores.boardStore,
-        planningRequests: stores.planningRequests,
-      },
-      {
-        goalKey,
-        groupKey: materialized.groupKey,
-        title: materialized.title,
-        description: materialized.description,
-        acceptanceCriteria: materialized.acceptanceCriteria,
-        decisionRefs: materialized.decisionRefs,
-        answers: materialized.answers,
-        requestedUpdates: materialized.requestedUpdates,
-        blockedBy: materialized.blockedBy,
-        writer: 'assistant',
-        reason: `assistant request planning ${materialized.title}`,
-      },
-    )
-
-    return {
-      kind: 'request_planning',
-      requestKey: result.request.requestKey,
-      taskRef: result.request.taskRef,
-      request: result.request,
-      created: result.created,
-      taskCreated: result.taskCreated,
-      resolvedSourceResponseFormat: materialized.resolvedSourceResponseFormat,
-      summary: result.created
-        ? `Requested planning follow-through in ${result.request.requestKey} for ${result.request.taskRef}.`
-        : `Planning request already open in ${result.request.requestKey} for ${result.request.taskRef}.`,
-    }
-  }
-
   if (action.kind === 'request_planning_batch') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
     const materialized = materializeInterpretedPlanningBatchInput(
       {
         groupKey: action.groupKey,
@@ -328,6 +741,7 @@ async function applyAssistantAction(
         groupKey: materialized.groupKey,
         decisionRefs: materialized.decisionRefs,
         answers: materialized.answers,
+        attachments: actionAttachments,
         requests: materialized.requests,
         writer: 'assistant',
         reason: `assistant request planning batch ${materialized.groupKey}`,
@@ -362,6 +776,10 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'request_planning_workflows') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
     const materialized = materializeInterpretedPlanningWorkflowBatchInput(
       {
         workflowKey: action.workflowKey,
@@ -388,6 +806,7 @@ async function applyAssistantAction(
         reuseGroupKey: materialized.reuseGroupKey,
         decisionRefs: materialized.decisionRefs,
         answers: materialized.answers,
+        attachments: actionAttachments,
         workflows: [...materialized.workflows] as Parameters<
           typeof requestGoalPlanningWorkflows
         >[1]['workflows'],
@@ -414,54 +833,11 @@ async function applyAssistantAction(
     }
   }
 
-  if (action.kind === 'request_decision') {
-    const result = await requestGoalDecision(
-      {
-        boardStore: stores.boardStore,
-        decisions: stores.decisions,
-        planningRequests: stores.planningRequests,
-      },
-      {
-        goalKey,
-        decisionKey: action.decisionKey,
-        summary: action.summary,
-        summaryKey: action.summaryKey,
-        prompt: action.prompt,
-        matchHints: action.matchHints,
-        taskRef: action.taskRef,
-        writer: 'assistant',
-        reason: `assistant request decision ${action.decisionKey}`,
-      },
-    )
-
-    if (result.decision.status === 'resolved') {
-      return {
-        kind: 'request_decision',
-        decisionKey: result.decision.decisionKey,
-        decision: result.decision,
-        created: result.created,
-        blockerAdded: result.blockerAdded,
-        decisionStatus: result.decision.status,
-        summary: `Decision ${result.decision.decisionKey} is already resolved.`,
-      }
-    }
-
-    return {
-      kind: 'request_decision',
-      decisionKey: result.decision.decisionKey,
-      decision: result.decision,
-      created: result.created,
-      blockerAdded: result.blockerAdded,
-      decisionStatus: result.decision.status,
-      summary: result.blockerAdded
-        ? `Requested decision ${result.decision.decisionKey} and linked it to ${action.taskRef}.`
-        : result.created
-          ? `Requested decision ${result.decision.decisionKey}.`
-          : `Decision ${result.decision.decisionKey} is already open.`,
-    }
-  }
-
   if (action.kind === 'resolve_decision') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
     const materialized = materializeInterpretedDecisionBundle({
       answers: [
         {
@@ -509,6 +885,7 @@ async function applyAssistantAction(
         decisionKey: action.decisionKey,
         taskRef: firstAnswer.taskRef,
         answer: firstAnswer.answer,
+        attachments: actionAttachments,
         followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant resolve decision ${action.decisionKey}`,
@@ -526,6 +903,10 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answer') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
     const materialized = materializeInterpretedDecisionBundle({
       answers: [
         {
@@ -573,6 +954,7 @@ async function applyAssistantAction(
         decisionKey: firstAnswer.decisionKey,
         taskRef: firstAnswer.taskRef,
         answer: firstAnswer.answer,
+        attachments: actionAttachments,
         followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant record answer ${action.decisionKey ?? action.summary}`,
@@ -591,6 +973,10 @@ async function applyAssistantAction(
   }
 
   if (action.kind === 'record_answers') {
+    const actionAttachments = resolveActionAttachments(
+      action.attachmentAssetPaths,
+      stores.availableAttachments,
+    )
     const current = await stores.decisions.readGoalDecisions(goalKey)
     const materialized = materializeInterpretedDecisionBundle({
       answers: action.answers,
@@ -632,6 +1018,7 @@ async function applyAssistantAction(
       {
         goalKey,
         answers,
+        attachments: actionAttachments,
         followThrough: materialized.followThrough,
         writer: 'assistant',
         reason: `assistant record answers ${answers
@@ -711,6 +1098,7 @@ async function runAssistantCommand(
   rootDir: string,
   command: Awaited<ReturnType<typeof resolveConfiguredTransportCommand>>,
   events: AgentRuntimeEvent[],
+  onEvent?: (event: AgentRuntimeEvent) => Promise<void> | void,
 ) {
   const child = Bun.spawn(command.cmd, {
     cwd: rootDir,
@@ -732,25 +1120,29 @@ async function runAssistantCommand(
   await Promise.all([
     consumeTextLines(child.stdout, async (line) => {
       stdoutLines.push(line)
-      events.push(
-        ...normalizeProcessOutputLine({
-          format: command.transcriptFormat ?? 'plain',
-          stream: 'stdout',
-          role: 'assistant',
-          line,
-        }),
-      )
+      const normalized = normalizeProcessOutputLine({
+        format: command.transcriptFormat ?? 'plain',
+        stream: 'stdout',
+        role: 'assistant',
+        line,
+      })
+      events.push(...normalized)
+      for (const event of normalized) {
+        await onEvent?.(event)
+      }
     }),
     consumeTextLines(child.stderr, async (line) => {
       stderrLines.push(line)
-      events.push(
-        ...normalizeProcessOutputLine({
-          format: command.transcriptFormat ?? 'plain',
-          stream: 'stderr',
-          role: 'assistant',
-          line,
-        }),
-      )
+      const normalized = normalizeProcessOutputLine({
+        format: command.transcriptFormat ?? 'plain',
+        stream: 'stderr',
+        role: 'assistant',
+        line,
+      })
+      events.push(...normalized)
+      for (const event of normalized) {
+        await onEvent?.(event)
+      }
     }),
   ])
 
@@ -781,16 +1173,7 @@ async function readAdapterConfig(path: string) {
     return null
   }
 
-  const raw = await file.text()
-  const parsed = agentAdapterConfigSchema.safeParse(JSON.parse(raw))
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-      .join(', ')
-    throw new Error(`Invalid adapter config: ${issues}`)
-  }
-
-  return parsed.data
+  return readAndMigrateAgentAdapterConfig(path)
 }
 
 function summarizeResolvedDecisionResult(
@@ -810,6 +1193,29 @@ function summarizeResolvedDecisionResult(
     return `Resolved decision ${decisionKey} and cleared linked blockers.`
   }
   return `Resolved decision ${decisionKey}.`
+}
+
+function summarizeResolvedDecisionsResult(
+  result: Awaited<ReturnType<typeof answerGoalDecisions>>,
+) {
+  const decisionKeys = result.decisions.map((decision) => decision.decisionKey)
+  if (result.followThrough?.kind === 'workflow_batch') {
+    return `Resolved ${decisionKeys.length} decisions and opened ${result.followThrough.workflows.length} planner workflows.`
+  }
+  if (result.followThrough?.kind === 'planning_batch') {
+    return `Resolved ${decisionKeys.length} decisions and routed engineering through grouped planning follow-through ${result.followThrough.groupKey}.`
+  }
+  if (result.followThrough?.kind === 'planning') {
+    return `Resolved ${decisionKeys.length} decisions and routed engineering through planning follow-through ${result.followThrough.taskRefs.join(', ')}.`
+  }
+  if (result.blockerRemoved) {
+    return decisionKeys.length === 1
+      ? `Resolved decision ${decisionKeys[0]} and cleared linked blockers.`
+      : `Resolved ${decisionKeys.length} decisions and cleared linked blockers.`
+  }
+  return decisionKeys.length === 1
+    ? `Resolved decision ${decisionKeys[0]}.`
+    : `Resolved ${decisionKeys.length} decisions.`
 }
 
 function slugifyPreferenceSummary(summary: string) {
@@ -884,6 +1290,36 @@ function nextPlanningTaskRef(existingRefs: string[]) {
     }, 0) + 1
 
   return `P-${nextNumber}`
+}
+
+export function assistantRunMergeKey(assistantRunId: string) {
+  return `assistant-run:${assistantRunId}:assistant`
+}
+
+function resolveActionAttachments(
+  attachmentAssetPaths: string[] | undefined,
+  availableAttachments: GoalAttachmentRef[],
+) {
+  const requestedPaths = attachmentAssetPaths ?? []
+  if (requestedPaths.length === 0) {
+    return []
+  }
+
+  const attachmentByPath = new Map(
+    availableAttachments.map((attachment) => [attachment.assetPath, attachment] as const),
+  )
+  const resolved: GoalAttachmentRef[] = []
+  for (const assetPath of requestedPaths) {
+    const attachment = attachmentByPath.get(assetPath)
+    if (!attachment) {
+      throw new Error(`Unknown assistant attachment asset path: ${assetPath}`)
+    }
+    if (!resolved.some((candidate) => candidate.assetPath === attachment.assetPath)) {
+      resolved.push(attachment)
+    }
+  }
+
+  return resolved
 }
 
 function cloneTaskItem(task: TaskItem): TaskItem {

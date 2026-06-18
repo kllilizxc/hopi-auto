@@ -10,6 +10,7 @@ export interface AttemptStore {
   get(taskRef: string, failureKind: FailureKind): Promise<number>
   increment(taskRef: string, failureKind: FailureKind): Promise<number>
   reset(taskRef: string, failureKind: FailureKind): Promise<void>
+  resetTask(taskRef: string): Promise<void>
 }
 
 export function createAttemptStore(rootDir = process.cwd()): AttemptStore {
@@ -36,6 +37,17 @@ export function createAttemptStore(rootDir = process.cwd()): AttemptStore {
       await withFileLock(lockPath, async () => {
         const attempts = await readAttempts(attemptsPath)
         delete attempts[attemptKey(taskRef, failureKind)]
+        await writeAttemptsAtomically(attemptsPath, attempts)
+      })
+    },
+    async resetTask(taskRef) {
+      await withFileLock(lockPath, async () => {
+        const attempts = await readAttempts(attemptsPath)
+        for (const key of Object.keys(attempts)) {
+          if (key.startsWith(`${taskRef}:`)) {
+            delete attempts[key]
+          }
+        }
         await writeAttemptsAtomically(attemptsPath, attempts)
       })
     },

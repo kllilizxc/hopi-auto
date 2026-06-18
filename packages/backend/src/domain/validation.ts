@@ -1,20 +1,60 @@
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
-import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES, type TodoBoard } from './board'
+import { BLOCKER_KINDS, TASK_KINDS, TASK_STATUSES, type TaskStatus, type TodoBoard } from './board'
+import { normalizeGoalAttachmentAssetPath } from '../storage/goalAttachmentStore'
+
+const LEGACY_TASK_STATUS_ALIASES: ReadonlyMap<string, TaskStatus> = new Map([
+  ['pending', 'planned'],
+])
 
 const BlockerRefSchema = z.object({
   kind: z.enum(BLOCKER_KINDS),
   ref: z.string().min(1),
 })
 
+const TaskAttachmentAssetPathsSchema = z
+  .array(z.string().min(1))
+  .optional()
+  .transform((values, ctx) => {
+    if (!values) {
+      return undefined
+    }
+
+    const normalized: string[] = []
+    const seen = new Set<string>()
+    for (const value of values) {
+      try {
+        const assetPath = normalizeGoalAttachmentAssetPath(value)
+        if (seen.has(assetPath)) {
+          continue
+        }
+        normalized.push(assetPath)
+        seen.add(assetPath)
+      } catch (error) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            error instanceof Error ? error.message : 'Invalid Goal attachment asset path',
+        })
+        return z.NEVER
+      }
+    }
+    return normalized
+  })
+
 const TaskItemSchema = z.object({
   ref: z.string().min(1),
   kind: z.enum(TASK_KINDS),
-  status: z.enum(TASK_STATUSES),
+  status: z.preprocess(
+    (value) =>
+      typeof value === 'string' ? LEGACY_TASK_STATUS_ALIASES.get(value.trim()) ?? value : value,
+    z.enum(TASK_STATUSES),
+  ),
   title: z.string().min(1),
   description: z.string().default(''),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   blockedBy: z.array(BlockerRefSchema).default([]),
+  attachmentAssetPaths: TaskAttachmentAssetPathsSchema,
 })
 
 const TodoBoardSchema = z.object({

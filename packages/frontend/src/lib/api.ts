@@ -15,6 +15,7 @@ export interface TodoTaskItem {
   description: string
   acceptanceCriteria: string[]
   blockedBy: BlockerRef[]
+  running?: boolean
 }
 
 export interface TodoBoard {
@@ -24,6 +25,14 @@ export interface TodoBoard {
     title: string
   }
   items: TodoTaskItem[]
+}
+
+export interface GoalAttachmentRef {
+  assetPath: string
+  fileName: string
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  sizeBytes: number
+  createdAt: string
 }
 
 export interface GoalTaskCreateInput {
@@ -44,8 +53,25 @@ export type AssistantThreadEntry =
   | {
       entryId: string
       createdAt: string
-      kind: 'user_message' | 'assistant_message'
+      kind: 'user_message'
       content: string
+      attachments: GoalAttachmentRef[]
+    }
+  | {
+      entryId: string
+      createdAt: string
+      kind: 'assistant_message'
+      content: string
+      mergeKey?: string
+    }
+  | {
+      entryId: string
+      createdAt: string
+      kind: 'system_message'
+      label: string
+      content: string
+      details: string[]
+      dedupeKey?: string
     }
   | {
       entryId: string
@@ -69,6 +95,11 @@ export interface GoalAssistantThread {
   entries: AssistantThreadEntry[]
 }
 
+export interface GoalAssistantAttachmentUploadResult {
+  goalKey: string
+  attachments: GoalAttachmentRef[]
+}
+
 export interface AssistantRunSummary {
   assistantRunId: string
   startedAt: string
@@ -84,8 +115,68 @@ export interface AssistantRunDetail {
   startedAt: string
   endedAt: string
   requestContent: string
+  attachments?: GoalAttachmentRef[]
   status: 'completed' | 'failed'
   message: string
+}
+
+export type MessageFeedItemKind =
+  | 'user_message'
+  | 'assistant_message'
+  | 'assistant_delta'
+  | 'system_message'
+  | 'tool_call'
+  | 'tool_result'
+  | 'status'
+
+export type MessageFeedRole = 'user' | 'assistant' | 'system'
+
+export interface MessageFeedItem {
+  id: string
+  createdAt: string
+  kind: MessageFeedItemKind
+  role: MessageFeedRole
+  text: string
+  collapsedByDefault: boolean
+  label?: string
+  details?: string[]
+  attachments?: GoalAttachmentRef[]
+  runId?: string
+  stepId?: string
+  stepRole?: AgentRole
+  toolName?: string
+  toolInvocationKey?: string
+  transport?: TranscriptTransport
+  vendorEventType?: string
+  mergeKey?: string
+  pending?: boolean
+  notification?: {
+    kind:
+      | 'task_blocked_intervention'
+      | 'task_blocked_merge_conflict'
+      | 'task_blocked_decision'
+      | 'open_decision'
+      | 'automation_failed'
+    taskRef?: string
+    blocker?: {
+      kind: 'task' | 'decision' | 'merge_conflict' | 'intervention'
+      ref: string
+    }
+    decisionKey?: string
+    actions: Array<'retry_task' | 'answer_decision' | 'inspect_task' | 'open_run'>
+  }
+}
+
+export interface MessageFeedPage {
+  items: MessageFeedItem[]
+  oldestCursor?: string
+  newestCursor?: string
+  hasMoreBefore: boolean
+}
+
+export interface MessageFeedStreamEvent {
+  type: 'connected' | 'item'
+  item?: MessageFeedItem
 }
 
 export type RunStatus = 'active' | 'retryable' | 'completed' | 'blocked' | 'system_error'
@@ -198,6 +289,20 @@ export interface GoalRunDetail {
   steps: GoalRunStep[]
 }
 
+export interface GoalRunStepBundleFile {
+  path: string
+  content: string | null
+}
+
+export interface GoalRunStepBundle {
+  goalKey: string
+  runId: string
+  stepId: string
+  context: GoalRunStepBundleFile
+  prompt: GoalRunStepBundleFile
+  outcome: GoalRunStepBundleFile
+}
+
 export interface AssistantRuntimeEvent {
   kind: 'message' | 'transcript' | 'worktree_prepared' | 'artifact'
   level?: 'info' | 'error'
@@ -262,8 +367,11 @@ export interface GoalAssistantActionFollowThroughInput {
 
 export interface GoalAssistantAction {
   kind: string
+  mode?: 'single' | 'batch' | 'workflow' | 'upsert' | 'retire'
+  attachmentAssetPaths?: string[]
   status?: TaskStatus
   taskRef?: string
+  clearBlockers?: BlockerRef[]
   taskKey?: string
   requestKey?: string
   workflowKey?: string
@@ -313,6 +421,7 @@ export interface GoalAssistantRunDetail {
   startedAt: string
   endedAt: string
   requestContent: string
+  attachments?: GoalAttachmentRef[]
   status: 'completed' | 'failed'
   message: string
   actions: GoalAssistantAction[]
@@ -336,6 +445,7 @@ export interface GoalAssistantPlanningRequestResult {
   taskRef: string
   decisionRefs: string[]
   answers: CapturedAnswer[]
+  attachments?: GoalAttachmentRef[]
   requestedUpdates: string[]
   status: string
   createdAt?: string
@@ -377,9 +487,11 @@ export interface GoalAssistantPreferenceResult {
 
 export interface GoalAssistantActionResult {
   kind: string
+  mode?: 'single' | 'batch' | 'workflow' | 'upsert' | 'retire'
   summary: string
   taskRef?: string
   task?: TodoTaskItem
+  clearedBlockers?: BlockerRef[]
   taskCreated?: boolean
   requestKey?: string
   request?: GoalAssistantPlanningRequestResult
@@ -426,6 +538,7 @@ export interface GoalAssistantRunBundleFile {
 export interface GoalAssistantRunBundle {
   goalKey: string
   assistantRunId: string
+  attachments?: GoalAttachmentRef[]
   context: GoalAssistantRunBundleFile
   prompt: GoalAssistantRunBundleFile
   outcome: GoalAssistantRunBundleFile
@@ -434,7 +547,9 @@ export interface GoalAssistantRunBundle {
 
 export interface GoalEvent {
   type?: string
+  projectKey?: string
   goalKey?: string
+  status?: AutomationStatus
 }
 
 export type GoalDocStatus = 'bootstrapped' | 'curated'
@@ -461,6 +576,7 @@ export interface GoalDecision {
   status: 'open' | 'resolved'
   taskRef?: string
   answer?: string
+  attachments?: GoalAttachmentRef[]
   createdAt: string
   resolvedAt?: string
 }
@@ -538,6 +654,7 @@ export interface GoalPlanningRequest {
   taskRef: string
   decisionRefs: string[]
   answers: CapturedAnswer[]
+  attachments?: GoalAttachmentRef[]
   requestedUpdates: string[]
   status: 'open' | 'resolved'
   createdAt: string
@@ -867,6 +984,55 @@ export interface PreferenceDocument {
   entries: PreferenceEntry[]
 }
 
+export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
+export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+
+export interface ProjectCodingDefaults {
+  transport: CodingAgentTransport
+  model?: string
+  reasoningEffort?: CodingReasoningEffort
+}
+
+export interface ProjectRecord {
+  projectKey: string
+  name: string
+  rootDir: string
+  createdAt: string
+  lastOpenedGoalKey?: string
+  codingDefaults: ProjectCodingDefaults
+}
+
+export interface ProjectGoalSummary {
+  goalKey: string
+  title: string
+  objective?: string
+  createdAt?: string
+}
+
+export type AutomationState = 'idle' | 'running' | 'blocked' | 'failed'
+
+export interface LaneParallelism {
+  in_progress: number
+  in_review: number
+  merging: number
+}
+
+export interface AutomationStatus {
+  projectKey: string
+  goalKey: string
+  state: AutomationState
+  startedAt?: string
+  endedAt?: string
+  stepCount: number
+  maxSteps: number
+  maxParallel: number
+  laneParallelism: LaneParallelism
+  lastResult?: ReconcileResult
+  error?: string
+  reconcileEnabled: boolean
+  updatedAt: string
+}
+
 export type ReconcileResult =
   | { kind: 'idle' }
   | { kind: 'advanced'; taskRef: string; from: TaskStatus; to: TaskStatus }
@@ -876,6 +1042,24 @@ const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') 
 
 function apiUrl(path: string) {
   return configuredApiBase ? `${configuredApiBase}${path}` : path
+}
+
+function goalApiPath(goalKey: string, projectKey: string | undefined, suffix: string) {
+  if (projectKey) {
+    return `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}${suffix}`
+  }
+
+  return `/api/goals/${encodeURIComponent(goalKey)}${suffix}`
+}
+
+export function goalAssetUrl(goalKey: string, assetPath: string, projectKey?: string) {
+  const normalized = assetPath.startsWith('assets/') ? assetPath.slice('assets/'.length) : assetPath
+  const encodedPath = normalized
+    .split('/')
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+  return apiUrl(goalApiPath(goalKey, projectKey, `/assets/${encodedPath}`))
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -892,33 +1076,167 @@ export function openGoalEventStream() {
   return new EventSource(apiUrl('/api/events'))
 }
 
-export function readGoalBoard(goalKey: string) {
-  return apiRequest<TodoBoard>(`/api/goals/${encodeURIComponent(goalKey)}/board`)
+export function openGoalAssistantFeedStream(
+  goalKey: string,
+  projectKey?: string,
+  after?: string,
+) {
+  const query = new URLSearchParams()
+  if (after) {
+    query.set('after', after)
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return new EventSource(apiUrl(`${goalApiPath(goalKey, projectKey, '/assistant/feed/stream')}${suffix}`))
 }
 
-export function readGoalDocs(goalKey: string) {
-  return apiRequest<GoalDocsSnapshot>(`/api/goals/${encodeURIComponent(goalKey)}/docs`)
-}
-
-export function readGoalDecisions(goalKey: string) {
-  return apiRequest<GoalDecisionSet>(`/api/goals/${encodeURIComponent(goalKey)}/decisions`)
-}
-
-export function readGoalPlanningRequests(goalKey: string) {
-  return apiRequest<GoalPlanningRequestSet>(
-    `/api/goals/${encodeURIComponent(goalKey)}/planning-requests`,
+export function openGoalRunFeedStream(
+  goalKey: string,
+  runId: string,
+  options?: {
+    projectKey?: string
+    stepId?: string | null
+    after?: string
+  },
+) {
+  const query = new URLSearchParams()
+  if (options?.stepId) {
+    query.set('stepId', options.stepId)
+  }
+  if (options?.after) {
+    query.set('after', options.after)
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return new EventSource(
+    apiUrl(
+      `${goalApiPath(goalKey, options?.projectKey, `/runs/${encodeURIComponent(runId)}/feed/stream`)}${suffix}`,
+    ),
   )
 }
 
-export function readGoalPlanningWorkflows(goalKey: string) {
+export function readProjects() {
+  return apiRequest<{ projects: ProjectRecord[] }>('/api/projects')
+}
+
+export function createProject(input: {
+  projectKey?: string
+  name?: string
+  rootDir: string
+  codingDefaults?: ProjectCodingDefaults
+}) {
+  return apiRequest<ProjectRecord>('/api/projects', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProjectSettings(
+  projectKey: string,
+  input: {
+    codingDefaults?: ProjectCodingDefaults
+  },
+) {
+  return apiRequest<ProjectRecord>(`/api/projects/${encodeURIComponent(projectKey)}/settings`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function readProjectGoals(projectKey: string) {
+  return apiRequest<{ projectKey: string; goals: ProjectGoalSummary[] }>(
+    `/api/projects/${encodeURIComponent(projectKey)}/goals`,
+  )
+}
+
+export function createProjectGoal(
+  projectKey: string,
+  input: {
+    goalKey: string
+    title: string
+    objective: string
+    successCriteria?: string[]
+  },
+) {
+  return apiRequest<ProjectGoalSummary>(
+    `/api/projects/${encodeURIComponent(projectKey)}/goals`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  )
+}
+
+export function readGoalAutomation(projectKey: string, goalKey: string) {
+  return apiRequest<{ status: AutomationStatus }>(
+    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/automation`,
+  )
+}
+
+export function startGoalAutomation(
+  projectKey: string,
+  goalKey: string,
+  input: {
+    maxSteps?: number
+    maxParallel?: number
+    laneParallelism?: Partial<LaneParallelism>
+  } = {},
+) {
+  return apiRequest<{ status: AutomationStatus; alreadyRunning: boolean }>(
+    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/start`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  )
+}
+
+export function stopGoalAutomation(projectKey: string, goalKey: string) {
+  return apiRequest<{ status: AutomationStatus }>(
+    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/stop`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+  )
+}
+
+export function readGoalBoard(goalKey: string, projectKey?: string) {
+  return apiRequest<TodoBoard>(goalApiPath(goalKey, projectKey, '/board'))
+}
+
+export function readGoalDocs(goalKey: string, projectKey?: string) {
+  return apiRequest<GoalDocsSnapshot>(goalApiPath(goalKey, projectKey, '/docs'))
+}
+
+export function readGoalDecisions(goalKey: string, projectKey?: string) {
+  return apiRequest<GoalDecisionSet>(goalApiPath(goalKey, projectKey, '/decisions'))
+}
+
+export function readGoalPlanningRequests(goalKey: string, projectKey?: string) {
+  return apiRequest<GoalPlanningRequestSet>(goalApiPath(goalKey, projectKey, '/planning-requests'))
+}
+
+export function readGoalPlanningWorkflows(goalKey: string, projectKey?: string) {
   return apiRequest<{ goalKey: string; workflows: GoalPlanningWorkflowState[] }>(
-    `/api/goals/${encodeURIComponent(goalKey)}/planning-requests/workflows`,
+    goalApiPath(goalKey, projectKey, '/planning-requests/workflows'),
   )
 }
 
-export function readGoalPlanningWorkflow(goalKey: string, workflowKey: string) {
+export function readGoalPlanningWorkflow(
+  goalKey: string,
+  workflowKey: string,
+  projectKey?: string,
+) {
   return apiRequest<GoalPlanningWorkflowState>(
-    `/api/goals/${encodeURIComponent(goalKey)}/planning-requests/workflows/${encodeURIComponent(workflowKey)}`,
+    goalApiPath(
+      goalKey,
+      projectKey,
+      `/planning-requests/workflows/${encodeURIComponent(workflowKey)}`,
+    ),
   )
 }
 
@@ -926,27 +1244,87 @@ export function readPreferences() {
   return apiRequest<PreferenceDocument>('/api/preferences')
 }
 
-export async function readGoalAssistantThread(goalKey: string) {
-  return apiRequest<GoalAssistantThread>(
-    `/api/goals/${encodeURIComponent(goalKey)}/assistant/thread`,
+export async function readGoalAssistantThread(goalKey: string, projectKey?: string) {
+  return apiRequest<GoalAssistantThread>(goalApiPath(goalKey, projectKey, '/assistant/thread'))
+}
+
+export async function readGoalAssistantFeed(
+  goalKey: string,
+  options?: {
+    before?: string
+    limit?: number
+    projectKey?: string
+  },
+) {
+  const query = new URLSearchParams()
+  if (options?.before) {
+    query.set('before', options.before)
+  }
+  if (typeof options?.limit === 'number') {
+    query.set('limit', String(options.limit))
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return apiRequest<MessageFeedPage>(
+    `${goalApiPath(goalKey, options?.projectKey, '/assistant/feed')}${suffix}`,
   )
 }
 
-export async function readGoalAssistantRuns(goalKey: string) {
+export async function readGoalAssistantRuns(goalKey: string, projectKey?: string) {
   return apiRequest<{ goalKey: string; runs: AssistantRunSummary[] }>(
-    `/api/goals/${encodeURIComponent(goalKey)}/assistant/runs`,
+    goalApiPath(goalKey, projectKey, '/assistant/runs'),
   )
 }
 
-export async function readGoalRuns(goalKey: string) {
+export async function readGoalRuns(goalKey: string, projectKey?: string) {
   return apiRequest<{ goalKey: string; runs: GoalRunSummary[] }>(
-    `/api/goals/${encodeURIComponent(goalKey)}/runs`,
+    goalApiPath(goalKey, projectKey, '/runs'),
   )
 }
 
-export async function readGoalRun(goalKey: string, runId: string) {
+export async function readGoalRun(goalKey: string, runId: string, projectKey?: string) {
   return apiRequest<GoalRunDetail>(
-    `/api/goals/${encodeURIComponent(goalKey)}/runs/${encodeURIComponent(runId)}`,
+    goalApiPath(goalKey, projectKey, `/runs/${encodeURIComponent(runId)}`),
+  )
+}
+
+export async function readGoalRunStepBundle(
+  goalKey: string,
+  runId: string,
+  stepId: string,
+  projectKey?: string,
+) {
+  return apiRequest<GoalRunStepBundle>(
+    goalApiPath(
+      goalKey,
+      projectKey,
+      `/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/bundle`,
+    ),
+  )
+}
+
+export async function readGoalRunFeed(
+  goalKey: string,
+  runId: string,
+  options?: {
+    before?: string
+    limit?: number
+    stepId?: string | null
+    projectKey?: string
+  },
+) {
+  const query = new URLSearchParams()
+  if (options?.before) {
+    query.set('before', options.before)
+  }
+  if (typeof options?.limit === 'number') {
+    query.set('limit', String(options.limit))
+  }
+  if (options?.stepId) {
+    query.set('stepId', options.stepId)
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return apiRequest<MessageFeedPage>(
+    `${goalApiPath(goalKey, options?.projectKey, `/runs/${encodeURIComponent(runId)}/feed`)}${suffix}`,
   )
 }
 
@@ -959,6 +1337,7 @@ export async function readGoalWriteTraces(
     role?: AgentRole
     limit?: number
   },
+  projectKey?: string,
 ) {
   const query = new URLSearchParams()
   if (filters?.taskRef) {
@@ -979,43 +1358,119 @@ export async function readGoalWriteTraces(
   const suffix = query.size > 0 ? `?${query.toString()}` : ''
 
   return apiRequest<{ goalKey: string; entries: GoalWriteTraceEntry[] }>(
-    `/api/goals/${encodeURIComponent(goalKey)}/write-traces${suffix}`,
+    `${goalApiPath(goalKey, projectKey, '/write-traces')}${suffix}`,
   )
 }
 
-export async function readGoalAssistantRun(goalKey: string, assistantRunId: string) {
+export async function readGoalAssistantRun(
+  goalKey: string,
+  assistantRunId: string,
+  projectKey?: string,
+) {
   return apiRequest<GoalAssistantRunDetail>(
-    `/api/goals/${encodeURIComponent(goalKey)}/assistant/runs/${encodeURIComponent(assistantRunId)}`,
+    goalApiPath(
+      goalKey,
+      projectKey,
+      `/assistant/runs/${encodeURIComponent(assistantRunId)}`,
+    ),
   )
 }
 
-export async function readGoalAssistantRunBundle(goalKey: string, assistantRunId: string) {
+export async function readGoalAssistantRunBundle(
+  goalKey: string,
+  assistantRunId: string,
+  projectKey?: string,
+) {
   return apiRequest<GoalAssistantRunBundle>(
-    `/api/goals/${encodeURIComponent(goalKey)}/assistant/runs/${encodeURIComponent(assistantRunId)}/bundle`,
+    goalApiPath(
+      goalKey,
+      projectKey,
+      `/assistant/runs/${encodeURIComponent(assistantRunId)}/bundle`,
+    ),
   )
 }
 
-export async function appendGoalAssistantMessage(goalKey: string, content: string) {
-  return apiRequest<AssistantThreadEntry>(
-    `/api/goals/${encodeURIComponent(goalKey)}/assistant/messages`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content }),
-    },
-  )
-}
-
-export async function runGoalAssistant(goalKey: string, content: string) {
-  return apiRequest<GoalAssistantRunDetail>(`/api/goals/${encodeURIComponent(goalKey)}/assistant/run`, {
+export async function appendGoalAssistantMessage(
+  goalKey: string,
+  input: { content: string; attachments?: GoalAttachmentRef[] },
+  projectKey?: string,
+) {
+  return apiRequest<AssistantThreadEntry>(goalApiPath(goalKey, projectKey, '/assistant/messages'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({
+      content: input.content,
+      attachments: input.attachments ?? [],
+    }),
   })
 }
 
-export async function reconcileGoal(goalKey: string) {
-  return apiRequest<ReconcileResult>(`/api/goals/${encodeURIComponent(goalKey)}/reconcile`, {
+export async function runGoalAssistant(
+  goalKey: string,
+  input: {
+    content: string
+    images?: File[]
+    attachments?: GoalAttachmentRef[]
+    appendUserMessage?: boolean
+  },
+  projectKey?: string,
+) {
+  const path = goalApiPath(goalKey, projectKey, '/assistant/run')
+  if (!input.images || input.images.length === 0) {
+    return apiRequest<GoalAssistantRunDetail>(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: input.content,
+        attachments: input.attachments ?? [],
+        appendUserMessage: input.appendUserMessage ?? true,
+      }),
+    })
+  }
+
+  const formData = new FormData()
+  formData.set('content', input.content)
+  formData.set('appendUserMessage', String(input.appendUserMessage ?? true))
+  for (const image of input.images) {
+    formData.append('images[]', image)
+  }
+
+  const response = await fetch(apiUrl(path), {
+    method: 'POST',
+    body: formData,
+  })
+  if (!response.ok) {
+    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)
+  }
+
+  return (await response.json()) as GoalAssistantRunDetail
+}
+
+export async function uploadGoalAssistantImages(
+  goalKey: string,
+  images: File[],
+  projectKey?: string,
+) {
+  const formData = new FormData()
+  for (const image of images) {
+    formData.append('images[]', image)
+  }
+
+  const response = await fetch(apiUrl(goalApiPath(goalKey, projectKey, '/assistant/attachments')), {
+    method: 'POST',
+    body: formData,
+  })
+  if (!response.ok) {
+    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)
+  }
+
+  return (await response.json()) as GoalAssistantAttachmentUploadResult
+}
+
+export async function reconcileGoal(goalKey: string, projectKey?: string) {
+  return apiRequest<ReconcileResult>(goalApiPath(goalKey, projectKey, '/reconcile'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({}),
@@ -1032,8 +1487,9 @@ export async function createGoalDecision(
     matchHints?: string[]
     taskRef?: string
   },
+  projectKey?: string,
 ) {
-  const response = await fetch(apiUrl(`/api/goals/${encodeURIComponent(goalKey)}/decisions`), {
+  const response = await fetch(apiUrl(goalApiPath(goalKey, projectKey, '/decisions')), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -1050,17 +1506,22 @@ export async function createGoalDecision(
   }
 }
 
-export async function createGoalTask(goalKey: string, input: GoalTaskCreateInput) {
-  return apiRequest<TodoBoard>(`/api/goals/${encodeURIComponent(goalKey)}/tasks`, {
+export async function createGoalTask(goalKey: string, input: GoalTaskCreateInput, projectKey?: string) {
+  return apiRequest<TodoBoard>(goalApiPath(goalKey, projectKey, '/tasks'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
 }
 
-export async function moveGoalTask(goalKey: string, taskRef: string, input: GoalTaskMoveInput) {
+export async function moveGoalTask(
+  goalKey: string,
+  taskRef: string,
+  input: GoalTaskMoveInput,
+  projectKey?: string,
+) {
   return apiRequest<TodoBoard>(
-    `/api/goals/${encodeURIComponent(goalKey)}/tasks/${encodeURIComponent(taskRef)}/move`,
+    goalApiPath(goalKey, projectKey, `/tasks/${encodeURIComponent(taskRef)}/move`),
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1088,22 +1549,27 @@ export async function resolveGoalDecision(
     sourceResponseFormat?: GoalSourceResponseFormat
     followThrough?: GoalDecisionFollowThroughInput
   },
+  projectKey?: string,
 ) {
   return apiRequest<{
     decision: GoalDecision
     blockerRemoved?: boolean
     followThrough?: GoalDecisionFollowThroughResult
     resolvedSourceResponseFormat?: GoalSourceResponseFormat
-  }>(`/api/goals/${encodeURIComponent(goalKey)}/decisions/${encodeURIComponent(decisionKey)}/resolve`, {
+  }>(goalApiPath(goalKey, projectKey, `/decisions/${encodeURIComponent(decisionKey)}/resolve`), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
 }
 
-export async function answerGoalDecision(goalKey: string, input: GoalDecisionAnswerInput) {
+export async function answerGoalDecision(
+  goalKey: string,
+  input: GoalDecisionAnswerInput,
+  projectKey?: string,
+) {
   return apiRequest<GoalDecisionAnswerResult>(
-    `/api/goals/${encodeURIComponent(goalKey)}/decisions/answer`,
+    goalApiPath(goalKey, projectKey, '/decisions/answer'),
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1112,9 +1578,13 @@ export async function answerGoalDecision(goalKey: string, input: GoalDecisionAns
   )
 }
 
-export async function answerGoalDecisions(goalKey: string, input: GoalDecisionAnswerBatchInput) {
+export async function answerGoalDecisions(
+  goalKey: string,
+  input: GoalDecisionAnswerBatchInput,
+  projectKey?: string,
+) {
   return apiRequest<GoalDecisionAnswerBatchResult>(
-    `/api/goals/${encodeURIComponent(goalKey)}/decisions/answers`,
+    goalApiPath(goalKey, projectKey, '/decisions/answers'),
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1141,8 +1611,9 @@ export async function createGoalPlanningRequest(
     requestedUpdates?: string[]
     blockedBy?: BlockerRef[]
   },
+  projectKey?: string,
 ) {
-  const response = await fetch(apiUrl(`/api/goals/${encodeURIComponent(goalKey)}/planning-requests`), {
+  const response = await fetch(apiUrl(goalApiPath(goalKey, projectKey, '/planning-requests')), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -1164,15 +1635,13 @@ export async function createGoalPlanningRequest(
 export async function createGoalPlanningWorkflow(
   goalKey: string,
   input: GoalPlanningWorkflowCreateInput,
+  projectKey?: string,
 ) {
-  const response = await fetch(
-    apiUrl(`/api/goals/${encodeURIComponent(goalKey)}/planning-requests/workflows`),
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    },
-  )
+  const response = await fetch(apiUrl(goalApiPath(goalKey, projectKey, '/planning-requests/workflows')), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
     throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)

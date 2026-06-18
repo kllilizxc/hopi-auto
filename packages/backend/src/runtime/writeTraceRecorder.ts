@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readdir, readlink } from 'node:fs/promises'
-import { join, relative, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { AgentRole } from '../agent/AgentRunner'
 import type { GoalWriteTraceEntry, WriteTraceChange } from './writeTrace'
 import { type WriteTraceStore, createWriteTraceStore } from './writeTraceStore'
@@ -27,10 +27,14 @@ export interface RecordProcessExecutionOptions {
 }
 
 export interface WriteTraceRecorder {
-  snapshot(cwd: string): Promise<WorkspaceSnapshot>
+  snapshot(cwd: string, options?: SnapshotOptions): Promise<WorkspaceSnapshot>
   recordProcessExecution(
     options: RecordProcessExecutionOptions,
   ): Promise<GoalWriteTraceEntry | null>
+}
+
+interface SnapshotOptions {
+  followHopiSymlink?: boolean
 }
 
 export function createWriteTraceRecorder(
@@ -38,9 +42,11 @@ export function createWriteTraceRecorder(
   store: WriteTraceStore = createWriteTraceStore(rootDir),
 ): WriteTraceRecorder {
   return {
-    async snapshot(cwd) {
+    async snapshot(cwd, options = {}) {
       const snapshot = new Map<string, SnapshotEntry>()
-      await collectSnapshotEntries(cwd, cwd, snapshot)
+      await collectSnapshotEntries(cwd, cwd, snapshot, '', {
+        followHopiSymlink: options.followHopiSymlink ?? true,
+      })
       return snapshot
     },
     async recordProcessExecution(options) {
@@ -71,6 +77,8 @@ async function collectSnapshotEntries(
   rootDir: string,
   currentDir: string,
   snapshot: WorkspaceSnapshot,
+  pathPrefix = '',
+  options: SnapshotOptions = {},
 ) {
   const entries = await readdir(currentDir, { withFileTypes: true })
 
@@ -80,14 +88,21 @@ async function collectSnapshotEntries(
     }
 
     const absolutePath = join(currentDir, entry.name)
-    const relativePath = normalizeRelativePath(relative(rootDir, absolutePath))
+    const relativePath = normalizeRelativePath(
+      pathPrefix.length > 0 ? joinSnapshotPath(pathPrefix, entry.name) : relative(rootDir, absolutePath),
+    )
 
     if (entry.isDirectory()) {
-      await collectSnapshotEntries(rootDir, absolutePath, snapshot)
+      await collectSnapshotEntries(rootDir, absolutePath, snapshot, relativePath, options)
       continue
     }
 
     if (entry.isSymbolicLink()) {
+      if (entry.name === '.hopi' && options.followHopiSymlink) {
+        await collectHopiSymlinkEntries(rootDir, absolutePath, snapshot, '.hopi')
+        continue
+      }
+
       const target = await readlink(absolutePath)
       snapshot.set(relativePath, {
         path: relativePath,
@@ -109,6 +124,50 @@ async function collectSnapshotEntries(
       hash: hashBytes(bytes),
     })
   }
+}
+
+async function collectHopiSymlinkEntries(
+  rootDir: string,
+  linkPath: string,
+  snapshot: WorkspaceSnapshot,
+  prefix: string,
+) {
+  const targetPath = resolve(dirname(linkPath), await readlink(linkPath))
+  const docsDir = join(targetPath, 'docs')
+  await collectOptionalPath(rootDir, docsDir, snapshot, joinSnapshotPath(prefix, 'docs'))
+  await collectOptionalFile(rootDir, join(targetPath, 'preference.md'), snapshot, joinSnapshotPath(prefix, 'preference.md'))
+}
+
+async function collectOptionalPath(
+  rootDir: string,
+  absolutePath: string,
+  snapshot: WorkspaceSnapshot,
+  prefix: string,
+) {
+  try {
+    await readdir(absolutePath)
+  } catch {
+    return
+  }
+  await collectSnapshotEntries(rootDir, absolutePath, snapshot, prefix)
+}
+
+async function collectOptionalFile(
+  _rootDir: string,
+  absolutePath: string,
+  snapshot: WorkspaceSnapshot,
+  path: string,
+) {
+  const file = Bun.file(absolutePath)
+  if (!(await file.exists())) {
+    return
+  }
+  const bytes = await file.bytes()
+  snapshot.set(normalizeRelativePath(path), {
+    path: normalizeRelativePath(path),
+    size: bytes.byteLength,
+    hash: hashBytes(bytes),
+  })
 }
 
 function diffSnapshots(before: WorkspaceSnapshot, after: WorkspaceSnapshot): WriteTraceChange[] {
@@ -156,4 +215,8 @@ function hashText(value: string) {
 
 function normalizeRelativePath(path: string) {
   return path.split(sep).join('/')
+}
+
+function joinSnapshotPath(prefix: string, entryName: string) {
+  return prefix.length > 0 ? `${prefix}/${entryName}` : entryName
 }

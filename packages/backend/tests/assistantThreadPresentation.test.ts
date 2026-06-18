@@ -5,6 +5,79 @@ import {
 } from '../src/assistant/assistantInspection'
 
 describe('assistant thread presentation', () => {
+  test('surfaces unified request_planning and resolve_decisions action authority in thread presentation', () => {
+    expect(
+      formatAssistantThreadEntryPresentation({
+        entryId: 'entry-unified-planning',
+        createdAt: '2026-06-03T00:00:00.000Z',
+        kind: 'action',
+        actionType: 'request_planning',
+        summary: 'Request grouped planning: auth-follow-through',
+        action: {
+          kind: 'request_planning',
+          mode: 'batch',
+          attachmentAssetPaths: [],
+          groupKey: 'auth-follow-through',
+          decisionRefs: ['auth-strategy'],
+          answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
+          answerSources: [],
+          requests: [
+            {
+              taskKey: 'task-graph',
+              title: 'Decompose auth task graph',
+              description: 'Reshape todo.yml after the goal context is stable.',
+              acceptanceCriteria: ['The auth task graph is visible in todo.yml.'],
+              requestedUpdates: ['todo.yml'],
+              blockedBy: [],
+              blockedByTaskKeys: [],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      body: 'request_planning | Request grouped planning: auth-follow-through',
+      details: [
+        'Planning mode: batch',
+        'Planning group key: auth-follow-through',
+        'Grouped requests: 1',
+        'Linked decisions: auth-strategy',
+        'Shared planner answers: 1',
+        'Shared planner answer detail: Pilot scope [answerKey=pilot-scope]',
+        'Grouped request: task-graph -> updates todo.yml',
+        'Grouped request task-graph title: Decompose auth task graph',
+        'Grouped request task-graph description: Reshape todo.yml after the goal context is stable.',
+        'Grouped request task-graph acceptance: The auth task graph is visible in todo.yml.',
+      ],
+    })
+
+    expect(
+      formatAssistantThreadEntryPresentation({
+        entryId: 'entry-unified-decisions',
+        createdAt: '2026-06-03T00:00:00.000Z',
+        kind: 'action',
+        actionType: 'resolve_decisions',
+        summary: 'Resolve 1 durable decisions.',
+        action: {
+          kind: 'resolve_decisions',
+          attachmentAssetPaths: [],
+          inferOpenDecisions: true,
+          inferDecisionTopics: false,
+          sourceResponseFormat: 'matching_answer_sources',
+          answers: [{ summary: 'Auth strategy', decisionKey: 'auth-strategy', matchHints: [] }],
+          answerSources: [],
+        },
+      }),
+    ).toEqual({
+      body: 'resolve_decisions | Resolve 1 durable decisions.',
+      details: [
+        'Explicit answers: 1',
+        'Explicit answer detail: Auth strategy [decisionKey=auth-strategy]',
+        'Infer open decisions: yes',
+        'Action source-response format: matching_answer_sources',
+      ],
+    })
+  })
+
   test('surfaces structured action authority in thread presentation', () => {
     expect(
       formatAssistantThreadEntryPresentation({
@@ -15,6 +88,7 @@ describe('assistant thread presentation', () => {
         summary: 'Request planning: Capture rollout notes',
         action: {
           kind: 'request_planning',
+          attachmentAssetPaths: [],
           title: 'Capture rollout notes',
           description: 'Record rollout details before more planning work continues.',
           acceptanceCriteria: ['Rollout notes are durable.'],
@@ -62,6 +136,7 @@ describe('assistant thread presentation', () => {
         summary: 'Request grouped planning: auth-follow-through',
         action: {
           kind: 'request_planning_batch',
+          attachmentAssetPaths: [],
           groupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
           answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
@@ -129,6 +204,7 @@ describe('assistant thread presentation', () => {
         summary: 'Record answer with grouped planning follow-through auth-follow-through.',
         action: {
           kind: 'record_answer',
+          attachmentAssetPaths: [],
           summary: 'Choose the auth strategy',
           answer: 'Use Bun-native auth.',
           matchHints: [],
@@ -192,6 +268,7 @@ describe('assistant thread presentation', () => {
         summary: 'Capture shared rollout answers',
         action: {
           kind: 'record_answers',
+          attachmentAssetPaths: [],
           sourceResponseFormat: 'matching_answer_sources',
           inferOpenDecisions: true,
           inferDecisionTopics: true,
@@ -302,6 +379,7 @@ describe('assistant thread presentation', () => {
         summary: 'Update planning workflow auth-rollout-follow-through.',
         action: {
           kind: 'request_planning_workflows',
+          attachmentAssetPaths: [],
           workflowKey: 'auth-rollout-follow-through',
           reuseGroupKey: 'auth-follow-through',
           decisionRefs: ['auth-strategy'],
@@ -435,6 +513,7 @@ describe('assistant thread presentation', () => {
                 matchHints: ['launch cohort'],
               },
             ],
+            attachments: [],
             requestedUpdates: ['goal.md', 'design.md'],
             status: 'open',
             createdAt: '2026-06-04T00:00:00.000Z',
@@ -485,6 +564,7 @@ describe('assistant thread presentation', () => {
             taskRef: 'P-9',
             decisionRefs: ['rollout-strategy'],
             answers: [],
+            attachments: [],
             requestedUpdates: ['goal.md'],
             status: 'resolved',
             createdAt: '2026-06-04T00:00:00.000Z',
@@ -533,6 +613,7 @@ describe('assistant thread presentation', () => {
             status: 'resolved',
             taskRef: 'T-7',
             answer: 'Use Bun-native auth.',
+            attachments: [],
             createdAt: '2026-06-04T00:00:00.000Z',
             resolvedAt: '2026-06-04T00:05:00.000Z',
           },
@@ -661,6 +742,44 @@ describe('assistant thread presentation', () => {
     })
   })
 
+  test('surfaces retry-task authority in thread presentation', () => {
+    expect(
+      formatAssistantThreadEntryPresentation({
+        entryId: 'entry-retry-task-result',
+        createdAt: '2026-06-04T00:00:00.000Z',
+        kind: 'action_result',
+        actionType: 'retry_task',
+        summary: 'Cleared retryable blocker intervention:T-4:reviewer_rejected from T-4.',
+        result: {
+          kind: 'retry_task',
+          taskRef: 'T-4',
+          status: 'planned',
+          clearedBlockers: [{ kind: 'intervention', ref: 'T-4:reviewer_rejected' }],
+          task: {
+            ref: 'T-4',
+            kind: 'engineering',
+            status: 'planned',
+            title: 'Polish deck manager layout',
+            description: 'Retry the reviewer-rejected deck manager polish task.',
+            acceptanceCriteria: ['The deck manager returns to a clean two-pane layout.'],
+            blockedBy: [],
+          },
+          summary: 'Cleared retryable blocker intervention:T-4:reviewer_rejected from T-4.',
+        },
+      }),
+    ).toEqual({
+      body: 'retry_task | Cleared retryable blocker intervention:T-4:reviewer_rejected from T-4.',
+      details: [
+        'Task ref: T-4',
+        'Result status: planned',
+        'Cleared blockers: intervention:T-4:reviewer_rejected',
+        'Task detail: T-4 [engineering] [planned] Polish deck manager layout',
+        'Task description T-4: Retry the reviewer-rejected deck manager polish task.',
+        'Task acceptance T-4: The deck manager returns to a clean two-pane layout.',
+      ],
+    })
+  })
+
   test('surfaces created planning task body authority in thread presentation', () => {
     expect(
       formatAssistantThreadEntryPresentation({
@@ -729,6 +848,7 @@ describe('assistant thread presentation', () => {
           summary: 'Request planning: Capture rollout notes',
           action: {
             kind: 'request_planning',
+            attachmentAssetPaths: [],
             title: 'Capture rollout notes',
             description: 'Record rollout details before more planning work continues.',
             acceptanceCriteria: ['Rollout notes are durable.'],

@@ -2,6 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { BoardView } from './pages/BoardView'
+import { GoalDocsPage } from './pages/GoalDocsPage'
+import { GoalCreatePage } from './pages/GoalCreatePage'
+import { ProjectHomePage } from './pages/ProjectHomePage'
 import { SessionView } from './pages/SessionView'
 
 const queryClient = new QueryClient({
@@ -19,8 +22,23 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<Navigate to="/board/tutorial" replace />} />
+            <Route index element={<Navigate to="/projects" replace />} />
+            <Route path="projects" element={<ProjectHomePage />} />
+            <Route path="projects/:projectKey/goals/new" element={<GoalCreatePage />} />
+            <Route
+              path="projects/:projectKey/board/:goalKey"
+              element={<BoardView mvpMode />}
+            />
+            <Route
+              path="projects/:projectKey/docs/:goalKey"
+              element={<GoalDocsPage />}
+            />
+            <Route
+              path="projects/:projectKey/session/:goalKey"
+              element={<SessionView />}
+            />
             <Route path="board/:goalKey" element={<BoardView />} />
+            <Route path="docs/:goalKey" element={<GoalDocsPage />} />
             <Route path="session/:goalKey" element={<SessionView />} />
           </Route>
         </Routes>

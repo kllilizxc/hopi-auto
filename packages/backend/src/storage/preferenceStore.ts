@@ -59,7 +59,11 @@ const preferenceFileSchema = z.object({
   preferences: z.array(preferenceEntrySchema).default([]),
 })
 
-const LEGACY_EMPTY_MARKER = 'Durable project preferences have not been recorded yet.'
+const LEGACY_EMPTY_MARKERS = new Set([
+  'Durable project preferences have not been recorded yet.',
+  'No saved preferences yet.',
+])
+const LEGACY_PREFERENCE_HEADERS = new Set(['# Preferences', '# HOPI Preferences'])
 
 const DEFAULT_PREFERENCES = renderPreferenceDocument([])
 
@@ -206,11 +210,7 @@ function parseStructuredPreferenceContent(source: string) {
 
 function parseLegacyPreferenceEntries(content: string) {
   const trimmed = content.trim()
-  if (
-    trimmed === '' ||
-    trimmed === LEGACY_EMPTY_MARKER ||
-    trimmed === `# Preferences\n\n${LEGACY_EMPTY_MARKER}`
-  ) {
+  if (isLegacyEmptyPreferenceDocument(trimmed)) {
     return []
   }
 
@@ -242,11 +242,7 @@ function extractYamlBlock(content: string) {
 
 function isLegacyPreferenceDocument(content: string) {
   const trimmed = content.trim()
-  if (
-    trimmed === '' ||
-    trimmed === LEGACY_EMPTY_MARKER ||
-    trimmed === `# Preferences\n\n${LEGACY_EMPTY_MARKER}`
-  ) {
+  if (isLegacyEmptyPreferenceDocument(trimmed)) {
     return true
   }
 
@@ -255,8 +251,28 @@ function isLegacyPreferenceDocument(content: string) {
     .map((line) => line.trim())
     .filter(Boolean)
   return nonEmptyLines.every(
-    (line, index) => (index === 0 && line === '# Preferences') || line.startsWith('- '),
+    (line, index) => (index === 0 && LEGACY_PREFERENCE_HEADERS.has(line)) || line.startsWith('- '),
   )
+}
+
+function isLegacyEmptyPreferenceDocument(trimmed: string) {
+  if (trimmed === '') {
+    return true
+  }
+
+  if (LEGACY_EMPTY_MARKERS.has(trimmed)) {
+    return true
+  }
+
+  for (const header of LEGACY_PREFERENCE_HEADERS) {
+    for (const marker of LEGACY_EMPTY_MARKERS) {
+      if (trimmed === `${header}\n\n${marker}` || trimmed === `${header}\n\n- ${marker}`) {
+        return true
+      }
+    }
+  }
+
+  return false
 }
 
 function normalizePreferenceEntry(entry: z.infer<typeof preferenceEntrySchema>): PreferenceEntry {

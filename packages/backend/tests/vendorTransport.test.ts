@@ -5,11 +5,16 @@ import {
 } from '../src/agent/vendorTransport'
 
 const bundle = {
+  projectRoot: '/tmp/project',
   goalFile: '/tmp/goal.md',
   designFile: '/tmp/design.md',
   contextFile: '/tmp/context.md',
   promptFile: '/tmp/prompt.md',
   outcomeFile: '/tmp/outcome.json',
+  canonicalOutcomeFile: '/tmp/outcome.json',
+  browserHarnessDir: 'scripts/hopi/browser-harness',
+  browserHarnessArtifactDir: '/tmp/worktree/.hopi-runtime/browser-harness',
+  canonicalBrowserHarnessArtifactDir: '/tmp/project/.hopi/runtime/browser-harness',
 }
 
 const input = {
@@ -33,6 +38,7 @@ describe('resolveConfiguredTransportCommand', () => {
         sandbox: 'workspace-write',
         approvalPolicy: 'never',
         model: 'gpt-5-codex',
+        reasoningEffort: 'xhigh',
       } satisfies RoleTransportConfig,
       bundle,
       input,
@@ -41,19 +47,94 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command).toMatchObject({
       cwdMode: 'worktree',
       outcomeFile: bundle.outcomeFile,
+      browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       stdin: '# prompt for codex\n',
       transcriptFormat: 'codex_jsonl',
     })
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
+      '-a',
+      'never',
+      '-c',
+      'model_reasoning_effort="xhigh"',
       'exec',
       '--skip-git-repo-check',
       '-s',
       'workspace-write',
-      '-a',
-      'never',
       '-m',
       'gpt-5-codex',
+      '--json',
+      '-',
+    ])
+  })
+
+  test('passes uploaded image files through codex -i arguments', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for codex with images\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        binary: '/usr/local/bin/codex',
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      } satisfies RoleTransportConfig,
+      bundle: {
+        ...bundle,
+        imageFiles: ['/tmp/screen-1.png', '/tmp/screen-2.webp'],
+      },
+      input,
+    })
+
+    expect(command.cmd).toEqual([
+      '/usr/local/bin/codex',
+      '-a',
+      'never',
+      'exec',
+      '--skip-git-repo-check',
+      '-s',
+      'workspace-write',
+      '-i',
+      '/tmp/screen-1.png',
+      '-i',
+      '/tmp/screen-2.webp',
+      '--json',
+      '-',
+    ])
+  })
+
+  test('passes extra writable roots through codex --add-dir arguments', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for codex with writable roots\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        binary: '/usr/local/bin/codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      } satisfies RoleTransportConfig,
+      bundle: {
+        ...bundle,
+        extraWritableRoots: ['/tmp/project/.hopi/docs/goals/goal-1'],
+      },
+      input: {
+        ...input,
+        role: 'planner',
+      },
+    })
+
+    expect(command.cmd).toEqual([
+      '/usr/local/bin/codex',
+      '-a',
+      'never',
+      'exec',
+      '--skip-git-repo-check',
+      '-s',
+      'workspace-write',
+      '--add-dir',
+      '/tmp/project/.hopi/docs/goals/goal-1',
       '--json',
       '-',
     ])
@@ -77,6 +158,8 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command).toMatchObject({
       cwdMode: 'worktree',
       outcomeFile: bundle.outcomeFile,
+      browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       stdin: '# prompt for claude\n',
       transcriptFormat: 'claude_stream_json',
     })
@@ -111,6 +194,8 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command).toMatchObject({
       cwdMode: 'root',
       outcomeFile: bundle.outcomeFile,
+      browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       transcriptFormat: 'opencode_json',
     })
     expect(command.cmd).toEqual([
@@ -145,12 +230,18 @@ describe('resolveConfiguredTransportCommand', () => {
       cwdMode: 'root',
       baseRef: 'main',
       outcomeFile: bundle.outcomeFile,
+      canonicalOutcomeFile: bundle.canonicalOutcomeFile,
+      browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       env: {
+        HOPI_PROJECT_ROOT: bundle.projectRoot,
         HOPI_CONTEXT_FILE: bundle.contextFile,
         HOPI_OUTCOME_FILE: bundle.outcomeFile,
         HOPI_GOAL_FILE: bundle.goalFile,
         HOPI_DESIGN_FILE: bundle.designFile,
         HOPI_PROMPT_FILE: bundle.promptFile,
+        HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
+        HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
         HOPI_GOAL_KEY: input.goalKey,
         HOPI_TASK_REF: input.taskRef,
         HOPI_ROLE: input.role,

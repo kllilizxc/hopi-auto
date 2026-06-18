@@ -71,6 +71,65 @@ describe('createServer', () => {
     })
   })
 
+  test('adds a transient running flag to the active board task', async () => {
+    const workspaceRoot = rootDir()
+    await createBoardStore(workspaceRoot).mutateBoard('test', 'test', 'seed board', (board) => {
+      board.goal.title = 'Test Goal'
+      board.items = [
+        {
+          ref: 'T-1',
+          kind: 'engineering',
+          status: 'in_review',
+          title: 'Review task',
+          description: 'Review the task.',
+          acceptanceCriteria: ['Review completes.'],
+          blockedBy: [],
+        },
+      ]
+    })
+    let releaseRunner!: () => void
+    let startedRunner!: () => void
+    const runnerStarted = new Promise<void>((resolve) => {
+      startedRunner = resolve
+    })
+    const runnerReleased = new Promise<void>((resolve) => {
+      releaseRunner = resolve
+    })
+    const runner: AgentRunner = {
+      async run() {
+        startedRunner()
+        await runnerReleased
+        return { kind: 'success' }
+      },
+    }
+    const server = startServer(runner, workspaceRoot)
+
+    const reconcile = postJson(server, '/api/goals/test/reconcile', {})
+    await runnerStarted
+
+    const runningResponse = await fetch(apiUrl(server, '/api/goals/test/board'))
+    const runningBoard = await readJson<
+      Omit<TodoBoard, 'items'> & { items: Array<TaskItem & { running?: boolean }> }
+    >(runningResponse)
+    expect(runningBoard.items[0]).toMatchObject({
+      ref: 'T-1',
+      status: 'in_review',
+      running: true,
+    })
+    expect(await Bun.file(join(workspaceRoot, '.hopi', 'docs', 'goals', 'test', 'todo.yml')).text())
+      .not.toContain('running:')
+
+    releaseRunner()
+    const reconcileResponse = await reconcile
+    expect(reconcileResponse.status).toBe(200)
+    await expect(reconcileResponse.json()).resolves.toEqual({
+      kind: 'advanced',
+      taskRef: 'T-1',
+      from: 'in_review',
+      to: 'merging',
+    })
+  })
+
   test('returns bootstrapped goal docs through the API', async () => {
     const server = startServer()
 
@@ -13392,6 +13451,227 @@ preferences:
     })
   })
 
+  test('accepts assistant image attachments on codex transport and serves durable Goal assets', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    const mockCodexPath = join(workspaceRoot, 'mock-codex-images')
+    await writeFile(
+      mockCodexPath,
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2)
+const imagePaths = []
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === '-i') {
+    const next = args[index + 1]
+    if (next) {
+      imagePaths.push(next)
+      index += 1
+    }
+  }
+}
+const prompt = await new Response(Bun.stdin.stream()).text()
+if (!prompt.includes('Current Uploaded Images')) {
+  throw new Error('missing uploaded-image section in prompt')
+}
+if (imagePaths.length !== 1) {
+  throw new Error(\`expected 1 image, got \${imagePaths.length}\`)
+}
+const firstImage = imagePaths[0]
+const match = /\\/assets\\/(.+)$/.exec(firstImage)
+if (!match?.[1]) {
+  throw new Error(\`missing goal asset path in \${firstImage}\`)
+}
+const assetPath = \`assets/\${match[1]}\`
+await Bun.write(
+  'assistant-image-evidence.json',
+  \`\${JSON.stringify({ imagePaths, assetPath, prompt }, null, 2)}\\n\`,
+)
+await Bun.write(
+  process.env.HOPI_OUTCOME_FILE!,
+  JSON.stringify({
+    message: 'Used uploaded screenshot.',
+    actions: [
+      {
+        kind: 'request_decision',
+        attachmentAssetPaths: [assetPath],
+        decisionKey: 'visual-spec',
+        summary: 'Capture screenshot intent',
+        matchHints: ['layout'],
+      },
+      {
+        kind: 'request_planning',
+        attachmentAssetPaths: [assetPath],
+        title: 'Plan UI cleanup',
+        description: 'Use the screenshot to plan UI changes.',
+        acceptanceCriteria: ['The UI cleanup plan is durable.'],
+        decisionRefs: ['visual-spec'],
+        answerSources: [],
+        answers: [],
+        requestedUpdates: ['design.md', 'todo.yml'],
+        blockedBy: [],
+      },
+    ],
+  }),
+)
+`,
+      'utf8',
+    )
+    await chmod(mockCodexPath, 0o755)
+
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        transport: 'codex',
+        binary: mockCodexPath,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const imageBytes = Uint8Array.from([137, 80, 78, 71])
+    const formData = new FormData()
+    formData.set('content', 'Use the attached screenshot to create durable planning work.')
+    formData.append('images[]', new File([imageBytes], 'layout.png', { type: 'image/png' }))
+
+    const response = await server.fetch(
+      new Request('http://127.0.0.1/api/goals/test/assistant/run', {
+        method: 'POST',
+        body: formData,
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const result = await readJson<{
+      assistantRunId: string
+      message: string
+      attachments: Array<{ assetPath: string; fileName: string; mediaType: string }>
+      actionResults: Array<{
+        kind: string
+        request?: { attachments?: Array<{ assetPath: string }> }
+        decision?: { attachments?: Array<{ assetPath: string }> }
+      }>
+    }>(response)
+    expect(result.message).toBe('Used uploaded screenshot.')
+    expect(result.attachments).toHaveLength(1)
+    const firstAttachment = result.attachments[0]
+    if (!firstAttachment) {
+      throw new Error('Expected first attachment')
+    }
+    expect(firstAttachment).toMatchObject({
+      assetPath: expect.stringMatching(/^assets\/assistant\/[^/]+\/layout\.png$/),
+      fileName: 'layout.png',
+      mediaType: 'image/png',
+    })
+    expect(result.actionResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_decision',
+          decision: expect.objectContaining({
+            attachments: [expect.objectContaining({ assetPath: firstAttachment.assetPath })],
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'request_planning',
+          request: expect.objectContaining({
+            attachments: [expect.objectContaining({ assetPath: firstAttachment.assetPath })],
+          }),
+        }),
+      ]),
+    )
+
+    const thread = await createAssistantThreadStore(workspaceRoot).readThread('test')
+    expect(thread.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'user_message',
+          content: 'Use the attached screenshot to create durable planning work.',
+          attachments: [expect.objectContaining({ assetPath: firstAttachment.assetPath })],
+        }),
+      ]),
+    )
+
+    await expect(
+      createDecisionStore(workspaceRoot).readGoalDecisions('test'),
+    ).resolves.toMatchObject({
+      decisions: [
+        expect.objectContaining({
+          decisionKey: 'visual-spec',
+          attachments: [expect.objectContaining({ assetPath: firstAttachment.assetPath })],
+        }),
+      ],
+    })
+    await expect(readGoalPlanningRequestsForAssertion(workspaceRoot)).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          attachments: [expect.objectContaining({ assetPath: firstAttachment.assetPath })],
+        }),
+      ],
+    })
+
+    const encodedAssetPath = firstAttachment.assetPath
+      .slice('assets/'.length)
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/')
+    const assetResponse = await fetch(apiUrl(server, `/api/goals/test/assets/${encodedAssetPath}`))
+    expect(assetResponse.status).toBe(200)
+    expect(assetResponse.headers.get('content-type')).toContain('image/png')
+    await expect(assetResponse.bytes()).resolves.toEqual(imageBytes)
+
+    const evidence = JSON.parse(
+      await Bun.file(join(workspaceRoot, 'assistant-image-evidence.json')).text(),
+    ) as {
+      imagePaths: string[]
+      assetPath: string
+      prompt: string
+    }
+    expect(evidence.imagePaths).toHaveLength(1)
+    expect(evidence.assetPath).toBe(firstAttachment.assetPath)
+    expect(evidence.prompt).toContain('Current Uploaded Images')
+  })
+
+  test('rejects assistant image attachments for non-codex transports', async () => {
+    const workspaceRoot = await initGitRepo(rootDir())
+    await writeAdapterConfig(workspaceRoot, {
+      version: 1,
+      assistant: {
+        cmd: [
+          'bun',
+          '-e',
+          "await Bun.write(process.env.HOPI_OUTCOME_FILE!, JSON.stringify({ message: 'ok', actions: [] }))",
+        ],
+        cwdMode: 'root',
+      },
+      roles: {},
+    })
+
+    const server = startServer(undefined, workspaceRoot)
+    const formData = new FormData()
+    formData.set('content', 'Use the screenshot.')
+    formData.append(
+      'images[]',
+      new File([Uint8Array.from([137, 80, 78, 71])], 'layout.png', { type: 'image/png' }),
+    )
+
+    const response = await server.fetch(
+      new Request('http://127.0.0.1/api/goals/test/assistant/run', {
+        method: 'POST',
+        body: formData,
+      }),
+    )
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Goal assistant image attachments require a Codex assistant transport.',
+    })
+    await expect(createAssistantThreadStore(workspaceRoot).readThread('test')).resolves.toEqual({
+      goalKey: 'test',
+      entries: [],
+    })
+  })
+
   test('runs the configured Goal assistant and preserves transcript tool invocation keys on assistant run readback', async () => {
     const workspaceRoot = await initGitRepo(rootDir())
     const mockCodexPath = join(workspaceRoot, 'mock-assistant-codex')
@@ -20047,7 +20327,7 @@ await Bun.write(
     expect(board.items[0]).toMatchObject({ status: 'planned' })
 
     const events = await Bun.file(
-      join(rootDir(), '.hopi', 'docs', 'goals', 'test', 'events.jsonl'),
+      join(rootDir(), '.hopi', 'runtime', 'goals', 'test', 'events.jsonl'),
     ).text()
     expect(events).toContain('"action":"system_error"')
     expect(events).toContain('adapter exploded')

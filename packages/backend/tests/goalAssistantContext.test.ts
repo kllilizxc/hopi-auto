@@ -3,6 +3,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createGoalAssistantContextBuilder } from '../src/assistant/goalAssistantContext'
 import { createAssistantThreadStore } from '../src/runtime/assistantThreadStore'
+import type { GoalAttachmentRef } from '../src/storage/goalAttachmentStore'
 
 const tmpBase = join(process.cwd(), 'tests', 'tmp', 'goal-assistant-context')
 
@@ -11,6 +12,90 @@ afterEach(async () => {
 })
 
 describe('createGoalAssistantContextBuilder', () => {
+  test('pins high-risk assistant action literals in the generated prompt', async () => {
+    const rootDir = testRoot()
+    const builder = createGoalAssistantContextBuilder(rootDir)
+
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-1',
+      assistantRunId: 'assistant-run-1',
+    })
+
+    const prompt = await readFile(bundle.promptFile, 'utf8')
+    expect(prompt).toContain('Allowed request_planning.mode literals: single | batch | workflow')
+    expect(prompt).toContain(
+      'Allowed retry_task.clearBlockers.kind literals: intervention | merge_conflict',
+    )
+    expect(prompt).toContain(
+      'Allowed blockedBy.kind literals anywhere in assistant actions: task | decision | merge_conflict | intervention',
+    )
+    expect(prompt).toContain(
+      'Allowed followThrough.kind literals: planning | planning_batch | workflow_batch',
+    )
+    expect(prompt).toContain(
+      'Allowed workflow child kind literals inside request_planning workflow mode or workflow_batch followThrough: planning | planning_batch',
+    )
+    expect(prompt).toContain(
+      'Allowed set_preference.mode literals: upsert | retire',
+    )
+    expect(prompt).toContain(
+      'Use only five public action families: retry_task, request_planning, request_decision, resolve_decisions, set_preference.',
+    )
+    expect(prompt).toContain(
+      'Use retry_task only when the user explicitly asks to retry or resume a blocked task.',
+    )
+    expect(prompt).toContain(
+      'retry_task may clear only retryable blockers and resets that task\'s retry budget. It must not bypass task or decision blockers.',
+    )
+    expect(prompt).toContain(
+      'For UI, screenshot, visual, interaction, keyboard/IME, routing, responsive, or browser-visible work, request planning should tell planner to include Browser Harness acceptance criteria that either reference an existing project scenario or explicitly require the engineering task to create/update one under scripts/hopi/browser-harness/**.',
+    )
+    expect(prompt).toContain(
+      "You may call Browser Harness with `browser-harness <<'PY' ... PY` to inspect visible UI state before shaping a planning request or decision.",
+    )
+    expect(prompt).toContain(
+      'Prefer existing project scenarios under `scripts/hopi/browser-harness/scenarios/*.py`; do not create or edit scenario scripts from the assistant.',
+    )
+  })
+
+  test('surfaces current uploaded images and absolute image files in the assistant bundle', async () => {
+    const rootDir = testRoot()
+    const builder = createGoalAssistantContextBuilder(rootDir)
+    const attachments: GoalAttachmentRef[] = [
+      {
+        assetPath: 'assets/assistant/upload-1/layout.png',
+        fileName: 'layout.png',
+        mediaType: 'image/png',
+        sizeBytes: 4,
+        createdAt: '2026-06-14T00:00:00.000Z',
+      },
+    ]
+
+    const bundle = await builder.prepareBundle({
+      goalKey: 'goal-1',
+      assistantRunId: 'assistant-run-1',
+      attachments,
+    })
+
+    const context = await readFile(bundle.contextFile, 'utf8')
+    expect(context).toContain('Current Uploaded Images')
+    expect(context).toContain('assets/assistant/upload-1/layout.png')
+    expect(context).toContain('layout.png')
+    expect(bundle.imageFiles).toEqual([
+      join(
+        rootDir,
+        '.hopi',
+        'docs',
+        'goals',
+        'goal-1',
+        'assets',
+        'assistant',
+        'upload-1',
+        'layout.png',
+      ),
+    ])
+  })
+
   test('surfaces richer structured action authority in recent assistant thread context', async () => {
     const rootDir = testRoot()
     const threadStore = createAssistantThreadStore(rootDir)
@@ -21,6 +106,7 @@ describe('createGoalAssistantContextBuilder', () => {
       summary: 'Capture shared rollout answers',
       action: {
         kind: 'record_answers',
+        attachmentAssetPaths: [],
         sourceResponseFormat: 'matching_answer_sources',
         inferOpenDecisions: true,
         inferDecisionTopics: true,
@@ -125,6 +211,7 @@ describe('createGoalAssistantContextBuilder', () => {
       summary: 'Request grouped planning: auth-follow-through',
       action: {
         kind: 'request_planning_batch',
+        attachmentAssetPaths: [],
         groupKey: 'auth-follow-through',
         decisionRefs: ['auth-strategy'],
         answers: [{ summary: 'Pilot scope', answerKey: 'pilot-scope', matchHints: [] }],
@@ -186,6 +273,7 @@ describe('createGoalAssistantContextBuilder', () => {
       summary: 'Record answer with grouped planning follow-through auth-follow-through.',
       action: {
         kind: 'record_answer',
+        attachmentAssetPaths: [],
         summary: 'Choose the auth strategy',
         answer: 'Use Bun-native auth.',
         matchHints: [],

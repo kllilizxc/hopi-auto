@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { RoleProcessContextBundle } from '../runtime/roleProcessContext'
 import type { ProcessAgentCommand } from './ProcessAgentRunner'
+import { codingReasoningEffortSchema } from './projectCodingDefaults'
 
 const cwdModeSchema = z.enum(['root', 'worktree'])
 const codexSandboxSchema = z.enum(['read-only', 'workspace-write', 'danger-full-access'])
@@ -29,6 +30,7 @@ const codexTransportSchema = commonTransportSchema.extend({
   transport: z.literal('codex'),
   model: z.string().min(1).optional(),
   profile: z.string().min(1).optional(),
+  reasoningEffort: codingReasoningEffortSchema.optional(),
   sandbox: codexSandboxSchema.default('workspace-write'),
   approvalPolicy: codexApprovalSchema.default('never'),
 })
@@ -78,6 +80,9 @@ export async function resolveConfiguredTransportCommand(options: {
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
       outcomeFile: options.bundle.outcomeFile,
+      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
+      browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
     }
   }
@@ -85,14 +90,24 @@ export async function resolveConfiguredTransportCommand(options: {
   const prompt = await Bun.file(options.bundle.promptFile).text()
 
   if (options.config.transport === 'codex') {
-    const cmd = [options.config.binary ?? 'codex', 'exec', '--skip-git-repo-check']
-    cmd.push('-s', options.config.sandbox)
+    const cmd = [options.config.binary ?? 'codex']
     cmd.push('-a', options.config.approvalPolicy)
+    if (options.config.reasoningEffort) {
+      cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
+    }
+    cmd.push('exec', '--skip-git-repo-check')
+    cmd.push('-s', options.config.sandbox)
+    for (const dir of options.bundle.extraWritableRoots ?? []) {
+      cmd.push('--add-dir', dir)
+    }
     if (options.config.model) {
       cmd.push('-m', options.config.model)
     }
     if (options.config.profile) {
       cmd.push('-p', options.config.profile)
+    }
+    for (const imageFile of options.bundle.imageFiles ?? []) {
+      cmd.push('-i', imageFile)
     }
     cmd.push('--json')
     cmd.push('-')
@@ -101,6 +116,9 @@ export async function resolveConfiguredTransportCommand(options: {
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
       outcomeFile: options.bundle.outcomeFile,
+      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
+      browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
       stdin: prompt,
       transcriptFormat: 'codex_jsonl',
@@ -124,6 +142,9 @@ export async function resolveConfiguredTransportCommand(options: {
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
       outcomeFile: options.bundle.outcomeFile,
+      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
+      browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
+      canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
       stdin: prompt,
       transcriptFormat: 'claude_stream_json',
@@ -146,6 +167,9 @@ export async function resolveConfiguredTransportCommand(options: {
     cwdMode: options.config.cwdMode,
     baseRef: options.config.baseRef,
     outcomeFile: options.bundle.outcomeFile,
+    canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
+    browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
+    canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
     env,
     transcriptFormat: 'opencode_json',
   }
@@ -153,11 +177,14 @@ export async function resolveConfiguredTransportCommand(options: {
 
 function buildTransportEnv(bundle: RoleProcessContextBundle, input: ConfiguredTransportInvocation) {
   return {
+    HOPI_PROJECT_ROOT: bundle.projectRoot,
     HOPI_CONTEXT_FILE: bundle.contextFile,
     HOPI_OUTCOME_FILE: bundle.outcomeFile,
     HOPI_GOAL_FILE: bundle.goalFile,
     HOPI_DESIGN_FILE: bundle.designFile,
     HOPI_PROMPT_FILE: bundle.promptFile,
+    HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
+    HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     HOPI_GOAL_KEY: input.goalKey,
     HOPI_RUN_ID: input.runId,
     HOPI_STEP_ID: input.stepId,
@@ -176,6 +203,8 @@ function placeholderValues(options: {
     GOAL_FILE: options.bundle.goalFile,
     DESIGN_FILE: options.bundle.designFile,
     PROMPT_FILE: options.bundle.promptFile,
+    BROWSER_HARNESS_DIR: options.bundle.browserHarnessDir,
+    BROWSER_HARNESS_ARTIFACT_DIR: options.bundle.browserHarnessArtifactDir,
     GOAL_KEY: options.input.goalKey,
     TASK_REF: options.input.taskRef ?? '',
     ROLE: options.input.role ?? '',

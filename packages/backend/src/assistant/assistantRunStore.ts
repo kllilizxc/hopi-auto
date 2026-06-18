@@ -33,19 +33,19 @@ export function createAssistantRunStore(rootDir = process.cwd()): AssistantRunSt
       return parseGoalAssistantRunRecord(raw)
     },
     async readBundle(goalKey, assistantRunId) {
-      const resultPath = paths.assistantResultPath(goalKey, assistantRunId)
-      const resultFile = Bun.file(resultPath)
-      if (!(await resultFile.exists())) {
+      const run = await this.readRun(goalKey, assistantRunId)
+      if (!run) {
         return null
       }
 
       return {
         goalKey,
         assistantRunId,
+        attachments: run.attachments,
         context: await readBundleFile(paths.assistantContextPath(goalKey, assistantRunId)),
         prompt: await readBundleFile(paths.assistantPromptPath(goalKey, assistantRunId)),
         outcome: await readBundleFile(paths.assistantOutcomePath(goalKey, assistantRunId)),
-        result: await readBundleFile(resultPath),
+        result: await readBundleFile(paths.assistantResultPath(goalKey, assistantRunId)),
       }
     },
     async listRuns(goalKey) {

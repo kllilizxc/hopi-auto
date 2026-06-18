@@ -22,18 +22,64 @@
   }
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
-  min-height: 100vh;
+  overflow: hidden;
 }
 
 #root {
-  width: 100%;
-  min-height: 100vh;
+  isolation: isolate;
 }
+
+#root > * {
+  height: 100%;
+}
+
+.scroll-container__viewport {
+  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+}
+
+.scroll-container__viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scroll-container__viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-container__viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.scroll-container[data-scroll-active='true'] .scroll-container__viewport::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.34);
+}
+
+.scroll-container[data-scroll-active='true'] .scroll-container__viewport {
+  scrollbar-color: rgba(148, 163, 184, 0.34) transparent;
+}
+
+.scroll-container[data-scroll-active='true']
+  .scroll-container__viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 232, 240, 0.42);
+}
+
 .task-card:hover {
   transform: translateY(-1px);
 }
