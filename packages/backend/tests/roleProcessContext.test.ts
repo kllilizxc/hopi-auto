@@ -168,26 +168,17 @@ requests:
     expect(context).toContain('active | prefer-incremental-rollouts | Prefer incremental rollouts.')
     expect(prompt).toContain('## Planner Design Policy')
     expect(prompt).toContain(
-      'Do not edit decisions.yml, planning-requests.yml, events.jsonl, write-trace.jsonl; those files are runtime-owned workflow state.',
+      'Use the exact Goal-doc paths from the bundled context; requested update paths are relative to that Goal docs directory, and decisions.yml, planning-requests.yml, events.jsonl, write-trace.jsonl stay read-only.',
     )
     expect(prompt).toContain(
       'If design.md is still bootstrapped, replace placeholder sections with durable design detail before returning success.',
     )
     expect(prompt).toContain(
-      'If a relevant planning request targets goal.md, update durable Goal context before returning success.',
-    )
-    expect(prompt).toContain(
-      'Address open planning requests linked to this task before returning success.',
-    )
-    expect(prompt).toContain(
-      'If a relevant planning request targets design.md, update durable design rationale before returning success.',
-    )
-    expect(prompt).toContain(
-      'If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.',
+      'Before returning success, satisfy every open planning request linked to this task by updating each requested durable Goal-local file (`goal.md`, `design.md`, `todo.yml`, or another requested doc).',
     )
     expect(prompt).toContain('## Planner Task Decomposition Rules')
     expect(prompt).toContain(
-      'Default to one engineering task unless there is a clear parallelism or sequencing benefit.',
+      'Default to one engineering task unless parallelism or sequencing clearly helps.',
     )
     expect(prompt).toContain(
       'Every engineering task must name its primary implementation surface in backticks inside the task description',
@@ -202,27 +193,25 @@ requests:
       'For UI, layout, visual, interaction, routing, browser state, keyboard/IME, responsive, screenshot, modal, panel, button, tab/filter, form, or input work, every engineering task must include at least one acceptance criterion beginning with `Browser harness:`.',
     )
     expect(prompt).toContain(
+      'A `Browser harness:` criterion must name the page/user path, visible state or interaction result, and either an existing scenario under `scripts/hopi/browser-harness/scenarios/` or that the generator must create/update one there.',
+    )
+    expect(prompt).toContain(
       'Planner must not create or edit `scripts/hopi/browser-harness/**`; those project scripts are engineering assets produced by generator/reviewer/merger worktrees.',
     )
+    expect(prompt).not.toContain('## Browser Harness Capability')
+    expect(prompt).toContain('## todo.yml Guardrails')
+    expect(prompt).toContain('Only use task kinds: planning | engineering.')
     expect(prompt).toContain(
-      'If the repo does not already contain a suitable project scenario, do not require one to pre-exist; make the engineering task say the generator must create or update the scenario under `scripts/hopi/browser-harness/scenarios/`.',
-    )
-    expect(prompt).toContain('## todo.yml Canonical Literals')
-    expect(prompt).toContain('Allowed task kind literals: planning | engineering')
-    expect(prompt).toContain(
-      'Allowed task status literals: planned | in_progress | in_review | merging | done',
+      'Only use task statuses: planned | in_progress | in_review | merging | done.',
     )
     expect(prompt).toContain(
-      'Allowed blockedBy.kind literals: task | decision | merge_conflict | intervention',
+      'Only use `blockedBy.kind` values: task | decision | merge_conflict | intervention.',
     )
     expect(prompt).toContain(
       'If a YAML list item in description or acceptanceCriteria starts with backticks or another YAML-reserved leading character, quote it or write it with `>-`; never start a bare list item with ``.',
     )
     expect(prompt).toContain(
-      'Do not invent synonyms such as pending, queued, active, blocked, or review_pending.',
-    )
-    expect(prompt).toContain(
-      'planning-requests.yml is runtime-owned and must not be edited. For reference only, its status literals are open | resolved.',
+      '`attachmentAssetPaths` is optional, but when present every value must be an exact Goal-local asset path under `assets/`; do not invent attachment paths or collapse image lineage into prose-only references.',
     )
   })
 
@@ -354,10 +343,10 @@ requests:
     expect(context).toContain('.hopi/docs/goals/goal-2b')
     expect(context).toContain('Requested durable updates: goal.md, notes/rollout.md, research.md')
     expect(prompt).toContain(
-      'Requested update paths are relative to the Goal docs directory from the bundled context.',
+      'Use the exact Goal-doc paths from the bundled context; requested update paths are relative to that Goal docs directory, and decisions.yml, planning-requests.yml, events.jsonl, write-trace.jsonl stay read-only.',
     )
     expect(prompt).toContain(
-      'If a relevant planning request targets another Goal-local path, create or update that durable document before returning success.',
+      'Before returning success, satisfy every open planning request linked to this task by updating each requested durable Goal-local file (`goal.md`, `design.md`, `todo.yml`, or another requested doc).',
     )
   })
 
@@ -433,10 +422,10 @@ requests:
       `Attachment assets: ${decisionAttachment.assetPath}`,
     )
     expect(prompt).toContain(
-      'When a task materially depends on a referenced Goal image, keep the exact Goal-local asset path(s) under attachmentAssetPaths on that task row.',
+      'When a task materially depends on a referenced Goal image, keep the exact Goal-local asset path(s) under `attachmentAssetPaths` on that task row.',
     )
     expect(prompt).toContain(
-      'attachmentAssetPaths is optional, but when present every value must be an exact Goal-local asset path under assets/.',
+      '`attachmentAssetPaths` is optional, but when present every value must be an exact Goal-local asset path under `assets/`; do not invent attachment paths or collapse image lineage into prose-only references.',
     )
   })
 
@@ -644,7 +633,11 @@ requests:
     expect(context).toContain('## Relevant Write Traces')
     expect(context).toContain('Changes: modified src/auth.ts, added src/session.ts')
     expect(prompt).toContain('## Role Evidence Policy')
+    expect(prompt).toContain('## Browser Harness Review Policy')
     expect(prompt).toContain('Reviewer must use relevant write traces as execution evidence.')
+    expect(prompt).toContain(
+      'If acceptance criteria include a Browser harness requirement, run or inspect the referenced project scenario under `scripts/hopi/browser-harness/scenarios/` before accepting.',
+    )
     expect(prompt).toContain(
       'If there are no relevant traces or the traces do not support the claimed work, prefer reject or fail over blind acceptance.',
     )
@@ -965,11 +958,13 @@ requests:
     expect(prompt).toContain(
       'Planning reviewer must verify durable planning follow-through against open planning requests before accepting.',
     )
+    expect(prompt).not.toContain('## Browser Harness Capability')
+    expect(prompt).not.toContain('## Browser Harness Review Policy')
     expect(prompt).toContain(
       'If there is no durable planning evidence or the docs and task graph do not reflect the requested follow-through, prefer reject or fail over blind acceptance.',
     )
     expect(prompt).toContain(
-      'When reviewing planning work, accept Browser Harness follow-through when the downstream engineering task clearly names visible verification and either references an existing repo scenario or explicitly requires the generator to create/update one; do not reject planning solely because the scenario asset does not exist yet.',
+      'Accept Browser Harness follow-through when the downstream engineering task clearly names visible verification and either references an existing repo scenario or explicitly requires the generator to create/update one; do not reject planning solely because the scenario asset does not exist yet.',
     )
   })
 
@@ -1004,6 +999,8 @@ requests:
     expect(prompt).toContain(
       'Merger must inspect relevant run history and artifact evidence before returning success.',
     )
+    expect(prompt).not.toContain('## Browser Harness Capability')
+    expect(prompt).not.toContain('## Browser Harness Review Policy')
     expect(prompt).toContain(
       'Merger must not return success blindly when engineering write-trace evidence is missing.',
     )
@@ -1077,6 +1074,8 @@ requests:
     expect(prompt).toContain(
       'Merger may reconcile worktree product files when necessary, but success is only valid if the merge script succeeds afterward.',
     )
+    expect(prompt).not.toContain('## Browser Harness Capability')
+    expect(prompt).not.toContain('## Browser Harness Review Policy')
   })
 
   test('warns planning merger when durable planning follow-through evidence is missing', async () => {
@@ -1131,6 +1130,8 @@ requests:
     expect(prompt).toContain(
       'Planning merger must inspect durable planning evidence before returning success.',
     )
+    expect(prompt).not.toContain('## Browser Harness Capability')
+    expect(prompt).not.toContain('## Browser Harness Review Policy')
     expect(prompt).toContain(
       'Planning merger must not return success blindly when durable planning follow-through evidence is missing.',
     )

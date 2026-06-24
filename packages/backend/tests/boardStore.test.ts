@@ -83,6 +83,37 @@ items:
     expect(board.items[0]?.status).toBe('planned')
   })
 
+  test('repairs malformed reserved-leading list items and rewrites canonical YAML', async () => {
+    const store = createBoardStore(tmpRoot)
+    await Bun.write(
+      store.paths.todoPath('g'),
+      `version: 1
+goal:
+  goalKey: g
+  title: Goal
+items:
+  - ref: T-1
+    kind: engineering
+    status: planned
+    title: Task T-1
+    description: Description for T-1
+    acceptanceCriteria:
+      - \`T-1\` survives restart cleanup
+      - Browser harness: restart flow stays visible
+`,
+    )
+
+    const board = await store.readBoard('g')
+    const repairedYaml = await Bun.file(store.paths.todoPath('g')).text()
+
+    expect(board.items[0]?.acceptanceCriteria).toEqual([
+      '`T-1` survives restart cleanup',
+      'Browser harness: restart flow stays visible',
+    ])
+    expect(repairedYaml).toContain('- "`T-1` survives restart cleanup"')
+    expect(repairedYaml).toContain('- "Browser harness: restart flow stays visible"')
+  })
+
   test('supports explicit event appends', async () => {
     const store = createBoardStore(tmpRoot)
 

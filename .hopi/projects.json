@@ -7,6 +7,13 @@
       "rootDir": "/home/kllilizxc/Code/CardGame2",
       "createdAt": "2026-06-14T06:09:14.390Z",
       "lastOpenedGoalKey": "deck-mangements"
+    },
+    {
+      "projectKey": "cardgame",
+      "name": "CardGame",
+      "rootDir": "/home/kllilizxc/Code/CardGame",
+      "createdAt": "2026-06-24T14:37:01.660Z",
+      "lastOpenedGoalKey": "bug-1"
     }
   ]
 }

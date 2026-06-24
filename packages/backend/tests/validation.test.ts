@@ -147,4 +147,28 @@ describe('YAML helpers', () => {
 
     expect(board.items.map((item) => item.ref)).toEqual(['T-1', 'T-2'])
   })
+
+  test('recovers list items that start with reserved plain-scalar characters', () => {
+    const yaml = `version: 1
+goal:
+  goalKey: g
+  title: Goal
+items:
+  - ref: T-1
+    kind: engineering
+    status: planned
+    title: Task T-1
+    description: Description for T-1
+    acceptanceCriteria:
+      - \`Task T-1\` survives scene restart cleanup
+      - Browser harness: re-entry flow stays visible after restart
+`
+
+    const board = parseBoardYaml(yaml)
+
+    expect(board.items[0]?.acceptanceCriteria).toEqual([
+      '`Task T-1` survives scene restart cleanup',
+      'Browser harness: re-entry flow stays visible after restart',
+    ])
+  })
 })

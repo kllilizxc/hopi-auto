@@ -7,6 +7,11 @@ const LEGACY_TASK_STATUS_ALIASES: ReadonlyMap<string, TaskStatus> = new Map([
   ['pending', 'planned'],
 ])
 
+const RESERVED_PLAIN_SCALAR_START = /^[`@]/
+const BLOCK_SCALAR_HEADER = /^(\s*(?:-\s+)?[^:#][^:]*:\s*[>|][+-]?)\s*$/
+const BLOCK_SCALAR_SEQUENCE_HEADER = /^(\s*-\s*[>|][+-]?)\s*$/
+const STRING_LIST_HEADER = /^(\s*)(acceptanceCriteria|attachmentAssetPaths):\s*$/
+
 const BlockerRefSchema = z.object({
   kind: z.enum(BLOCKER_KINDS),
   ref: z.string().min(1),
@@ -67,8 +72,33 @@ const TodoBoardSchema = z.object({
 })
 
 export function parseBoardYaml(source: string): TodoBoard {
-  const raw = parse(source)
-  return validateBoard(raw)
+  return parseBoardYamlWithRecovery(source).board
+}
+
+export function parseBoardYamlWithRecovery(source: string): {
+  board: TodoBoard
+  repaired: boolean
+} {
+  try {
+    return {
+      board: validateBoard(parse(source)),
+      repaired: false,
+    }
+  } catch (error) {
+    const repairedSource = repairReservedPlainScalarStarts(source)
+    if (repairedSource === source) {
+      throw error
+    }
+
+    try {
+      return {
+        board: validateBoard(parse(repairedSource)),
+        repaired: true,
+      }
+    } catch {
+      throw error
+    }
+  }
 }
 
 export function validateBoard(input: unknown): TodoBoard {
@@ -102,6 +132,111 @@ export function validateBoard(input: unknown): TodoBoard {
 
 export function stringifyBoardYaml(board: TodoBoard): string {
   return stringify(validateBoard(board), { indent: 2 })
+}
+
+function repairReservedPlainScalarStarts(source: string) {
+  const lines = source.split('\n')
+  let changed = false
+  let blockScalarIndent: number | null = null
+  let stringListIndent: number | null = null
+
+  const repairedLines = lines.map((line) => {
+    const indent = leadingWhitespaceWidth(line)
+
+    if (blockScalarIndent !== null) {
+      if (line.trim() === '' || indent > blockScalarIndent) {
+        return line
+      }
+      blockScalarIndent = null
+    }
+
+    if (stringListIndent !== null) {
+      if (line.trim() === '') {
+        return line
+      }
+
+      if (indent > stringListIndent) {
+        if (BLOCK_SCALAR_SEQUENCE_HEADER.test(line)) {
+          blockScalarIndent = indent
+          return line
+        }
+
+        const repairedStringListLine = repairStringListItemLine(line)
+        if (repairedStringListLine !== line) {
+          changed = true
+        }
+        return repairedStringListLine
+      }
+
+      stringListIndent = null
+    }
+
+    if (BLOCK_SCALAR_HEADER.test(line) || BLOCK_SCALAR_SEQUENCE_HEADER.test(line)) {
+      blockScalarIndent = indent
+      return line
+    }
+
+    if (STRING_LIST_HEADER.test(line)) {
+      stringListIndent = indent
+      return line
+    }
+
+    const repairedLine = repairReservedPlainScalarLine(line)
+    if (repairedLine !== line) {
+      changed = true
+    }
+    return repairedLine
+  })
+
+  return changed ? repairedLines.join('\n') : source
+}
+
+function repairReservedPlainScalarLine(line: string) {
+  const sequenceMatch = line.match(/^(\s*-\s+)(.+)$/)
+  if (sequenceMatch) {
+    return quoteReservedLeadingScalar(sequenceMatch[1], sequenceMatch[2])
+  }
+
+  const mappingMatch = line.match(/^(\s*(?:-\s+)?[^:#][^:]*:\s+)(.+)$/)
+  if (mappingMatch) {
+    return quoteReservedLeadingScalar(mappingMatch[1], mappingMatch[2])
+  }
+
+  return line
+}
+
+function repairStringListItemLine(line: string) {
+  const sequenceMatch = line.match(/^(\s*-\s+)(.+)$/)
+  if (!sequenceMatch) {
+    return line
+  }
+
+  const leadingWhitespace = sequenceMatch[2].match(/^\s*/)?.[0] ?? ''
+  const value = sequenceMatch[2].slice(leadingWhitespace.length)
+  if (
+    value.startsWith('"') ||
+    value.startsWith("'") ||
+    value.startsWith('|') ||
+    value.startsWith('>')
+  ) {
+    return line
+  }
+
+  return `${sequenceMatch[1]}${leadingWhitespace}${JSON.stringify(value)}`
+}
+
+function quoteReservedLeadingScalar(prefix: string, rawValue: string) {
+  const leadingWhitespace = rawValue.match(/^\s*/)?.[0] ?? ''
+  const value = rawValue.slice(leadingWhitespace.length)
+  if (!RESERVED_PLAIN_SCALAR_START.test(value)) {
+    return `${prefix}${rawValue}`
+  }
+
+  return `${prefix}${leadingWhitespace}${JSON.stringify(value)}`
+}
+
+function leadingWhitespaceWidth(value: string) {
+  return value.match(/^\s*/)?.[0].length ?? 0
 }
 
 function assertNoTaskBlockerCycles(board: TodoBoard) {

@@ -10,8 +10,6 @@ import type { PreferenceEntry } from '../storage/preferenceStore'
 import type { MergeScriptAttemptRecord } from './gitMergeExecutor'
 import type { GoalWriteTraceEntry } from './writeTrace'
 
-const PLANNING_REQUEST_STATUS_LITERALS = ['open', 'resolved'] as const
-
 export interface PlannerContextInputs {
   goalDocsRoot: string
   todoFile: string
@@ -457,18 +455,18 @@ ${entries
 }
 
 function renderBrowserHarnessCapabilityPolicy(role: AgentRole, taskKind: TaskItem['kind']) {
-  const reviewerLine =
-    role === 'reviewer' && taskKind === 'engineering'
-      ? '- If acceptance criteria include a Browser harness requirement, run or inspect the referenced scenario before accepting; reject/fail if verification cannot run or does not prove the visible behavior.\n'
-      : ''
-  const planningReviewerLine =
-    role === 'reviewer' && taskKind === 'planning'
-      ? '- When reviewing planning work, accept Browser Harness follow-through when the downstream engineering task clearly names visible verification and either references an existing repo scenario or explicitly requires the generator to create/update one; do not reject planning solely because the scenario asset does not exist yet.\n'
-      : ''
-  const generatorLine =
-    role === 'generator'
-      ? '- If acceptance criteria require a Browser Harness scenario, create or update the project script under scripts/hopi/browser-harness/** and run it when the app/server is available.\n'
-      : ''
+  if (role === 'planner' || role === 'merger' || (role === 'reviewer' && taskKind === 'planning')) {
+    return ''
+  }
+
+  if (role === 'reviewer' && taskKind === 'engineering') {
+    return `## Browser Harness Review Policy
+
+- If acceptance criteria include a Browser harness requirement, run or inspect the referenced project scenario under \`scripts/hopi/browser-harness/scenarios/\` before accepting.
+- If you execute Browser Harness directly, write screenshots, logs, and extracted verification outputs to \`$HOPI_BROWSER_HARNESS_ARTIFACT_DIR\`.
+- Reject or fail when verification cannot run or does not prove the visible behavior.
+`
+  }
 
   return `## Browser Harness Capability
 
@@ -478,7 +476,8 @@ function renderBrowserHarnessCapabilityPolicy(role: AgentRole, taskKind: TaskIte
 - Write screenshots, logs, and extracted verification outputs to \`$HOPI_BROWSER_HARNESS_ARTIFACT_DIR\`.
 - If the browser is unavailable, the dev server is not running, or a login wall blocks verification, do not claim success; return fail/reject with the concrete blocker.
 - \`~/.hopi/browser-harness/templates/**\` may be used as a template source only; project acceptance should reference repo scripts under \`scripts/hopi/browser-harness/**\`.
-${generatorLine}${reviewerLine}${planningReviewerLine}`
+- If acceptance criteria require a Browser Harness scenario, create or update the project script under \`scripts/hopi/browser-harness/**\` and run it when the app/server is available.
+`
 }
 
 function roleBoundaryText(role: AgentRole) {
@@ -531,6 +530,7 @@ function renderRoleEvidencePolicy(role: AgentRole, taskKind: TaskItem['kind']) {
 
 - Planning reviewer must verify durable planning follow-through against open planning requests before accepting.
 - Planning reviewer should correlate goal-doc and todo changes with prior run history and write traces.
+- Accept Browser Harness follow-through when the downstream engineering task clearly names visible verification and either references an existing repo scenario or explicitly requires the generator to create/update one; do not reject planning solely because the scenario asset does not exist yet.
 - If there is no durable planning evidence or the docs and task graph do not reflect the requested follow-through, prefer reject or fail over blind acceptance.
 `
   }
@@ -559,41 +559,31 @@ function renderPlannerDesignPolicy(role: AgentRole, docsStatus: GoalDocsStatusIn
 
   return `## Planner Design Policy
 
-${bootstrapRule}- Update durable design rationale before reshaping substantial task graph work.
-- Requested update paths are relative to the Goal docs directory from the bundled context.
-- Use the exact file paths listed in the bundled context when reading or writing Goal docs; do not invent alternate relative .hopi/... paths.
-- Do not edit ${RESERVED_GOAL_STATE_FILES.join(', ')}; those files are runtime-owned workflow state.
-- If a relevant planning request targets goal.md, update durable Goal context before returning success.
-- When decisions materially change decomposition, summarize the implication in design.md before concluding planning work.
-- Address open planning requests linked to this task before returning success.
-- If a relevant planning request targets design.md, update durable design rationale before returning success.
-- If a relevant planning request targets another Goal-local path, create or update that durable document before returning success.
-- If a relevant planning request targets todo.yml, reshape the visible task graph before returning success.
-- When a task materially depends on a referenced Goal image, keep the exact Goal-local asset path(s) under attachmentAssetPaths on that task row.
+${bootstrapRule}- Use the exact Goal-doc paths from the bundled context; requested update paths are relative to that Goal docs directory, and ${RESERVED_GOAL_STATE_FILES.join(', ')} stay read-only.
+- Update durable design rationale before reshaping substantial task graph work.
+- Before returning success, satisfy every open planning request linked to this task by updating each requested durable Goal-local file (\`goal.md\`, \`design.md\`, \`todo.yml\`, or another requested doc).
+- When decisions materially change decomposition, summarize the implication in \`design.md\` before finishing.
+- When a task materially depends on a referenced Goal image, keep the exact Goal-local asset path(s) under \`attachmentAssetPaths\` on that task row.
 
 ## Planner Task Decomposition Rules
 
-- Default to one engineering task unless there is a clear parallelism or sequencing benefit.
+- Default to one engineering task unless parallelism or sequencing clearly helps.
 - Every engineering task must name its primary implementation surface in backticks inside the task description, for example \`DeckManagementPanel\` or \`src/game/ui/deckbuilder/DeckManagementPanel.ts\`.
 - If two engineering tasks would touch the same primary surface, merge them into one task or add a \`blockedBy\` task dependency so they do not run in parallel.
 - Use \`blockedBy: [{ kind: "task", ref: "..." }]\` for structural prerequisites or overlapping implementation surfaces that must remain ordered.
 - Preserve/no-regression concerns should usually stay in acceptance criteria or a serial hardening pass, not as a parallel task on the same surface.
 - For UI, layout, visual, interaction, routing, browser state, keyboard/IME, responsive, screenshot, modal, panel, button, tab/filter, form, or input work, every engineering task must include at least one acceptance criterion beginning with \`Browser harness:\`.
-- A \`Browser harness:\` criterion must name the page/user path, visible state or interaction result, and either an existing scenario under \`scripts/hopi/browser-harness/scenarios/\` or the scenario the generator must create/update.
-- If the repo does not already contain a suitable project scenario, do not require one to pre-exist; make the engineering task say the generator must create or update the scenario under \`scripts/hopi/browser-harness/scenarios/\`.
+- A \`Browser harness:\` criterion must name the page/user path, visible state or interaction result, and either an existing scenario under \`scripts/hopi/browser-harness/scenarios/\` or that the generator must create/update one there.
 - Planner must not create or edit \`scripts/hopi/browser-harness/**\`; those project scripts are engineering assets produced by generator/reviewer/merger worktrees.
 - If Browser Harness truly does not apply to a UI-looking task, write \`Browser harness: not applicable because ...\` with a concrete reason.
 
-## todo.yml Canonical Literals
+## todo.yml Guardrails
 
-- Allowed task kind literals: ${TASK_KINDS.join(' | ')}
-- Allowed task status literals: ${TASK_STATUSES.join(' | ')}
-- Allowed blockedBy.kind literals: ${BLOCKER_KINDS.join(' | ')}
+- Only use task kinds: ${TASK_KINDS.join(' | ')}.
+- Only use task statuses: ${TASK_STATUSES.join(' | ')}.
+- Only use \`blockedBy.kind\` values: ${BLOCKER_KINDS.join(' | ')}.
 - If a YAML list item in description or acceptanceCriteria starts with backticks or another YAML-reserved leading character, quote it or write it with \`>-\`; never start a bare list item with \`\`.
-- attachmentAssetPaths is optional, but when present every value must be an exact Goal-local asset path under assets/.
-- Do not invent synonyms such as pending, queued, active, blocked, or review_pending.
-- Do not invent attachment paths or collapse image lineage into prose-only references.
-- planning-requests.yml is runtime-owned and must not be edited. For reference only, its status literals are ${PLANNING_REQUEST_STATUS_LITERALS.join(' | ')}.
+- \`attachmentAssetPaths\` is optional, but when present every value must be an exact Goal-local asset path under \`assets/\`; do not invent attachment paths or collapse image lineage into prose-only references.
 `
 }
 

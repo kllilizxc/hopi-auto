@@ -1,7 +1,11 @@
 import { appendFile, mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { BoardEvent, TodoBoard } from '../domain/board'
-import { parseBoardYaml, stringifyBoardYaml, validateBoard } from '../domain/validation'
+import {
+  parseBoardYamlWithRecovery,
+  stringifyBoardYaml,
+  validateBoard,
+} from '../domain/validation'
 import { withFileLock } from './lock'
 import { type ProjectPaths, createProjectPaths } from './paths'
 import {
@@ -70,7 +74,12 @@ async function readBoardAtPath(todoPath: string, goalKey: string): Promise<TodoB
     }
   }
 
-  return parseBoardYaml(await file.text())
+  const source = await file.text()
+  const { board, repaired } = parseBoardYamlWithRecovery(source)
+  if (repaired) {
+    await writeBoardAtomically(todoPath, board)
+  }
+  return board
 }
 
 async function writeBoardAtomically(todoPath: string, board: TodoBoard) {
