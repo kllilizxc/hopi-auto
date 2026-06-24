@@ -18,16 +18,6 @@ import {
   ActionRequiredNotificationSchema,
 } from './actionRequiredNotificationTypes'
 
-const ASSISTANT_THREAD_ENTRY_KINDS = [
-  'user_message',
-  'assistant_message',
-  'system_message',
-  'action',
-  'action_result',
-] as const
-
-export type AssistantThreadEntryKind = (typeof ASSISTANT_THREAD_ENTRY_KINDS)[number]
-
 export type AssistantThreadEntryInput =
   | { kind: 'user_message'; content: string; attachments?: GoalAttachmentRef[] }
   | { kind: 'assistant_message'; content: string; mergeKey?: string }
@@ -187,8 +177,7 @@ export function createAssistantThreadStore(
         const thread = await readThreadAtPath(threadPath, goalKey)
         if (input.kind === 'system_message' && input.dedupeKey) {
           const existing = thread.entries.find(
-            (entry) =>
-              entry.kind === 'system_message' && entry.dedupeKey === input.dedupeKey,
+            (entry) => entry.kind === 'system_message' && entry.dedupeKey === input.dedupeKey,
           )
           if (existing) {
             return existing

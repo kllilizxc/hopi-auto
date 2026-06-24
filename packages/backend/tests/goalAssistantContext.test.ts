@@ -35,9 +35,7 @@ describe('createGoalAssistantContextBuilder', () => {
     expect(prompt).toContain(
       'Allowed workflow child kind literals inside request_planning workflow mode or workflow_batch followThrough: planning | planning_batch',
     )
-    expect(prompt).toContain(
-      'Allowed set_preference.mode literals: upsert | retire',
-    )
+    expect(prompt).toContain('Allowed set_preference.mode literals: upsert | retire')
     expect(prompt).toContain(
       'Use only five public action families: retry_task, request_planning, request_decision, resolve_decisions, set_preference.',
     )
@@ -45,7 +43,7 @@ describe('createGoalAssistantContextBuilder', () => {
       'Use retry_task only when the user explicitly asks to retry or resume a blocked task.',
     )
     expect(prompt).toContain(
-      'retry_task may clear only retryable blockers and resets that task\'s retry budget. It must not bypass task or decision blockers.',
+      "retry_task may clear only retryable blockers and resets that task's retry budget. It must not bypass task or decision blockers.",
     )
     expect(prompt).toContain(
       'For UI, screenshot, visual, interaction, keyboard/IME, routing, responsive, or browser-visible work, request planning should tell planner to include Browser Harness acceptance criteria that either reference an existing project scenario or explicitly require the engineering task to create/update one under scripts/hopi/browser-harness/**.',

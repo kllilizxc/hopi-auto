@@ -65,8 +65,6 @@ const LEGACY_EMPTY_MARKERS = new Set([
 ])
 const LEGACY_PREFERENCE_HEADERS = new Set(['# Preferences', '# HOPI Preferences'])
 
-const DEFAULT_PREFERENCES = renderPreferenceDocument([])
-
 export function createPreferenceStore(rootDir = process.cwd()): PreferenceStore {
   const paths = createProjectPaths(rootDir)
 
@@ -413,8 +411,4 @@ function ensureUniquePreferenceKey(baseKey: string, usedKeys: Set<string>) {
   }
   usedKeys.add(candidate)
   return candidate
-}
-
-export function defaultPreferenceDocument() {
-  return DEFAULT_PREFERENCES
 }

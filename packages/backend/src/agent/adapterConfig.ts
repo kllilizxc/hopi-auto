@@ -1,13 +1,13 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
-import type { RoleTransportConfig } from './vendorTransport'
-import { roleTransportConfigSchema } from './vendorTransport'
 import {
   DEFAULT_PROJECT_CODING_DEFAULTS,
   type ProjectCodingDefaults,
   normalizeProjectCodingDefaults,
 } from './projectCodingDefaults'
+import type { RoleTransportConfig } from './vendorTransport'
+import { roleTransportConfigSchema } from './vendorTransport'
 
 const WORKFLOW_ROLE_KEYS = ['planner', 'generator', 'reviewer', 'merger'] as const
 
@@ -102,11 +102,6 @@ export function normalizeAgentAdapterConfig(input: unknown): AgentAdapterConfig 
     .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
     .join(', ')
   throw new Error(`Invalid adapter config: ${issues}`)
-}
-
-export async function readAgentAdapterConfig(path: string) {
-  const raw = await Bun.file(path).text()
-  return normalizeAgentAdapterConfig(JSON.parse(raw))
 }
 
 export async function writeAgentAdapterConfig(path: string, config: AgentAdapterConfig) {
@@ -233,10 +228,7 @@ function selectPreferredCodingDefaultSource(
   return undefined
 }
 
-function isLegacyGeneratedCodexConfig(
-  config: RoleTransportConfig,
-  cwdMode: 'root' | 'worktree',
-) {
+function isLegacyGeneratedCodexConfig(config: RoleTransportConfig, cwdMode: 'root' | 'worktree') {
   return (
     config.transport === 'codex' &&
     config.cwdMode === cwdMode &&
@@ -254,11 +246,7 @@ function resolveExplicitTransportConfig(
   defaults: ProjectCodingDefaults,
   config: RoleTransportConfig,
 ): RoleTransportConfig {
-  if (
-    config.transport === 'codex' &&
-    !config.profile &&
-    defaults.transport === 'codex'
-  ) {
+  if (config.transport === 'codex' && !config.profile && defaults.transport === 'codex') {
     return {
       ...config,
       model: config.model ?? defaults.model,

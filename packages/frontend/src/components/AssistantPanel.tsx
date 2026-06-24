@@ -2,6 +2,7 @@ import { type ChangeEvent, type ClipboardEvent, useCallback, useEffect, useMemo,
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImagePlus, Loader2, MessageSquare, Send, X } from 'lucide-react'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
+import { goalScopedQueryKey } from '../lib/goalScope'
 import { useMessageFeed, mergeMessageFeedItems } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
 import {
@@ -90,13 +91,8 @@ export function AssistantPanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const draftAttachmentsRef = useRef<DraftAttachment[]>([])
   const queryClient = useQueryClient()
-  const goalScope = projectKey ?? '__legacy__'
-  const goalQueryKey = (key: string, ...rest: Array<string | number | null>) => [
-    key,
-    goalScope,
-    goalKey,
-    ...rest,
-  ]
+  const goalQueryKey = (key: string, ...rest: Array<string | number | null>) =>
+    goalScopedQueryKey(key, goalKey, projectKey, ...rest)
 
   const loadFeedPage = useCallback(
     (before?: string) =>
@@ -261,7 +257,7 @@ export function AssistantPanel({
     setStatusMessages([])
     setOptimisticMessages([])
     setAssistantPendingMessage(null)
-  }, [goalKey, goalScope])
+  }, [goalKey, projectKey])
 
   useEffect(() => {
     if (!goalKey || !proactiveMessage) {

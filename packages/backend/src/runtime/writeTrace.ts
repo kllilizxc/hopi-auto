@@ -56,13 +56,6 @@ const GoalWriteTraceEntrySchema = z.object({
   resultSummary: z.string(),
 })
 
-export function emptyGoalWriteTrace(goalKey: string): GoalWriteTrace {
-  return {
-    goalKey,
-    entries: [],
-  }
-}
-
 export function parseWriteTraceEntry(source: string): GoalWriteTraceEntry {
   const raw = JSON.parse(source)
   return validateWriteTraceEntry(raw)

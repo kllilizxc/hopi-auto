@@ -222,9 +222,7 @@ requests:
     await store.ensureGoalPlanningRequests(goalKey)
 
     await expect(Bun.file(planningRequestsPath).text()).resolves.toContain('status: open')
-    await expect(Bun.file(planningRequestsPath).text()).resolves.not.toContain(
-      'handledByTaskRefs',
-    )
+    await expect(Bun.file(planningRequestsPath).text()).resolves.not.toContain('handledByTaskRefs')
   })
 
   test('supports stable planning request group keys', async () => {

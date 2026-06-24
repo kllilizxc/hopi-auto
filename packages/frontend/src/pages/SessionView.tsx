@@ -19,6 +19,7 @@ import {
   readGoalAssistantRuns,
   readGoalRuns,
 } from '../lib/api'
+import { buildGoalRoute, goalScopedQueryKey, matchesGoalScope } from '../lib/goalScope'
 
 const RUN_STATUS_STYLES: Record<string, string> = {
   active: 'text-yellow-300 bg-yellow-500/10 border-yellow-500/20',
@@ -38,15 +39,13 @@ export function SessionView({ goalKey: goalKeyProp, projectKey: projectKeyProp }
   const routeParams = useParams<{ goalKey: string; projectKey: string }>()
   const goalKey = goalKeyProp ?? routeParams.goalKey
   const projectKey = projectKeyProp ?? routeParams.projectKey
-  const boardHref =
-    goalKey && projectKey
-      ? `/projects/${encodeURIComponent(projectKey)}/board/${encodeURIComponent(goalKey)}`
-      : goalKey
-        ? `/board/${encodeURIComponent(goalKey)}`
-        : '/projects'
+  const boardHref = buildGoalRoute(
+    goalKey ? { goalKey, projectKey: projectKey ?? null } : null,
+    'board',
+  )
 
   const runsQuery = useQuery({
-    queryKey: ['goal-runs', projectKey ?? '__legacy__', goalKey],
+    queryKey: goalScopedQueryKey('goal-runs', goalKey, projectKey),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key')
@@ -58,7 +57,7 @@ export function SessionView({ goalKey: goalKeyProp, projectKey: projectKeyProp }
   })
 
   const assistantRunsQuery = useQuery({
-    queryKey: ['assistant-runs', projectKey ?? '__legacy__', goalKey],
+    queryKey: goalScopedQueryKey('assistant-runs', goalKey, projectKey),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key')
@@ -76,8 +75,12 @@ export function SessionView({ goalKey: goalKeyProp, projectKey: projectKeyProp }
 
     const evtSource = openGoalEventStream()
     evtSource.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as { type?: string; goalKey?: string; projectKey?: string }
-      if (payload.goalKey !== goalKey || (projectKey ? payload.projectKey !== projectKey : Boolean(payload.projectKey))) {
+      const payload = JSON.parse(event.data) as {
+        type?: string
+        goalKey?: string
+        projectKey?: string
+      }
+      if (!matchesGoalScope({ goalKey, projectKey: projectKey ?? null }, payload)) {
         return
       }
 

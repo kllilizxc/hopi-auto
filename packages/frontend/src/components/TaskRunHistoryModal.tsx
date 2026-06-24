@@ -9,6 +9,7 @@ import type {
   TodoTaskItem,
 } from '../lib/api'
 import { openGoalRunFeedStream, readGoalRunFeed, readGoalRunStepBundle } from '../lib/api'
+import { goalScopedQueryKey } from '../lib/goalScope'
 import { useMessageFeed } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
 import { ScrollContainer } from './ScrollContainer'
@@ -113,20 +114,26 @@ export function TaskRunHistoryModal({
 
   const feed = useMessageFeed({
     enabled: isOpen && Boolean(goalKey) && Boolean(activeRun),
-    queryKey: ['run-feed', projectKey ?? '__legacy__', goalKey, activeRun?.runId ?? null, selectedStepId ?? null],
+    queryKey: goalScopedQueryKey(
+      'run-feed',
+      goalKey,
+      projectKey,
+      activeRun?.runId ?? null,
+      selectedStepId ?? null,
+    ),
     loadPage: loadFeedPage,
     openStream: openFeedStream,
   })
 
   const stepMetadata = useMemo(() => buildStepMetadata(selectedStep), [selectedStep])
   const promptBundleQuery = useQuery<GoalRunStepBundle>({
-    queryKey: [
+    queryKey: goalScopedQueryKey(
       'run-step-bundle',
-      projectKey ?? '__legacy__',
       goalKey,
+      projectKey,
       activeRun?.runId ?? null,
       promptStep?.stepId ?? null,
-    ],
+    ),
     queryFn: () => readGoalRunStepBundle(goalKey, activeRun!.runId, promptStep!.stepId, projectKey),
     enabled:
       isOpen &&

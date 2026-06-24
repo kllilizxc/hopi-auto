@@ -1,6 +1,7 @@
-import type { AgentOutcome, AgentRole, AgentRunner, AgentRuntimeEvent } from '../agent/AgentRunner'
+import type { AgentOutcome, AgentRole, AgentRunner } from '../agent/AgentRunner'
 import type { BlockerRef, FailureKind, TaskItem, TaskStatus } from '../domain/board'
 import type { AttemptStore } from '../runtime/attemptStore'
+import type { ExecutionStateStore } from '../runtime/executionStateStore'
 import { type GitMergeExecutor, createGitMergeExecutor } from '../runtime/gitMergeExecutor'
 import {
   type LaneParallelismInput,
@@ -12,14 +13,13 @@ import {
   resolvePlanningRequestsForTask,
   syncGroupedPlanningEngineeringBlockers,
 } from '../runtime/planningRequest'
+import type { RunStatus, StepOutcome } from '../runtime/runHistory'
+import type { RunHistoryStore } from '../runtime/runHistoryStore'
+import type { RunningTaskRegistry } from '../runtime/runningTaskRegistry'
 import {
   inspectBrowserHarnessAcceptanceCriteria,
   inspectEngineeringTaskDecomposition,
 } from '../runtime/taskGraphPolicy'
-import type { ExecutionStateStore } from '../runtime/executionStateStore'
-import type { RunningTaskRegistry } from '../runtime/runningTaskRegistry'
-import type { RunStatus, StepOutcome } from '../runtime/runHistory'
-import type { RunHistoryStore } from '../runtime/runHistoryStore'
 import { type WriteTraceStore, createWriteTraceStore } from '../runtime/writeTraceStore'
 import type { BoardStore } from '../storage/boardStore'
 import { type DecisionStore, createDecisionStore } from '../storage/decisionStore'
@@ -28,6 +28,17 @@ import {
   type PlanningRequestStore,
   createPlanningRequestStore,
 } from '../storage/planningRequestStore'
+import {
+  errorMessage,
+  executionOutcomeForAgentOutcome,
+  firstNonEmpty,
+  historyEventForRuntimeEvent,
+  messageForOutcome,
+  recordMergeScriptAttempt,
+  runStatusForResolution,
+  statusMessage,
+  stepOutcomeForAgentOutcome,
+} from './reconcileSupport'
 
 export interface ReconcileOptions {
   goalKey: string
@@ -136,9 +147,17 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
           refs: executionLease ? { stepId: executionLease.executionId } : undefined,
         })
         if (executionLease && executionLease.executionId !== runRef.stepId) {
-          await options.execution?.bindRunStepRefs(options.goalKey, executionLease.executionId, runRef)
+          await options.execution?.bindRunStepRefs(
+            options.goalKey,
+            executionLease.executionId,
+            runRef,
+          )
         } else if (executionLease) {
-          await options.execution?.bindRunStepRefs(options.goalKey, executionLease.executionId, runRef)
+          await options.execution?.bindRunStepRefs(
+            options.goalKey,
+            executionLease.executionId,
+            runRef,
+          )
         }
       } catch (error) {
         await setTaskStatus(options.store, options.goalKey, writer, task.ref, from)
@@ -191,8 +210,7 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
         } else if (initialAttempt.result?.kind === 'merge_conflict') {
           outcome = {
             kind: 'merge_conflict',
-            artifactRef:
-              initialAttempt.result.artifactRef ?? `branch:${task.ref}:${runRef.runId}`,
+            artifactRef: initialAttempt.result.artifactRef ?? `branch:${task.ref}:${runRef.runId}`,
           }
           forcedResolution = {
             to: step.mergeConflictTo ?? from,
@@ -260,8 +278,7 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
               outcome = {
                 kind: 'merge_conflict',
                 artifactRef:
-                  verificationAttempt.result.artifactRef ??
-                  `branch:${task.ref}:${runRef.runId}`,
+                  verificationAttempt.result.artifactRef ?? `branch:${task.ref}:${runRef.runId}`,
               }
               if (verificationAttempt.result.kind === 'merge_conflict') {
                 forcedResolution = {
@@ -415,7 +432,9 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
       statusAfter: validated.resolution.to,
       outcome: stepOutcomeForAgentOutcome(validated.outcome),
       runStatus: runStatusForResolution(validated.resolution),
-      message: statusMessage(messageForOutcome(task.ref, validated.outcome, validated.resolution.to)),
+      message: statusMessage(
+        messageForOutcome(task.ref, validated.outcome, validated.resolution.to),
+      ),
     })
     if (executionLease) {
       await options.execution?.finishTaskExecution({
@@ -434,11 +453,13 @@ export async function reconcileOnce(options: ReconcileOptions): Promise<Reconcil
   } finally {
     runningLease?.release()
     if (executionLease && !executionFinalized) {
-      await options.execution?.finishTaskExecution({
-        goalKey: options.goalKey,
-        executionId: executionLease.executionId,
-        outcome: 'system_error',
-      }).catch(() => undefined)
+      await options.execution
+        ?.finishTaskExecution({
+          goalKey: options.goalKey,
+          executionId: executionLease.executionId,
+          outcome: 'system_error',
+        })
+        .catch(() => undefined)
     }
   }
 }
@@ -868,212 +889,4 @@ async function finishHistoryStep(
     runStatus: input.runStatus,
     message: input.message,
   })
-}
-
-function runStatusForResolution(resolution: OutcomeResolution): RunStatus | undefined {
-  if (resolution.blocker) {
-    return 'blocked'
-  }
-
-  if (resolution.to === 'done') {
-    return 'completed'
-  }
-
-  if (resolution.to === 'planned') {
-    return 'retryable'
-  }
-
-  return undefined
-}
-
-function stepOutcomeForAgentOutcome(outcome: AgentOutcome): StepOutcome {
-  switch (outcome.kind) {
-    case 'success':
-      return 'success'
-    case 'reject':
-      return 'reject'
-    case 'merge_conflict':
-      return 'merge_conflict'
-    case 'timeout':
-      return 'timeout'
-    case 'fail':
-      return 'fail'
-  }
-}
-
-function executionOutcomeForAgentOutcome(outcome: AgentOutcome) {
-  if (outcome.kind === 'success') {
-    return 'succeeded' as const
-  }
-  if (outcome.kind === 'reject') {
-    return 'rejected' as const
-  }
-  if (outcome.kind === 'timeout') {
-    return 'timed_out' as const
-  }
-  if (outcome.kind === 'merge_conflict') {
-    return 'merge_conflict' as const
-  }
-  if (outcome.kind === 'fail') {
-    return 'failed' as const
-  }
-  return 'system_error' as const
-}
-
-function messageForOutcome(taskRef: string, outcome: AgentOutcome, statusAfter: TaskStatus) {
-  switch (outcome.kind) {
-    case 'success':
-      return `${taskRef} advanced to ${statusAfter}`
-    case 'reject':
-      return outcome.reason
-    case 'merge_conflict':
-      return `merge conflict: ${outcome.artifactRef}`
-    case 'timeout':
-      return outcome.reason
-    case 'fail':
-      return outcome.reason
-  }
-}
-
-function statusMessage(content: string) {
-  return {
-    kind: 'system' as const,
-    role: 'system' as const,
-    content,
-  }
-}
-
-function historyEventForRuntimeEvent(event: AgentRuntimeEvent) {
-  if (event.kind === 'transcript') {
-    return {
-      kind: 'transcript' as const,
-      transport: event.transport,
-      entryKind: event.entryKind,
-      summary: event.summary,
-      toolName: event.toolName,
-      toolInvocationKey: event.toolInvocationKey,
-      vendorEventType: event.vendorEventType,
-    }
-  }
-
-  if (event.kind === 'message') {
-    return {
-      kind: 'message' as const,
-      level: event.level,
-      role: event.role,
-      content: event.content,
-    }
-  }
-
-  if (event.kind === 'worktree_prepared') {
-    return {
-      kind: 'worktree_prepared' as const,
-      path: event.path,
-      branch: event.branch,
-      baseBranch: event.baseBranch,
-    }
-  }
-
-  return {
-    kind: 'artifact' as const,
-    ref: event.ref,
-    label: event.label,
-  }
-}
-
-async function recordMergeScriptAttempt(
-  history: RunHistoryStore | undefined,
-  options: {
-    goalKey: string
-    runId: string
-    stepId: string
-    attempt: NonNullable<GitMergeExecutor['runMergeScript']> extends (
-      options: any,
-    ) => Promise<infer TResult>
-      ? TResult
-      : never
-    phase: 'initial' | 'verification'
-  },
-) {
-  if (!history) {
-    return
-  }
-
-  const toolInvocationKey = `merge-script:${options.phase}:${options.runId}:${options.stepId}`
-  const commandSummary = `command (${options.attempt.command.join(' ')})`
-  const resultSummary = summarizeMergeScriptAttempt(options.attempt, options.phase)
-  await history.recordStepEvent({
-    goalKey: options.goalKey,
-    runId: options.runId,
-    stepId: options.stepId,
-    event: {
-      kind: 'transcript',
-      transport: 'process',
-      entryKind: 'tool_call',
-      summary: commandSummary,
-      toolName: 'command',
-      toolInvocationKey,
-      vendorEventType: 'merge_script',
-    },
-  })
-  await history.recordStepEvent({
-    goalKey: options.goalKey,
-    runId: options.runId,
-    stepId: options.stepId,
-    event: {
-      kind: 'transcript',
-      transport: 'process',
-      entryKind: 'tool_result',
-      summary: resultSummary,
-      toolName: 'command',
-      toolInvocationKey,
-      vendorEventType: 'merge_script',
-    },
-  })
-}
-
-function summarizeMergeScriptAttempt(
-  attempt: Awaited<ReturnType<NonNullable<GitMergeExecutor['runMergeScript']>>>,
-  phase: 'initial' | 'verification',
-) {
-  const parts = [`${phase} merge script`]
-  if (attempt.result) {
-    parts.push(`${attempt.result.kind}: ${attempt.result.reason}`)
-  } else if (attempt.parseError) {
-    parts.push(`invalid output: ${attempt.parseError}`)
-  } else {
-    parts.push(`exit ${attempt.exitCode}`)
-  }
-
-  const stdout = attempt.stdout.trim()
-  if (stdout) {
-    parts.push(`stdout=${truncateHistorySummary(stdout)}`)
-  }
-  const stderr = attempt.stderr.trim()
-  if (stderr) {
-    parts.push(`stderr=${truncateHistorySummary(stderr)}`)
-  }
-
-  return parts.join(' | ')
-}
-
-function truncateHistorySummary(content: string, maxLength = 240) {
-  if (content.length <= maxLength) {
-    return content
-  }
-  return `${content.slice(0, maxLength)}...[truncated]`
-}
-
-function firstNonEmpty(...values: Array<string | undefined>) {
-  for (const value of values) {
-    if (typeof value === 'string' && value.length > 0) {
-      return value
-    }
-  }
-
-  return ''
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
 }

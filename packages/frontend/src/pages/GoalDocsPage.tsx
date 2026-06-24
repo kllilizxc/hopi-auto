@@ -4,19 +4,20 @@ import { AlertCircle, ArrowLeft, FileText, Loader2 } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { ScrollContainer } from '../components/ScrollContainer'
 import { type GoalDocsSnapshot, readGoalDocs } from '../lib/api'
+import { buildGoalRoute, goalScopedQueryKey } from '../lib/goalScope'
 import { cn } from '../lib/utils'
 
 export function GoalDocsPage() {
   const routeParams = useParams<{ goalKey: string; projectKey: string }>()
   const goalKey = routeParams.goalKey
   const projectKey = routeParams.projectKey
-  const boardHref =
-    projectKey && goalKey
-      ? `/projects/${projectKey}/board/${goalKey}`
-      : `/board/${goalKey ?? ''}`
+  const boardHref = buildGoalRoute(
+    goalKey ? { goalKey, projectKey: projectKey ?? null } : null,
+    'board',
+  )
 
   const { data, isLoading, error } = useQuery<GoalDocsSnapshot>({
-    queryKey: ['goal-docs-page', projectKey ?? '__legacy__', goalKey],
+    queryKey: goalScopedQueryKey('goal-docs-page', goalKey, projectKey),
     queryFn: async () => {
       if (!goalKey) {
         throw new Error('Missing goal key')
