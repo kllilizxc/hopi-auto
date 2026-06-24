@@ -27,7 +27,7 @@ export function Layout() {
   )
 
   useEffect(() => {
-    if (!routeState.goalKey) {
+    if (!routeState.goalKey || !routeState.projectKey) {
       return
     }
 
@@ -51,7 +51,7 @@ export function Layout() {
   const boardHref = buildGoalRoute(navigableScope, 'board')
   const sessionHref = buildGoalRoute(navigableScope, 'session')
   const docsHref = buildGoalRoute(navigableScope, 'docs')
-  const hasScopedGoal = Boolean(navigableScope?.goalKey)
+  const hasScopedGoal = Boolean(navigableScope?.goalKey && navigableScope.projectKey)
   const isProjectsSurface =
     location.pathname.startsWith('/projects') &&
     !location.pathname.includes('/board/') &&

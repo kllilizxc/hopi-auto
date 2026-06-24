@@ -9,8 +9,6 @@ import type { ResolvedProjectContext, ServerRuntimeSupport } from './serverRunti
 import {
   assistantMessageSchema,
   automationStartSchema,
-  createTaskSchema,
-  moveTaskSchema,
 } from './serverSchemas'
 import {
   DEFAULT_PROJECT_KEY,
@@ -273,64 +271,6 @@ export async function handleGoalActionRoute(input: GoalActionRouteInput): Promis
       runtime.broadcast({ type: 'preferences_changed' })
     }
     return jsonResponse(result)
-  }
-
-  if (request.method === 'POST' && isGoalLeafRoute(goalRoute, 'tasks')) {
-    const currentGoalKey = requireGoalRoute(goalRoute).goalKey
-    const currentProjectKey = routeContext?.projectKey
-    const currentContext = requireRouteContext(routeContext).context
-    const body = await parseJsonBody(request, createTaskSchema)
-    await currentContext.store.mutateBoard(currentGoalKey, 'api', `create ${body.ref}`, (board) => {
-      if (board.items.some((task) => task.ref === body.ref)) {
-        throw new HttpError(409, `Task already exists: ${body.ref}`)
-      }
-
-      board.items.push({
-        ...body,
-        blockedBy: body.blockedBy ?? [],
-        status: 'planned',
-      })
-    })
-    await currentContext.actionRequired.reconcileGoal(currentGoalKey)
-    runtime.broadcastGoalEvent('board_changed', currentGoalKey, currentProjectKey)
-    return jsonResponse(
-      await runtime.boardResponse(
-        await currentContext.store.readBoard(currentGoalKey),
-        currentContext,
-      ),
-      201,
-    )
-  }
-
-  if (request.method === 'POST' && isGoalLeafRoute(goalRoute, 'tasks', 2)) {
-    if (requireGoalExtra(goalRoute, 1) !== 'move') {
-      throw new HttpError(404, 'Not found')
-    }
-    const currentGoalKey = requireGoalRoute(goalRoute).goalKey
-    const currentProjectKey = routeContext?.projectKey
-    const currentContext = requireRouteContext(routeContext).context
-    const body = await parseJsonBody(request, moveTaskSchema)
-    const taskRef = requireGoalExtra(goalRoute, 0)
-    await currentContext.store.mutateBoard(
-      currentGoalKey,
-      'api',
-      body.reason ?? 'manual transition',
-      (board) => {
-        const task = board.items.find((item) => item.ref === taskRef)
-        if (!task) {
-          throw new HttpError(404, `Task not found: ${taskRef}`)
-        }
-        task.status = body.status
-      },
-    )
-    await currentContext.actionRequired.reconcileGoal(currentGoalKey)
-    runtime.broadcastGoalEvent('board_changed', currentGoalKey, currentProjectKey)
-    return jsonResponse(
-      await runtime.boardResponse(
-        await currentContext.store.readBoard(currentGoalKey),
-        currentContext,
-      ),
-    )
   }
 
   if (request.method === 'GET' && isGoalAutomationRoute(parts)) {

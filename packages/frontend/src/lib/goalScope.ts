@@ -35,16 +35,11 @@ export function goalScopedQueryKey(
 }
 
 export function buildGoalRoute(scope: GoalRouteState | null, surface: GoalSurface) {
-  if (!scope?.goalKey) {
+  if (!scope?.goalKey || !scope.projectKey) {
     return '/projects'
   }
 
-  const encodedGoalKey = encodeURIComponent(scope.goalKey)
-  if (scope.projectKey) {
-    return `/projects/${encodeURIComponent(scope.projectKey)}/${surface}/${encodedGoalKey}`
-  }
-
-  return `/${surface}/${encodedGoalKey}`
+  return `/projects/${encodeURIComponent(scope.projectKey)}/${surface}/${encodeURIComponent(scope.goalKey)}`
 }
 
 export function readGoalRouteState(pathname: string): GoalRouteState {
@@ -65,16 +60,6 @@ export function readGoalRouteState(pathname: string): GoalRouteState {
     }
   }
 
-  if (
-    parts.length >= 2 &&
-    (parts[0] === 'board' || parts[0] === 'session' || parts[0] === 'docs')
-  ) {
-    return {
-      goalKey: decodeURIComponent(parts[1]),
-      projectKey: null,
-    }
-  }
-
   return {
     goalKey: null,
     projectKey: null,
@@ -86,7 +71,7 @@ export function resolveNavigableGoalScope(
   rememberedScope: GoalScope | null,
   projects: ProjectRecord[],
 ) {
-  if (routeState.goalKey) {
+  if (routeState.projectKey && routeState.goalKey) {
     return {
       projectKey: routeState.projectKey,
       goalKey: routeState.goalKey,
@@ -105,8 +90,20 @@ export function resolveNavigableGoalScope(
     return null
   }
 
-  if (rememberedScope) {
+  if (rememberedScope?.projectKey) {
     return rememberedScope
+  }
+
+  if (rememberedScope?.goalKey) {
+    const rememberedProject = projects.find(
+      (entry) => entry.lastOpenedGoalKey === rememberedScope.goalKey,
+    )
+    if (rememberedProject?.lastOpenedGoalKey) {
+      return {
+        projectKey: rememberedProject.projectKey,
+        goalKey: rememberedProject.lastOpenedGoalKey,
+      } satisfies GoalScope
+    }
   }
 
   const fallbackProject = projects.find((entry) => entry.lastOpenedGoalKey)

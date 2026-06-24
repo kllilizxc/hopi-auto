@@ -27,7 +27,7 @@ function App() {
             <Route path="projects/:projectKey/goals/new" element={<GoalCreatePage />} />
             <Route
               path="projects/:projectKey/board/:goalKey"
-              element={<BoardView mvpMode />}
+              element={<BoardView />}
             />
             <Route
               path="projects/:projectKey/docs/:goalKey"
@@ -37,9 +37,6 @@ function App() {
               path="projects/:projectKey/session/:goalKey"
               element={<SessionView />}
             />
-            <Route path="board/:goalKey" element={<BoardView />} />
-            <Route path="docs/:goalKey" element={<GoalDocsPage />} />
-            <Route path="session/:goalKey" element={<SessionView />} />
           </Route>
         </Routes>
       </BrowserRouter>

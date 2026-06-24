@@ -189,7 +189,9 @@ export function buildAssistantProactiveMessage(input: {
       id: `assistant-status:${baseId}`,
       label: 'Status update',
       content: 'Current status: paused. This goal does not have any tasks yet.',
-      details: ['Create or seed a task before starting automation.'],
+      details: [
+        'Use Goal Assistant to expand the plan, or create a new goal from the project home.',
+      ],
       timestamp: input.timestamp,
     }
   }
@@ -201,7 +203,7 @@ export function buildAssistantProactiveMessage(input: {
       content: `Current status: paused. All ${input.totalTaskCount} task(s) are done, so nothing is runnable right now.`,
       details: [
         'Review the completed session history from the task cards.',
-        'If more work is needed, move a task back to planned or create a new engineering task.',
+        'If more work is needed, ask Goal Assistant to open follow-up work for this goal.',
       ],
       timestamp: input.timestamp,
     }
@@ -231,7 +233,7 @@ export function buildAssistantProactiveMessage(input: {
       content: `Current status: paused. ${input.blockedTaskCount} task(s) are blocked, so nothing is runnable right now.`,
       details: [
         ...blockedSummary,
-        'Resolve the blocker refs on those cards first.',
+        'Resolve the blocker with Goal Assistant or the upstream task owner first.',
         'After the blockers clear, press Start to resume automation.',
       ],
       timestamp: input.timestamp,
@@ -242,7 +244,7 @@ export function buildAssistantProactiveMessage(input: {
     id: `assistant-status:${baseId}`,
     label: 'Status update',
     content: 'Current status: paused. Nothing is runnable at the moment.',
-    details: ['Review task states and reopen or create work before starting automation.'],
+    details: ['Review task states, then use Goal Assistant if this goal needs more work.'],
     timestamp: input.timestamp,
   }
 }
