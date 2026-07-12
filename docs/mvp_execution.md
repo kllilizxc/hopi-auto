@@ -346,6 +346,12 @@ panel rewrite therefore receives one Generator, Reviewer, and C1 cycle rather th
 dependency edge. Planner splits Work only for real ordering, isolation, or independently valuable
 delivery.
 
+The Work `repos` list is the complete source workspace for that responsibility: include every Repo
+the Generator or Reviewer must inspect, execute, or modify to prove the Work. HOPI does not add a
+second read-only Repo scope. A Repo that is only exercised may produce no source delta; checkpointing
+and C1 already treat its unchanged task branch as a no-op. Omitting a required runtime dependency is
+therefore an invalid Work contract, not a reason for an agent to search neighboring runtime folders.
+
 Planner decides which adopted references matter to which Engineering Work. For every related Work,
 it writes the exact Goal-relative image path and intended use or limitation into the Work Markdown.
 It does not add an attachment field to Work and does not propagate unrelated Goal images merely
@@ -381,6 +387,12 @@ Planner reads existing documents only from the immutable authority root and copi
 proposal only a document it intends to replace. It does not mirror unchanged Goal-package files;
 their absence means unchanged, never deleted.
 
+The Planner process starts in its Run root because `context.md`, `repos.json`, `result.json`, and the
+sparse overlay are siblings there. A canonical proposal path is written exactly once beneath the
+`proposal/` child, for example `proposal/.hopi/docs/...`; Planner never treats the proposal directory
+itself as cwd and then adds a second `proposal/` prefix. Engineering processes continue to start in
+their assigned task worktree. This is one fixed path convention, not role-configurable behavior.
+
 Planner never consumes an unconsumed or stale responsibility result, reconstructs Evidence from Run
 directories, or advances Engineering Work to `review` or `done`. Runtime files remain diagnostics;
 the next responsibility Run owns a fresh result. Planner may preserve Engineering Work or reset it
@@ -415,8 +427,12 @@ Generator may inspect Git status and diff but never writes the Git index, create
 branches, merges, rebases, or resets. Coordinator snapshots safe task-worktree changes after the Run;
 an inability to run `git add` inside the model sandbox is therefore expected and is never a blocker.
 
-A responsibility Run resolves ordinary project paths from its assigned `cwd` and reads integration
-truth only through the immutable context bundle. It does not receive the Preview-adapter
+A responsibility Run resolves ordinary project paths only from the Repo IDs and roots in its
+`HOPI_REPOS_FILE`, and reads integration truth only through the immutable context bundle. It never
+searches sibling, historical, or other Work runtime directories for missing source. If a Repo needed
+to implement or prove the contract is absent from the manifest, Generator returns `replan` instead
+of guessing a path. Independent reads and checks should be batched where practical; repeated
+discovery and progress narration are not evidence. The Run does not receive the Preview-adapter
 `HOPI_PROJECT_ROOT` variable: exporting the managed integration root there could make a task script
 bypass its stable worktree. Project Preview alone owns that variable.
 
@@ -506,6 +522,12 @@ storage and start from their Repo's current `hopi/release`. A responsibility rec
 workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
 
+HOPI materializes managed integration and task worktrees with `core.autocrlf=false` for the checkout
+operation, regardless of the operator's global Git preference. This does not change the user Repo
+configuration or checkout. It preserves committed blob line endings in HOPI-owned roots so an
+executable script that passed review cannot become `bash\r` merely because a later Work gets a fresh
+checkout.
+
 ### Project preparation
 
 Primary `scripts/hopi/prepare` is the Project's one reviewed, executable preparation contract. It is a fixed
@@ -515,8 +537,9 @@ It may populate ignored dependencies and caches but must not modify tracked or n
 files. Coordinator invokes it with the primary root as cwd and a runtime-only `HOPI_REPOS_FILE`
 mapping stable Repo IDs to the exact task or integration roots that will be consumed before every
 Generator, Reviewer, and Preview start. Repeated invocation, rather than a HOPI-maintained lockfile
-fingerprint, is the freshness check. The script may call Repo-native setup commands through that
-manifest; HOPI does not add per-Repo preparation configuration.
+fingerprint, is the freshness check. When the manifest is present, the script resolves linked Repos
+from it and never scans HOPI runtime siblings or earlier Work directories. It may call Repo-native
+setup commands through that manifest; HOPI does not add per-Repo preparation configuration.
 
 A missing script is allowed only for bootstrap. Planner records its creation in the first real
 Engineering Work that needs an executable environment; it does not create a separate Init Work.
@@ -530,7 +553,22 @@ that can repair it. Its path and captured failure log are added to that Run's as
 is strict before Reviewer: missing, non-executable, failing, or source-mutating preparation skips the
 model call and returns the same Work to Generator with the exact log. Preview runs the same preparation
 contract before primary `scripts/hopi/preview`, leaving Preview responsible only for service startup and its
-ready URL. There is no initialized flag, prepare revision, setup Action, or preparation Kanban state.
+ready URL. The fixed responsibility prompt exposes the adapter's exact ready signal,
+`HOPI_PREVIEW_URL=<reachable-url>`, whenever an Engineering Work may create, repair, or review the
+script; a merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
+initialized flag, prepare revision, setup Action, or preparation Kanban state.
+
+The public Project Preview API always starts the current managed integration release. It therefore
+cannot prove a pre-C1 task candidate. Engineering Work contains only acceptance criteria that
+Generator and Reviewer can prove by executing the candidate script directly with that Run's Repo
+manifest. When accepted design explicitly requires public Preview proof, the final semantic Planner
+uses the injected `HOPI_API_ORIGIN` after the relevant Engineering Work has integrated; it proposes
+completion only after the public session reaches `running`, and otherwise plans the smallest repair.
+Planner does not start Preview for Goals that do not require this proof. This reuses final Planning
+instead of adding a post-C1 stage, candidate-Preview mode, or automatic Preview on every release.
+The fixed API paths are `POST /api/projects/:projectId/preview/start`,
+`GET /api/projects/:projectId/preview`, and `POST /api/projects/:projectId/preview/stop`; Planner
+does not discover variants from Project source.
 
 If a code change makes preparation obsolete, the candidate fails this existing pre-review check and
 the same Work repairs it. If the script exits successfully but the environment is still wrong, normal
@@ -584,6 +622,8 @@ Concurrency rules:
 - Generator Runs may execute in parallel within profile capacity
 - a same-Goal Planning trigger queues immediately but its Planner Run waits for admitted Engineering
   Runs to drain; once queued, it blocks admission of new Engineering Runs
+- a material contract revision interrupts already admitted Runs for that Goal after the revision is
+  durable; an ordinary same-revision Planning request does not
 - possible overlap is serialized with `dependsOn`
 - deterministic source integration is idempotent by the qualified project/Goal/Work trailer
 
@@ -612,6 +652,12 @@ Assistant never edits source or canonical files directly. Its local MCP server i
 existing controllers and the global publisher. Reply prose, tool-result summaries, and raw Codex
 events are never parsed for control state. Planner still owns delivery decomposition.
 
+The MCP tool descriptions and JSON schemas injected into the Assistant turn are the only authority
+for tool arguments. Assistant calls those tools directly and never searches Project files,
+`.hopi/runtime`, transcripts, or HOPI source to guess a schema. It reads an exact canonical or
+diagnostic path returned by `hopi_read_state` only when that file's body is actually needed; broad
+runtime search is neither discovery nor evidence.
+
 An Inbox turn is eligible when it is pending, not already active in the one Home conversation, and
 not covered by open event-target Attention. Public user turns have priority over internal Reflection
 turns; each source class runs in receipt order. Project Attention blocks a tool targeting that
@@ -619,8 +665,12 @@ Project, not unrelated conversation or direct answers. Bounded Assistant or tool
 turn pending under targeted Attention.
 
 Messages remain writable while passes run. A material instruction first ensures Planning Work as
-the Goal-wide guard, then increments `contractRevision` and publishes its effects. Older Runs may
-preserve source and Evidence but cannot publish state.
+the Goal-wide guard, then increments `contractRevision` and publishes its effects. Once that
+revision is durable, Coordinator interrupts the Goal's admitted Runs to avoid spending more work on
+obsolete authority. The immutable-context publication guard remains the correctness boundary if a
+result races that interrupt. Before completing an interrupted Generator Attempt, Coordinator makes
+one safe task-branch checkpoint of partial source; it publishes no Evidence and advances no Work.
+Older Runs may therefore preserve useful source but cannot publish state.
 
 ### State read and Reflection
 

@@ -183,6 +183,10 @@ describe('WorkspaceAssistant conversation', () => {
       'explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope',
     )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
+    expect(seen[0]?.prompt).toContain(
+      'MCP tool descriptions and JSON schemas are the sole authority',
+    )
+    expect(seen[0]?.prompt).toContain('never search project files, .hopi/runtime, transcripts')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')

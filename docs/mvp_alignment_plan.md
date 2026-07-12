@@ -67,7 +67,9 @@ Alignment is complete only when:
 - [x] Use one empty sparse proposal overlay for every responsibility; absent canonical paths remain
   unchanged instead of requiring Planner to mirror a complete candidate snapshot.
 - [x] Give both Engineering responsibilities the same Run-scoped network execution needed for local
-  implementation and verification while keeping Planner network-free.
+  implementation and verification. Give Planner network access only when a local
+  `HOPI_API_ORIGIN` is staged, so explicit post-C1 Preview proof is possible without making public
+  Preview a pre-C1 Engineering responsibility.
 - [x] Give Planner the compact canonical Work and Attention field shapes it may create, so it never
   searches other Goals or historical Runs merely to infer fixed frontmatter.
 - [x] Treat Goal creation as admission of the current instruction plus initial Planning; a repeated
@@ -87,6 +89,19 @@ Alignment is complete only when:
   Reviewer, card, retry counter, and primary C1 across the combined workspace.
 - [x] Persist secondary release commits in primary `project.yml`; recover incomplete ref/worktree
   projections after C1 and block unexpected external ref values without rollback.
+- [x] Treat Work `repos` as the complete inspect/execute/modify workspace, use its exact
+  `HOPI_REPOS_FILE` instead of historical checkout discovery, and let unchanged listed Repos remain
+  C1 no-ops.
+- [x] Materialize HOPI-owned integration and task worktrees with `core.autocrlf=false` without
+  changing the user's checkout or Git configuration.
+- [x] Start Planner in its Run root, keep proposal paths single-prefixed, and make injected MCP
+  schemas authoritative so Planner and Assistant do not search runtime history for fixed formats.
+- [x] Interrupt same-Goal Runs after a material revision becomes durable, checkpoint safe partial
+  Generator source without publishing Evidence, and retain the immutable publication guard as the
+  final race boundary.
+- [x] Split Preview proof at the existing C1 boundary: Engineering directly proves its candidate
+  script; final Planner uses exact public start/status/stop routes only when accepted design
+  explicitly requires integrated-release proof.
 - [x] Require the backend product route smoke to load every emitted frontend asset, not merely return
   an HTML shell.
 - [x] Rerun backend, frontend, build, and production smoke checks.
@@ -140,6 +155,9 @@ Alignment is complete only when:
   Goal and Project reconciliation tests
 - notification identity, acknowledgement loss, webhook, backoff: `attentionDelivery.test.ts`
 - Preview adapter and repair prompt: `previewManager.test.ts`
+- Preview candidate/integrated ownership, Planner API context, material interruption, and partial
+  Generator checkpoint: `roleContextStager.test.ts`, `vendorTransport.test.ts`,
+  `assistantTools.test.ts`, and `projectReconciler.test.ts`
 - Project preparation bootstrap, repeated execution, source-mutation guard, Reviewer clean rebuild,
   operational retry backoff, and Preview reuse: `projectPreparation.test.ts`,
   `stableWorktreeManager.test.ts`, `projectReconciler.test.ts`, `workProjection.test.ts`, and
@@ -185,6 +203,8 @@ concept can be removed. Model wording and incidental tool order are not assertio
 | Lifecycle | Pause interrupts active Runs without consuming output; Resume plans before new Engineering | live `EV-36973460...` resumed into only `plan-0006`; `EV-d27fe7ce...` interrupted it and cleared active Runs without Project Attention |
 | Runtime capability | Generator and Reviewer can build, start a Run-scoped service, inspect runtime behavior, preserve artifacts, and leave no process behind | live Generator and independent Reviewer port-conflict smoke tests; both selected a non-`8080` endpoint and verified `SIGTERM` cleanup |
 | Project operation | Preview uses only the managed release target and routes missing/broken adapter repair through Assistant | missing dependency and early fixed-port readiness failures reopened the existing Preview Goal; after repair, host Start returned `running` only with reachable `http://127.0.0.1:43960`, and Stop closed the endpoint and both child processes without affecting the user-owned `8080` service |
+| Multi-Repo delivery | one Assistant instruction plans, changes, reviews, and integrates a Work spanning a primary `web` Repo and secondary `api` Repo without touching either user checkout | isolated Project `P-dogfood`, Goal `G-68391b3e...`: API contract and dashboard crossed two Repos through one Work/C1 model; an omitted runtime Repo caused `replan` rather than checkout discovery; revision 3 repaired the exact ready protocol, primary release reached `db090e4`, secondary release stayed at its documented `c78867e`, and both user `main` checkouts remained at their original clean commits |
+| Post-C1 proof | public Preview validates only the integrated release, while Generator and Reviewer prove the candidate directly from their Run manifest | final `plan-0005` used `POST /preview/start`, `GET /preview`, live dashboard and readiness HTTP 200 checks, then `POST /preview/stop`; Goal completed only after the public session reached `running`, and no validation process remained |
 | Capacity and isolation | independent Goals use fixed capacity; same Work keeps one branch; C1 target movement does not stale semantic output | live concurrent CardGame Goals plus scheduler/C1 coverage |
 | Reflection priority and delivery | a new user turn interrupts in-flight background thought; a later completion handoff is public exactly once and acknowledges its Attention | `RF-70944253...` became `interrupted` within one poll after `EV-a8aea957...`, whose reply was `pong`; `RF-a8c56860...` handed off exact Attention `completion-bun-guidance-ready-fa64079e...`, `hopi_notify_user` returned `attentionAcknowledged: true`, and follow-up `RF-fc713cdd...` ended with no handoff |
 | Documentation-only delivery | existing project guidance is assessed before code; a real gap becomes the smallest design-backed Work, while sufficient current fact completes without Engineering | `G-41b9a706...` corrected the initial assumption, updated design first, changed only root `AGENTS.md`, passed Review and C1, and delivered completion; follow-up `G-bc11aea0...` used only `plan-initial`, made no project change, performed no foreign-Goal/runtime template lookup, and completed with one acknowledged Attention |
@@ -205,7 +225,7 @@ machine.
 
 ## Final Gate
 
-- [x] Backend lint, typecheck, and all 224 tests pass; all 39 frontend tests pass.
+- [x] Backend lint, typecheck, and all 228 tests pass; all 39 frontend tests pass.
 - [x] Bun builds the frontend successfully and the backend serves loadable deep routes with all
   emitted assets.
 - [x] `git diff --check` reports no patch errors.

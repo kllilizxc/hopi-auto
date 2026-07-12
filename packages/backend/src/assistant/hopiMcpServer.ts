@@ -38,7 +38,7 @@ if (mode !== 'reflection') {
     'hopi_write_design',
     {
       description:
-        'Create or update Goal-local design Markdown. Paths are relative to the selected Goal design root, for example index.md or architecture/api.md. Relevant durable public Inbox images may be adopted with references; HOPI records their Goal-local path and purpose in design/references.md. This is documentation-only; call hopi_request_planning separately when implementation should follow.',
+        'Create or update Goal-local design Markdown with writes: [{ path, content }] (plus projectId, goalId, and optional references). Paths are relative to the selected Goal design root, for example index.md or architecture/api.md. Relevant durable public Inbox images may be adopted with references; HOPI records their Goal-local path and purpose in design/references.md. This is documentation-only; call hopi_request_planning separately when implementation should follow.',
       inputSchema: assistantToolSchemas.hopi_write_design,
     },
     (args) => callTool('hopi_write_design', args),

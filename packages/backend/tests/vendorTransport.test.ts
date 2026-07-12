@@ -15,6 +15,7 @@ const bundle = {
   browserHarnessDir: 'scripts/hopi/browser-harness',
   browserHarnessArtifactDir: '/tmp/worktree/.hopi-runtime/browser-harness',
   canonicalBrowserHarnessArtifactDir: '/tmp/project/.hopi/runtime/browser-harness',
+  apiOrigin: 'http://127.0.0.1:3000',
 }
 
 const input = {
@@ -151,6 +152,8 @@ describe('resolveConfiguredTransportCommand', () => {
       '/usr/local/bin/codex',
       '-a',
       'never',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
       'exec',
       '--skip-git-repo-check',
       '-s',
@@ -296,6 +299,7 @@ describe('resolveConfiguredTransportCommand', () => {
         HOPI_PROMPT_FILE: bundle.promptFile,
         HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
         HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
+        HOPI_API_ORIGIN: bundle.apiOrigin,
         HOPI_GOAL_KEY: input.goalKey,
         HOPI_GOAL_ID: input.goalKey,
         HOPI_WORK_ID: input.taskRef,

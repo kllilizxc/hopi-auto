@@ -632,8 +632,17 @@ async function createManagedRepoRoot(
     (await runGit(repo.repoPath, ['show-ref', '--verify', '--quiet', HOPI_RELEASE_REF], true))
       .exitCode === 0
   const args = targetExists
-    ? ['worktree', 'add', integrationRoot, HOPI_RELEASE_BRANCH]
-    : ['worktree', 'add', '-b', HOPI_RELEASE_BRANCH, integrationRoot, 'HEAD']
+    ? ['-c', 'core.autocrlf=false', 'worktree', 'add', integrationRoot, HOPI_RELEASE_BRANCH]
+    : [
+        '-c',
+        'core.autocrlf=false',
+        'worktree',
+        'add',
+        '-b',
+        HOPI_RELEASE_BRANCH,
+        integrationRoot,
+        'HEAD',
+      ]
   const result = await runGit(repo.repoPath, args, true)
   if (result.exitCode !== 0) {
     throw new AssistantHomeStoreError(

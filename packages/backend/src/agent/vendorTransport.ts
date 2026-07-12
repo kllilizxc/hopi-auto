@@ -29,6 +29,7 @@ export interface TransportContextBundle {
   canonicalBrowserHarnessArtifactDir: string
   imageFiles?: string[]
   reposFile?: string
+  apiOrigin?: string
 }
 
 const cwdModeSchema = z.enum(['root', 'worktree'])
@@ -125,7 +126,9 @@ export async function resolveConfiguredTransportCommand(options: {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
     }
     if (
-      (options.input.role === 'generator' || options.input.role === 'reviewer') &&
+      (options.input.role === 'generator' ||
+        options.input.role === 'reviewer' ||
+        (options.input.role === 'planner' && Boolean(options.bundle.apiOrigin))) &&
       options.config.sandbox === 'workspace-write'
     ) {
       cmd.push('-c', 'sandbox_workspace_write.network_access=true')
@@ -221,6 +224,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
+    ...(bundle.apiOrigin ? { HOPI_API_ORIGIN: bundle.apiOrigin } : {}),
     HOPI_GOAL_KEY: input.goalKey,
     HOPI_GOAL_ID: input.goalKey,
     HOPI_RUN_ID: input.runId,
@@ -244,6 +248,7 @@ function placeholderValues(options: {
     PROMPT_FILE: options.bundle.promptFile,
     BROWSER_HARNESS_DIR: options.bundle.browserHarnessDir,
     BROWSER_HARNESS_ARTIFACT_DIR: options.bundle.browserHarnessArtifactDir,
+    API_ORIGIN: options.bundle.apiOrigin ?? '',
     GOAL_KEY: options.input.goalKey,
     GOAL_ID: options.input.goalKey,
     PROJECT_ID: options.input.projectId ?? '',

@@ -31,6 +31,9 @@ export interface AssistantToolProject {
   repos?: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   controller: GoalController
+  reconciler?: {
+    interruptRuns(goalId?: string): void
+  }
 }
 
 export interface AssistantToolResult {
@@ -327,6 +330,7 @@ export function createAssistantTools(options: {
                 references: references.planning,
               },
             })
+            project.reconciler?.interruptRuns(args.goalId)
           } else {
             await project.controller.ensurePlanning(
               args.goalId,

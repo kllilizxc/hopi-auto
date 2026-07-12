@@ -268,6 +268,36 @@ describe('Assistant HOPI tools', () => {
     expect(openPlanning[0]?.body).toContain('/EV-2.md')
   })
 
+  test('interrupts obsolete Goal Runs only after a material contract revision', async () => {
+    const fixture = await setup({ trackInterrupts: true })
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-plan',
+      content: 'Reassess the existing contract.',
+    })
+
+    await fixture.tools.executeForEvent('EV-plan', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: false,
+    })
+    expect(fixture.interruptedGoalIds).toEqual([])
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-revise',
+      content: 'Add a new success criterion.',
+    })
+    await fixture.tools.executeForEvent('EV-revise', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: true,
+    })
+
+    expect((await fixture.goalStore.readGoal('G-1'))?.attributes.contractRevision).toBe(2)
+    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
+  })
+
   test('normalizes an exact canonical design path without creating a nested control root', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -632,7 +662,12 @@ describe('Assistant HOPI tools', () => {
   })
 })
 
-async function setup(options: { activeRuns?: () => ReadonlyMap<string, Responsibility> } = {}) {
+async function setup(
+  options: {
+    activeRuns?: () => ReadonlyMap<string, Responsibility>
+    trackInterrupts?: boolean
+  } = {},
+) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
   await git(repoRoot, ['init', '-b', 'main'])
@@ -648,6 +683,7 @@ async function setup(options: { activeRuns?: () => ReadonlyMap<string, Responsib
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
   const controller = createGoalController(goalStore, { verifyCompletion: () => false })
+  const interruptedGoalIds: string[] = []
   const projects = new Map([
     [
       'P-1',
@@ -656,6 +692,18 @@ async function setup(options: { activeRuns?: () => ReadonlyMap<string, Responsib
         projectRoot: linked.integrationRoot,
         store: goalStore,
         controller,
+        ...(options.trackInterrupts
+          ? {
+              reconciler: {
+                interruptRuns(goalId?: string) {
+                  if (goalId) interruptedGoalIds.push(goalId)
+                },
+                operationallyDeferredWorkIds() {
+                  return new Set<string>()
+                },
+              },
+            }
+          : {}),
       },
     ],
   ])
@@ -675,7 +723,7 @@ async function setup(options: { activeRuns?: () => ReadonlyMap<string, Responsib
     projects,
     state,
   })
-  return { homeRoot, workspace, goalStore, controller, attempts, tools }
+  return { homeRoot, workspace, goalStore, controller, attempts, tools, interruptedGoalIds }
 }
 
 async function finishInitialPlanning(

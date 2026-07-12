@@ -53,6 +53,7 @@ describe('ProjectReconciler', () => {
       'goal_completed',
     ])
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer', 'planner'])
+    expect(fixture.runner.plannerCwds).toEqual(fixture.runner.plannerRunRoots)
     expect(goalPackage.goal.attributes.lifecycle).toBe('done')
     expect(goalPackage.goal.attributes.completionAttentionId).not.toBeNull()
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
@@ -135,6 +136,64 @@ describe('ProjectReconciler', () => {
     expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 1 })
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
     expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
+  })
+
+  test('checkpoints partial Generator source before completing an interruption', async () => {
+    let taskWorktreePath = ''
+    const fixture = await createFixture({
+      generatorWaitForAbort: true,
+      checkpointTask: async (input) => {
+        taskWorktreePath = input.worktreePath
+        return checkpointTaskWorktree(input)
+      },
+    })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const running = fixture.reconciler.reconcileGoal('goal-1')
+    const expectedWorktree = join(
+      fixture.homeRoot,
+      '.hopi',
+      'runtime',
+      'worktrees',
+      'project-1',
+      'goal-1',
+      'W-1',
+    )
+    await waitUntil(async () =>
+      (
+        await Bun.file(join(expectedWorktree, 'src', 'feature.ts'))
+          .text()
+          .catch(() => '')
+      ).includes('2'),
+    )
+
+    fixture.reconciler.interruptRuns('goal-1')
+    const result = await running
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    const attempt = attempts.at(-1)
+
+    expect(result).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['run_interrupted'] },
+    })
+    expect(taskWorktreePath).toBe(expectedWorktree)
+    expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
+    expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
+    expect(attempt).toMatchObject({ status: 'interrupted', result: null, application: null })
+    expect(
+      (await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt?.runId ?? ''))?.events,
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: 'message',
+        role: 'coordinator',
+        content: 'Checkpointed safe partial Generator source before interruption.',
+      }),
+    )
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 0,
+      evidenceRefs: [],
+    })
   })
 
   test('does not consume a Work attempt when Coordinator checkpoint infrastructure fails', async () => {
@@ -278,6 +337,8 @@ describe('ProjectReconciler', () => {
 
 class DeliveryScriptRunner implements RoleRunner {
   readonly responsibilities: string[] = []
+  readonly plannerCwds: string[] = []
+  readonly plannerRunRoots: string[] = []
   private reviewerRuns = 0
 
   constructor(
@@ -286,12 +347,17 @@ class DeliveryScriptRunner implements RoleRunner {
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
       generatorCreatesPrepare: boolean
+      generatorWaitForAbort: boolean
       workRepos: readonly string[]
     },
   ) {}
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     this.responsibilities.push(input.responsibility)
+    if (input.responsibility === 'planner') {
+      this.plannerCwds.push(input.cwd)
+      this.plannerRunRoots.push(input.context.runRoot)
+    }
     await observer?.onEvent?.({
       kind: 'message',
       level: 'info',
@@ -309,6 +375,9 @@ class DeliveryScriptRunner implements RoleRunner {
         await mkdir(dirname(adapter), { recursive: true })
         await Bun.write(adapter, '#!/usr/bin/env bun\nconsole.log("ready")\n')
         await chmod(adapter, 0o755)
+      }
+      if (this.options.generatorWaitForAbort) {
+        await waitForAbort(input.signal)
       }
       if (this.options.generatorOperationalFailure) {
         return {
@@ -415,6 +484,7 @@ async function createFixture(
     includePrepare?: boolean
     generatorCreatesPrepare?: boolean
     generatorOperationalFailure?: boolean
+    generatorWaitForAbort?: boolean
     reviewerOperationalWriteOnce?: boolean
     includeSecondaryRepo?: boolean
     operationalRetryBaseMs?: number
@@ -476,6 +546,7 @@ async function createFixture(
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
+    generatorWaitForAbort: options.generatorWaitForAbort ?? false,
     workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
   })
   let runSequence = 0
@@ -520,4 +591,21 @@ async function git(cwd: string, args: string[]) {
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
   return stdout.trim()
+}
+
+async function waitForAbort(signal?: AbortSignal) {
+  if (!signal) throw new Error('Expected a Generator Run signal')
+  if (signal.aborted) return
+  await new Promise<void>((resolve) =>
+    signal.addEventListener('abort', () => resolve(), { once: true }),
+  )
+}
+
+async function waitUntil(predicate: () => Promise<boolean>, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await Bun.sleep(10)
+  }
+  throw new Error('Timed out waiting for test condition')
 }

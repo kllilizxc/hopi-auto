@@ -63,6 +63,30 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(prepared.path, '.hopi', 'project.yml')).exists()).toBe(false)
   })
 
+  test('materializes task worktrees without inheriting user autocrlf conversion', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    await git(repoPath, ['config', 'core.autocrlf', 'true'])
+    await Bun.write(join(repoPath, 'run.sh'), '#!/usr/bin/env bash\nprintf "ready\\n"\n')
+    await git(repoPath, ['add', 'run.sh'])
+    await git(repoPath, ['commit', '-m', 'add executable text'])
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+
+    const prepared = await createStableWorktreeManager(homeRoot).prepare({
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    })
+
+    expect(await Bun.file(join(prepared.path, 'run.sh')).text()).toBe(
+      '#!/usr/bin/env bash\nprintf "ready\\n"\n',
+    )
+  })
+
   test('creates sibling task worktrees for multiple Repos without dirtying primary', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const primaryPath = await createRepo(join(temporaryRoot, 'primary'))

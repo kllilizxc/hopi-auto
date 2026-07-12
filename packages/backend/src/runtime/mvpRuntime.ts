@@ -106,6 +106,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const linkedProjects = await home.listProjects()
   const projects = new Map<string, MvpProjectRuntime>()
   const preview = createPreviewManager(options.homeRoot)
+  const assistantToolUrl = options.assistantToolUrl
 
   for (const linked of linkedProjects) {
     const store = createGoalPackageStore(linked.integrationRoot, linked.projectId, publisher)
@@ -132,6 +133,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       roleRunner,
       attempts,
       goalController: controller,
+      apiOrigin: assistantToolUrl ? () => new URL(assistantToolUrl()).origin : undefined,
       onProjectBlocked: async ({ projectId, reason }) => {
         await attentions.ensureProjectAttention(projectId, reason)
       },

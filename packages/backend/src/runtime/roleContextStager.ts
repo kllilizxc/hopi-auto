@@ -28,6 +28,7 @@ export interface PrepareRoleContextInput {
   responsibility: Responsibility
   primaryRepoId?: string
   repoRoots?: readonly RoleRepoRoot[]
+  apiOrigin?: string
 }
 
 export interface RoleRepoRoot {
@@ -72,6 +73,7 @@ export function createRoleContextStager(
       assertStableId(input.runId, 'runId')
 
       const projectRoot = resolve(input.projectRoot)
+      const apiOrigin = input.apiOrigin ? normalizeApiOrigin(input.apiOrigin) : undefined
       const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
       assertStableId(primaryRepoId, 'primaryRepoId')
       const repoRoots = normalizeRepoRoots(
@@ -202,6 +204,7 @@ export function createRoleContextStager(
           primaryRepoId,
           repoRoots,
           reposFile,
+          apiOrigin,
         }),
       )
       await Bun.write(
@@ -209,6 +212,7 @@ export function createRoleContextStager(
         renderResponsibilityPrompt(
           input,
           {
+            runRoot,
             contextFile,
             authorityRoot,
             proposalRoot,
@@ -219,6 +223,7 @@ export function createRoleContextStager(
             primaryRepoId,
             repoRoots,
             reposFile,
+            apiOrigin,
           },
           assignment,
         ),
@@ -243,6 +248,7 @@ export function createRoleContextStager(
         bootstrapSourceRoot,
         repoRoots,
         reposFile,
+        apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
         extraWritableRoots: [runRoot, ...repoRoots.map((repo) => repo.path)],
@@ -275,6 +281,14 @@ function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: s
     throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
   }
   return normalized
+}
+
+function normalizeApiOrigin(value: string) {
+  const url = new URL(value)
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin === 'null') {
+    throw new RoleContextStagingError(`Invalid HOPI API origin: ${value}`)
+  }
+  return url.origin
 }
 
 function collectReferencedImages(
@@ -591,6 +605,7 @@ function renderContextManifest(
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
+    apiOrigin?: string
   },
 ) {
   return [
@@ -607,6 +622,7 @@ function renderContextManifest(
     `- Disposable runtime scratch: ${context.runtimeScratchDir}`,
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Repo workspace manifest: ${context.reposFile}`,
+    ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
     ...context.repoRoots.map(
       (repo) => `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
     ),
@@ -640,6 +656,7 @@ function renderContextManifest(
 function renderResponsibilityPrompt(
   input: PrepareRoleContextInput,
   paths: {
+    runRoot: string
     contextFile: string
     authorityRoot: string
     proposalRoot: string
@@ -650,12 +667,14 @@ function renderResponsibilityPrompt(
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
+    apiOrigin?: string
   },
   assignment: RunAssignment,
 ) {
   const common = [
     '## Canonical Boundary',
     '',
+    `Process working directory: ${input.responsibility === 'planner' ? paths.runRoot : 'the assigned task Repo root'}.`,
     `Audit manifest: ${paths.contextFile}`,
     `Treat ${paths.authorityRoot} as immutable canonical authority.`,
     `Write control-document proposals only beneath ${paths.proposalRoot}.`,
@@ -665,8 +684,13 @@ function renderResponsibilityPrompt(
     'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
     'Sandbox, Git metadata, local port, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
     'Use $HOPI_RUN_SCRATCH for disposable temporary or cache files when a tool default is not writable.',
-    `Use ${paths.reposFile} as the exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names.`,
+    `Use ${paths.reposFile} as the complete and exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.`,
     `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
+    ...(paths.apiOrigin
+      ? [
+          `HOPI public API origin is ${paths.apiOrigin} and is also available as $HOPI_API_ORIGIN. Project Preview endpoints always operate on the current managed integration release, never this Run's task worktree.`,
+        ]
+      : []),
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
@@ -732,10 +756,12 @@ function renderCurrentAssignment(assignment: RunAssignment) {
 }
 
 function plannerPrompt(paths: {
+  runRoot: string
   proposalRoot: string
   bootstrapSourceRoot?: string
   prepareMissing: boolean
   attentionRoot: string
+  apiOrigin?: string
 }) {
   return [
     '## Planner',
@@ -747,7 +773,8 @@ function plannerPrompt(paths: {
     'Record established decisions in design/** before exposing implementation Work.',
     'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
     'Plan the smallest independently schedulable Engineering Work set, with complete acceptance criteria and permanent dependsOn edges for known causal, semantic, or file-writer overlap.',
-    'Give every Engineering Work the smallest non-empty repos list that supplies its writable source workspace. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
+    'Every Engineering Work acceptance criterion must be provable against its task worktree before C1. Do not put public Project Preview API validation in Engineering Work: that API starts the already integrated release, so it cannot prove a candidate.',
+    'Give every Engineering Work the smallest non-empty repos list containing every Repo its Generator or Reviewer must inspect, execute, or modify to prove the Work. There is no separate read-only Repo scope; unchanged listed Repos are C1 no-ops. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
     'Independent testability alone does not justify a separate Work. Keep prerequisite scaffolding with its only consumer when they share primary files and the prerequisite has no independently useful operator outcome.',
     'Every newly proposed Engineering Work must use kind engineering and stage generate. Mark the owning Planning Work done only with a complete proposal.',
     'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
@@ -780,6 +807,13 @@ function plannerPrompt(paths: {
     '---',
     '```',
     'Keep exactly one nonterminal Planning Work. Never reopen terminal Work.',
+    ...(paths.apiOrigin
+      ? [
+          `Only when accepted design explicitly requires public Preview proof and all relevant Engineering Work is terminal, validate the integrated release with POST ${paths.apiOrigin}/api/projects/<projectId>/preview/start, GET ${paths.apiOrigin}/api/projects/<projectId>/preview, and POST ${paths.apiOrigin}/api/projects/<projectId>/preview/stop. Do not probe alternate routes or start Preview by default. Propose completion only after the session is running and its endpoint is reachable; if proof fails, plan the smallest repair.`,
+        ]
+      : []),
+    `The Planner cwd is ${paths.runRoot}. Write each canonical relative path exactly once below its proposal/ child; for example, .hopi/docs/... belongs at proposal/.hopi/docs/....`,
+    'The Planner Run root is not a Git checkout. Validate the sparse proposal by reading its files; do not run Git status or search historical runtime directories.',
     `Write changed Goal-package documents into the sparse overlay at ${paths.proposalRoot}; do not edit source or ordinary project documents.`,
     ...(paths.bootstrapSourceRoot
       ? [
@@ -808,6 +842,9 @@ function generatorPrompt(paths: {
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
     'Read root AGENTS.md and scripts/hopi/prepare before rediscovering project setup or runtime entrypoints. A Project Preparation Diagnostic appended below is exact preflight input, not a separate Work.',
+    "Use only Repo roots listed in $HOPI_REPOS_FILE. When a required Repo is absent, request Assistant management through attention; never discover or use another Work's checkout. Project scripts must use the manifest when it is present instead of scanning HOPI runtime siblings.",
+    'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest.',
+    'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
     'The staged canonical context overrides any older .hopi copy in the task branch.',
     'If the owning Work cites a reference image, inspect the attached image and follow the documented purpose rather than treating every visual detail as a requirement.',
     'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
@@ -815,6 +852,7 @@ function generatorPrompt(paths: {
     'Coordinator alone owns the Git index, task-branch checkpoints, and commits after this Run.',
     `If accepted design, missing information, or an external condition prevents safe progress, stage one targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management and return attention.`,
     'Do not rerun an unchanged passing check. One passing run after the final relevant source change is sufficient unless distinct acceptance criteria require distinct evidence.',
+    'Batch independent file reads and checks where practical. Extra progress narration and repeated discovery are not implementation evidence.',
     'Return success only after the acceptance criteria have evidence. Return attention when Assistant management is required; use fail for a retryable execution failure that does not require Assistant input.',
     '',
   ]
@@ -833,8 +871,12 @@ function reviewerPrompt(paths: {
     'If the owning Work cites a reference image, compare material visual criteria against the attached original image and its documented purpose.',
     'Choose the strongest proportionate proof for every acceptance criterion.',
     'Decide the proof plan before installing optional tools. Reuse root AGENTS.md, scripts/hopi/prepare, and the existing project test/browser stack; do not install a competing harness after decisive proof already exists.',
+    'Use only Repo roots listed in $HOPI_REPOS_FILE. If direct proof requires a missing Repo, request Assistant management through attention instead of inspecting another Work checkout or historical runtime directory.',
+    'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
+    'When scripts/hopi/preview is in scope, verify that readiness emits exactly one HOPI_PREVIEW_URL=<reachable-url> line; accepting a bare URL would leave Project Preview stuck in starting.',
     'A helper-only change normally needs focused tests, not browser exploration. A visual, crash, or interaction Work needs one direct runtime exercise of the reported path. Do not rerun an unchanged passing check.',
     'When the Work addresses an operator-reported runtime path, crash, interaction, or visual behavior, exercise that exact path through the point after the reported failure. Unit or shell-level tests alone are insufficient unless existing evidence is strictly stronger and you explain why.',
+    'Batch independent inspection and checks where practical. Extra progress narration and repeated discovery are not review evidence.',
     'This is an evidence obligation, not a fixed browser workflow. You may start short-lived local services for this Run; persistent Project Preview and integration are not your responsibility.',
     `If design, information, or operator authority is required, stage one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management.`,
     'Return reject for an implementation defect, attention when Assistant management is required, and fail for a retryable review failure.',

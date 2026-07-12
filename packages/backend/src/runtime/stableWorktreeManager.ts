@@ -150,7 +150,11 @@ async function gitCommonDir(cwd: string) {
 }
 
 async function runGit(cwd: string, args: string[], allowFailure = false) {
-  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const child = Bun.spawn(['git', '-c', 'core.autocrlf=false', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),

@@ -56,6 +56,7 @@ export interface ProjectReconcilerOptions {
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
   operationalRetryBaseMs?: number
+  apiOrigin?: () => string
   onProjectBlocked?(input: {
     projectId: string
     reason: string
@@ -275,6 +276,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           responsibility,
           primaryRepoId,
           repoRoots: roleRepoRoots,
+          apiOrigin: options.apiOrigin?.(),
         })
         attempt = await attempts
           .start({
@@ -354,7 +356,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             cwd:
               worktreeEntries.find(({ repo }) => repo.primary)?.worktree.path ??
               worktreeEntries[0]?.worktree.path ??
-              context.proposalRoot,
+              context.runRoot,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             signal: runController.signal,
@@ -362,7 +364,44 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           attempt ? { onEvent: (event) => attempt?.record(event) } : undefined,
         )
         if (runController.signal.aborted) {
-          await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
+          let checkpointFailure: unknown = null
+          if (responsibility === 'generator' && worktreeEntries.length > 0) {
+            try {
+              await Promise.all(
+                worktreeEntries.map(({ repo, worktree }) =>
+                  checkpointTask({
+                    worktreePath: worktree.path,
+                    projectId: options.projectId,
+                    goalId,
+                    workId,
+                    runId,
+                    repoId: repo.repoId,
+                  }),
+                ),
+              )
+              await attempt?.record({
+                kind: 'message',
+                level: 'info',
+                role: 'coordinator',
+                content: 'Checkpointed safe partial Generator source before interruption.',
+              })
+            } catch (error) {
+              checkpointFailure = error
+              await attempt?.record({
+                kind: 'message',
+                level: 'error',
+                role: 'coordinator',
+                content: `Partial Generator checkpoint failed during interruption: ${errorMessage(error)}`,
+              })
+            }
+          }
+          await attempt?.interrupt(
+            new Error(
+              checkpointFailure
+                ? `${responsibility} Run was interrupted; partial source checkpoint failed: ${errorMessage(checkpointFailure)}`
+                : `${responsibility} Run was interrupted`,
+            ),
+          )
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
         if (responsibility === 'generator' && worktreeEntries.length > 0) {

@@ -51,6 +51,9 @@ describe('HOPI MCP server', () => {
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
     ).toContain('same-instruction call after hopi_create_goal is unnecessary and idempotent')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
+      'writes: [{ path, content }]',
+    )
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })

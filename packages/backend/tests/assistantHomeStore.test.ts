@@ -70,6 +70,21 @@ describe('createAssistantHomeStore', () => {
     expect(await store.validateProject('P-1')).toEqual(project)
   })
 
+  test('materializes managed roots without inheriting user autocrlf conversion', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    await git(repoPath, ['config', 'core.autocrlf', 'true'])
+    await Bun.write(join(repoPath, 'run.sh'), '#!/usr/bin/env bash\nprintf "ready\\n"\n')
+    await git(repoPath, ['add', 'run.sh'])
+    await git(repoPath, ['commit', '-m', 'add executable text'])
+
+    const project = await store.linkProject({ projectId: 'P-1', repoPath })
+
+    expect(await Bun.file(join(project.integrationRoot, 'run.sh')).text()).toBe(
+      '#!/usr/bin/env bash\nprintf "ready\\n"\n',
+    )
+  })
+
   test('migrates a version 1 Project link without changing its Repo identity', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))

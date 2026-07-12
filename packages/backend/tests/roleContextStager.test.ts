@@ -33,6 +33,7 @@ describe('RoleContextStager', () => {
       workId: 'plan-initial',
       runId: 'run-1',
       responsibility: 'planner',
+      apiOrigin: 'http://127.0.0.1:3000/internal/path',
     })
 
     expect(bundle.bootstrapSourceRoot).toBeDefined()
@@ -61,11 +62,20 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('kind: engineering')
     expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(prompt).toContain('.hopi/docs/repos.md')
+    expect(prompt).toContain(`The Planner cwd is ${bundle.runRoot}`)
+    expect(prompt).toContain('proposal/.hopi/docs/...')
     expect(prompt).toContain('New Attention frontmatter')
     expect(prompt).toContain('notifiedAt: null')
     expect(prompt).toContain('scripts/hopi/prepare is absent')
     expect(prompt).toContain('do not create a separate Init Work')
     expect(prompt).toContain('Independent testability alone does not justify a separate Work')
+    expect(prompt).toContain('inspect, execute, or modify to prove the Work')
+    expect(prompt).toContain('Planner Run root is not a Git checkout')
+    expect(prompt).toContain('Every Engineering Work acceptance criterion must be provable')
+    expect(prompt).toContain('/api/projects/<projectId>/preview/start')
+    expect(prompt).toContain('GET http://127.0.0.1:3000/api/projects/<projectId>/preview')
+    expect(prompt).toContain('/api/projects/<projectId>/preview/stop')
+    expect(bundle.apiOrigin).toBe('http://127.0.0.1:3000')
     expect(bundle.authorityFiles.find((file) => file.path === 'AGENTS.md')?.hash).toBeNull()
   })
 
@@ -227,8 +237,17 @@ describe('RoleContextStager', () => {
     )
     expect(generatorPrompt).toContain('If you stage targeted Attention, result must be attention')
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
+    expect(generatorPrompt).toContain('Use only Repo roots listed in $HOPI_REPOS_FILE')
+    expect(generatorPrompt).toContain("never discover or use another Work's checkout")
+    expect(generatorPrompt).toContain('Batch independent file reads and checks')
+    expect(generatorPrompt).toContain('exactly one HOPI_PREVIEW_URL=<reachable-url> line')
+    expect(generatorPrompt).toContain('is not candidate evidence')
     expect(reviewerPrompt).toContain('short-lived local services for this Run')
     expect(reviewerPrompt).toContain('Decide the proof plan before installing optional tools')
+    expect(reviewerPrompt).toContain('If direct proof requires a missing Repo, return replan')
+    expect(reviewerPrompt).toContain('Batch independent inspection and checks')
+    expect(reviewerPrompt).toContain('accepting a bare URL would leave Project Preview stuck')
+    expect(reviewerPrompt).toContain('final post-C1 Preview proof belongs to Planner')
     expect(reviewerPrompt).toContain('A helper-only change normally needs focused tests')
     expect(reviewerPrompt).toContain(
       'exercise that exact path through the point after the reported failure',
