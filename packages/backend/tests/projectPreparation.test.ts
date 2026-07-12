@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createProjectPreparer } from '../src/runtime/projectPreparation'
@@ -39,7 +39,9 @@ describe('ProjectPreparer', () => {
 
     expect(result).toMatchObject({ kind: 'ready', exitCode: 0 })
     expect(result.logs).toContain('stdout: ready')
-    expect(await Bun.file(join(fixture.runtime, 'cwd.txt')).text()).toBe(fixture.repo)
+    expect(await Bun.file(join(fixture.runtime, 'cwd.txt')).text()).toBe(
+      await realpath(fixture.repo),
+    )
     expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
   })
 

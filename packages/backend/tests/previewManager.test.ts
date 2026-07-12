@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createPreviewManager, makePreviewAdapterExecutable } from '../src/runtime/previewManager'
+import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'preview-manager')
 
@@ -34,7 +35,7 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
     const manager = createPreviewManager(join(temporaryRoot, 'home'), {
-      startupTimeoutMs: 500,
+      startupTimeoutMs: 2_000,
       stopGraceMs: 500,
       now: () => new Date('2026-07-11T00:00:00Z'),
     })
@@ -42,7 +43,6 @@ describe('PreviewManager', () => {
     const result = await manager.start({ projectId: 'P-1', projectRoot })
     expect(result.kind).toBe('started')
     if (result.kind !== 'started') throw new Error('Expected started Preview')
-    await Bun.sleep(30)
     expect(result.session.endpoint).toBe('http://127.0.0.1:4321')
     expect(await Bun.file(join(dirname(result.session.logPath), 'root.txt')).text()).toBe(
       projectRoot,
@@ -77,6 +77,70 @@ describe('PreviewManager', () => {
     expect(result.prompt).toContain('clean managed integration worktree')
   })
 
+  test('shares one preparation and adapter launch across concurrent Start calls', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const launchLog = await writeCountingFailureAdapter(projectRoot)
+    const controlled = createControlledPreparer()
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      preparer: controlled.preparer,
+    })
+
+    const first = manager.start({ projectId: 'P-1', projectRoot })
+    const second = manager.start({ projectId: 'P-1', projectRoot })
+    await controlled.entered
+    controlled.release()
+    const [firstResult, secondResult] = await Promise.all([first, second])
+
+    expect(controlled.calls).toBe(1)
+    expect(secondResult).toBe(firstResult)
+    expect(await Bun.file(launchLog).text()).toBe('started\n')
+  })
+
+  test('Stop during Project preparation prevents the Preview adapter from launching', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const launchLog = await writeCountingFailureAdapter(projectRoot)
+    const controlled = createControlledPreparer()
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      preparer: controlled.preparer,
+    })
+
+    const starting = manager.start({ projectId: 'P-1', projectRoot })
+    await controlled.entered
+    const stopped = await manager.stop('P-1', 'release_updated')
+    controlled.release()
+    const result = await starting
+
+    expect(stopped).toMatchObject({ status: 'stopped', stoppedReason: 'release_updated' })
+    expect(result).toMatchObject({
+      kind: 'started',
+      session: { status: 'stopped', stoppedReason: 'release_updated' },
+    })
+    expect(await Bun.file(launchLog).exists()).toBe(false)
+  })
+
+  test('stopAll waits for blocked Project preparation to settle', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const launchLog = await writeCountingFailureAdapter(projectRoot)
+    const controlled = createControlledPreparer()
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      preparer: controlled.preparer,
+    })
+
+    const starting = manager.start({ projectId: 'P-1', projectRoot })
+    await controlled.entered
+    let stopAllSettled = false
+    const stopping = manager.stopAll().then(() => {
+      stopAllSettled = true
+    })
+    await Promise.resolve()
+    const settledBeforeRelease = stopAllSettled
+    controlled.release()
+    await Promise.all([starting, stopping])
+
+    expect(settledBeforeRelease).toBe(false)
+    expect(await Bun.file(launchLog).exists()).toBe(false)
+  })
+
   test('runs Project preparation before Preview and returns its logs on failure', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
@@ -100,13 +164,10 @@ describe('PreviewManager', () => {
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
     await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
     await writePrepareAdapter(projectRoot)
-    await Bun.write(
-      adapter,
-      '#!/usr/bin/env bun\nconsole.error("missing database")\nprocess.exit(2)\n',
-    )
+    await Bun.write(adapter, '#!/bin/sh\nprintf "missing database\\n" >&2\nexit 2\n')
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), { startupTimeoutMs: 100 })
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), { startupTimeoutMs: 2_000 })
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
@@ -137,12 +198,11 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
     const manager = createPreviewManager(join(temporaryRoot, 'home'), {
-      startupTimeoutMs: 500,
+      startupTimeoutMs: 2_000,
       stopGraceMs: 500,
     })
 
     const start = manager.start({ projectId: 'P-1', projectRoot })
-    await Bun.sleep(30)
     expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', endpoint: null })
     const result = await start
 
@@ -177,7 +237,6 @@ describe('PreviewManager', () => {
     })
 
     const starting = manager.start({ projectId: 'P-1', projectRoot })
-    await Bun.sleep(30)
     expect(await manager.stop('P-1', 'release_updated')).toMatchObject({
       status: 'stopped',
       endpoint: null,
@@ -202,7 +261,7 @@ describe('PreviewManager', () => {
       adapter,
       [
         '#!/usr/bin/env bun',
-        'console.error("still preparing")',
+        'await Bun.write(Bun.stderr, "still preparing\\n")',
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -211,7 +270,7 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
     const manager = createPreviewManager(join(temporaryRoot, 'home'), {
-      startupTimeoutMs: 80,
+      startupTimeoutMs: 2_000,
       stopGraceMs: 500,
     })
 
@@ -222,7 +281,7 @@ describe('PreviewManager', () => {
     expect(result.logs).toContain('still preparing')
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
-      error: 'Preview adapter did not become ready within 80ms',
+      error: 'Preview adapter did not become ready within 2000ms',
     })
   })
 })
@@ -236,6 +295,59 @@ async function writePrepareAdapter(projectRoot: string, body = 'console.log("pre
   await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
   await Bun.write(adapter, `#!/usr/bin/env bun\n${body}\n`)
   await makePreviewAdapterExecutable(adapter)
+}
+
+function createControlledPreparer() {
+  let calls = 0
+  let releasePreparation: () => void = () => undefined
+  let markEntered: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => {
+    releasePreparation = resolve
+  })
+  const entered = new Promise<void>((resolve) => {
+    markEntered = resolve
+  })
+  const preparer: ProjectPreparer = {
+    async prepare(input) {
+      calls += 1
+      markEntered()
+      await gate
+      return {
+        kind: 'ready',
+        adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
+        exitCode: 0,
+        logs: '',
+        logPath: join(input.runtimeDir, 'prepare.log'),
+      }
+    },
+  }
+  return {
+    preparer,
+    entered,
+    release: () => releasePreparation(),
+    get calls() {
+      return calls
+    },
+  }
+}
+
+async function writeCountingFailureAdapter(projectRoot: string) {
+  const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+  const launchLog = join(projectRoot, 'preview-launches.log')
+  await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+  await Bun.write(
+    adapter,
+    [
+      '#!/usr/bin/env bun',
+      'import { appendFile } from "node:fs/promises"',
+      `await appendFile(${JSON.stringify(launchLog)}, "started\\n")`,
+      'await Bun.write(Bun.stderr, "expected startup failure\\n")',
+      'process.exit(2)',
+      '',
+    ].join('\n'),
+  )
+  await makePreviewAdapterExecutable(adapter)
+  return launchLog
 }
 
 async function initializeGit(projectRoot: string) {
