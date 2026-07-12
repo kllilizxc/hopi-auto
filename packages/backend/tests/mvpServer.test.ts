@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GoalPackage } from '../src/domain/goalPackage'
@@ -330,6 +330,8 @@ describe('MVP server', () => {
     const homeRoot = join(temporaryRoot, 'home')
     const webRepo = await createRepo(join(temporaryRoot, 'web'))
     const apiRepo = await createRepo(join(temporaryRoot, 'api'))
+    const canonicalWebRepo = await realpath(webRepo)
+    const canonicalApiRepo = await realpath(apiRepo)
     await Bun.write(join(webRepo, 'local.txt'), 'local web state\n')
     await Bun.write(join(apiRepo, 'local.txt'), 'local api state\n')
     const webBefore = await checkoutSnapshot(webRepo)
@@ -352,10 +354,10 @@ describe('MVP server', () => {
         {
           projectId: 'P-1',
           primaryRepoId: 'web',
-          repoPath: webRepo,
+          repoPath: canonicalWebRepo,
           repos: [
-            { repoId: 'web', repoPath: webRepo, primary: true },
-            { repoId: 'api', repoPath: apiRepo, primary: false },
+            { repoId: 'web', repoPath: canonicalWebRepo, primary: true },
+            { repoId: 'api', repoPath: canonicalApiRepo, primary: false },
           ],
         },
       ],
@@ -365,6 +367,7 @@ describe('MVP server', () => {
 
     const movedApiRepo = join(temporaryRoot, 'moved-api')
     await rename(apiRepo, movedApiRepo)
+    const canonicalMovedApiRepo = await realpath(movedApiRepo)
     const rebound = await request(base, '/api/projects/P-1/repos/api/rebind', {
       method: 'POST',
       body: { repoPath: movedApiRepo },
@@ -377,7 +380,7 @@ describe('MVP server', () => {
           primaryRepoId: 'web',
           repos: [
             { repoId: 'web', primary: true },
-            { repoId: 'api', repoPath: movedApiRepo, primary: false },
+            { repoId: 'api', repoPath: canonicalMovedApiRepo, primary: false },
           ],
         },
       ],

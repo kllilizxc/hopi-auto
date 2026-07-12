@@ -1,4 +1,4 @@
-import { chmod, mkdir } from 'node:fs/promises'
+import { appendFile, chmod, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   type ProjectPreparationRepoRoot,
@@ -42,13 +42,15 @@ export interface PreviewManager {
   inspect(projectId: string): PreviewSession | null
 }
 
-interface LivePreview {
+interface PreviewOperation {
   session: PreviewSession
-  process: ReturnType<typeof Bun.spawn>
+  process: ReturnType<typeof Bun.spawn> | null
   logs: string[]
   ready: Promise<string>
   signalReady(endpoint: string): void
   streams: Promise<void>[]
+  logWriteTail: Promise<void>
+  startPromise: Promise<PreviewStartResult>
 }
 
 export interface PreviewManagerOptions {
@@ -68,43 +70,144 @@ export function createPreviewManager(
   const stopGraceMs = options.stopGraceMs ?? 5_000
   const now = options.now ?? (() => new Date())
   const preparer = options.preparer ?? createProjectPreparer()
-  const sessions = new Map<string, LivePreview>()
+  const operations = new Map<string, PreviewOperation>()
+
+  async function runStart(
+    operation: PreviewOperation,
+    input: Parameters<PreviewManager['start']>[0],
+    paths: {
+      projectRoot: string
+      adapter: string
+      sessionRoot: string
+      logPath: string
+      preparationRoot: string
+      reposFile: string
+    },
+  ): Promise<PreviewStartResult> {
+    const adapterFile = Bun.file(paths.adapter)
+    if (!(await adapterFile.exists())) {
+      if (isStopped(operation)) return stoppedResult(operation.session, now)
+      removeProvisionalOperation(operation)
+      return repairRequired('missing', paths.adapter, '')
+    }
+    if (!(await isExecutable(paths.adapter))) {
+      if (isStopped(operation)) return stoppedResult(operation.session, now)
+      removeProvisionalOperation(operation)
+      return repairRequired('not_executable', paths.adapter, '')
+    }
+
+    await mkdir(paths.sessionRoot, { recursive: true })
+    if (isStopped(operation)) return stoppedResult(operation.session, now)
+    const preparation = await preparer.prepare({
+      projectRoot: paths.projectRoot,
+      runtimeDir: paths.preparationRoot,
+      timeoutMs: options.preparationTimeoutMs,
+      primaryRepoId: input.primaryRepoId,
+      repoRoots: input.repoRoots,
+    })
+    if (isStopped(operation)) return stoppedResult(operation.session, now)
+    if (preparation.kind !== 'ready') {
+      removeProvisionalOperation(operation)
+      return repairRequired('preparation_failed', preparation.adapterPath, preparation.logs)
+    }
+
+    await Bun.write(paths.logPath, '')
+    if (isStopped(operation)) return stoppedResult(operation.session, now)
+    const child = Bun.spawn([paths.adapter], {
+      cwd: paths.projectRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        ...process.env,
+        HOPI_PROJECT_ROOT: paths.projectRoot,
+        HOPI_REPOS_FILE: paths.reposFile,
+        HOPI_PREVIEW_RUNTIME_DIR: paths.sessionRoot,
+      },
+    })
+    operation.process = child
+    operation.streams = [
+      consumePreviewStream(child.stdout, operation, paths.logPath),
+      consumePreviewStream(child.stderr, operation, paths.logPath),
+    ]
+
+    const startup = await Promise.race([
+      child.exited.then((exitCode) => ({ kind: 'exit' as const, exitCode })),
+      operation.ready.then((endpoint) => ({ kind: 'ready' as const, endpoint })),
+      Bun.sleep(startupTimeoutMs).then(() => ({ kind: 'timeout' as const })),
+    ])
+    if (startup.kind !== 'ready') {
+      if (startup.kind === 'timeout') {
+        await terminatePreview(child, stopGraceMs)
+      }
+      await settlePreviewLogs(operation)
+      if (isStopped(operation)) {
+        return stoppedResult(operation.session, now)
+      }
+      operation.session.status = 'failed'
+      operation.session.endpoint = null
+      operation.session.endedAt = now().toISOString()
+      operation.session.error =
+        startup.kind === 'timeout'
+          ? `Preview adapter did not become ready within ${startupTimeoutMs}ms`
+          : `Preview adapter exited with code ${startup.exitCode}`
+      return repairRequired('startup_failed', paths.adapter, operation.logs.join('\n'))
+    }
+    if (isStopped(operation)) {
+      return stoppedResult(operation.session, now)
+    }
+    operation.session.status = 'running'
+    void child.exited.then(async (exitCode) => {
+      if (operation.session.status === 'stopped') return
+      operation.session.status = exitCode === 0 ? 'stopped' : 'failed'
+      operation.session.endpoint = null
+      operation.session.error =
+        exitCode === 0 ? null : `Preview adapter exited with code ${exitCode}`
+      operation.session.endedAt = now().toISOString()
+      await settlePreviewLogs(operation)
+    })
+    return { kind: 'started', session: operation.session }
+  }
+
+  function removeProvisionalOperation(operation: PreviewOperation) {
+    if (operations.get(operation.session.projectId) === operation) {
+      operations.delete(operation.session.projectId)
+    }
+  }
+
+  async function stopOperation(
+    operation: PreviewOperation,
+    reason?: PreviewStoppedReason,
+  ): Promise<PreviewSession> {
+    if (operation.session.status === 'stopped' || operation.session.status === 'failed') {
+      return operation.session
+    }
+    operation.session.status = 'stopped'
+    operation.session.stoppedReason = reason ?? null
+    operation.session.endpoint = null
+    if (operation.process) {
+      await terminatePreview(operation.process, stopGraceMs)
+      await settlePreviewLogs(operation)
+    }
+    operation.session.endedAt ??= now().toISOString()
+    return operation.session
+  }
 
   return {
     inspect(projectId) {
-      return sessions.get(projectId)?.session ?? null
+      return operations.get(projectId)?.session ?? null
     },
-    async start(input) {
-      const current = sessions.get(input.projectId)
+    start(input) {
+      const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
-        return { kind: 'started', session: current.session }
+        return current.startPromise
       }
       const projectRoot = resolve(input.projectRoot)
       const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
-      const adapterFile = Bun.file(adapter)
-      if (!(await adapterFile.exists())) {
-        return repairRequired('missing', adapter, '')
-      }
-      if (!(await isExecutable(adapter))) {
-        return repairRequired('not_executable', adapter, '')
-      }
-
       const sessionId = `preview-${crypto.randomUUID()}`
       const sessionRoot = join(runtimeRoot, input.projectId, sessionId)
       const logPath = join(sessionRoot, 'preview.log')
       const preparationRoot = join(sessionRoot, 'project-prepare')
       const reposFile = join(preparationRoot, 'repos.json')
-      await mkdir(sessionRoot, { recursive: true })
-      const preparation = await preparer.prepare({
-        projectRoot,
-        runtimeDir: preparationRoot,
-        timeoutMs: options.preparationTimeoutMs,
-        primaryRepoId: input.primaryRepoId,
-        repoRoots: input.repoRoots,
-      })
-      if (preparation.kind !== 'ready') {
-        return repairRequired('preparation_failed', preparation.adapterPath, preparation.logs)
-      }
       const session: PreviewSession = {
         sessionId,
         projectId: input.projectId,
@@ -116,102 +219,46 @@ export function createPreviewManager(
         error: null,
         stoppedReason: null,
       }
-      const child = Bun.spawn([adapter], {
-        cwd: projectRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          HOPI_PROJECT_ROOT: projectRoot,
-          HOPI_REPOS_FILE: reposFile,
-          HOPI_PREVIEW_RUNTIME_DIR: sessionRoot,
-        },
-      })
       let signalReady: (endpoint: string) => void = () => undefined
       const ready = new Promise<string>((resolveReady) => {
         signalReady = resolveReady
       })
-      const live: LivePreview = {
+      const operation: PreviewOperation = {
         session,
-        process: child,
+        process: null,
         logs: [],
         ready,
         signalReady,
         streams: [],
+        logWriteTail: Promise.resolve(),
+        startPromise: Promise.resolve({ kind: 'started', session }),
       }
-      sessions.set(input.projectId, live)
-      live.streams = [
-        consumePreviewStream(child.stdout, live, logPath),
-        consumePreviewStream(child.stderr, live, logPath),
-      ]
-
-      const startup = await Promise.race([
-        child.exited.then((exitCode) => ({ kind: 'exit' as const, exitCode })),
-        ready.then((endpoint) => ({ kind: 'ready' as const, endpoint })),
-        Bun.sleep(startupTimeoutMs).then(() => ({ kind: 'timeout' as const })),
-      ])
-      if (startup.kind !== 'ready') {
-        if (startup.kind === 'timeout') {
-          await terminatePreview(live, stopGraceMs)
-        }
-        await Promise.allSettled(live.streams)
-        if (session.status === 'stopped') {
-          session.endpoint = null
-          session.endedAt ??= now().toISOString()
-          await flushLogs(logPath, live.logs)
-          return { kind: 'started', session }
-        }
-        session.status = 'failed'
-        session.endpoint = null
-        session.endedAt = now().toISOString()
-        session.error =
-          startup.kind === 'timeout'
-            ? `Preview adapter did not become ready within ${startupTimeoutMs}ms`
-            : `Preview adapter exited with code ${startup.exitCode}`
-        await flushLogs(logPath, live.logs)
-        return repairRequired('startup_failed', adapter, live.logs.join('\n'))
-      }
-      if (session.status === 'stopped') {
-        session.endpoint = null
-        session.endedAt ??= now().toISOString()
-        return { kind: 'started', session }
-      }
-      session.status = 'running'
-      void child.exited.then(async (exitCode) => {
-        if (session.status === 'stopped') return
-        session.status = exitCode === 0 ? 'stopped' : 'failed'
-        session.endpoint = null
-        session.error = exitCode === 0 ? null : `Preview adapter exited with code ${exitCode}`
-        session.endedAt = now().toISOString()
-        await Promise.allSettled(live.streams)
-        await flushLogs(logPath, live.logs)
+      operations.set(input.projectId, operation)
+      operation.startPromise = runStart(operation, input, {
+        projectRoot,
+        adapter,
+        sessionRoot,
+        logPath,
+        preparationRoot,
+        reposFile,
       })
-      return { kind: 'started', session }
+      return operation.startPromise
     },
     async stop(projectId, reason) {
-      const live = sessions.get(projectId)
-      if (!live) return null
-      if (live.session.status === 'stopped' || live.session.status === 'failed') {
-        return live.session
-      }
-      live.session.status = 'stopped'
-      live.session.stoppedReason = reason ?? null
-      live.session.endpoint = null
-      await terminatePreview(live, stopGraceMs)
-      live.session.endedAt = now().toISOString()
-      await Promise.allSettled(live.streams)
-      await flushLogs(live.session.logPath, live.logs)
-      return live.session
+      const operation = operations.get(projectId)
+      return operation ? stopOperation(operation, reason) : null
     },
     async stopAll() {
-      await Promise.all([...sessions.keys()].map((projectId) => this.stop(projectId)))
+      const active = [...operations.values()]
+      await Promise.all(active.map((operation) => stopOperation(operation)))
+      await Promise.allSettled(active.map((operation) => operation.startPromise))
     },
   }
 }
 
 async function consumePreviewStream(
   stream: ReadableStream<Uint8Array>,
-  live: LivePreview,
+  operation: PreviewOperation,
   logPath: string,
 ) {
   const reader = stream.getReader()
@@ -223,37 +270,47 @@ async function consumePreviewStream(
     buffered += decoder.decode(value, { stream: true })
     const lines = buffered.split(/\r?\n/)
     buffered = lines.pop() ?? ''
-    for (const line of lines) recordLine(live, line)
-    await flushLogs(logPath, live.logs)
+    for (const line of lines) recordLine(operation, line, logPath)
   }
   buffered += decoder.decode()
-  if (buffered) recordLine(live, buffered)
-  await flushLogs(logPath, live.logs)
+  if (buffered) recordLine(operation, buffered, logPath)
 }
 
-function recordLine(live: LivePreview, line: string) {
-  live.logs.push(line)
+function recordLine(operation: PreviewOperation, line: string, logPath: string) {
+  operation.logs.push(line)
+  operation.logWriteTail = operation.logWriteTail.then(() => appendFile(logPath, `${line}\n`))
   const endpoint = /^HOPI_PREVIEW_URL=(\S+)$/.exec(line)?.[1]
-  if (endpoint && live.session.endpoint === null) {
-    live.session.endpoint = endpoint
-    live.signalReady(endpoint)
+  if (endpoint && operation.session.endpoint === null) {
+    operation.session.endpoint = endpoint
+    operation.signalReady(endpoint)
   }
 }
 
-async function terminatePreview(live: LivePreview, stopGraceMs: number) {
-  live.process.kill('SIGTERM')
+async function settlePreviewLogs(operation: PreviewOperation) {
+  await Promise.allSettled(operation.streams)
+  await operation.logWriteTail
+}
+
+async function terminatePreview(process: ReturnType<typeof Bun.spawn>, stopGraceMs: number) {
+  process.kill('SIGTERM')
   const stopped = await Promise.race([
-    live.process.exited.then(() => true),
+    process.exited.then(() => true),
     Bun.sleep(stopGraceMs).then(() => false),
   ])
   if (!stopped) {
-    live.process.kill('SIGKILL')
-    await live.process.exited
+    process.kill('SIGKILL')
+    await process.exited
   }
 }
 
-async function flushLogs(path: string, logs: readonly string[]) {
-  await Bun.write(path, logs.length > 0 ? `${logs.join('\n')}\n` : '')
+function stoppedResult(session: PreviewSession, now: () => Date): PreviewStartResult {
+  session.endpoint = null
+  session.endedAt ??= now().toISOString()
+  return { kind: 'started', session }
+}
+
+function isStopped(operation: PreviewOperation) {
+  return operation.session.status === 'stopped'
 }
 
 async function isExecutable(path: string) {
