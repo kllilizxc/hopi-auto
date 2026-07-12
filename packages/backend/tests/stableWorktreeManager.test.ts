@@ -63,6 +63,37 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(prepared.path, '.hopi', 'project.yml')).exists()).toBe(false)
   })
 
+  test('creates sibling task worktrees for multiple Repos without dirtying primary', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    const home = createAssistantHomeStore(homeRoot)
+    let project = await home.linkProject({ projectId: 'P-1', repoPath: primaryPath })
+    project = await home.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
+    const apiRepo = project.repos.find((repo) => repo.repoId === 'api')
+    if (!apiRepo) throw new Error('Expected linked api Repo')
+    const manager = createStableWorktreeManager(homeRoot)
+    const common = { projectId: 'P-1', goalId: 'G-1', workId: 'W-1', primaryRepoId: 'primary' }
+
+    const [primary, api] = await Promise.all([
+      manager.prepare({
+        ...common,
+        repoId: 'primary',
+        projectRoot: project.integrationRoot,
+      }),
+      manager.prepare({
+        ...common,
+        repoId: 'api',
+        projectRoot: apiRepo.integrationRoot,
+      }),
+    ])
+    await Bun.write(join(api.path, 'api-change.txt'), 'isolated\n')
+
+    expect(api.path.startsWith(`${primary.path}/`)).toBe(false)
+    expect(primary.branch).toBe(api.branch)
+    expect(await git(primary.path, ['status', '--porcelain'])).toBe('')
+  })
+
   test('rebuilds a disposable checkout from its stable task branch after migration cleanup', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))

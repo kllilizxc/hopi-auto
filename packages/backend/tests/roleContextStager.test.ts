@@ -59,6 +59,8 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('never inspect another Goal or historical Run')
     expect(prompt).toContain('New Engineering Work frontmatter')
     expect(prompt).toContain('kind: engineering')
+    expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
+    expect(prompt).toContain('.hopi/docs/repos.md')
     expect(prompt).toContain('New Attention frontmatter')
     expect(prompt).toContain('notifiedAt: null')
     expect(prompt).toContain('scripts/hopi/prepare is absent')

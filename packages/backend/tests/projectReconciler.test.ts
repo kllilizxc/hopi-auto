@@ -75,6 +75,33 @@ describe('ProjectReconciler', () => {
     )
   })
 
+  test('runs one Engineering Work across two Repos and publishes one primary C1', async () => {
+    const releases: Array<{ projectId: string; commit: string }> = []
+    const fixture = await createFixture({
+      includeSecondaryRepo: true,
+      onReleaseUpdated: (input) => {
+        releases.push(input)
+      },
+    })
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+
+    const api = fixture.linked.repos.find((repo) => repo.repoId === 'api')
+    if (!api || !fixture.apiRepoRoot) throw new Error('Expected api Repo fixture')
+    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
+      stage: 'done',
+      repos: ['primary', 'api'],
+    })
+    expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(api.integrationRoot, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(await Bun.file(join(fixture.apiRepoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
+  })
+
   test('Pause is a lifecycle guard and dispatches no responsibility pass', async () => {
     const fixture = await createFixture()
     const controller = createGoalController(fixture.store, { verifyCompletion: () => true })
@@ -259,6 +286,7 @@ class DeliveryScriptRunner implements RoleRunner {
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
       generatorCreatesPrepare: boolean
+      workRepos: readonly string[]
     },
   ) {}
 
@@ -272,8 +300,10 @@ class DeliveryScriptRunner implements RoleRunner {
     })
     if (input.responsibility === 'planner') await this.plan(input)
     if (input.responsibility === 'generator') {
-      await mkdir(join(input.cwd, 'src'), { recursive: true })
-      await Bun.write(join(input.cwd, 'src', 'feature.ts'), 'export const feature = 2\n')
+      for (const repo of input.context.repoRoots) {
+        await mkdir(join(repo.path, 'src'), { recursive: true })
+        await Bun.write(join(repo.path, 'src', 'feature.ts'), 'export const feature = 2\n')
+      }
       if (this.options.generatorCreatesPrepare) {
         const adapter = join(input.cwd, 'scripts', 'hopi', 'prepare')
         await mkdir(dirname(adapter), { recursive: true })
@@ -346,6 +376,7 @@ class DeliveryScriptRunner implements RoleRunner {
             title: 'Build feature 2',
             kind: 'engineering',
             stage: 'generate',
+            repos: [...this.options.workRepos],
             notBefore: null,
             dependsOn: [],
             contractRevision: planning.attributes.contractRevision,
@@ -385,6 +416,7 @@ async function createFixture(
     generatorCreatesPrepare?: boolean
     generatorOperationalFailure?: boolean
     reviewerOperationalWriteOnce?: boolean
+    includeSecondaryRepo?: boolean
     operationalRetryBaseMs?: number
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
@@ -410,10 +442,28 @@ async function createFixture(
   await git(repoRoot, ['commit', '-m', 'initial'])
 
   const homeRoot = join(temporaryRoot, 'home')
-  const linked = await createAssistantHomeStore(homeRoot).linkProject({
+  const home = createAssistantHomeStore(homeRoot)
+  let linked = await home.linkProject({
     projectId: 'project-1',
     repoPath: repoRoot,
   })
+  let apiRepoRoot: string | null = null
+  if (options.includeSecondaryRepo) {
+    apiRepoRoot = join(temporaryRoot, 'api-repo')
+    await mkdir(join(apiRepoRoot, 'src'), { recursive: true })
+    await Bun.write(join(apiRepoRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
+    await git(apiRepoRoot, ['init', '-b', 'main'])
+    await git(apiRepoRoot, ['config', 'core.autocrlf', 'false'])
+    await git(apiRepoRoot, ['config', 'user.email', 'hopi@example.test'])
+    await git(apiRepoRoot, ['config', 'user.name', 'HOPI Test'])
+    await git(apiRepoRoot, ['add', '.'])
+    await git(apiRepoRoot, ['commit', '-m', 'initial'])
+    linked = await home.linkRepo({
+      projectId: 'project-1',
+      repoId: 'api',
+      repoPath: apiRepoRoot,
+    })
+  }
   const publisher = new PublicationCoordinator()
   const store = createGoalPackageStore(linked.integrationRoot, 'project-1', publisher)
   await store.createGoal({
@@ -426,6 +476,7 @@ async function createFixture(
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
+    workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
   })
   let runSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')
@@ -434,6 +485,8 @@ async function createFixture(
     homeRoot,
     projectId: 'project-1',
     projectRoot: linked.integrationRoot,
+    primaryRepoId: linked.primaryRepoId,
+    projectRepos: linked.repos,
     store,
     publisher,
     roleRunner: runner,
@@ -448,6 +501,8 @@ async function createFixture(
   return {
     homeRoot,
     repoRoot,
+    apiRepoRoot,
+    linked,
     projectRoot: linked.integrationRoot,
     store,
     runner,

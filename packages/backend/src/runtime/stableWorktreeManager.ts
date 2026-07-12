@@ -1,6 +1,6 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../domain/project'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -9,12 +9,15 @@ export interface StableWorktreeInput {
   projectId: string
   goalId: string
   workId: string
+  repoId?: string
+  primaryRepoId?: string
 }
 
 export interface StableWorktree {
   path: string
   branch: string
   baseRef: typeof HOPI_RELEASE_BRANCH
+  repoId: string
 }
 
 export interface StableWorktreeManager {
@@ -30,18 +33,25 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
 
   function worktree(input: StableWorktreeInput): StableWorktree {
     assertInput(input)
+    const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
+    const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
+    const workRoot = join(
+      absoluteHomeRoot,
+      '.hopi',
+      'runtime',
+      'worktrees',
+      input.projectId,
+      input.goalId,
+      input.workId,
+    )
     return {
-      path: join(
-        absoluteHomeRoot,
-        '.hopi',
-        'runtime',
-        'worktrees',
-        input.projectId,
-        input.goalId,
-        input.workId,
-      ),
+      path:
+        repoId === primaryRepoId
+          ? workRoot
+          : join(dirname(workRoot), `${input.workId}.repos`, repoId),
       branch: stableWorkBranch(input),
       baseRef: HOPI_RELEASE_BRANCH,
+      repoId,
     }
   }
 
@@ -163,6 +173,8 @@ function assertInput(input: StableWorktreeInput) {
   assertStableId(input.projectId, 'projectId')
   assertStableId(input.goalId, 'goalId')
   assertStableId(input.workId, 'workId')
+  assertStableId(input.repoId ?? DEFAULT_PRIMARY_REPO_ID, 'repoId')
+  assertStableId(input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID, 'primaryRepoId')
 }
 
 function assertStableId(value: string, label: string) {

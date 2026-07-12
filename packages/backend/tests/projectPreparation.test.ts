@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createProjectPreparer } from '../src/runtime/projectPreparation'
 
 const roots: string[] = []
@@ -56,6 +56,37 @@ describe('ProjectPreparer', () => {
 
     expect(result.kind).toBe('source_changed')
     expect(result.logs).toContain('generated.txt')
+  })
+
+  test('passes one runtime manifest for a multi-Repo workspace', async () => {
+    const fixture = await createFixture()
+    const api = join(dirname(fixture.repo), 'api')
+    await mkdir(api, { recursive: true })
+    await Bun.write(join(api, 'README.md'), '# API\n')
+    await git(api, ['init', '-b', 'main'])
+    await git(api, ['config', 'user.name', 'HOPI Test'])
+    await git(api, ['config', 'user.email', 'hopi@example.test'])
+    await git(api, ['add', '.'])
+    await git(api, ['commit', '-m', 'initial'])
+    await writeAdapter(
+      fixture.repo,
+      'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE!).json(); console.log(`api=${manifest.repos.api}`)',
+    )
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'add prepare'])
+
+    const result = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: fixture.runtime,
+      primaryRepoId: 'web',
+      repoRoots: [
+        { repoId: 'web', path: fixture.repo },
+        { repoId: 'api', path: api },
+      ],
+    })
+
+    expect(result.kind).toBe('ready')
+    expect(result.logs).toContain(`api=${api}`)
   })
 
   test('does not run over uncheckpointed Generator source', async () => {

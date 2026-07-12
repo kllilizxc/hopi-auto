@@ -2,6 +2,8 @@ import { chmod, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TransportContextBundle } from '../agent/vendorTransport'
 import {
+  engineeringWorkRepoIds,
+  isEngineeringWork,
   isWorkTerminal,
   parseAttentionDocument,
   parseEvidenceDocument,
@@ -9,7 +11,7 @@ import {
   parseInputDocument,
   parseWorkDocument,
 } from '../domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF } from '../domain/project'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
@@ -24,6 +26,14 @@ export interface PrepareRoleContextInput {
   workId: string
   runId: string
   responsibility: Responsibility
+  primaryRepoId?: string
+  repoRoots?: readonly RoleRepoRoot[]
+}
+
+export interface RoleRepoRoot {
+  repoId: string
+  path: string
+  primary: boolean
 }
 
 export interface RoleContextBundle extends TransportContextBundle {
@@ -38,6 +48,8 @@ export interface RoleContextBundle extends TransportContextBundle {
   guardFiles: Readonly<Record<string, string | null>>
   guardPrefixes: readonly string[]
   bootstrapSourceRoot?: string
+  repoRoots: readonly RoleRepoRoot[]
+  reposFile: string
 }
 
 export interface RoleContextStager {
@@ -60,6 +72,12 @@ export function createRoleContextStager(
       assertStableId(input.runId, 'runId')
 
       const projectRoot = resolve(input.projectRoot)
+      const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
+      assertStableId(primaryRepoId, 'primaryRepoId')
+      const repoRoots = normalizeRepoRoots(
+        input.repoRoots ?? [{ repoId: primaryRepoId, path: projectRoot, primary: true }],
+        primaryRepoId,
+      )
       const paths = createGoalPackagePaths(projectRoot, input.projectId)
       const runRoot = join(
         absoluteHomeRoot,
@@ -77,6 +95,7 @@ export function createRoleContextStager(
       const resultFile = join(runRoot, 'result.json')
       const contextFile = join(runRoot, 'context.md')
       const promptFile = join(runRoot, 'prompt.md')
+      const reposFile = join(runRoot, 'repos.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const runtimeScratchDir = join(runRoot, 'scratch')
 
@@ -92,6 +111,7 @@ export function createRoleContextStager(
           '.hopi/project.yml',
           '.hopi/preference.md',
           '.hopi/docs/index.md',
+          '.hopi/docs/repos.md',
           '.hopi/docs/tech-debt.md',
         ],
         prefixes: [paths.goalRoot(input.goalId)],
@@ -107,6 +127,22 @@ export function createRoleContextStager(
         throw new RoleContextStagingError(
           `Work path ${workPath} owns ${parsedWork.attributes.id}, expected ${input.workId}`,
         )
+      }
+      if (input.responsibility !== 'planner') {
+        if (!isEngineeringWork(parsedWork.attributes)) {
+          throw new RoleContextStagingError(
+            `${input.responsibility} requires Engineering Work ${input.workId}`,
+          )
+        }
+        const expectedRepoIds = engineeringWorkRepoIds(parsedWork.attributes, primaryRepoId)
+        const actualRepoIds = repoRoots.map((repo) => repo.repoId)
+        if (
+          JSON.stringify([...expectedRepoIds].sort()) !== JSON.stringify([...actualRepoIds].sort())
+        ) {
+          throw new RoleContextStagingError(
+            `Work Repo workspace disagrees with staged roots (${expectedRepoIds.join(', ')} vs ${actualRepoIds.join(', ')})`,
+          )
+        }
       }
 
       const referencedImages = collectReferencedImages(parsedWork.body, paths, input.goalId)
@@ -139,6 +175,18 @@ export function createRoleContextStager(
       }
 
       await Bun.write(
+        reposFile,
+        `${JSON.stringify(
+          {
+            primaryRepoId,
+            repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
+          },
+          null,
+          2,
+        )}\n`,
+      )
+
+      await Bun.write(
         contextFile,
         renderContextManifest(input, {
           authorityRoot,
@@ -151,6 +199,9 @@ export function createRoleContextStager(
             .filter((path) => authorityFiles.some((file) => file.path === path)),
           bootstrapSourceRoot,
           imagePaths: [...referencedImages],
+          primaryRepoId,
+          repoRoots,
+          reposFile,
         }),
       )
       await Bun.write(
@@ -165,6 +216,9 @@ export function createRoleContextStager(
             bootstrapSourceRoot,
             prepareMissing: prepareFile?.content === null,
             attentionRoot: paths.attentionRoot(input.goalId),
+            primaryRepoId,
+            repoRoots,
+            reposFile,
           },
           assignment,
         ),
@@ -187,9 +241,11 @@ export function createRoleContextStager(
         guardFiles,
         guardPrefixes,
         bootstrapSourceRoot,
+        repoRoots,
+        reposFile,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
-        extraWritableRoots: [runRoot],
+        extraWritableRoots: [runRoot, ...repoRoots.map((repo) => repo.path)],
         contextFile,
         promptFile,
         outcomeFile: resultFile,
@@ -201,6 +257,24 @@ export function createRoleContextStager(
       }
     },
   }
+}
+
+function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
+  const normalized = repoRoots.map((repo) => {
+    assertStableId(repo.repoId, 'repoId')
+    return { ...repo, path: resolve(repo.path) }
+  })
+  if (normalized.length === 0) {
+    throw new RoleContextStagingError('Responsibility Repo workspace must not be empty')
+  }
+  if (new Set(normalized.map((repo) => repo.repoId)).size !== normalized.length) {
+    throw new RoleContextStagingError('Responsibility Repo workspace contains duplicate Repo IDs')
+  }
+  const primary = normalized.filter((repo) => repo.primary)
+  if (primary.length > 1 || (primary[0] && primary[0].repoId !== primaryRepoId)) {
+    throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
+  }
+  return normalized
 }
 
 function collectReferencedImages(
@@ -239,6 +313,7 @@ function selectGuardFiles(
   )
   const referencedImages = collectReferencedImages(work.body, paths, input.goalId)
   const selected = files.filter((file) => {
+    if (file.path === '.hopi/project.yml') return false
     if (!file.path.startsWith(`${goalRoot}/`)) return true
     if (file.path === paths.goalDocument(input.goalId)) return true
     if (file.path.startsWith(`${paths.designRoot(input.goalId)}/`)) return true
@@ -462,6 +537,9 @@ function renderContextManifest(
     evidencePaths: readonly string[]
     bootstrapSourceRoot?: string
     imagePaths: readonly string[]
+    primaryRepoId: string
+    repoRoots: readonly RoleRepoRoot[]
+    reposFile: string
   },
 ) {
   return [
@@ -476,6 +554,11 @@ function renderContextManifest(
     `- Immutable authority root: ${context.authorityRoot}`,
     `- Writable proposal root: ${context.proposalRoot}`,
     `- Disposable runtime scratch: ${context.runtimeScratchDir}`,
+    `- Project primary Repo: ${context.primaryRepoId}`,
+    `- Repo workspace manifest: ${context.reposFile}`,
+    ...context.repoRoots.map(
+      (repo) => `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
+    ),
     ...(context.bootstrapSourceRoot
       ? [`- Read-only bootstrap source snapshot: ${context.bootstrapSourceRoot}`]
       : []),
@@ -513,6 +596,9 @@ function renderResponsibilityPrompt(
     bootstrapSourceRoot?: string
     prepareMissing: boolean
     attentionRoot: string
+    primaryRepoId: string
+    repoRoots: readonly RoleRepoRoot[]
+    reposFile: string
   },
   assignment: RunAssignment,
 ) {
@@ -528,6 +614,8 @@ function renderResponsibilityPrompt(
     'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
     'Sandbox, Git metadata, local port, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
     'Use $HOPI_RUN_SCRATCH for disposable temporary or cache files when a tool default is not writable.',
+    `Use ${paths.reposFile} as the exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names.`,
+    `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'If you stage targeted Attention, result must be fail. Never combine targeted Attention with success, reject, or replan.',
@@ -606,10 +694,11 @@ function plannerPrompt(paths: {
     'Record established decisions in design/** before exposing implementation Work.',
     'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
     'Plan the smallest independently schedulable Engineering Work set, with complete acceptance criteria and permanent dependsOn edges for known causal, semantic, or file-writer overlap.',
+    'Give every Engineering Work the smallest non-empty repos list that supplies its writable source workspace. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
     'Independent testability alone does not justify a separate Work. Keep prerequisite scaffolding with its only consumer when they share primary files and the prerequisite has no independently useful operator outcome.',
     'Every newly proposed Engineering Work must use kind engineering and stage generate. Mark the owning Planning Work done only with a complete proposal.',
     'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
-    'Your proposal may contain only design/**, Work, targeted or completion Attention, and the missing root AGENTS.md bootstrap described below. Never create Planner Evidence or add its ID to the Planning Work; Coordinator derives it from result.json during publication.',
+    'Your proposal may contain only design/**, Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing root AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator derives it from result.json during publication.',
     'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
     'The fixed control fields are listed below. Use them directly; never inspect another Goal or historical Run to infer document format. Markdown bodies remain free-form.',
     'New Engineering Work frontmatter:',
@@ -624,6 +713,7 @@ function plannerPrompt(paths: {
     'attempts: 0',
     'kind: engineering',
     'stage: generate',
+    'repos: [<one-or-more-listed-repo-ids>]',
     '---',
     '```',
     'New Attention frontmatter (target is null for completion, otherwise the canonical Work reference):',

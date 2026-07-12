@@ -6,6 +6,7 @@ export interface TaskCheckpointInput {
   goalId: string
   workId: string
   runId: string
+  repoId?: string
 }
 
 export interface TaskCheckpoint {
@@ -62,6 +63,7 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
     `HOPI-Project: ${input.projectId}`,
     `HOPI-Goal: ${input.goalId}`,
     `HOPI-Work: ${input.workId}`,
+    ...(input.repoId ? [`HOPI-Repo: ${input.repoId}`] : []),
     `HOPI-Producer-Run: ${input.runId}`,
   ].join('\n')
   const commit = await gitResult(input.worktreePath, ['commit', '--no-gpg-sign', '-m', message], {

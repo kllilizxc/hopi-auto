@@ -5,6 +5,7 @@ import {
   renderAttentionDocument,
   renderInputDocument,
 } from '../domain/canonicalDocuments'
+import type { LinkedProjectRepo } from '../domain/project'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import { acknowledgeGoalAttention } from '../runtime/attentionDelivery'
@@ -25,6 +26,8 @@ import {
 export interface AssistantToolProject {
   projectId: string
   projectRoot: string
+  primaryRepoId?: string
+  repos?: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   controller: GoalController
 }
@@ -484,6 +487,11 @@ export function createAssistantTools(options: {
             const result = await options.preview.start({
               projectId: project.projectId,
               projectRoot: project.projectRoot,
+              primaryRepoId: project.primaryRepoId,
+              repoRoots: project.repos?.map((repo) => ({
+                repoId: repo.repoId,
+                path: repo.integrationRoot,
+              })),
             })
             return {
               summary: `Preview start requested for ${project.projectId}.`,

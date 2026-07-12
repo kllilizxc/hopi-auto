@@ -28,6 +28,7 @@ export interface TransportContextBundle {
   browserHarnessArtifactDir: string
   canonicalBrowserHarnessArtifactDir: string
   imageFiles?: string[]
+  reposFile?: string
 }
 
 const cwdModeSchema = z.enum(['root', 'worktree'])
@@ -222,6 +223,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     HOPI_PROMPT_FILE: bundle.promptFile,
     HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
+    ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
     HOPI_GOAL_KEY: input.goalKey,
     HOPI_GOAL_ID: input.goalKey,
     HOPI_RUN_ID: input.runId,

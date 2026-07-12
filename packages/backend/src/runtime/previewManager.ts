@@ -1,6 +1,10 @@
 import { chmod, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { type ProjectPreparer, createProjectPreparer } from './projectPreparation'
+import {
+  type ProjectPreparationRepoRoot,
+  type ProjectPreparer,
+  createProjectPreparer,
+} from './projectPreparation'
 
 export type PreviewStatus = 'starting' | 'running' | 'stopped' | 'failed'
 export type PreviewStoppedReason = 'release_updated'
@@ -27,7 +31,12 @@ export type PreviewStartResult =
     }
 
 export interface PreviewManager {
-  start(input: { projectId: string; projectRoot: string }): Promise<PreviewStartResult>
+  start(input: {
+    projectId: string
+    projectRoot: string
+    primaryRepoId?: string
+    repoRoots?: readonly ProjectPreparationRepoRoot[]
+  }): Promise<PreviewStartResult>
   stop(projectId: string, reason?: PreviewStoppedReason): Promise<PreviewSession | null>
   stopAll(): Promise<void>
   inspect(projectId: string): PreviewSession | null
@@ -83,11 +92,15 @@ export function createPreviewManager(
       const sessionId = `preview-${crypto.randomUUID()}`
       const sessionRoot = join(runtimeRoot, input.projectId, sessionId)
       const logPath = join(sessionRoot, 'preview.log')
+      const preparationRoot = join(sessionRoot, 'project-prepare')
+      const reposFile = join(preparationRoot, 'repos.json')
       await mkdir(sessionRoot, { recursive: true })
       const preparation = await preparer.prepare({
         projectRoot,
-        runtimeDir: join(sessionRoot, 'project-prepare'),
+        runtimeDir: preparationRoot,
         timeoutMs: options.preparationTimeoutMs,
+        primaryRepoId: input.primaryRepoId,
+        repoRoots: input.repoRoots,
       })
       if (preparation.kind !== 'ready') {
         return repairRequired('preparation_failed', preparation.adapterPath, preparation.logs)
@@ -110,6 +123,7 @@ export function createPreviewManager(
         env: {
           ...process.env,
           HOPI_PROJECT_ROOT: projectRoot,
+          HOPI_REPOS_FILE: reposFile,
           HOPI_PREVIEW_RUNTIME_DIR: sessionRoot,
         },
       })

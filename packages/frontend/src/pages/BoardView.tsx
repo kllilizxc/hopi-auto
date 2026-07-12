@@ -419,6 +419,11 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
       </div>
       <h2>{work.title}</h2>
       <p>{excerpt(work.body)}</p>
+      {work.repos && work.repos.length > 0 && (
+        <div className="work-repos" aria-label="Repositories">
+          {work.repos.map((repoId) => <span key={repoId}>{repoId}</span>)}
+        </div>
+      )}
       <div className="work-card-foot">
         <span>{work.projection.responsibility ?? work.stage}</span>
         <span>{work.attempts}/3 recovery</span>
@@ -513,6 +518,10 @@ function WorkDetail({
                 <span>
                   <small>Responsibility</small>
                   <strong>{work.projection.responsibility ?? 'none'}</strong>
+                </span>
+                <span>
+                  <small>Repositories</small>
+                  <strong>{work.repos?.join(', ') ?? 'project docs'}</strong>
                 </span>
                 <span>
                   <small>Revision</small>

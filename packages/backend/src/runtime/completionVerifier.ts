@@ -5,8 +5,9 @@ import {
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { HOPI_RELEASE_REF } from '../domain/project'
+import { parseProjectDocument, repoRelease } from '../domain/projectDocument'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
-import { findIntegrationCommits } from './c1Integrator'
+import { type C1ProjectLayout, findIntegrationCommits } from './c1Integrator'
 
 export interface CompletionStructureVerifier {
   verify(goalId: string, goalPackage: GoalPackage): Promise<boolean>
@@ -14,6 +15,7 @@ export interface CompletionStructureVerifier {
 
 export function createCompletionStructureVerifier(
   store: GoalPackageStore,
+  layout?: C1ProjectLayout,
 ): CompletionStructureVerifier {
   return {
     async verify(goalId, goalPackage) {
@@ -47,9 +49,36 @@ export function createCompletionStructureVerifier(
           return false
         }
       }
+      if (layout && !(await releaseProjectionMatches(store, layout))) return false
       return true
     },
   }
+}
+
+async function releaseProjectionMatches(store: GoalPackageStore, layout: C1ProjectLayout) {
+  const source = await Bun.file(`${store.paths.projectRoot}/.hopi/project.yml`).text()
+  const document = parseProjectDocument(source, layout.primaryRepoId)
+  for (const repo of layout.repos) {
+    if (repo.primary) continue
+    const expected = repoRelease(document, repo.repoId)
+    if (!expected) return false
+    const [target, head, indexTree, expectedTree, status] = await Promise.all([
+      git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF]),
+      git(repo.integrationRoot, ['rev-parse', 'HEAD']),
+      git(repo.integrationRoot, ['write-tree']),
+      git(repo.integrationRoot, ['show', '-s', '--format=%T', expected]),
+      git(repo.integrationRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
+    ])
+    if (
+      target.trim() !== expected ||
+      head.trim() !== expected ||
+      indexTree.trim() !== expectedTree.trim() ||
+      status
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 async function gitBlob(cwd: string, object: string) {

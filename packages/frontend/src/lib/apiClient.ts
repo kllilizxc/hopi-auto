@@ -99,8 +99,18 @@ export function readWorkAttemptEvents(
   )
 }
 
-export function createProject(input: { projectId?: string; repoPath: string }) {
+export function createProject(input: { projectId?: string; repoPath: string; repoId?: string }) {
   return apiRequest<AppSnapshot>('/api/projects', { method: 'POST', body: input })
+}
+
+export function linkProjectRepo(
+  projectId: string,
+  input: { repoId: string; repoPath: string },
+) {
+  return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/repos`, {
+    method: 'POST',
+    body: input,
+  })
 }
 
 export function rebindProject(projectId: string, repoPath: string) {
@@ -108,6 +118,13 @@ export function rebindProject(projectId: string, repoPath: string) {
     method: 'POST',
     body: { repoPath },
   })
+}
+
+export function rebindProjectRepo(projectId: string, repoId: string, repoPath: string) {
+  return apiRequest<AppSnapshot>(
+    `/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}/rebind`,
+    { method: 'POST', body: { repoPath } },
+  )
 }
 
 export function updateProjectSettings(

@@ -1,6 +1,6 @@
 # HOPI MVP Multi-Repo Design
 
-Status: accepted implementation target
+Status: implemented MVP protocol
 Last updated: 2026-07-12
 
 This document owns the Repo membership, multi-root execution, integration, and recovery rules for
@@ -107,7 +107,7 @@ one runtime manifest:
   "primaryRepoId": "web",
   "repos": {
     "web": "/runtime/worktrees/P-1/G-1/W-1",
-    "api": "/runtime/worktrees/P-1/G-1/W-1/repos/api"
+    "api": "/runtime/worktrees/P-1/G-1/W-1.repos/api"
   }
 }
 ```

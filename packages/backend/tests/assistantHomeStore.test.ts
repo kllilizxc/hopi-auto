@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
-import { HOPI_RELEASE_BRANCH } from '../src/domain/project'
+import { HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../src/domain/project'
 import {
   AssistantHomeStoreError,
   createAssistantHomeStore,
@@ -30,7 +30,7 @@ describe('createAssistantHomeStore', () => {
     expect(first).toEqual(second)
     expect(first.homeId).toMatch(/^H-/)
     expect(await readYaml(store.paths.homeDocumentPath)).toEqual(first)
-    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 1, projects: [] })
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 2, projects: [] })
   })
 
   test('links a Repo through hopi/release without changing the user checkout', async () => {
@@ -44,6 +44,15 @@ describe('createAssistantHomeStore', () => {
 
     expect(project).toEqual({
       projectId: 'P-1',
+      primaryRepoId: 'primary',
+      repos: [
+        {
+          repoId: 'primary',
+          repoPath: await realpath(repoPath),
+          integrationRoot: store.paths.integrationRoot('P-1'),
+          primary: true,
+        },
+      ],
       repoPath: await realpath(repoPath),
       integrationRoot: store.paths.integrationRoot('P-1'),
     })
@@ -53,10 +62,139 @@ describe('createAssistantHomeStore', () => {
     )
     expect(await git(project.integrationRoot, ['rev-parse', 'HEAD'])).toBe(before.head)
     expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toEqual({
-      version: 1,
+      version: 2,
       projectId: 'P-1',
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary' }],
     })
     expect(await store.validateProject('P-1')).toEqual(project)
+  })
+
+  test('migrates a version 1 Project link without changing its Repo identity', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const store = createAssistantHomeStore(homeRoot)
+    await store.initialize()
+    await Bun.write(
+      store.paths.projectLinksPath,
+      `version: 1\nprojects:\n  - projectId: P-1\n    repoPath: ${repoPath}\n`,
+    )
+
+    await store.initialize()
+
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({
+      version: 2,
+      projects: [
+        {
+          projectId: 'P-1',
+          primaryRepoId: 'primary',
+          repos: [{ repoId: 'primary', repoPath: await realpath(repoPath) }],
+        },
+      ],
+    })
+  })
+
+  test('links and validates a secondary Repo without changing either user checkout', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    const beforePrimary = await snapshotUserCheckout(primaryPath)
+    const beforeApi = await snapshotUserCheckout(apiPath)
+    await store.linkProject({ projectId: 'P-1', repoPath: primaryPath })
+
+    const project = await store.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
+    const api = project.repos.find((repo) => repo.repoId === 'api')
+    if (!api) throw new Error('Expected linked api Repo')
+
+    expect(api).toEqual({
+      repoId: 'api',
+      repoPath: await realpath(apiPath),
+      integrationRoot: store.paths.repoIntegrationRoot('P-1', 'api', 'primary'),
+      primary: false,
+    })
+    expect(await git(api.integrationRoot, ['branch', '--show-current'])).toBe(HOPI_RELEASE_BRANCH)
+    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toEqual({
+      version: 2,
+      projectId: 'P-1',
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary' }, { repoId: 'api', releaseCommit: beforeApi.head }],
+    })
+    expect(await snapshotUserCheckout(primaryPath)).toEqual(beforePrimary)
+    expect(await snapshotUserCheckout(apiPath)).toEqual(beforeApi)
+    expect(await store.validateProject('P-1')).toEqual(project)
+    await expect(
+      store.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath }),
+    ).resolves.toEqual(project)
+  })
+
+  test('rebinds one secondary Repo without changing the primary binding', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    const linked = await store.linkProject({ projectId: 'P-1', repoPath: primaryPath })
+    await store.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
+    const movedApi = join(temporaryRoot, 'moved-api')
+    await rename(apiPath, movedApi)
+
+    const rebound = await store.rebindRepo({
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: movedApi,
+    })
+
+    expect(rebound.repoPath).toBe(linked.repoPath)
+    expect(rebound.repos.find((repo) => repo.repoId === 'api')?.repoPath).toBe(
+      await realpath(movedApi),
+    )
+    expect(await store.validateProject('P-1')).toEqual(rebound)
+  })
+
+  test('reconstructs a missing secondary managed root only from its documented release', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    await store.linkProject({ projectId: 'P-1', repoPath: primaryPath })
+    const linked = await store.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
+    const api = linked.repos.find((repo) => repo.repoId === 'api')
+    if (!api) throw new Error('Expected linked api Repo')
+    await git(apiPath, ['worktree', 'remove', '--force', api.integrationRoot])
+    const movedApi = join(temporaryRoot, 'moved-api')
+    await rename(apiPath, movedApi)
+
+    const rebound = await store.rebindRepo({
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: movedApi,
+    })
+
+    expect(rebound.repos.find((repo) => repo.repoId === 'api')?.repoPath).toBe(
+      await realpath(movedApi),
+    )
+    expect(await store.validateProject('P-1')).toEqual(rebound)
+  })
+
+  test('rejects secondary reconstruction when its release diverged from project.yml', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    await store.linkProject({ projectId: 'P-1', repoPath: primaryPath })
+    const linked = await store.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
+    const api = linked.repos.find((repo) => repo.repoId === 'api')
+    if (!api) throw new Error('Expected linked api Repo')
+    await git(apiPath, ['worktree', 'remove', '--force', api.integrationRoot])
+    await Bun.write(join(apiPath, 'unexpected.txt'), 'unexpected release\n')
+    await git(apiPath, ['add', 'unexpected.txt'])
+    await git(apiPath, ['commit', '-m', 'unexpected release'])
+    await git(apiPath, ['update-ref', HOPI_RELEASE_REF, 'HEAD'])
+    const movedApi = join(temporaryRoot, 'moved-api')
+    await rename(apiPath, movedApi)
+
+    await expect(
+      store.rebindRepo({ projectId: 'P-1', repoId: 'api', repoPath: movedApi }),
+    ).rejects.toThrow('disagrees with project.yml')
+    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
+      projects: [{ repos: [{ repoId: 'primary' }, { repoId: 'api', repoPath: apiPath }] }],
+    })
   })
 
   test('reuses an exact link request and rejects identity or Repo conflicts', async () => {

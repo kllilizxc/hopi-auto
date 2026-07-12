@@ -14,6 +14,7 @@ import {
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
+import type { LinkedProjectRepo } from '../domain/project'
 import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { PublicationCoordinator } from '../publication/publisher'
 import { createCoordinatorReconciler } from '../scheduler/coordinatorReconciler'
@@ -33,6 +34,8 @@ import { createWorkspaceAttentionController } from './workspaceAttentionControll
 
 export interface MvpProjectRuntime {
   projectId: string
+  primaryRepoId: string
+  repos: LinkedProjectRepo[]
   repoPath: string
   projectRoot: string
   store: ReturnType<typeof createGoalPackageStore>
@@ -56,6 +59,7 @@ export interface MvpRuntime {
   preview: ReturnType<typeof createPreviewManager>
   attempts: ReturnType<typeof createRunAttemptStore>
   rebindProject(projectId: string, repoPath: string): Promise<void>
+  rebindRepo(projectId: string, repoId: string, repoPath: string): Promise<void>
   readProjectCodingDefaults(projectId: string): Promise<{
     codingDefaults: ProjectCodingDefaults
     inherited: boolean
@@ -105,7 +109,15 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
 
   for (const linked of linkedProjects) {
     const store = createGoalPackageStore(linked.integrationRoot, linked.projectId, publisher)
-    const completion = createCompletionStructureVerifier(store)
+    const layout = {
+      primaryRepoId: linked.primaryRepoId,
+      repos: linked.repos.map((repo) => ({
+        repoId: repo.repoId,
+        integrationRoot: repo.integrationRoot,
+        primary: repo.primary,
+      })),
+    }
+    const completion = createCompletionStructureVerifier(store, layout)
     const controller = createGoalController(store, {
       verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
     })
@@ -113,6 +125,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       homeRoot: options.homeRoot,
       projectId: linked.projectId,
       projectRoot: linked.integrationRoot,
+      primaryRepoId: linked.primaryRepoId,
+      projectRepos: linked.repos,
       store,
       publisher,
       roleRunner,
@@ -127,6 +141,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
     projects.set(linked.projectId, {
       projectId: linked.projectId,
+      primaryRepoId: linked.primaryRepoId,
+      repos: [...linked.repos],
       repoPath: linked.repoPath,
       projectRoot: linked.integrationRoot,
       store,
@@ -142,6 +158,12 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     projects: [...projects.values()].map((project) => ({
       projectId: project.projectId,
       projectRoot: project.projectRoot,
+      primaryRepoId: project.primaryRepoId,
+      repos: project.repos.map((repo) => ({
+        repoId: repo.repoId,
+        integrationRoot: repo.integrationRoot,
+        primary: repo.primary,
+      })),
       store: project.store,
     })),
     attentions,
@@ -212,8 +234,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
-  async function rebindProject(projectId: string, repoPath: string) {
-    await home.rebindProject({ projectId, repoPath })
+  async function resolveProjectBindingAttentions(projectId: string) {
     const state = await workspace.readWorkspace()
     for (const attention of state.attentions.values()) {
       if (
@@ -226,6 +247,16 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
         )
       }
     }
+  }
+
+  async function rebindProject(projectId: string, repoPath: string) {
+    await home.rebindProject({ projectId, repoPath })
+    await resolveProjectBindingAttentions(projectId)
+  }
+
+  async function rebindRepo(projectId: string, repoId: string, repoPath: string) {
+    await home.rebindRepo({ projectId, repoId, repoPath })
+    await resolveProjectBindingAttentions(projectId)
   }
 
   async function readProjectCodingDefaults(projectId: string) {
@@ -255,6 +286,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     preview,
     attempts,
     rebindProject,
+    rebindRepo,
     readProjectCodingDefaults,
   }
 }

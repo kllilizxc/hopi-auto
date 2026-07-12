@@ -19,11 +19,18 @@ export interface ProjectPreparationResult {
   logPath: string
 }
 
+export interface ProjectPreparationRepoRoot {
+  repoId: string
+  path: string
+}
+
 export interface ProjectPreparer {
   prepare(input: {
     projectRoot: string
     runtimeDir: string
     timeoutMs?: number
+    primaryRepoId?: string
+    repoRoots?: readonly ProjectPreparationRepoRoot[]
   }): Promise<ProjectPreparationResult>
 }
 
@@ -34,15 +41,35 @@ export function createProjectPreparer(): ProjectPreparer {
       const runtimeDir = resolve(input.runtimeDir)
       const adapterPath = join(projectRoot, ...PROJECT_PREPARE_PATH.split('/'))
       const logPath = join(runtimeDir, 'prepare.log')
+      const reposFile = join(runtimeDir, 'repos.json')
       await mkdir(runtimeDir, { recursive: true })
+      const repoRoots = normalizeRepoRoots(
+        input.repoRoots ?? [{ repoId: 'primary', path: projectRoot }],
+      )
+      const selectedPaths = new Set(repoRoots.map((repo) => repo.path))
+      const observedRoots = [...new Set([projectRoot, ...selectedPaths])]
+      await Bun.write(
+        reposFile,
+        `${JSON.stringify(
+          {
+            primaryRepoId: input.primaryRepoId ?? 'primary',
+            repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
+          },
+          null,
+          2,
+        )}\n`,
+      )
 
-      const before = await sourceStatus(projectRoot)
-      if (before) {
+      const before = await sourceStatuses(observedRoots)
+      const dirtySelected = [...before].filter(
+        ([root, status]) => selectedPaths.has(root) && status,
+      )
+      if (dirtySelected.length > 0) {
         return finish({
           kind: 'skipped_dirty',
           adapterPath,
           exitCode: null,
-          logs: `Project preparation was skipped because the checkout already has uncheckpointed source:\n${before}`,
+          logs: `Project preparation was skipped because a task checkout already has uncheckpointed source:\n${renderStatuses(dirtySelected)}`,
           logPath,
         })
       }
@@ -77,6 +104,7 @@ export function createProjectPreparer(): ProjectPreparer {
           env: {
             ...process.env,
             HOPI_PROJECT_ROOT: projectRoot,
+            HOPI_REPOS_FILE: reposFile,
             HOPI_PREPARE_RUNTIME_DIR: runtimeDir,
           },
         })
@@ -104,9 +132,11 @@ export function createProjectPreparer(): ProjectPreparer {
         lines.push(`stderr: Unable to execute ${PROJECT_PREPARE_PATH}: ${errorMessage(error)}`)
       }
 
-      const after = await sourceStatus(projectRoot)
-      if (after !== before) {
-        lines.push(`stderr: ${PROJECT_PREPARE_PATH} modified Project source:\n${after}`)
+      const after = await sourceStatuses(observedRoots)
+      if (JSON.stringify([...after]) !== JSON.stringify([...before])) {
+        lines.push(
+          `stderr: ${PROJECT_PREPARE_PATH} modified Project source:\n${renderStatuses([...after])}`,
+        )
         return finish({
           kind: 'source_changed',
           adapterPath,
@@ -124,6 +154,26 @@ export function createProjectPreparer(): ProjectPreparer {
       })
     },
   }
+}
+
+function normalizeRepoRoots(repoRoots: readonly ProjectPreparationRepoRoot[]) {
+  if (repoRoots.length === 0)
+    throw new Error('Project preparation Repo workspace must not be empty')
+  const normalized = repoRoots.map((repo) => ({ ...repo, path: resolve(repo.path) }))
+  if (new Set(normalized.map((repo) => repo.repoId)).size !== normalized.length) {
+    throw new Error('Project preparation Repo IDs must be unique')
+  }
+  return normalized
+}
+
+async function sourceStatuses(roots: readonly string[]) {
+  return new Map(
+    await Promise.all(roots.map(async (root) => [root, await sourceStatus(root)] as const)),
+  )
+}
+
+function renderStatuses(entries: readonly (readonly [string, string])[]) {
+  return entries.map(([root, status]) => `${root}:\n${status || '(clean)'}`).join('\n')
 }
 
 async function finish(result: ProjectPreparationResult) {

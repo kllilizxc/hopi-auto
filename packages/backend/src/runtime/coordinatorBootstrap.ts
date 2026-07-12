@@ -5,13 +5,19 @@ import { HOPI_RELEASE_REF } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
-import { listIntegrationRecords } from './c1Integrator'
+import {
+  type C1ProjectRepo,
+  listIntegrationRecords,
+  reconcileProjectReleaseProjection,
+} from './c1Integrator'
 import { createCompletionStructureVerifier } from './completionVerifier'
 import type { WorkspaceAttentionController } from './workspaceAttentionController'
 
 export interface CoordinatorBootstrapProject {
   projectId: string
   projectRoot: string
+  primaryRepoId?: string
+  repos?: readonly C1ProjectRepo[]
   store: GoalPackageStore
 }
 
@@ -56,13 +62,31 @@ export async function bootstrapCoordinator(input: {
   const blocked = new Set<string>()
   for (const project of input.projects) {
     try {
-      await removeAbandonedTemporaryFiles(
-        project.projectRoot,
-        new Set([join(project.projectRoot, '.git')]),
-      )
+      const linkedBeforeValidation = await input.home.readProject(project.projectId)
+      const primaryRepoId = project.primaryRepoId ?? linkedBeforeValidation.primaryRepoId
+      const repos =
+        project.repos ??
+        linkedBeforeValidation.repos.map((repo) => ({
+          repoId: repo.repoId,
+          integrationRoot: repo.integrationRoot,
+          primary: repo.primary,
+        }))
+      for (const repo of repos) {
+        await removeAbandonedTemporaryFiles(
+          repo.integrationRoot,
+          new Set([join(repo.integrationRoot, '.git')]),
+        )
+      }
+      await reconcileProjectReleaseProjection({ primaryRepoId, repos })
       const linked = await input.home.validateProject(project.projectId)
       if (linked.integrationRoot !== project.projectRoot) {
         throw new Error('Project runtime root disagrees with the Assistant-home link')
+      }
+      for (const runtimeRepo of repos) {
+        const linkedRepo = linked.repos.find((repo) => repo.repoId === runtimeRepo.repoId)
+        if (linkedRepo?.integrationRoot !== runtimeRepo.integrationRoot) {
+          throw new Error(`Project runtime Repo ${runtimeRepo.repoId} disagrees with its link`)
+        }
       }
       await project.store.migrateLegacyGoals()
       await validateManagedProjection(project)
@@ -104,10 +128,22 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   }
 
   const packages = new Map<string, Awaited<ReturnType<GoalPackageStore['readPackage']>>>()
+  const completionLayout = project.repos
+    ? {
+        primaryRepoId:
+          project.primaryRepoId ?? project.repos.find((repo) => repo.primary)?.repoId ?? 'primary',
+        repos: project.repos,
+      }
+    : undefined
   for (const goalId of await project.store.listGoalIds()) {
     const goalPackage = await project.store.readPackage(goalId)
     packages.set(goalId, goalPackage)
-    if (!(await createCompletionStructureVerifier(project.store).verify(goalId, goalPackage))) {
+    if (
+      !(await createCompletionStructureVerifier(project.store, completionLayout).verify(
+        goalId,
+        goalPackage,
+      ))
+    ) {
       throw new Error(`Goal ${goalId} has invalid qualified C1 history`)
     }
   }

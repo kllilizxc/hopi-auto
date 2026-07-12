@@ -3,6 +3,7 @@ import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import {
   type EvidenceDocument,
   type WorkDocument,
+  engineeringWorkRepoIds,
   isEngineeringWork,
   parseEvidenceDocument,
   parseWorkDocument,
@@ -10,7 +11,13 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { validateGoalPackageTransition } from '../domain/goalPackage'
-import { HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF, type ProjectDocument } from '../domain/project'
+import {
+  parseProjectDocument,
+  renderProjectDocument,
+  repoRelease,
+  withRepoRelease,
+} from '../domain/projectDocument'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type { PublicationSnapshot, PublicationWrite } from '../publication/types'
@@ -21,6 +28,7 @@ import { validatePassSemanticGuard } from './passOutcomeCoordinator'
 export interface C1IntegrationInput {
   pass: ApplyPassOutcomeInput
   taskWorktreePath: string
+  taskWorktrees?: Readonly<Record<string, string>>
   evidence: EvidenceDocument
   completedWork: WorkDocument
 }
@@ -29,6 +37,7 @@ export type C1IntegrationResult =
   | { kind: 'integrated'; commit: string; recoveredUncertainUpdate: boolean }
   | { kind: 'already_integrated'; commit: string }
   | { kind: 'rejected'; reason: string }
+  | { kind: 'blocked'; reason: string }
   | { kind: 'blocked_after_boundary'; commit: string; reason: string }
 
 export interface C1FaultHooks {
@@ -39,6 +48,19 @@ export interface C1FaultHooks {
   }): Promise<void>
   afterRefUpdate?(commit: string): Promise<void> | void
   beforeMaterialization?(commit: string): Promise<void> | void
+  beforeSecondaryProjection?(commit: string): Promise<void> | void
+  afterSecondaryProjection?(repoId: string, commit: string): Promise<void> | void
+}
+
+export interface C1ProjectRepo {
+  repoId: string
+  integrationRoot: string
+  primary: boolean
+}
+
+export interface C1ProjectLayout {
+  primaryRepoId: string
+  repos: readonly C1ProjectRepo[]
 }
 
 export interface C1Integrator {
@@ -52,12 +74,16 @@ export function createC1Integrator(
   store: GoalPackageStore,
   publisher: PublicationCoordinator,
   now: () => Date = () => new Date(),
+  layout?: C1ProjectLayout,
 ): C1Integrator {
   const temporaryRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'integration')
+  const projectLayout = normalizeProjectLayout(store, layout)
 
   return {
     async integrate(input, faultHooks = {}) {
       validateInput(store, input)
+      const selectedRepos = selectedProjectRepos(projectLayout, input.completedWork)
+      const taskWorktrees = resolveTaskWorktrees(projectLayout, selectedRepos, input)
       const workReference = workRef(store, input.pass.goalId, input.pass.workId)
       const existing = await findIntegrationCommits(
         store.paths.projectRoot,
@@ -74,7 +100,7 @@ export function createC1Integrator(
       if (existing[0]) {
         await validateIntegratedCommit(store, input, existing[0])
         try {
-          await validateMaterializedCommit(store.paths.projectRoot, existing[0])
+          await recoverProjectProjection(projectLayout, existing[0], faultHooks)
         } catch (error) {
           return {
             kind: 'blocked_after_boundary',
@@ -87,8 +113,6 @@ export function createC1Integrator(
 
       await mkdir(temporaryRoot, { recursive: true })
       const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'c1-'))
-      const indexPath = join(temporaryDirectory, 'index')
-      const gitEnv = { GIT_INDEX_FILE: indexPath }
 
       try {
         return await publisher.runExclusive(async (session) => {
@@ -111,7 +135,51 @@ export function createC1Integrator(
             currentAuthority: currentCandidate,
           })
 
-          const writes = integrationDocumentWrites(store, input)
+          const projectFile = snapshot.files.find((file) => file.path === '.hopi/project.yml')
+          if (!projectFile?.content || !projectFile.hash) {
+            throw new C1IntegrationError('Current project.yml is missing from canonical authority')
+          }
+          const currentProject = parseProjectDocument(
+            new TextDecoder().decode(projectFile.content),
+            projectLayout.primaryRepoId,
+          )
+          validateProjectLayoutDocument(projectLayout, currentProject)
+
+          const oldSecondaryTargets = new Map<string, string>()
+          for (const repo of projectLayout.repos) {
+            if (repo.primary) continue
+            const actual = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+            const documented = repoRelease(currentProject, repo.repoId)
+            if (!documented || actual !== documented) {
+              return {
+                kind: 'blocked',
+                reason: `Repo ${repo.repoId} release ${actual} disagrees with project.yml ${documented ?? 'missing'}`,
+              }
+            }
+            oldSecondaryTargets.set(repo.repoId, actual)
+          }
+
+          let nextProject = currentProject
+          for (const repo of selectedRepos) {
+            if (repo.primary) continue
+            const oldRepoTarget = oldSecondaryTargets.get(repo.repoId)
+            if (!oldRepoTarget) {
+              throw new C1IntegrationError(`Missing old release for Repo ${repo.repoId}`)
+            }
+            const component = await buildComponentCandidate({
+              repo,
+              oldTarget: oldRepoTarget,
+              taskWorktreePath: requireTaskWorktree(taskWorktrees, repo.repoId),
+              indexPath: join(temporaryDirectory, `component-${repo.repoId}.index`),
+              store,
+              input,
+              timestamp: now(),
+            })
+            if (component.kind === 'rejected') return component
+            nextProject = withRepoRelease(nextProject, repo.repoId, component.commit)
+          }
+
+          const writes = integrationDocumentWrites(store, input, projectFile.hash, nextProject)
           const candidate = publicationCandidateFromSnapshot(snapshot, writes)
           const nextPackage = await validateGoalPackageTransition(
             currentCandidate,
@@ -121,37 +189,30 @@ export function createC1Integrator(
           )
           validateIntegrationDocumentDelta(input, currentPackage, nextPackage)
 
-          const taskHead = await git(input.taskWorktreePath, ['rev-parse', 'HEAD'])
-          const taskStatus = await git(input.taskWorktreePath, [
-            'status',
-            '--porcelain=v1',
-            '--untracked-files=all',
-          ])
-          if (taskStatus) {
-            return { kind: 'rejected', reason: 'Task worktree is not checkpoint-clean' }
+          const gitEnv = { GIT_INDEX_FILE: join(temporaryDirectory, 'primary.index') }
+          const primary = requireLayoutRepo(projectLayout, projectLayout.primaryRepoId)
+          if (!primary.primary) {
+            throw new C1IntegrationError(`C1 primary Repo must be ${projectLayout.primaryRepoId}`)
           }
-          const mergeBase = await git(projectRoot, ['merge-base', oldTarget, taskHead])
-          const merge = await gitResult(
-            projectRoot,
-            ['read-tree', '-m', mergeBase, oldTarget, taskHead],
-            gitEnv,
-          )
-          if (merge.exitCode !== 0) {
-            return {
-              kind: 'rejected',
-              reason: `Cannot construct C1 source merge: ${merge.stderr || merge.stdout}`,
-            }
-          }
-          const conflicts = await git(projectRoot, ['ls-files', '-u'], gitEnv)
-          if (conflicts) {
-            return {
-              kind: 'rejected',
-              reason: 'Task changes conflict with current integration target',
-            }
-          }
+          const primarySelected = selectedRepos.some((repo) => repo.primary)
+          const primarySource = primarySelected
+            ? await buildSourceCandidate({
+                repo: primary,
+                oldTarget,
+                taskWorktreePath: requireTaskWorktree(taskWorktrees, projectLayout.primaryRepoId),
+                env: gitEnv,
+              })
+            : await readTargetIntoIndex(projectRoot, oldTarget, gitEnv)
+          if (primarySource.kind === 'rejected') return primarySource
 
           await replaceCanonicalIndex(projectRoot, gitEnv, snapshot, writes)
-          await overlayBootstrapAgents(projectRoot, gitEnv, snapshot, mergeBase, taskHead)
+          await overlayBootstrapAgents(
+            projectRoot,
+            gitEnv,
+            snapshot,
+            primarySource.mergeBase,
+            primarySource.taskHead,
+          )
           const tree = await durableGit(projectRoot, ['write-tree'], gitEnv)
           const unsupported = await changedUnsupportedTreeEntries(projectRoot, oldTarget, tree)
           if (unsupported.length > 0) {
@@ -169,6 +230,16 @@ export function createC1Integrator(
             input,
             now(),
           )
+          for (const [repoId, expected] of oldSecondaryTargets) {
+            const repo = requireLayoutRepo(projectLayout, repoId)
+            const actual = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+            if (actual !== expected) {
+              return {
+                kind: 'blocked',
+                reason: `Repo ${repoId} release changed before primary C1 (${expected} -> ${actual})`,
+              }
+            }
+          }
           let recoveredUncertainUpdate = false
           const move = () => durableUpdateRef(projectRoot, commit, oldTarget)
           try {
@@ -201,6 +272,13 @@ export function createC1Integrator(
             await faultHooks.beforeMaterialization?.(commit)
             await materializeCommit(projectRoot, oldTarget, commit)
             await validateMaterializedCommit(projectRoot, commit)
+            await faultHooks.beforeSecondaryProjection?.(commit)
+            await materializeSecondaryProjections(
+              projectLayout,
+              currentProject,
+              nextProject,
+              faultHooks,
+            )
             return { kind: 'integrated', commit, recoveredUncertainUpdate }
           } catch (error) {
             return {
@@ -215,6 +293,405 @@ export function createC1Integrator(
       }
     },
   }
+}
+
+function normalizeProjectLayout(store: GoalPackageStore, layout?: C1ProjectLayout) {
+  const normalized: C1ProjectLayout = layout ?? {
+    primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
+    repos: [
+      {
+        repoId: DEFAULT_PRIMARY_REPO_ID,
+        integrationRoot: store.paths.projectRoot,
+        primary: true,
+      },
+    ],
+  }
+  const repoIds = new Set<string>()
+  for (const repo of normalized.repos) {
+    if (repoIds.has(repo.repoId)) throw new C1IntegrationError(`Duplicate Repo ${repo.repoId}`)
+    repoIds.add(repo.repoId)
+  }
+  const primary = normalized.repos.filter((repo) => repo.primary)
+  if (primary.length !== 1 || primary[0]?.repoId !== normalized.primaryRepoId) {
+    throw new C1IntegrationError(`C1 primary Repo must be ${normalized.primaryRepoId}`)
+  }
+  if (resolve(primary[0].integrationRoot) !== resolve(store.paths.projectRoot)) {
+    throw new C1IntegrationError('C1 primary Repo must own the canonical Project root')
+  }
+  return normalized
+}
+
+function selectedProjectRepos(layout: C1ProjectLayout, work: WorkDocument) {
+  if (!isEngineeringWork(work.attributes)) {
+    throw new C1IntegrationError('C1 Work must be Engineering Work')
+  }
+  return engineeringWorkRepoIds(work.attributes, layout.primaryRepoId).map((repoId) =>
+    requireLayoutRepo(layout, repoId),
+  )
+}
+
+function requireLayoutRepo(layout: C1ProjectLayout, repoId: string) {
+  const repo = layout.repos.find((candidate) => candidate.repoId === repoId)
+  if (!repo) throw new C1IntegrationError(`Work references unlinked Repo ${repoId}`)
+  return repo
+}
+
+function resolveTaskWorktrees(
+  layout: C1ProjectLayout,
+  selectedRepos: readonly C1ProjectRepo[],
+  input: C1IntegrationInput,
+) {
+  let entries: ReadonlyArray<readonly [string, string]>
+  if (input.taskWorktrees) {
+    entries = Object.entries(input.taskWorktrees)
+  } else if (selectedRepos.length === 1) {
+    const selected = selectedRepos[0]
+    if (!selected) throw new C1IntegrationError('C1 Work has no selected Repo')
+    entries = [[selected.repoId, input.taskWorktreePath]]
+  } else {
+    entries = []
+  }
+  const worktrees = new Map(entries)
+  for (const repo of selectedRepos) {
+    if (!worktrees.get(repo.repoId)) {
+      throw new C1IntegrationError(`C1 is missing task worktree for Repo ${repo.repoId}`)
+    }
+  }
+  for (const repoId of worktrees.keys()) requireLayoutRepo(layout, repoId)
+  return worktrees
+}
+
+function requireTaskWorktree(worktrees: ReadonlyMap<string, string>, repoId: string) {
+  const path = worktrees.get(repoId)
+  if (!path) throw new C1IntegrationError(`C1 is missing task worktree for Repo ${repoId}`)
+  return path
+}
+
+function validateProjectLayoutDocument(layout: C1ProjectLayout, document: ProjectDocument) {
+  if (document.primaryRepoId !== layout.primaryRepoId) {
+    throw new C1IntegrationError('project.yml primary Repo disagrees with runtime layout')
+  }
+  const runtimeIds = layout.repos.map((repo) => repo.repoId).sort()
+  const documentIds = document.repos.map((repo) => repo.repoId).sort()
+  if (JSON.stringify(runtimeIds) !== JSON.stringify(documentIds)) {
+    throw new C1IntegrationError('project.yml Repo membership disagrees with runtime layout')
+  }
+}
+
+type SourceCandidateResult =
+  | { kind: 'ready'; mergeBase?: string; taskHead?: string }
+  | { kind: 'rejected'; reason: string }
+
+async function readTargetIntoIndex(
+  repoRoot: string,
+  oldTarget: string,
+  env: Record<string, string>,
+): Promise<SourceCandidateResult> {
+  await git(repoRoot, ['read-tree', oldTarget], env)
+  return { kind: 'ready' }
+}
+
+async function buildSourceCandidate(input: {
+  repo: C1ProjectRepo
+  oldTarget: string
+  taskWorktreePath: string
+  env: Record<string, string>
+}): Promise<SourceCandidateResult> {
+  const taskStatus = await git(input.taskWorktreePath, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+  ])
+  if (taskStatus) {
+    return {
+      kind: 'rejected',
+      reason: `Repo ${input.repo.repoId} task worktree is not checkpoint-clean`,
+    }
+  }
+  const taskHead = await git(input.taskWorktreePath, ['rev-parse', 'HEAD'])
+  const mergeBase = await git(input.repo.integrationRoot, ['merge-base', input.oldTarget, taskHead])
+  const merge = await gitResult(
+    input.repo.integrationRoot,
+    ['read-tree', '-m', mergeBase, input.oldTarget, taskHead],
+    input.env,
+  )
+  if (merge.exitCode !== 0) {
+    return {
+      kind: 'rejected',
+      reason: `Cannot construct Repo ${input.repo.repoId} source merge: ${merge.stderr || merge.stdout}`,
+    }
+  }
+  const conflicts = await git(input.repo.integrationRoot, ['ls-files', '-u'], input.env)
+  if (conflicts) {
+    return {
+      kind: 'rejected',
+      reason: `Repo ${input.repo.repoId} task changes conflict with its current release`,
+    }
+  }
+  return { kind: 'ready', mergeBase, taskHead }
+}
+
+async function buildComponentCandidate(input: {
+  repo: C1ProjectRepo
+  oldTarget: string
+  taskWorktreePath: string
+  indexPath: string
+  store: GoalPackageStore
+  input: C1IntegrationInput
+  timestamp: Date
+}): Promise<{ kind: 'ready'; commit: string } | { kind: 'rejected'; reason: string }> {
+  const env = { GIT_INDEX_FILE: input.indexPath }
+  const source = await buildSourceCandidate({
+    repo: input.repo,
+    oldTarget: input.oldTarget,
+    taskWorktreePath: input.taskWorktreePath,
+    env,
+  })
+  if (source.kind === 'rejected') return source
+  const tree = await durableGit(input.repo.integrationRoot, ['write-tree'], env)
+  const unsupported = await changedUnsupportedTreeEntries(
+    input.repo.integrationRoot,
+    input.oldTarget,
+    tree,
+  )
+  if (unsupported.length > 0) {
+    return {
+      kind: 'rejected',
+      reason: `Repo ${input.repo.repoId} contains unsupported changed Git entries: ${unsupported.join(', ')}`,
+    }
+  }
+  const oldTree = await git(input.repo.integrationRoot, [
+    'show',
+    '-s',
+    '--format=%T',
+    input.oldTarget,
+  ])
+  if (tree === oldTree) return { kind: 'ready', commit: input.oldTarget }
+  return {
+    kind: 'ready',
+    commit: await createComponentCommit(
+      input.repo.integrationRoot,
+      tree,
+      input.oldTarget,
+      input.repo.repoId,
+      input.store,
+      input.input,
+      input.timestamp,
+    ),
+  }
+}
+
+async function createComponentCommit(
+  repoRoot: string,
+  tree: string,
+  oldTarget: string,
+  repoId: string,
+  store: GoalPackageStore,
+  input: C1IntegrationInput,
+  timestamp: Date,
+) {
+  const workReference = workRef(store, input.pass.goalId, input.pass.workId)
+  const message = [
+    `hopi: component ${repoId} for ${input.pass.goalId}/${input.pass.workId}`,
+    '',
+    `HOPI-Project: ${store.paths.projectId}`,
+    `HOPI-Goal: ${input.pass.goalId}`,
+    `HOPI-Work: ${input.pass.workId}`,
+    `HOPI-Repo: ${repoId}`,
+    `HOPI-Producer-Run: ${workReference}/run:${input.pass.runId}`,
+    '',
+  ].join('\n')
+  return durableGit(
+    repoRoot,
+    ['commit-tree', tree, '-p', oldTarget],
+    {
+      GIT_AUTHOR_NAME: 'HOPI Reviewer',
+      GIT_AUTHOR_EMAIL: 'hopi@local',
+      GIT_COMMITTER_NAME: 'HOPI Coordinator',
+      GIT_COMMITTER_EMAIL: 'hopi@local',
+      GIT_AUTHOR_DATE: timestamp.toISOString(),
+      GIT_COMMITTER_DATE: timestamp.toISOString(),
+    },
+    new TextEncoder().encode(message),
+  )
+}
+
+async function recoverProjectProjection(
+  layout: C1ProjectLayout,
+  commit: string,
+  faultHooks: C1FaultHooks,
+) {
+  const primary = requireLayoutRepo(layout, layout.primaryRepoId)
+  const primaryTarget = await git(primary.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  if (primaryTarget !== commit) {
+    throw new C1IntegrationError(`Primary release no longer points at existing C1 ${commit}`)
+  }
+  const primaryHead = await git(primary.integrationRoot, ['rev-parse', 'HEAD'])
+  if (primaryHead !== commit) {
+    await materializeCommit(primary.integrationRoot, primaryHead, commit)
+  }
+  await validateMaterializedCommit(primary.integrationRoot, commit)
+
+  const nextProject = await readProjectDocumentAt(
+    primary.integrationRoot,
+    commit,
+    layout.primaryRepoId,
+  )
+  validateProjectLayoutDocument(layout, nextProject)
+  const parent = await git(primary.integrationRoot, ['show', '-s', '--format=%P', commit])
+  const firstParent = parent.split(/\s+/)[0]
+  const previousProject = firstParent
+    ? await readProjectDocumentAtOrLegacy(
+        primary.integrationRoot,
+        firstParent,
+        nextProject.projectId,
+        layout.primaryRepoId,
+      )
+    : null
+  await faultHooks.beforeSecondaryProjection?.(commit)
+  for (const repo of layout.repos) {
+    if (repo.primary) continue
+    const desired = repoRelease(nextProject, repo.repoId)
+    if (!desired) throw new C1IntegrationError(`C1 is missing Repo ${repo.repoId} release`)
+    let expected = previousProject ? repoRelease(previousProject, repo.repoId) : undefined
+    if (!expected) {
+      const parentResult = await gitResult(repo.integrationRoot, ['rev-parse', `${desired}^`])
+      expected = parentResult.exitCode === 0 ? parentResult.stdout : undefined
+    }
+    await materializeSecondaryRepo(repo, expected ?? null, desired)
+    await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
+  }
+}
+
+export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout) {
+  const primary = requireLayoutRepo(layout, layout.primaryRepoId)
+  const target = await git(primary.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const [targetTree, indexTree] = await Promise.all([
+    git(primary.integrationRoot, ['show', '-s', '--format=%T', target]),
+    git(primary.integrationRoot, ['write-tree']),
+  ])
+  const parentLine = await git(primary.integrationRoot, ['show', '-s', '--format=%P', target])
+  const parent = parentLine.split(/\s+/)[0] || null
+  if (indexTree !== targetTree) {
+    if (!parent) {
+      throw new C1IntegrationError(
+        'Primary managed index does not materialize the root release tree',
+      )
+    }
+    const parentTree = await git(primary.integrationRoot, ['show', '-s', '--format=%T', parent])
+    if (indexTree !== parentTree) {
+      throw new C1IntegrationError(
+        `Primary managed index ${indexTree} is neither current ${targetTree} nor parent ${parentTree}`,
+      )
+    }
+    await materializeCommit(primary.integrationRoot, parent, target)
+  }
+
+  const projectFile = Bun.file(join(primary.integrationRoot, '.hopi', 'project.yml'))
+  if (!(await projectFile.exists())) {
+    throw new C1IntegrationError('Primary managed root is missing project.yml')
+  }
+  const currentProject = parseProjectDocument(await projectFile.text(), layout.primaryRepoId)
+  validateProjectLayoutDocument(layout, currentProject)
+  const previousProject = parent
+    ? await readProjectDocumentAtOrLegacy(
+        primary.integrationRoot,
+        parent,
+        currentProject.projectId,
+        layout.primaryRepoId,
+      )
+    : null
+
+  for (const repo of layout.repos) {
+    if (repo.primary) continue
+    const desired = repoRelease(currentProject, repo.repoId)
+    if (!desired) throw new C1IntegrationError(`project.yml is missing Repo ${repo.repoId} release`)
+    let expected = previousProject ? repoRelease(previousProject, repo.repoId) : undefined
+    if (!expected) {
+      const componentParent = await gitResult(repo.integrationRoot, ['rev-parse', `${desired}^`])
+      expected = componentParent.exitCode === 0 ? componentParent.stdout : undefined
+    }
+    await materializeSecondaryRepo(repo, expected ?? null, desired)
+  }
+}
+
+async function materializeSecondaryProjections(
+  layout: C1ProjectLayout,
+  previousProject: ProjectDocument,
+  nextProject: ProjectDocument,
+  faultHooks: C1FaultHooks,
+) {
+  for (const repo of layout.repos) {
+    if (repo.primary) continue
+    const desired = repoRelease(nextProject, repo.repoId)
+    const expected = repoRelease(previousProject, repo.repoId)
+    if (!desired || !expected) {
+      throw new C1IntegrationError(`Cannot project Repo ${repo.repoId} without release commits`)
+    }
+    await materializeSecondaryRepo(repo, expected, desired)
+    await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
+  }
+}
+
+async function materializeSecondaryRepo(
+  repo: C1ProjectRepo,
+  expectedOld: string | null,
+  desired: string,
+) {
+  const current = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const [indexTree, desiredTree, expectedOldTree] = await Promise.all([
+    git(repo.integrationRoot, ['write-tree']),
+    git(repo.integrationRoot, ['show', '-s', '--format=%T', desired]),
+    expectedOld
+      ? git(repo.integrationRoot, ['show', '-s', '--format=%T', expectedOld])
+      : Promise.resolve(null),
+  ])
+  const materializedCommit =
+    indexTree === desiredTree
+      ? desired
+      : expectedOld && indexTree === expectedOldTree
+        ? expectedOld
+        : null
+  if (!materializedCommit) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} index tree ${indexTree} is neither the previous nor desired release`,
+    )
+  }
+  if (current !== desired) {
+    if (!expectedOld || current !== expectedOld) {
+      throw new C1IntegrationError(
+        `Repo ${repo.repoId} release is ${current}, expected ${expectedOld ?? desired} or ${desired}`,
+      )
+    }
+    await durableUpdateRef(repo.integrationRoot, desired, expectedOld)
+    await durabilitySync(repo.integrationRoot)
+  }
+  if (materializedCommit !== desired) {
+    await materializeCommit(repo.integrationRoot, materializedCommit, desired)
+  }
+  await validateMaterializedCommit(repo.integrationRoot, desired)
+}
+
+async function readProjectDocumentAt(repoRoot: string, commit: string, primaryRepoId: string) {
+  const content = await gitBytes(repoRoot, ['show', `${commit}:.hopi/project.yml`])
+  return parseProjectDocument(new TextDecoder().decode(content), primaryRepoId)
+}
+
+async function readProjectDocumentAtOrLegacy(
+  repoRoot: string,
+  commit: string,
+  projectId: string,
+  primaryRepoId: string,
+) {
+  const result = await gitResult(repoRoot, ['show', `${commit}:.hopi/project.yml`])
+  return result.exitCode === 0
+    ? parseProjectDocument(result.stdout, primaryRepoId)
+    : {
+        version: 2 as const,
+        projectId,
+        primaryRepoId,
+        repos: [{ repoId: primaryRepoId }],
+      }
 }
 
 async function replaceCanonicalIndex(
@@ -254,18 +731,20 @@ async function overlayBootstrapAgents(
   projectRoot: string,
   env: Record<string, string>,
   snapshot: PublicationSnapshot,
-  mergeBase: string,
-  taskHead: string,
+  mergeBase?: string,
+  taskHead?: string,
 ) {
-  const taskChanged = await gitResult(
-    projectRoot,
-    ['diff', '--quiet', mergeBase, taskHead, '--', 'AGENTS.md'],
-    env,
-  )
-  if (taskChanged.exitCode !== 0 && taskChanged.exitCode !== 1) {
-    throw new C1IntegrationError(taskChanged.stderr || 'Cannot inspect AGENTS.md task change')
+  if (mergeBase && taskHead) {
+    const taskChanged = await gitResult(
+      projectRoot,
+      ['diff', '--quiet', mergeBase, taskHead, '--', 'AGENTS.md'],
+      env,
+    )
+    if (taskChanged.exitCode !== 0 && taskChanged.exitCode !== 1) {
+      throw new C1IntegrationError(taskChanged.stderr || 'Cannot inspect AGENTS.md task change')
+    }
+    if (taskChanged.exitCode === 1) return
   }
-  if (taskChanged.exitCode === 1) return
 
   const agents = snapshot.files.find((file) => file.path === 'AGENTS.md')
   if (agents?.content) {
@@ -380,7 +859,9 @@ async function validateMaterializedCommit(projectRoot: string, commit: string) {
   ])
   const commitTree = await git(projectRoot, ['show', '-s', '--format=%T', commit])
   if (head !== commit || indexTree !== commitTree || status) {
-    throw new C1IntegrationError('Managed integration worktree does not exactly materialize C1')
+    throw new C1IntegrationError(
+      `Managed integration worktree does not exactly materialize C1 (head=${head}, commit=${commit}, index=${indexTree}, tree=${commitTree}, status=${status || 'clean'})`,
+    )
   }
 }
 
@@ -433,8 +914,18 @@ async function safeProjectPath(projectRoot: string, path: string) {
   return target
 }
 
-function integrationDocumentWrites(store: GoalPackageStore, input: C1IntegrationInput) {
+function integrationDocumentWrites(
+  store: GoalPackageStore,
+  input: C1IntegrationInput,
+  projectDocumentHash: string,
+  projectDocument: ProjectDocument,
+) {
   return [
+    {
+      path: '.hopi/project.yml',
+      expectedHash: projectDocumentHash,
+      content: renderProjectDocument(projectDocument),
+    },
     {
       path: store.paths.evidenceDocument(input.pass.goalId, input.evidence.attributes.id),
       expectedHash: null,

@@ -40,8 +40,17 @@ export interface GoalSummary {
   openAttentionCount: number
 }
 
+export interface ProjectRepoSummary {
+  repoId: string
+  repoPath: string
+  integrationRoot: string
+  primary: boolean
+}
+
 export interface ProjectSummary {
   projectId: string
+  primaryRepoId: string
+  repos: ProjectRepoSummary[]
   repoPath: string
   guidance: string | null
   codingDefaults: ProjectCodingDefaults
@@ -146,6 +155,7 @@ export interface WorkView {
   stage: 'plan' | 'generate' | 'review' | 'done' | 'cancelled'
   notBefore: string | null
   dependsOn: string[]
+  repos?: string[]
   contractRevision: number
   evidenceRefs: string[]
   attempts: number

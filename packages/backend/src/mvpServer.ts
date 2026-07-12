@@ -42,8 +42,16 @@ const projectSchema = z.object({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
     .optional(),
   repoPath: z.string().min(1),
+  repoId: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .optional(),
 })
 const rebindProjectSchema = z.object({ repoPath: z.string().min(1) })
+const projectRepoSchema = z.object({
+  repoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  repoPath: z.string().min(1),
+})
 const projectSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
@@ -210,6 +218,36 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const body = await parseBody(request, rebindProjectSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
             await current.rebindProject(projectId, body.repoPath)
+          })
+          return json(await presentState(await nextRuntime))
+        }
+        if (
+          request.method === 'POST' &&
+          parts.length === 4 &&
+          parts[0] === 'api' &&
+          parts[1] === 'projects' &&
+          parts[3] === 'repos'
+        ) {
+          const projectId = requirePart(parts, 2)
+          const body = await parseBody(request, projectRepoSchema)
+          const nextRuntime = await reloadRuntime(async (current) => {
+            await current.home.linkRepo({ projectId, ...body })
+          })
+          return json(await presentState(await nextRuntime), 201)
+        }
+        if (
+          request.method === 'POST' &&
+          parts.length === 6 &&
+          parts[0] === 'api' &&
+          parts[1] === 'projects' &&
+          parts[3] === 'repos' &&
+          parts[5] === 'rebind'
+        ) {
+          const projectId = requirePart(parts, 2)
+          const repoId = requirePart(parts, 4)
+          const body = await parseBody(request, rebindProjectSchema)
+          const nextRuntime = await reloadRuntime(async (current) => {
+            await current.rebindRepo(projectId, repoId, body.repoPath)
           })
           return json(await presentState(await nextRuntime))
         }
@@ -422,6 +460,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             await runtime.preview.start({
               projectId: project.projectId,
               projectRoot: project.projectRoot,
+              primaryRepoId: project.primaryRepoId,
+              repoRoots: project.repos.map((repo) => ({
+                repoId: repo.repoId,
+                path: repo.integrationRoot,
+              })),
             }),
           )
         }
@@ -532,6 +575,13 @@ async function presentState(runtime: MvpRuntime) {
     }
     projects.push({
       projectId: project.projectId,
+      primaryRepoId: project.primaryRepoId,
+      repos: project.repos.map((repo) => ({
+        repoId: repo.repoId,
+        repoPath: repo.repoPath,
+        integrationRoot: repo.integrationRoot,
+        primary: repo.primary,
+      })),
       repoPath: project.repoPath,
       guidance: await readProjectGuidance(project.projectRoot),
       codingDefaults: modelSettings.codingDefaults,

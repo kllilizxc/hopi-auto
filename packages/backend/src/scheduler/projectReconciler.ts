@@ -1,4 +1,10 @@
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
+import { engineeringWorkRepoIds, isEngineeringWork } from '../domain/canonicalDocuments'
+import {
+  DEFAULT_PRIMARY_REPO_ID,
+  type LinkedProjectRepo,
+  requireProjectRepo,
+} from '../domain/project'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
@@ -33,6 +39,8 @@ export interface ProjectReconcilerOptions {
   homeRoot: string
   projectId: string
   projectRoot: string
+  primaryRepoId?: string
+  projectRepos?: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   publisher: PublicationCoordinator
   roleRunner: RoleRunner
@@ -89,13 +97,35 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const contextStager =
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
-  const outcomes =
-    options.outcomes ?? createPassOutcomeCoordinator(options.store, options.publisher, { now })
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
+  const primaryRepoId = options.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
+  const projectRepos: readonly LinkedProjectRepo[] = options.projectRepos ?? [
+    {
+      repoId: primaryRepoId,
+      repoPath: options.projectRoot,
+      integrationRoot: options.projectRoot,
+      primary: true,
+    },
+  ]
+  const c1Layout = {
+    primaryRepoId,
+    repos: projectRepos.map((repo) => ({
+      repoId: repo.repoId,
+      integrationRoot: repo.integrationRoot,
+      primary: repo.primary,
+    })),
+  }
+  const outcomes =
+    options.outcomes ??
+    createPassOutcomeCoordinator(options.store, options.publisher, {
+      now,
+      primaryRepoId,
+      projectRepoIds: projectRepos.map((repo) => repo.repoId),
+    })
   const integrator =
     options.integrator ??
-    createC1Integrator(options.homeRoot, options.store, options.publisher, now)
-  const completion = createCompletionStructureVerifier(options.store)
+    createC1Integrator(options.homeRoot, options.store, options.publisher, now, c1Layout)
+  const completion = createCompletionStructureVerifier(options.store, c1Layout)
   const goalController =
     options.goalController ??
     createGoalController(options.store, {
@@ -189,18 +219,53 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const runId = createRunId()
       let attempt: RunAttemptRecorder | null = null
       try {
-        const worktreeInput = {
-          projectRoot: options.projectRoot,
-          projectId: options.projectId,
-          goalId,
-          workId,
-        }
-        const worktree =
+        const owningWork = goalPackage.works.get(workId)
+        if (!owningWork) throw new Error(`Work is missing: ${workId}`)
+        const selectedRepos =
           responsibility === 'planner'
-            ? null
-            : responsibility === 'reviewer'
-              ? await worktrees.prepareClean(worktreeInput)
-              : await worktrees.prepare(worktreeInput)
+            ? projectRepos
+            : isEngineeringWork(owningWork.attributes)
+              ? engineeringWorkRepoIds(owningWork.attributes, primaryRepoId).map((repoId) =>
+                  requireProjectRepo({ repos: projectRepos }, repoId),
+                )
+              : []
+        if (responsibility !== 'planner' && selectedRepos.length === 0) {
+          throw new Error(`Engineering Work ${workId} has no Repo workspace`)
+        }
+        const worktreeEntries =
+          responsibility === 'planner'
+            ? []
+            : await Promise.all(
+                selectedRepos.map(async (repo) => {
+                  const worktreeInput = {
+                    projectRoot: repo.integrationRoot,
+                    projectId: options.projectId,
+                    goalId,
+                    workId,
+                    repoId: repo.repoId,
+                    primaryRepoId,
+                  }
+                  return {
+                    repo,
+                    worktree:
+                      responsibility === 'reviewer'
+                        ? await worktrees.prepareClean(worktreeInput)
+                        : await worktrees.prepare(worktreeInput),
+                  }
+                }),
+              )
+        const roleRepoRoots =
+          responsibility === 'planner'
+            ? selectedRepos.map((repo) => ({
+                repoId: repo.repoId,
+                path: repo.integrationRoot,
+                primary: repo.primary,
+              }))
+            : worktreeEntries.map(({ repo, worktree }) => ({
+                repoId: repo.repoId,
+                path: worktree.path,
+                primary: repo.primary,
+              }))
         const context = await contextStager.prepare({
           projectRoot: options.projectRoot,
           projectId: options.projectId,
@@ -208,6 +273,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           workId,
           runId,
           responsibility,
+          primaryRepoId,
+          repoRoots: roleRepoRoots,
         })
         attempt = await attempts
           .start({
@@ -219,21 +286,36 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runRoot: context.runRoot,
           })
           .catch(() => null)
-        if (worktree) {
+        if (worktreeEntries.length > 0) {
+          const primaryTaskRoot = worktreeEntries.find(({ repo }) => repo.primary)?.worktree.path
+          const preparationProjectRoot =
+            primaryTaskRoot ??
+            requireProjectRepo({ repos: projectRepos }, primaryRepoId).integrationRoot
           const preparation = await preparer.prepare({
-            projectRoot: worktree.path,
+            projectRoot: preparationProjectRoot,
             runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
             timeoutMs: options.preparationTimeoutMs,
+            primaryRepoId,
+            repoRoots: worktreeEntries.map(({ repo, worktree }) => ({
+              repoId: repo.repoId,
+              path: worktree.path,
+            })),
           })
           await attempt?.record(preparationEvent(responsibility, preparation))
           if (preparation.kind !== 'ready') {
             if (preparation.kind === 'source_changed') {
-              await worktrees.prepareClean({
-                projectRoot: options.projectRoot,
-                projectId: options.projectId,
-                goalId,
-                workId,
-              })
+              await Promise.all(
+                worktreeEntries.map(({ repo }) =>
+                  worktrees.prepareClean({
+                    projectRoot: repo.integrationRoot,
+                    projectId: options.projectId,
+                    goalId,
+                    workId,
+                    repoId: repo.repoId,
+                    primaryRepoId,
+                  }),
+                ),
+              )
             }
             if (responsibility === 'reviewer') {
               const outcome: RoleRunResult = {
@@ -269,7 +351,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             workId,
             runId,
             responsibility,
-            cwd: worktree?.path ?? context.proposalRoot,
+            cwd:
+              worktreeEntries.find(({ repo }) => repo.primary)?.worktree.path ??
+              worktreeEntries[0]?.worktree.path ??
+              context.proposalRoot,
+            sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             signal: runController.signal,
           },
@@ -279,15 +365,20 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        if (responsibility === 'generator' && worktree) {
+        if (responsibility === 'generator' && worktreeEntries.length > 0) {
           try {
-            await checkpointTask({
-              worktreePath: worktree.path,
-              projectId: options.projectId,
-              goalId,
-              workId,
-              runId,
-            })
+            await Promise.all(
+              worktreeEntries.map(({ repo, worktree }) =>
+                checkpointTask({
+                  worktreePath: worktree.path,
+                  projectId: options.projectId,
+                  goalId,
+                  workId,
+                  runId,
+                  repoId: repo.repoId,
+                }),
+              ),
+            )
           } catch (error) {
             const summary = `Task checkpoint failed: ${errorMessage(error)}`
             if (!(error instanceof TaskCheckpointError) || error.code === 'infrastructure') {
@@ -348,10 +439,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             application: application.kind,
           }
         }
-        if (!worktree) throw new Error('Reviewer integration has no task worktree')
+        if (worktreeEntries.length === 0) {
+          throw new Error('Reviewer integration has no task worktree')
+        }
+        const firstWorktree = worktreeEntries[0]
+        if (!firstWorktree) throw new Error('Reviewer integration has no task worktree')
         const integration = await integrator.integrate({
           pass,
-          taskWorktreePath: worktree.path,
+          taskWorktreePath: firstWorktree.worktree.path,
+          taskWorktrees: Object.fromEntries(
+            worktreeEntries.map(({ repo, worktree }) => [repo.repoId, worktree.path]),
+          ),
           evidence: application.evidence,
           completedWork: application.work,
         })
@@ -391,6 +489,25 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             result: 'reject',
             application: rejected.kind,
+          }
+        }
+
+        if (integration.kind === 'blocked') {
+          await options.onProjectBlocked?.({
+            projectId: options.projectId,
+            reason: integration.reason,
+          })
+          await attempt?.finish({
+            outcome: {
+              result: 'fail',
+              summary: integration.reason,
+              exitCode: outcome.exitCode,
+            },
+            application: 'project_blocked',
+          })
+          return {
+            kind: 'project_blocked',
+            reason: integration.reason,
           }
         }
 

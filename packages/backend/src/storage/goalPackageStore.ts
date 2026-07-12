@@ -58,6 +58,7 @@ export interface GoalPackageStore {
       supportingWrites: PublicationWrite[]
       gateWrite?: PublicationWrite
       bootstrapAgentsWrite?: PublicationWrite
+      projectContextWrites?: PublicationWrite[]
       validateTransition?(
         current: GoalPackage,
         candidate: GoalPackage,
@@ -221,11 +222,17 @@ export function createGoalPackageStore(
       ) {
         throw new Error('Planner bootstrap may only create a previously missing root AGENTS.md')
       }
+      for (const write of publication.projectContextWrites ?? []) {
+        if (write.path !== '.hopi/docs/repos.md') {
+          throw new Error(`Planner Project context write is unsupported: ${write.path}`)
+        }
+      }
       return publisher.publish({
         root: paths.publicationRoot,
         supportingWrites: [
           ...publication.supportingWrites,
           ...(publication.bootstrapAgentsWrite ? [publication.bootstrapAgentsWrite] : []),
+          ...(publication.projectContextWrites ?? []),
         ],
         gateWrite: publication.gateWrite,
         validateCandidate: async (candidate, current) => {

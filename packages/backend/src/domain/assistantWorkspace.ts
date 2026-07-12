@@ -8,7 +8,7 @@ import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from './assistantWorkspaceDocuments'
-import type { ProjectLink } from './project'
+import { DEFAULT_PRIMARY_REPO_ID, type ProjectLink } from './project'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -16,7 +16,7 @@ import {
 
 const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const homeSchema = z.object({ version: z.literal(1), homeId: stableIdSchema }).strict()
-const linksSchema = z
+const legacyLinksSchema = z
   .object({
     version: z.literal(1),
     projects: z.array(
@@ -24,6 +24,32 @@ const linksSchema = z
         .object({
           projectId: stableIdSchema,
           repoPath: z.string().min(1),
+          codingDefaults: projectCodingDefaultsInputSchema
+            .transform((value) => normalizeProjectCodingDefaults(value))
+            .optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+const linksSchema = z
+  .object({
+    version: z.literal(2),
+    projects: z.array(
+      z
+        .object({
+          projectId: stableIdSchema,
+          primaryRepoId: stableIdSchema,
+          repos: z
+            .array(
+              z
+                .object({
+                  repoId: stableIdSchema,
+                  repoPath: z.string().min(1),
+                })
+                .strict(),
+            )
+            .min(1),
           codingDefaults: projectCodingDefaultsInputSchema
             .transform((value) => normalizeProjectCodingDefaults(value))
             .optional(),
@@ -75,11 +101,22 @@ export async function readAndValidateAssistantWorkspace(
   paths: AssistantWorkspacePaths,
 ): Promise<AssistantWorkspace> {
   const home = parseYaml(await requiredText(candidate, paths.homeDocument), homeSchema, 'home.yml')
-  const links = parseYaml(
+  const rawLinks = parseYaml(
     await requiredText(candidate, paths.projectLinks),
-    linksSchema,
+    z.union([linksSchema, legacyLinksSchema]),
     'projects.yml',
   )
+  const links: { projects: ProjectLink[] } =
+    rawLinks.version === 2
+      ? rawLinks
+      : {
+          projects: rawLinks.projects.map((project) => ({
+            projectId: project.projectId,
+            primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
+            repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
+            ...(project.codingDefaults ? { codingDefaults: project.codingDefaults } : {}),
+          })),
+        }
   if (new Set(links.projects.map((project) => project.projectId)).size !== links.projects.length) {
     throw invalid('projects.yml contains duplicate projectId values')
   }

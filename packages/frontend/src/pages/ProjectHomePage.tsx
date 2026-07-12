@@ -27,8 +27,9 @@ import {
 } from '../components/ui'
 import {
   createProject,
+  linkProjectRepo,
   readState,
-  rebindProject,
+  rebindProjectRepo,
   updateProjectSettings,
   type CodingAgentTransport,
   type CodingReasoningEffort,
@@ -145,15 +146,32 @@ export function ProjectHomePage() {
 
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
-  const [showRebind, setShowRebind] = useState(false)
+  const [showRepoManager, setShowRepoManager] = useState(false)
+  const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
   const [showModelSettings, setShowModelSettings] = useState(false)
-  const [nextPath, setNextPath] = useState(project.repoPath)
+  const [nextRepoPath, setNextRepoPath] = useState('')
+  const [newRepoId, setNewRepoId] = useState('')
+  const [newRepoPath, setNewRepoPath] = useState('')
   const [modelDraft, setModelDraft] = useState(() => codingDefaultsToDraft(project.codingDefaults))
   const firstGoal = project.goals[0]
-  const rebindMutation = useMutation({
-    mutationFn: () => rebindProject(project.projectId, nextPath.trim()),
+  const linkRepoMutation = useMutation({
+    mutationFn: () =>
+      linkProjectRepo(project.projectId, {
+        repoId: newRepoId.trim(),
+        repoPath: newRepoPath.trim(),
+      }),
     onSuccess: async () => {
-      setShowRebind(false)
+      setNewRepoId('')
+      setNewRepoPath('')
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+  const rebindRepoMutation = useMutation({
+    mutationFn: () =>
+      rebindProjectRepo(project.projectId, editingRepoId ?? '', nextRepoPath.trim()),
+    onSuccess: async () => {
+      setEditingRepoId(null)
+      setNextRepoPath('')
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
@@ -172,7 +190,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <span className="project-initial">{project.projectId.slice(0, 2).toUpperCase()}</span>
         <div>
           <h2>{project.projectId}</h2>
-          <p>{project.repoPath}</p>
+          <p>{project.primaryRepoId} · {project.repoPath}</p>
         </div>
         <StatusChip className={`preview-status ${project.preview?.status ?? 'stopped'}`} size="sm">
           {project.preview?.stoppedReason === 'release_updated'
@@ -190,6 +208,85 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       <p className="project-guidance">
         {excerpt(project.guidance ?? 'Planner will create AGENTS.md guidance on its first pass.', 170)}
       </p>
+
+      <div className="project-repos">
+        <div className="project-repos-heading">
+          <span>Repositories</span>
+          <strong>{project.repos.length}</strong>
+        </div>
+        {project.repos.map((repo) => (
+          <div key={repo.repoId} className="project-repo-entry">
+            <div className="project-repo-row">
+              <span className="project-repo-id">{repo.repoId}</span>
+              <span className="project-repo-path" title={repo.repoPath}>{repo.repoPath}</span>
+              {repo.primary && <small>primary</small>}
+              {showRepoManager && (
+                <AppButton
+                  variant="ghost"
+                  type="button"
+                  onClick={() => {
+                    setEditingRepoId(repo.repoId)
+                    setNextRepoPath(repo.repoPath)
+                  }}
+                >
+                  <RefreshCw /> Rebind
+                </AppButton>
+              )}
+            </div>
+            {editingRepoId === repo.repoId && (
+              <AppForm
+                className="project-repo-form"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (nextRepoPath.trim()) rebindRepoMutation.mutate()
+                }}
+              >
+                <AppInput
+                  aria-label={`New path for ${repo.repoId}`}
+                  value={nextRepoPath}
+                  onChange={(event) => setNextRepoPath(event.target.value)}
+                />
+                <AppButton
+                  type="submit"
+                  disabled={!nextRepoPath.trim() || rebindRepoMutation.isPending}
+                >
+                  {rebindRepoMutation.isPending ? <AppSpinner size="sm" /> : <RefreshCw />}
+                  Apply
+                </AppButton>
+              </AppForm>
+            )}
+          </div>
+        ))}
+        {showRepoManager && (
+          <AppForm
+            className="project-repo-form project-repo-link-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (newRepoId.trim() && newRepoPath.trim()) linkRepoMutation.mutate()
+            }}
+          >
+            <AppInput
+              aria-label="Repository ID"
+              placeholder="api"
+              value={newRepoId}
+              onChange={(event) => setNewRepoId(event.target.value)}
+            />
+            <AppInput
+              aria-label="Repository path"
+              placeholder="/home/me/Code/product-api"
+              value={newRepoPath}
+              onChange={(event) => setNewRepoPath(event.target.value)}
+            />
+            <AppButton
+              type="submit"
+              disabled={!newRepoId.trim() || !newRepoPath.trim() || linkRepoMutation.isPending}
+            >
+              {linkRepoMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
+              Link
+            </AppButton>
+          </AppForm>
+        )}
+      </div>
 
       <div className="project-model-row">
         <Cpu />
@@ -305,29 +402,25 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </div>
 
-      {(rebindMutation.error || settingsMutation.error) && (
+      {(linkRepoMutation.error || rebindRepoMutation.error || settingsMutation.error) && (
         <AppAlert className="inline-error">
-          {rebindMutation.error?.message ?? settingsMutation.error?.message}
+          {linkRepoMutation.error?.message ??
+            rebindRepoMutation.error?.message ??
+            settingsMutation.error?.message}
         </AppAlert>
-      )}
-      {showRebind && (
-        <AppForm
-          className="rebind-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (nextPath.trim()) rebindMutation.mutate()
-          }}
-        >
-          <AppInput aria-label="New repository path" value={nextPath} onChange={(event) => setNextPath(event.target.value)} />
-          <AppButton type="submit" disabled={!nextPath.trim() || rebindMutation.isPending}>
-            {rebindMutation.isPending ? <AppSpinner size="sm" /> : <RefreshCw />} Rebind
-          </AppButton>
-        </AppForm>
       )}
 
       <div className="project-card-actions">
-        <AppButton className="text-button" variant="ghost" type="button" onClick={() => setShowRebind((value) => !value)}>
-          {showRebind ? 'Close rebind' : 'Repo moved?'}
+        <AppButton
+          className="text-button"
+          variant="ghost"
+          type="button"
+          onClick={() => {
+            setShowRepoManager((value) => !value)
+            setEditingRepoId(null)
+          }}
+        >
+          {showRepoManager ? 'Close repositories' : `Manage ${project.repos.length} repos`}
         </AppButton>
         <AppRouterLink className="secondary-button" to={`/projects/${encodeURIComponent(project.projectId)}/goals/new`}>
           <Plus /> New Goal

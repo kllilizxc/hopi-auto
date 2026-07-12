@@ -45,6 +45,8 @@ export interface PassOutcomeCoordinator {
 
 export interface PassOutcomeCoordinatorOptions {
   now?: () => Date
+  primaryRepoId?: string
+  projectRepoIds?: readonly string[]
 }
 
 export class PassProposalError extends Error {}
@@ -134,7 +136,14 @@ export function createPassOutcomeCoordinator(
     }
 
     if (input.responsibility === 'planner') {
-      const application = buildPlannerApplication(store, input, evidence, proposal, current)
+      const application = buildPlannerApplication(
+        store,
+        input,
+        evidence,
+        proposal,
+        current,
+        options,
+      )
       return publishWithStaleRecovery(store, input, evidence, application, {
         kind: 'published',
         evidenceId: evidence.attributes.id,
@@ -184,6 +193,7 @@ interface NewAttentionProposal {
 interface PassProposal {
   changedWrites: PublicationWrite[]
   bootstrapAgentsWrite?: PublicationWrite
+  projectContextWrites: PublicationWrite[]
   newAttentions: NewAttentionProposal[]
   proposedFiles: ReadonlyMap<string, PublicationSnapshotFile>
 }
@@ -191,6 +201,7 @@ interface PassProposal {
 interface PassPublication {
   supportingWrites: PublicationWrite[]
   gateWrite: PublicationWrite
+  projectContextWrites?: PublicationWrite[]
   validateTransition(
     current: GoalPackage,
     candidate: GoalPackage,
@@ -212,6 +223,7 @@ async function readPassProposal(
   const goalRoot = store.paths.goalRoot(input.goalId)
   const changedWrites: PublicationWrite[] = []
   const newAttentions: NewAttentionProposal[] = []
+  const projectContextWrites: PublicationWrite[] = []
   let bootstrapAgentsWrite: PublicationWrite | undefined
 
   for (const file of snapshot.files) {
@@ -237,6 +249,17 @@ async function readPassProposal(
       bootstrapAgentsWrite = { path: file.path, expectedHash: null, content: file.content }
       continue
     }
+    if (file.path === '.hopi/docs/repos.md') {
+      if (input.responsibility !== 'planner') {
+        throw new PassProposalError('Only Planner may update .hopi/docs/repos.md')
+      }
+      projectContextWrites.push({
+        path: file.path,
+        expectedHash,
+        content: file.content,
+      })
+      continue
+    }
     if (!file.path.startsWith(`${goalRoot}/`)) {
       throw new PassProposalError(`Proposal writes outside the owning Goal: ${file.path}`)
     }
@@ -259,7 +282,13 @@ async function readPassProposal(
     }
   }
 
-  return { changedWrites, bootstrapAgentsWrite, newAttentions, proposedFiles }
+  return {
+    changedWrites,
+    bootstrapAgentsWrite,
+    projectContextWrites,
+    newAttentions,
+    proposedFiles,
+  }
 }
 
 function buildAttentionApplication(
@@ -299,6 +328,7 @@ function buildPlannerApplication(
   evidence: EvidenceDocument,
   proposal: PassProposal,
   current: GoalPackage,
+  options: PassOutcomeCoordinatorOptions,
 ): PassPublication {
   const workPath = store.paths.workDocument(input.goalId, input.workId)
   const proposedWorkFile = proposal.proposedFiles.get(workPath)
@@ -351,13 +381,42 @@ function buildPlannerApplication(
 
   return {
     supportingWrites,
+    projectContextWrites: proposal.projectContextWrites,
     gateWrite: workWrite(store, input.goalId, proposedWork, input.context.workHash),
     async validateTransition(before, candidate, currentAuthority) {
-      await validatePassSemanticGuard(store, input, before, supportingWrites, {
-        currentAuthority,
-      })
+      await validatePassSemanticGuard(
+        store,
+        input,
+        before,
+        [...supportingWrites, ...proposal.projectContextWrites],
+        {
+          currentAuthority,
+        },
+      )
       validatePlannerTransition(before, candidate, input, evidence.attributes.id)
+      validatePlannerRepoScopes(before, candidate, options)
     },
+  }
+}
+
+function validatePlannerRepoScopes(
+  before: GoalPackage,
+  candidate: GoalPackage,
+  options: PassOutcomeCoordinatorOptions,
+) {
+  if (!options.projectRepoIds) return
+  const allowed = new Set(options.projectRepoIds)
+  const primaryRepoId = options.primaryRepoId ?? 'primary'
+  for (const [workId, work] of candidate.works) {
+    if (!isEngineeringWork(work.attributes)) continue
+    if (!before.works.has(workId) && !work.attributes.repos) {
+      throw new PassProposalError(`New Engineering Work ${workId} must declare repos`)
+    }
+    for (const repoId of work.attributes.repos ?? [primaryRepoId]) {
+      if (!allowed.has(repoId)) {
+        throw new PassProposalError(`Engineering Work ${workId} references unlinked Repo ${repoId}`)
+      }
+    }
   }
 }
 
@@ -435,6 +494,7 @@ async function publishWithStaleRecovery<T extends PassOutcomeApplication>(
       ...publication,
       bootstrapAgentsWrite:
         input.responsibility === 'planner' ? await plannerBootstrapWrite(input) : undefined,
+      projectContextWrites: publication.projectContextWrites,
     })
     return success
   } catch (error) {
@@ -958,7 +1018,12 @@ function assertInputRole(input: ApplyPassOutcomeInput) {
 }
 
 function emptyProposal(): PassProposal {
-  return { changedWrites: [], newAttentions: [], proposedFiles: new Map() }
+  return {
+    changedWrites: [],
+    projectContextWrites: [],
+    newAttentions: [],
+    proposedFiles: new Map(),
+  }
 }
 
 function stale(message: string): never {

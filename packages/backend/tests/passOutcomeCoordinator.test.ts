@@ -40,6 +40,10 @@ describe('PassOutcomeCoordinator', () => {
       renderWorkDocument(engineeringWork('W-1', 'generate')),
     )
     await Bun.write(join(context.proposalRoot, 'AGENTS.md'), '# Project instructions\n')
+    await Bun.write(
+      join(context.proposalRoot, '.hopi', 'docs', 'repos.md'),
+      '# Project Repositories\n\n- `primary`: product source.\n',
+    )
 
     const result = await fixture.outcomes.apply(
       fixture.input('plan-initial', 'run-plan', 'planner', context, 'success'),
@@ -51,6 +55,9 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
     expect(goalPackage.works.get('plan-initial')?.attributes.evidenceRefs).toEqual(['E-run-plan'])
     expect(await Bun.file(join(fixture.projectRoot, 'AGENTS.md')).text()).toContain('instructions')
+    expect(await Bun.file(join(fixture.projectRoot, '.hopi', 'docs', 'repos.md')).text()).toContain(
+      '`primary`',
+    )
   })
 
   test('stales a Planner result when a new Goal Input arrives after staging', async () => {

@@ -24,6 +24,7 @@ export interface RoleRunInput {
   runId: string
   responsibility: Responsibility
   cwd: string
+  sourceRoots?: readonly string[]
   context: RoleContextBundle
   signal?: AbortSignal
 }
@@ -75,8 +76,9 @@ export class ConfiguredRoleRunner implements RoleRunner {
     })
 
     const workflowBefore = await workflowDocumentStatus(input)
+    const sourceRoots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
     const reviewerBefore =
-      input.responsibility === 'reviewer' ? await sourceFingerprint(input.cwd) : null
+      input.responsibility === 'reviewer' ? await sourceRootsFingerprint(sourceRoots) : null
     await Bun.write(input.context.resultFile, '')
     const transcriptFile = join(input.context.runRoot, 'transcript.log')
     await Bun.write(transcriptFile, '')
@@ -100,8 +102,8 @@ export class ConfiguredRoleRunner implements RoleRunner {
         exitCode,
       )
     }
-    if (reviewerBefore !== null && reviewerBefore !== (await sourceFingerprint(input.cwd))) {
-      return failedResult('reviewer modified the task worktree', exitCode)
+    if (reviewerBefore !== null && reviewerBefore !== (await sourceRootsFingerprint(sourceRoots))) {
+      return failedResult('reviewer modified a task worktree', exitCode)
     }
     if (exitCode !== 0) {
       return failedResult(
@@ -173,7 +175,37 @@ async function readResult(path: string) {
 
 async function workflowDocumentStatus(input: RoleRunInput) {
   if (input.responsibility === 'planner') return ''
-  return gitOutput(input.cwd, ['status', '--porcelain=v1', '--untracked-files=all', '--', '.hopi'])
+  const roots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
+  const statuses = await Promise.all(
+    roots.map(async (root) => {
+      const status = await gitOutput(root, [
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+        '--',
+        '.hopi',
+      ])
+      return status ? `${root}\n${status}` : ''
+    }),
+  )
+  return statuses.filter(Boolean).join('\n')
+}
+
+async function sourceRootsFingerprint(roots: readonly string[]) {
+  const chunks: Uint8Array[] = []
+  for (const root of [...roots].sort()) {
+    chunks.push(new TextEncoder().encode(root))
+    chunks.push(new TextEncoder().encode(await sourceFingerprint(root)))
+  }
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const combined = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    combined.set(chunk, offset)
+    offset += chunk.length
+  }
+  const digest = await crypto.subtle.digest('SHA-256', combined)
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
 }
 
 async function sourceFingerprint(cwd: string) {

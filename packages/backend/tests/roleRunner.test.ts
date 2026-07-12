@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { ConfiguredRoleRunner } from '../src/agent/RoleRunner'
 import type { RoleContextBundle } from '../src/runtime/roleContextStager'
 
@@ -74,6 +74,29 @@ describe('ConfiguredRoleRunner', () => {
     expect(result.result).toBe('fail')
     expect(result.summary).toContain('reviewer modified')
     expect(result.failureKind).toBe('operational')
+  })
+
+  test('rejects a Reviewer that edits any Repo in its workspace', async () => {
+    const fixture = await createFixture()
+    const apiRoot = join(dirname(fixture.repoRoot), 'api')
+    await mkdir(apiRoot, { recursive: true })
+    await Bun.write(join(apiRoot, 'api.ts'), 'original\n')
+    await git(apiRoot, ['init', '-b', 'main'])
+    await git(apiRoot, ['config', 'user.email', 'hopi@example.test'])
+    await git(apiRoot, ['config', 'user.name', 'HOPI Test'])
+    await git(apiRoot, ['add', '.'])
+    await git(apiRoot, ['commit', '-m', 'initial'])
+    const runner = processRunner(
+      `await Bun.write(${JSON.stringify(join(apiRoot, 'api.ts'))}, "changed\\n"); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"reviewed",artifacts:[]}))`,
+    )
+
+    const result = await runner.run({
+      ...fixture.input('reviewer', fixture.repoRoot),
+      sourceRoots: [fixture.repoRoot, apiRoot],
+    })
+
+    expect(result.result).toBe('fail')
+    expect(result.summary).toContain('reviewer modified a task worktree')
   })
 
   test('rejects workflow document writes from an Engineering pass', async () => {
@@ -174,6 +197,8 @@ async function createFixture() {
     authorityFiles: [],
     guardFiles: {},
     guardPrefixes: [],
+    repoRoots: [{ repoId: 'primary', path: repoRoot, primary: true }],
+    reposFile: join(runRoot, 'repos.json'),
     goalFile: join(runRoot, 'goal.md'),
     designFile: join(runRoot, 'design.md'),
     contextFile: join(runRoot, 'context.md'),

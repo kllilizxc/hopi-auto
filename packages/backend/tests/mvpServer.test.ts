@@ -326,6 +326,65 @@ describe('MVP server', () => {
     ).not.toBeNull()
   })
 
+  test('links and rebinds a secondary Repo through the Project API without touching checkouts', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const webRepo = await createRepo(join(temporaryRoot, 'web'))
+    const apiRepo = await createRepo(join(temporaryRoot, 'api'))
+    await Bun.write(join(webRepo, 'local.txt'), 'local web state\n')
+    await Bun.write(join(apiRepo, 'local.txt'), 'local api state\n')
+    const webBefore = await checkoutSnapshot(webRepo)
+    const apiBefore = await checkoutSnapshot(apiRepo)
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    await request(base, '/api/projects', {
+      method: 'POST',
+      body: { projectId: 'P-1', repoId: 'web', repoPath: webRepo },
+    })
+    const linked = await request(base, '/api/projects/P-1/repos', {
+      method: 'POST',
+      body: { repoId: 'api', repoPath: apiRepo },
+    })
+
+    expect(linked).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          primaryRepoId: 'web',
+          repoPath: webRepo,
+          repos: [
+            { repoId: 'web', repoPath: webRepo, primary: true },
+            { repoId: 'api', repoPath: apiRepo, primary: false },
+          ],
+        },
+      ],
+    })
+    expect(await checkoutSnapshot(webRepo)).toEqual(webBefore)
+    expect(await checkoutSnapshot(apiRepo)).toEqual(apiBefore)
+
+    const movedApiRepo = join(temporaryRoot, 'moved-api')
+    await rename(apiRepo, movedApiRepo)
+    const rebound = await request(base, '/api/projects/P-1/repos/api/rebind', {
+      method: 'POST',
+      body: { repoPath: movedApiRepo },
+    })
+
+    expect(rebound).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          primaryRepoId: 'web',
+          repos: [
+            { repoId: 'web', primary: true },
+            { repoId: 'api', repoPath: movedApiRepo, primary: false },
+          ],
+        },
+      ],
+    })
+    expect(await checkoutSnapshot(movedApiRepo)).toEqual(apiBefore)
+  })
+
   test('accepts multipart Inbox images and serves their durable conversation thumbnails', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     await createAssistantHomeStore(homeRoot).initialize()

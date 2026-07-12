@@ -16,6 +16,10 @@ const canonicalRefSchema = z.string().min(1)
 const uniqueStableIdsSchema = z
   .array(stableIdSchema)
   .refine((values) => new Set(values).size === values.length, 'references must be unique')
+const nonEmptyUniqueStableIdsSchema = uniqueStableIdsSchema.refine(
+  (values) => values.length > 0,
+  'references must not be empty',
+)
 
 export const goalAttributesSchema = z
   .object({
@@ -67,6 +71,7 @@ export const engineeringWorkAttributesSchema = workBaseSchema
   .extend({
     kind: z.literal('engineering'),
     stage: z.enum(ENGINEERING_STAGES),
+    repos: nonEmptyUniqueStableIdsSchema.optional(),
   })
   .strict()
 
@@ -163,4 +168,11 @@ export function isPlanningWork(work: WorkAttributes): work is PlanningWorkAttrib
 
 export function isEngineeringWork(work: WorkAttributes): work is EngineeringWorkAttributes {
   return work.kind === 'engineering'
+}
+
+export function engineeringWorkRepoIds(
+  work: EngineeringWorkAttributes,
+  primaryRepoId: string,
+): readonly string[] {
+  return work.repos ?? [primaryRepoId]
 }

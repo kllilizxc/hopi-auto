@@ -1,7 +1,7 @@
 # HOPI MVP Implementation Alignment
 
 Status: MVP implementation aligned; live end-to-end audit complete
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This ledger records implementation evidence for [the MVP design](./mvp_design.md). It is not a
 second product or architecture authority. The design, document model, execution design, state
@@ -18,6 +18,7 @@ Alignment is complete only when:
 - retry, revision, Attention, completion, notification, and crash boundaries match the authority
   documents
 - HOPI never uses a user checkout as publication, integration, Preview, or repair state
+- a Project may bind multiple Repos while retaining one Work, one review, and one primary C1
 - the UI is Assistant-first and its Kanban is a read-only Work projection
 - the workspace Assistant is one persistent Codex conversation whose only canonical mutation path
   is validated HOPI tools
@@ -32,13 +33,13 @@ Alignment is complete only when:
 
 | Concern | Pre-MVP authority | MVP production authority | Verification |
 | --- | --- | --- | --- |
-| Project | user `rootDir` and mutable checkout | `home.yml`, `projects.yml`, `project.yml`, managed `hopi/release` worktree | dirty checkout and rebind tests |
+| Project | user `rootDir` and mutable checkout | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, managed `hopi/release` worktrees | migration, dirty checkout, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
 | Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn` plus singleton Planning guard | graph and readiness tests |
 | Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, persistent Codex thread, read-only Reflection, and validated HOPI tools | direct conversation, session resume, Reflection, tool, and recovery tests |
 | Workflow | manual controls and hard-coded task lanes | one code-owned profile through generic `RoleRunner` | profile parity and end-to-end reconcile tests |
 | Publication | direct writes and nested locks | OS instance lock, global mutex, one-gate `publish`, durable receipt and C1 ref | concurrency and fault-injection tests |
-| Isolation | per-Run worktrees merged into user root | stable Work branch/worktree plus managed integration root | retry, migration rebuild, and checkout tests |
+| Isolation | per-Run worktrees merged into user root | stable Work branch/worktree per selected Repo plus managed integration roots | retry, migration rebuild, multi-root, and checkout tests |
 | Completion | lane exhaustion | final Planner proposal plus structural Goal gate | C1 and completion verifier tests |
 | UI | React/Vite writable workflow screens | restored React package, Bun HTML import, Assistant, Goal design, read-only Kanban, Attention, Preview | frontend bundle and API smoke tests |
 | Notification | deduplication concept only | canonical identity, `notifiedAt`, webhook, bounded runtime backoff | delivery and lost-ack tests |
@@ -82,15 +83,19 @@ Alignment is complete only when:
   ordinary Assistant repair.
 - [x] Stop a running Preview after successful or recovered C1 integration, clear its obsolete
   endpoint, and leave restart as one explicit user action without affecting the durable C1 outcome.
+- [x] Bind one or more Repos to a Project, let Work select Repo IDs, and keep one Generator,
+  Reviewer, card, retry counter, and primary C1 across the combined workspace.
+- [x] Persist secondary release commits in primary `project.yml`; recover incomplete ref/worktree
+  projections after C1 and block unexpected external ref values without rollback.
 - [x] Require the backend product route smoke to load every emitted frontend asset, not merely return
   an HTML shell.
 - [x] Rerun backend, frontend, build, and production smoke checks.
 
 ## Implemented Slices
 
-1. Assistant home initializes a stable `homeId`, links one Repo per Project, creates `hopi/release`,
-   and keeps the user checkout untouched. Explicit rebind repairs moved Git worktree administration
-   but refuses to reconstruct a missing canonical managed root.
+1. Assistant home initializes a stable `homeId`, links one or more Repos per Project, creates each
+   `hopi/release`, and keeps user checkouts untouched. Explicit per-Repo rebind repairs moved Git
+   worktree administration but refuses to reconstruct a missing canonical primary root.
 2. `PublicationCoordinator` serializes snapshots and publications, validates the complete candidate,
    writes support before one gate, durably acknowledges Inbox receipt, and delegates C1 to a guarded
    durable Git ref boundary.
@@ -98,19 +103,20 @@ Alignment is complete only when:
    permanent dependencies, singleton Planning, retry, targeting, provenance, and completion rules.
 4. The fixed profile runs immutable Planner, Generator, and Reviewer contexts through one
    `RoleRunner`; missing `AGENTS.md` is silent Planner bootstrap and Engineering Work keeps one stable
-   branch and checkout.
+   branch and checkout in every Repo selected by the Work.
 5. Workspace Assistant preserves lossless Inbox turns without parsing reply prose or an Action
    object, resumes one persistent Codex thread, exposes validated HOPI tools through a single-turn
    MCP capability, and records normalized live messages, tool calls, results, and failures. One
    disposable read-only Reflection assesses coalesced state changes, can only hand an internal turn
    to that thread, and is interrupted by newer user input.
-6. Reconciler derives readiness, runs passes within fixed capacity, rebuilds C1 over clean target
-   advances, fails invalid projects closed, completes only from Planner proof, and delivers Attention
-   through one optional webhook channel.
+6. Reconciler derives readiness, runs passes within fixed capacity, rebuilds one primary C1 over
+   clean selected-Repo target advances, recovers secondary release projections, fails invalid
+   projects closed, completes only from Planner proof, and delivers Attention through one optional
+   webhook channel.
 7. The restored React UI exposes Assistant, Project, Goal contract/design, Pause/Resume, Needs you,
-   completion updates, four-column Kanban, cancelled archive, Project model defaults, Repo rebind,
-   Work Attempt message streams, an on-demand Reflection debug stream, and managed-target Preview;
-   Bun serves it through one backend process.
+   completion updates, four-column Kanban, cancelled archive, Project model defaults, Repo add and
+   rebind, Work Repo badges, Work Attempt message streams, an on-demand Reflection debug stream, and
+   managed-target Preview; Bun serves it through one backend process.
 8. The old server, stores, Assistant Actions, decision/planning-request graph, merger, per-Run
    worktrees, Vite runtime, and writable legacy React screens are deleted. `todo.yml` and v1/v2
    adapter config remain read-only one-way migration inputs only.
@@ -127,6 +133,9 @@ Alignment is complete only when:
 - revision, cancellation, retry, pause/resume, reopen: `goalController.test.ts`
 - managed isolation, project migration, stable task recovery: `assistantHomeStore.test.ts`,
   `stableWorktreeManager.test.ts`
+- multi-Repo linking/API, combined Planner-to-C1 Work, primary/secondary-only delivery, pre-C1
+  conflicts, partial projection recovery, and unexpected-ref blocking: `assistantHomeStore.test.ts`,
+  `mvpServer.test.ts`, `projectReconciler.test.ts`, and `multiRepoC1.test.ts`
 - deterministic integration and completion: `c1Integrator.test.ts`, `completionVerifier` coverage in
   Goal and Project reconciliation tests
 - notification identity, acknowledgement loss, webhook, backoff: `attentionDelivery.test.ts`
@@ -196,7 +205,7 @@ machine.
 
 ## Final Gate
 
-- [x] Backend lint, typecheck, and all 207 tests pass; all 27 frontend tests pass.
+- [x] Backend lint, typecheck, and all 224 tests pass; all 39 frontend tests pass.
 - [x] Bun builds the frontend successfully and the backend serves loadable deep routes with all
   emitted assets.
 - [x] `git diff --check` reports no patch errors.
