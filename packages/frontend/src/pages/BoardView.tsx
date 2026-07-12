@@ -1,566 +1,888 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
-  Loader2,
-  MessageSquare,
-  Play,
-  RefreshCw,
+  ArrowUpRight,
+  CirclePause,
+  CirclePlay,
+  ExternalLink,
+  FileText,
+  Inbox,
+  MessageSquareText,
   Square,
+  X,
 } from 'lucide-react'
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { AssistantPanel } from '../components/AssistantPanel'
-import { ScrollContainer } from '../components/ScrollContainer'
-import { TaskRunHistoryModal } from '../components/TaskRunHistoryModal'
+import { useMemo, useState } from 'react'
+import { Navigate, useParams } from 'react-router-dom'
+import { useShell } from '../components/Layout'
+import { UnifiedMessageFeed } from '../components/UnifiedMessageFeed'
 import {
-  readProjectGoals,
-  readProjects,
-  type ProjectGoalSummary,
-  type ProjectRecord,
-  type TaskStatus,
-  type TodoTaskItem,
+  AppAlert,
+  AppButton,
+  AppButtonGroup,
+  AppDisclosure,
+  AppLink,
+  AppModal,
+  AppRouterLink,
+  AppScrollShadow,
+  AppSpinner,
+  AppTabs,
+  CountBadge,
+  IconButton,
+  SelectField,
+  StatusChip,
+  WorkingIndicator,
+} from '../components/ui'
+import {
+  controlGoal,
+  readGoal,
+  readState,
+  readWorkAttempt,
+  readWorkAttemptEvents,
+  readWorkAttempts,
+  requestPreviewRepair,
+  startPreview,
+  stopPreview,
+  type GoalControl,
+  type KanbanColumn,
+  type RunAttemptDetail,
+  type RunAttemptEvent,
+  type RunAttemptSummary,
+  type WorkView,
 } from '../lib/api'
-import {
-  pickPreferredTaskRun,
-  sortTaskRunsForPresentation,
-} from '../lib/runSelection'
-import { cn } from '../lib/utils'
-import { TaskCard } from './boardViewTaskPanelSupport'
-import {
-  buildAssistantProactiveMessage,
-  buildTaskDisplayIdMap,
-  hasActionRequiredBlocker,
-  isRunnableTask,
-} from './boardViewTaskSupport'
-import { useBoardViewModel } from './useBoardViewModel'
+import { runEventsToMessageFeed } from '../lib/messageFeed'
+import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
+import { cn, excerpt } from '../lib/utils'
 
-const STATUS_COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
-  { id: 'planned', label: 'Planned', color: 'border-blue-500/30 bg-blue-500/5 text-blue-400' },
+const COLUMNS: Array<{
+  id: KanbanColumn
+  description: string
+  emptyTitle: string
+  emptyDescription: string
+}> = [
   {
-    id: 'in_progress',
-    label: 'In Progress',
-    color: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-400',
+    id: 'Plan',
+    description: 'Contract and next work',
+    emptyTitle: 'Plan is clear',
+    emptyDescription: 'No contract or planning work is waiting.',
   },
   {
-    id: 'in_review',
-    label: 'In Review',
-    color: 'border-purple-500/30 bg-purple-500/5 text-purple-400',
+    id: 'Build',
+    description: 'Generator pass',
+    emptyTitle: 'Build queue is clear',
+    emptyDescription: 'No work is waiting for generation.',
   },
   {
-    id: 'merging',
-    label: 'Merging',
-    color: 'border-orange-500/30 bg-orange-500/5 text-orange-400',
+    id: 'Review',
+    description: 'Reviewer pass',
+    emptyTitle: 'Review queue is clear',
+    emptyDescription: 'Nothing is waiting for review.',
   },
-  { id: 'done', label: 'Done', color: 'border-green-500/30 bg-green-500/5 text-green-400' },
+  {
+    id: 'Done',
+    description: 'Integrated evidence',
+    emptyTitle: 'No integrated work yet',
+    emptyDescription: 'Completed work will collect here.',
+  },
 ]
 
-interface BoardViewProps {
-  goalKey?: string
-  projectKey?: string
-}
-
-export function BoardView({
-  goalKey: goalKeyProp,
-  projectKey: projectKeyProp,
-}: BoardViewProps = {}) {
-  const navigate = useNavigate()
+export function BoardView() {
+  const { projectId, goalId } = useParams()
   const queryClient = useQueryClient()
-  const [switchingProjectKey, setSwitchingProjectKey] = useState<string | null>(null)
-  const [switchError, setSwitchError] = useState<string | null>(null)
-  const {
-    goalKey,
-    projectKey,
-    isAssistantOpen,
-    setIsAssistantOpen,
-    isTaskHistoryModalOpen,
-    setIsTaskHistoryModalOpen,
-    selectedTaskRef,
-    setSelectedTaskRef,
-    selectedTaskRunId,
-    setSelectedTaskRunId,
-    selectedTaskRunStepId,
-    setSelectedTaskRunStepId,
-    board,
-    isLoading,
-    error,
-    automationQuery,
-    taskRunsQuery,
-    taskRunDetailQuery,
-    reconcileMutation,
-    startAutomationMutation,
-    stopAutomationMutation,
-  } = useBoardViewModel({ goalKeyProp, projectKeyProp })
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: readProjects,
+  const { openAssistant } = useShell()
+  const [selectedWork, setSelectedWork] = useState<WorkView | null>(null)
+  const [repairPrompt, setRepairPrompt] = useState<string | null>(null)
+  const snapshotQuery = useQuery({
+    queryKey: ['mvp-state'],
+    queryFn: readState,
+    refetchInterval: 2_000,
   })
-  const projectGoalsQuery = useQuery({
-    queryKey: ['project-goals', projectKey],
-    queryFn: async () => {
-      if (!projectKey) {
-        throw new Error('Missing project key')
-      }
+  const goalQuery = useQuery({
+    queryKey: ['mvp-goal', projectId, goalId],
+    queryFn: () => readGoal(projectId ?? '', goalId ?? ''),
+    enabled: Boolean(projectId && goalId),
+    refetchInterval: 2_000,
+  })
 
-      return readProjectGoals(projectKey)
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
+      queryClient.invalidateQueries({ queryKey: ['mvp-goal', projectId, goalId] }),
+    ])
+  }
+  const controlMutation = useMutation({
+    mutationFn: (control: GoalControl) => controlGoal(projectId ?? '', goalId ?? '', control),
+    onSuccess: refresh,
+  })
+  const previewStartMutation = useMutation({
+    mutationFn: () => startPreview(projectId ?? ''),
+    onSuccess: async (result) => {
+      setRepairPrompt(result.kind === 'repair_required' ? result.prompt : null)
+      await refresh()
     },
-    enabled: Boolean(projectKey),
+  })
+  const previewStopMutation = useMutation({
+    mutationFn: () => stopPreview(projectId ?? ''),
+    onSuccess: refresh,
+  })
+  const previewRepairMutation = useMutation({
+    mutationFn: () => requestPreviewRepair(repairPrompt ?? ''),
+    onSuccess: async () => {
+      setRepairPrompt(null)
+      await refresh()
+      openAssistant()
+    },
   })
 
-  const projects = projectsQuery.data?.projects ?? []
-  const projectGoalsPayload = projectGoalsQuery.data
-  const projectGoals =
-    projectGoalsPayload && projectGoalsPayload.projectKey === projectKey
-      ? projectGoalsPayload.goals
-      : []
-  const selectableGoals = buildSelectableGoals(
-    projectGoals,
-    board?.goal.goalKey ?? goalKey ?? null,
-    board?.goal.title,
+  if (!projectId || !goalId) return <Navigate to="/projects" replace />
+  const snapshot = snapshotQuery.data
+  const project = snapshot?.projects.find((item) => item.projectId === projectId)
+  const goal = goalQuery.data
+  const error = snapshotQuery.error ?? goalQuery.error ?? controlMutation.error
+
+  if (!goal && (snapshotQuery.isLoading || goalQuery.isLoading)) {
+    return (
+      <div className="full-loading">
+        <AppSpinner size="sm" /> Loading canonical Goal
+      </div>
+    )
+  }
+  if (!goal || !project) {
+    return (
+      <AppAlert className="full-error">
+        <AlertCircle />
+        <h1>Goal unavailable</h1>
+        <p>{(error as Error | null)?.message ?? `${projectId} / ${goalId} was not found.`}</p>
+        <AppRouterLink className="secondary-button" to="/projects">
+          Back to Projects
+        </AppRouterLink>
+      </AppAlert>
+    )
+  }
+
+  const openAttention = goal.attentions.find(
+    (attention) => attention.target !== null && attention.resolvedAt === null,
   )
-  const currentProject = projectKey
-    ? projects.find((project) => project.projectKey === projectKey) ?? null
-    : null
+  const focus =
+    goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
+    goal.works.find((work) => work.projection.primaryBadge === 'working') ??
+    goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
+  const cancelled = goal.works.filter((work) => work.projection.cancelled)
+  const mutationError =
+    previewStartMutation.error ?? previewStopMutation.error ?? previewRepairMutation.error
 
-  const handleGoalSwitch = (nextGoalKey: string) => {
-    if (!projectKey || !nextGoalKey || nextGoalKey === goalKey) {
-      return
-    }
-
-    setSwitchError(null)
-    navigate(buildBoardRoute(projectKey, nextGoalKey))
+  const runControl = (control: GoalControl) => {
+    controlMutation.mutate(control)
   }
-
-  const handleProjectSwitch = async (nextProject: ProjectRecord) => {
-    if (nextProject.projectKey === projectKey) {
-      return
-    }
-
-    setSwitchingProjectKey(nextProject.projectKey)
-    setSwitchError(null)
-
-    try {
-      const fallbackGoalKey =
-        nextProject.lastOpenedGoalKey ??
-        (await queryClient.fetchQuery({
-          queryKey: ['project-goals', nextProject.projectKey],
-          queryFn: () => readProjectGoals(nextProject.projectKey),
-        })).goals[0]?.goalKey ??
-        null
-
-      if (fallbackGoalKey) {
-        navigate(buildBoardRoute(nextProject.projectKey, fallbackGoalKey))
-        return
-      }
-
-      navigate(`/projects/${encodeURIComponent(nextProject.projectKey)}/goals/new`)
-    } catch (switchFailure) {
-      setSwitchError((switchFailure as Error).message)
-    } finally {
-      setSwitchingProjectKey((current) =>
-        current === nextProject.projectKey ? null : current,
-      )
-    }
+  const closeWork = () => {
+    const workId = selectedWork?.id
+    setSelectedWork(null)
+    window.setTimeout(() => {
+      const trigger = workId
+        ? document.querySelector<HTMLElement>(`[data-work-id="${CSS.escape(workId)}"]`)
+        : null
+      trigger?.focus({ preventScroll: true })
+    }, 150)
   }
-
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-red-400 gap-4">
-        <AlertCircle className="w-12 h-12" />
-        <p className="text-lg">Failed to load board: {(error as Error).message}</p>
-      </div>
-    )
-  }
-
-  const itemsByStatus: Record<TaskStatus, TodoTaskItem[]> = {
-    planned: [],
-    in_progress: [],
-    in_review: [],
-    merging: [],
-    done: [],
-  }
-
-  for (const item of board?.items ?? []) {
-    itemsByStatus[item.status].push(item)
-  }
-
-  const selectedTask = selectedTaskRef
-    ? ((board?.items ?? []).find((item) => item.ref === selectedTaskRef) ?? null)
-    : null
-  const selectedTaskRuns = selectedTask
-    ? sortTaskRunsForPresentation(
-        (taskRunsQuery.data?.runs ?? []).filter((run) => run.taskRef === selectedTask.ref),
-        selectedTask.status,
-      )
-    : []
-
-  const handleTaskCardClick = (task: TodoTaskItem) => {
-    setSelectedTaskRef(task.ref)
-
-    const preferredRun = pickPreferredTaskRun(
-      taskRunsQuery.data?.runs ?? [],
-      task.ref,
-      null,
-      task.status,
-    )
-    setSelectedTaskRunId(preferredRun?.runId ?? null)
-    setSelectedTaskRunStepId(null)
-
-    if (!goalKey) {
-      return
-    }
-
-    setIsTaskHistoryModalOpen(true)
-  }
-
-  const selectedTaskRunDetail =
-    selectedTaskRunId && taskRunDetailQuery.data?.runId === selectedTaskRunId
-      ? taskRunDetailQuery.data
-      : null
-  const totalTaskCount = board?.items.length ?? 0
-  const doneTaskCount = (board?.items ?? []).filter((item) => item.status === 'done').length
-  const blockedTasks = (board?.items ?? []).filter((item) => item.blockedBy.length > 0)
-  const attentionBlockedTasks = blockedTasks.filter(hasActionRequiredBlocker)
-  const blockedTaskCount = attentionBlockedTasks.length
-  const runningTaskCount = (board?.items ?? []).filter((item) => item.running).length
-  const runnableTaskCount = (board?.items ?? []).filter(isRunnableTask).length
-  const taskDisplayIdByRef = buildTaskDisplayIdMap(board?.items ?? [])
-  const taskByRef = new Map((board?.items ?? []).map((task) => [task.ref, task] as const))
-  const automationStatus = automationQuery.data?.status
-  const automationState = automationStatus?.state ?? 'idle'
-  const reconcileEnabled = automationStatus?.reconcileEnabled ?? false
-  const automationDisplayState = automationState === 'idle' ? 'paused' : automationState
-  const automationStateLabel =
-    automationState === 'running' && !reconcileEnabled
-      ? 'running · reconcile off'
-      : automationDisplayState
-  const automationStateClass =
-    automationDisplayState === 'running'
-      ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-      : automationDisplayState === 'blocked' || automationDisplayState === 'failed'
-        ? 'border-red-500/30 bg-red-500/10 text-red-200'
-        : 'border-[#444] bg-[#202020] text-gray-200'
-  const canStartAutomation =
-    Boolean(projectKey) &&
-    runnableTaskCount > 0 &&
-    (automationState !== 'running' || !reconcileEnabled)
-  const canStopAutomation = automationState === 'running' && reconcileEnabled
-  const assistantProactiveMessage = buildAssistantProactiveMessage({
-    goalKey: board?.goal.goalKey ?? goalKey ?? 'goal',
-    automationDisplayState,
-    reconcileEnabled,
-    automationError: automationStatus?.error,
-    totalTaskCount,
-    doneTaskCount,
-    blockedTaskCount,
-    blockedTasks: attentionBlockedTasks,
-    runnableTaskCount,
-    runningTaskCount,
-    timestamp: automationStatus?.endedAt ?? automationStatus?.startedAt ?? new Date().toISOString(),
-  })
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#1A1A1A] relative">
-      <header className="border-b border-[#333] shrink-0">
-        {projectKey && projects.length > 0 && (
-          <div className="border-b border-[#2a2a2a] px-6 py-2.5">
-            <div className="flex items-center gap-3 overflow-hidden">
-              <div className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.28em] text-gray-500">
-                Projects
-              </div>
-              <div className="min-w-0 flex-1 overflow-x-auto pb-1">
-                <div className="flex min-w-max gap-2">
-                  {projects.map((project) => {
-                    const isActive = project.projectKey === projectKey
-                    const isSwitching = switchingProjectKey === project.projectKey
-                    return (
-                      <button
-                        key={project.projectKey}
-                        type="button"
-                        onClick={() => void handleProjectSwitch(project)}
-                        disabled={isSwitching || projectsQuery.isLoading}
-                        className={cn(
-                          'group flex min-w-[11rem] items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors disabled:opacity-70',
-                          isActive
-                            ? 'border-amber-400/50 bg-amber-500/12 text-amber-100'
-                            : 'border-[#333] bg-[#161616] text-gray-200 hover:border-[#444] hover:bg-[#1d1d1d]',
-                        )}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="truncate text-sm font-semibold">{project.name}</div>
-                            {isActive && (
-                              <span className="shrink-0 rounded-full border border-amber-300/35 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-200">
-                                current
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-gray-400">
-                            <code
-                              className={cn(
-                                'rounded px-1.5 py-0.5',
-                                isActive
-                                  ? 'bg-amber-500/10 text-amber-200'
-                                  : 'bg-[#222] text-gray-300',
-                              )}
-                            >
-                              {project.projectKey}
-                            </code>
-                            <span className="truncate">
-                              {project.lastOpenedGoalKey
-                                ? `Last goal: ${project.lastOpenedGoalKey}`
-                                : 'No goal opened yet'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="shrink-0">
-                          {isSwitching ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
-                          ) : (
-                            <span
-                              className={cn(
-                                'text-[11px] font-medium',
-                                isActive
-                                  ? 'text-amber-300'
-                                  : 'text-gray-500 group-hover:text-gray-300',
-                              )}
-                            >
-                              {isActive ? 'Live' : 'Open'}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="shrink-0 text-[11px] text-gray-500">
-                {projects.length} linked
-              </div>
-            </div>
+    <div className="board-page">
+      <header className="board-header">
+        <div className="goal-title-block">
+          <div>
+            <span className="eyebrow">
+              {projectId} / {goalId}
+            </span>
+            <h1>{goal.goal.title}</h1>
           </div>
-        )}
+        </div>
 
-        <div className="px-6 py-3.5 flex flex-col gap-3">
-          <div className="flex flex-wrap items-start justify-between gap-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white">{board?.goal.title}</h2>
-              <p className="text-sm text-gray-400 mt-1">
-                Goal Key:{' '}
-                <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-purple-400">
-                  {board?.goal.goalKey}
-                </code>
-                {projectKey && (
-                  <>
-                    {' '}
-                    · Project:{' '}
-                    <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-amber-300">
-                      {projectKey}
-                    </code>
-                  </>
-                )}
-              </p>
-            </div>
-
-            {projectKey && (
-              <label className="min-w-[18rem] max-w-full flex-1 sm:max-w-sm">
-                <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-500">
-                  Goal Quick Switch
-                  {currentProject ? ` · ${currentProject.name}` : ''}
-                </span>
-                <select
-                  value={selectableGoals.length > 0 ? (board?.goal.goalKey ?? goalKey ?? '') : ''}
-                  onChange={(event) => handleGoalSwitch(event.target.value)}
-                  disabled={projectGoalsQuery.isLoading || selectableGoals.length === 0}
-                  className="w-full rounded-xl border border-[#333] bg-[#161616] px-4 py-3 text-sm text-white outline-none transition-colors focus:border-purple-400 disabled:cursor-not-allowed disabled:text-gray-500"
-                >
-                  {selectableGoals.length === 0 ? (
-                    <option value="">
-                      {projectGoalsQuery.isLoading ? 'Loading goals...' : 'No goals in this project yet'}
-                    </option>
-                  ) : null}
-                  {selectableGoals.map((goal) => (
-                    <option key={goal.goalKey} value={goal.goalKey}>
-                      {formatGoalOptionLabel(goal)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
-
-          {switchError && (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-              Failed to switch board: {switchError}
-            </div>
+        <div className="board-actions">
+          {goal.goal.lifecycle === 'active' && (
+            <AppButton
+              className="secondary-button goal-pause-button"
+              type="button"
+              onClick={() => runControl('pause')}
+              disabled={controlMutation.isPending}
+            >
+              <CirclePause /> Pause
+            </AppButton>
           )}
-
-          <div className="flex flex-wrap items-center gap-3">
-            {projectKey && (
-              <>
-                <div
-                  className={cn(
-                    'rounded-lg border px-3 py-2 text-xs font-semibold uppercase tracking-wide',
-                    automationStateClass,
-                  )}
-                >
-                  {automationStateLabel}
-                  {automationStatus?.stepCount ? ` · ${automationStatus.stepCount} step(s)` : ''}
-                </div>
-                <button
-                  onClick={() => startAutomationMutation.mutate()}
-                  disabled={startAutomationMutation.isPending || !canStartAutomation}
-                  title={canStartAutomation ? 'Resume automation' : 'No runnable tasks'}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors font-medium disabled:opacity-60"
-                >
-                  {startAutomationMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                  Start
-                </button>
-                <button
-                  onClick={() => stopAutomationMutation.mutate()}
-                  disabled={stopAutomationMutation.isPending || !canStopAutomation}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#252525] hover:bg-[#2f2f2f] text-gray-200 rounded-lg transition-colors font-medium disabled:opacity-60"
-                >
-                  {stopAutomationMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Square className="w-4 h-4" />
-                  )}
-                  Stop
-                </button>
-              </>
-            )}
-            <button
-              onClick={() => reconcileMutation.mutate()}
-              disabled={reconcileMutation.isPending}
-              className="flex items-center gap-2 px-4 py-2 bg-[#252525] hover:bg-[#2f2f2f] text-gray-200 rounded-lg transition-colors font-medium disabled:opacity-60"
+          {goal.goal.lifecycle === 'paused' && (
+            <AppButton
+              className="primary-button compact"
+              type="button"
+              onClick={() => runControl('resume')}
+              disabled={controlMutation.isPending}
             >
-              {reconcileMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+              <CirclePlay /> Resume
+            </AppButton>
+          )}
+          <AppButtonGroup className="preview-compact-control" aria-label="Preview controls">
+            {project.preview?.status === 'running' &&
+              (project.preview.endpoint ? (
+                <AppLink
+                  className="preview-compact-open"
+                  href={project.preview.endpoint}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open Preview"
+                >
+                  <span className="preview-dot running" /> Preview <ExternalLink />
+                </AppLink>
               ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              Reconcile Once
-            </button>
-            <button
-              onClick={() => setIsAssistantOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors font-medium shadow-lg shadow-purple-900/20"
-            >
-              <MessageSquare className="w-4 h-4" />
-              Goal Assistant
-            </button>
-          </div>
+                <span className="preview-compact-open">
+                  <span className="preview-dot running" /> Preview
+                </span>
+              ))}
+            {project.preview?.status === 'running' ? (
+              <IconButton
+                className="icon-button preview-stop-button"
+                type="button"
+                onClick={() => previewStopMutation.mutate()}
+                disabled={previewStopMutation.isPending}
+                aria-label="Stop Preview"
+                title="Stop Preview"
+              >
+                {previewStopMutation.isPending ? <AppSpinner size="sm" /> : <Square />}
+              </IconButton>
+            ) : (
+              <AppButton
+                className="secondary-button preview-start-button"
+                type="button"
+                onClick={() => previewStartMutation.mutate()}
+                disabled={previewStartMutation.isPending || project.preview?.status === 'starting'}
+                title={project.preview?.error ?? 'Start Preview'}
+              >
+                {previewStartMutation.isPending || project.preview?.status === 'starting' ? (
+                  <AppSpinner size="sm" />
+                ) : (
+                  <CirclePlay />
+                )}
+                Preview
+              </AppButton>
+            )}
+          </AppButtonGroup>
         </div>
       </header>
 
-      <ScrollContainer axis="horizontal" className="flex-1" viewportClassName="h-full p-6">
-        <div className="flex h-full min-h-0 min-w-max gap-6">
-          {STATUS_COLUMNS.map((col) => (
-            <div
-              key={col.id}
-              className="w-80 h-full min-h-0 shrink-0 overflow-hidden flex flex-col"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h3
-                  className={cn(
-                    'text-sm font-semibold px-3 py-1 border rounded-full uppercase tracking-wider',
-                    col.color,
-                  )}
-                >
-                  {col.label}
-                </h3>
-                <span className="text-xs text-gray-500 font-mono bg-[#2A2A2A] px-2 py-0.5 rounded-full">
-                  {itemsByStatus[col.id]?.length || 0}
-                </span>
-              </div>
+      {error && <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>}
 
-              <ScrollContainer
-                axis="vertical"
-                className="flex-1 min-h-0 overflow-hidden"
-                viewportClassName="h-full pr-2"
-              >
-                <div className="flex flex-col gap-3">
-                  {itemsByStatus[col.id]?.map((task) => (
-                    <TaskCard
-                      key={task.ref}
-                      task={task}
-                      displayId={taskDisplayIdByRef.get(task.ref) ?? task.ref}
-                      taskDisplayIdByRef={taskDisplayIdByRef}
-                      taskByRef={taskByRef}
-                      selected={task.ref === selectedTaskRef}
-                      onClick={() => handleTaskCardClick(task)}
-                    />
-                  ))}
-                </div>
-              </ScrollContainer>
-            </div>
-          ))}
+      <section className="goal-focus-strip">
+        <div>
+          <small>Contract · revision {goal.goal.contractRevision}</small>
+          <p>{excerpt(goal.goal.body, 240)}</p>
         </div>
-      </ScrollContainer>
+        <div>
+          <small>Current focus</small>
+          <strong>
+            {openAttention ? 'Needs your decision' : (focus?.title ?? goal.goal.lifecycle)}
+          </strong>
+          <p>
+            {openAttention
+              ? excerpt(openAttention.body, 180)
+              : (focus?.projection.primaryBadge ?? 'No pending Work')}
+          </p>
+        </div>
+        <div>
+          <small>Progress</small>
+          <strong>
+            {goal.works.filter((work) => work.stage === 'done').length} of {goal.works.length}
+          </strong>
+          <p>Work complete</p>
+        </div>
+      </section>
 
-      <AssistantPanel
-        goalKey={board?.goal.goalKey || ''}
-        projectKey={projectKey}
-        isOpen={isAssistantOpen}
-        onClose={() => setIsAssistantOpen(false)}
-        proactiveMessage={assistantProactiveMessage}
-      />
-      <TaskRunHistoryModal
-        goalKey={board?.goal.goalKey || ''}
-        projectKey={projectKey}
-        isOpen={isTaskHistoryModalOpen}
-        task={selectedTask}
-        runs={selectedTaskRuns}
-        selectedRunId={selectedTaskRunId}
-        onSelectRunId={setSelectedTaskRunId}
-        runDetail={selectedTaskRunDetail}
-        runDetailLoading={taskRunDetailQuery.isLoading}
-        runDetailError={taskRunDetailQuery.error as Error | null}
-        selectedStepId={selectedTaskRunStepId}
-        onSelectStepId={setSelectedTaskRunStepId}
-        onClose={() => setIsTaskHistoryModalOpen(false)}
-      />
+      {openAttention && (
+        <AppButton
+          variant="ghost"
+          className="needs-you-banner"
+          type="button"
+          onClick={() => openAssistant(openAttention)}
+        >
+          <span>
+            <AlertCircle />
+          </span>
+          <span>
+            <strong>Needs you</strong>
+            <small>{excerpt(openAttention.body, 220)}</small>
+          </span>
+          <ArrowUpRight />
+        </AppButton>
+      )}
+
+      <AppScrollShadow className="kanban-scroll" orientation="horizontal">
+        <div className="kanban-board">
+          {COLUMNS.map((column) => {
+            const works = goal.works.filter((work) => work.projection.column === column.id)
+            return (
+              <section
+                className={`kanban-column column-${column.id.toLowerCase()}`}
+                key={column.id}
+              >
+                <header>
+                  <div>
+                    <strong>{column.id}</strong>
+                    <small>{column.description}</small>
+                  </div>
+                  <CountBadge>{works.length}</CountBadge>
+                </header>
+                <AppScrollShadow className="kanban-cards">
+                  {works.length ? (
+                    works.map((work) => (
+                      <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
+                    ))
+                  ) : (
+                    <div className="column-empty">
+                      <span className="column-empty-icon" aria-hidden="true">
+                        <Inbox />
+                      </span>
+                      <strong>{column.emptyTitle}</strong>
+                      <small>{column.emptyDescription}</small>
+                    </div>
+                  )}
+                </AppScrollShadow>
+              </section>
+            )
+          })}
+        </div>
+      </AppScrollShadow>
+
+      {cancelled.length > 0 && (
+        <AppDisclosure
+          className="cancelled-archive"
+          bodyClassName="cancelled-archive__content"
+          summary={`Cancelled archive · ${cancelled.length}`}
+        >
+            {cancelled.map((work) => (
+              <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
+            ))}
+        </AppDisclosure>
+      )}
+
+      {repairPrompt && (
+        <aside className="preview-repair-banner">
+          <div>
+            <strong>Preview adapter needs work</strong>
+            <p>HOPI can check for equivalent Work and create the smallest reviewed repair.</p>
+          </div>
+          <AppButton
+            className="primary-button compact"
+            type="button"
+            onClick={() => previewRepairMutation.mutate()}
+            disabled={previewRepairMutation.isPending}
+          >
+            {previewRepairMutation.isPending ? <AppSpinner size="sm" /> : <MessageSquareText />}
+            Ask Assistant to repair
+          </AppButton>
+          <IconButton
+            type="button"
+            onClick={() => setRepairPrompt(null)}
+            aria-label="Dismiss repair prompt"
+          >
+            <X />
+          </IconButton>
+        </aside>
+      )}
+      {mutationError && <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>}
+
+      {selectedWork && (
+        <WorkDetail
+          projectId={projectId}
+          goalId={goalId}
+          work={selectedWork}
+          onClose={closeWork}
+        />
+      )}
+    </div>
+  )
+}
+function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
+  const badge = work.projection.primaryBadge ?? (work.stage === 'done' ? 'Done' : null)
+  return (
+    <AppButton
+      className={cn('work-card', work.kind)}
+      data-work-id={work.id}
+      variant="ghost"
+      type="button"
+      onClick={(event) => {
+        event.currentTarget.focus({ preventScroll: true })
+        onOpen()
+      }}
+    >
+      <div className="work-card-top">
+        <span>{work.id}</span>
+        {badge && (
+          <StatusChip className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`} size="sm">
+            {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
+          </StatusChip>
+        )}
+      </div>
+      <h2>{work.title}</h2>
+      <p>{excerpt(work.body)}</p>
+      <div className="work-card-foot">
+        <span>{work.projection.responsibility ?? work.stage}</span>
+        <span>{work.attempts}/3 recovery</span>
+      </div>
+      {work.dependsOn.length > 0 && (
+        <small className="depends-line">after {work.dependsOn.join(', ')}</small>
+      )}
+    </AppButton>
+  )
+}
+
+function WorkDetail({
+  projectId,
+  goalId,
+  work,
+  onClose,
+}: {
+  projectId: string
+  goalId: string
+  work: WorkView
+  onClose: () => void
+}) {
+  const [activePane, setActivePane] = useState<'activity' | 'contract'>('activity')
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+  const attemptsQuery = useQuery({
+    queryKey: ['work-attempts', projectId, goalId, work.id],
+    queryFn: () => readWorkAttempts(projectId, goalId, work.id),
+    refetchInterval: 1_000,
+  })
+  const attempts = attemptsQuery.data?.attempts ?? []
+  const selectedAttempt =
+    attempts.find((attempt) => attempt.runId === selectedAttemptId) ?? attempts[0] ?? null
+  const attemptQuery = useQuery({
+    queryKey: ['work-attempt', projectId, goalId, work.id, selectedAttempt?.runId],
+    queryFn: () => readWorkAttempt(projectId, goalId, work.id, selectedAttempt!.runId),
+    enabled: Boolean(selectedAttempt) && activePane === 'contract',
+    refetchInterval:
+      activePane === 'contract' && selectedAttempt?.status === 'running' ? 1_000 : false,
+  })
+
+  return (
+    <AppModal
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <AppModal.Backdrop className="modal-backdrop" isDismissable variant="blur">
+        <AppModal.Container
+          className="work-detail-modal-container"
+          placement="center"
+          scroll="inside"
+          size="cover"
+        >
+          <AppModal.Dialog className="work-detail-modal" aria-label={work.title}>
+            <AppTabs
+              className="work-detail-tabs-root"
+              onSelectionChange={(key) => setActivePane(String(key) as 'activity' | 'contract')}
+              selectedKey={activePane}
+            >
+              <header>
+                <div className="work-detail-title">
+                  <span className="eyebrow">
+                    {work.kind} · {work.id}
+                  </span>
+                  <AppModal.Heading className="work-detail-heading">{work.title}</AppModal.Heading>
+                </div>
+                <div className="work-detail-header-actions">
+                  <AppTabs.ListContainer>
+                    <AppTabs.List className="work-detail-tabs" aria-label="Work detail view">
+                      <AppTabs.Tab id="activity">
+                        <MessageSquareText /> Activity
+                      </AppTabs.Tab>
+                      <AppTabs.Tab id="contract">
+                        <FileText /> Work contract
+                      </AppTabs.Tab>
+                    </AppTabs.List>
+                  </AppTabs.ListContainer>
+                  <AppModal.CloseTrigger
+                    className="icon-button"
+                    aria-label="Close Work detail"
+                  >
+                    <X />
+                  </AppModal.CloseTrigger>
+                </div>
+              </header>
+              <AppScrollShadow className="fact-grid work-fact-strip" orientation="horizontal">
+                <span>
+                  <small>Stage</small>
+                  <strong>{work.stage}</strong>
+                </span>
+                <span>
+                  <small>Responsibility</small>
+                  <strong>{work.projection.responsibility ?? 'none'}</strong>
+                </span>
+                <span>
+                  <small>Revision</small>
+                  <strong>{work.contractRevision}</strong>
+                </span>
+                <span>
+                  <small>Recovery</small>
+                  <strong>{work.attempts} / 3</strong>
+                </span>
+                <span>
+                  <small>Not before</small>
+                  <strong>{work.notBefore ?? 'now'}</strong>
+                </span>
+              </AppScrollShadow>
+              <div className="work-detail-body">
+                <AppTabs.Panel className="work-detail-tab-panel" id="activity">
+                  {activePane === 'activity' ? (
+                    <AttemptHistory
+                      projectId={projectId}
+                      goalId={goalId}
+                      workId={work.id}
+                      attempts={attempts}
+                      selectedAttempt={selectedAttempt}
+                      loading={attemptsQuery.isLoading}
+                      error={attemptsQuery.error as Error | null}
+                      onSelect={setSelectedAttemptId}
+                    />
+                  ) : null}
+                </AppTabs.Panel>
+                <AppTabs.Panel className="work-detail-tab-panel" id="contract">
+                  {activePane === 'contract' ? (
+                    <WorkContract
+                      work={work}
+                      attempts={attempts}
+                      selectedAttempt={selectedAttempt}
+                      detail={attemptQuery.data ?? null}
+                      loading={attemptsQuery.isLoading || attemptQuery.isLoading}
+                      error={(attemptsQuery.error ?? attemptQuery.error) as Error | null}
+                      onSelect={setSelectedAttemptId}
+                    />
+                  ) : null}
+                </AppTabs.Panel>
+              </div>
+            </AppTabs>
+          </AppModal.Dialog>
+        </AppModal.Container>
+      </AppModal.Backdrop>
+    </AppModal>
+  )
+}
+
+function WorkContract({
+  work,
+  attempts,
+  selectedAttempt,
+  detail,
+  loading,
+  error,
+  onSelect,
+}: {
+  work: WorkView
+  attempts: RunAttemptSummary[]
+  selectedAttempt: RunAttemptSummary | null
+  detail: RunAttemptDetail | null
+  loading: boolean
+  error: Error | null
+  onSelect: (runId: string) => void
+}) {
+  const selectedDetail = detail?.runId === selectedAttempt?.runId ? detail : null
+
+  return (
+    <AppScrollShadow className="work-contract-pane">
+      {work.dependsOn.length > 0 && (
+        <section>
+          <h2>Depends on</h2>
+          <div className="chip-list">
+            {work.dependsOn.map((item) => (
+              <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>
+            ))}
+          </div>
+        </section>
+      )}
+      {work.projection.failedPredicates.length > 0 && (
+        <section>
+          <h2>Waiting predicates</h2>
+          <div className="chip-list warning">
+            {work.projection.failedPredicates.map((item) => (
+              <StatusChip color="warning" key={item} size="sm" variant="soft">{item}</StatusChip>
+            ))}
+          </div>
+        </section>
+      )}
+      <section>
+        <h2>Evidence</h2>
+        <div className="chip-list">
+          {work.evidenceRefs.length ? (
+            work.evidenceRefs.map((item) => <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>)
+          ) : (
+            <small>No Evidence yet</small>
+          )}
+        </div>
+      </section>
+      <section>
+        <h2>Canonical Work document</h2>
+        <pre>{work.body}</pre>
+      </section>
+      <section className="work-system-prompt-section">
+        <div className="work-system-prompt-heading">
+          <div>
+            <h2>Run prompt</h2>
+            <p>The exact stdin instructions staged for this responsibility Attempt.</p>
+          </div>
+          {attempts.length > 0 && selectedAttempt && (
+            <SelectField
+              aria-label="Run prompt Attempt"
+              label="Attempt"
+              onValueChange={onSelect}
+              options={attempts.map((attempt, index) => ({
+                label: `Attempt ${attempts.length - index} · ${attempt.responsibility} · ${formatAttemptTime(attempt.startedAt)}`,
+                value: attempt.runId,
+              }))}
+              value={selectedAttempt.runId}
+            />
+          )}
+        </div>
+        {error ? (
+          <AppAlert className="work-system-prompt-empty error">{error.message}</AppAlert>
+        ) : loading && !selectedDetail ? (
+          <div className="work-system-prompt-empty">
+            <AppSpinner size="sm" /> Loading Run prompt
+          </div>
+        ) : !selectedAttempt ? (
+          <div className="work-system-prompt-empty">
+            The Run prompt is generated when this Work stages its first Attempt.
+          </div>
+        ) : (
+          <>
+            <div className="work-system-prompt-meta">
+              <StatusChip className={`attempt-status ${selectedAttempt.status}`} size="sm">
+                {selectedAttempt.status === 'running' ? (
+                  <WorkingIndicator label={attemptStatus(selectedAttempt)} />
+                ) : (
+                  attemptStatus(selectedAttempt)
+                )}
+              </StatusChip>
+              <strong>{selectedAttempt.responsibility}</strong>
+              <code>{selectedAttempt.runId}</code>
+            </div>
+            {selectedDetail?.runPrompt !== null && selectedDetail?.runPrompt !== undefined ? (
+              <RunPromptView prompt={selectedDetail.runPrompt} />
+            ) : (
+              <div className="work-system-prompt-empty">
+                This Attempt predates prompt capture, or its prompt.md is unavailable.
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </AppScrollShadow>
+  )
+}
+
+function RunPromptView({ prompt }: { prompt: string }) {
+  if (!prompt.includes('## Current Assignment')) {
+    return (
+      <div className="work-run-prompt">
+        <div>
+          <strong>Legacy Run instructions</strong>
+          <pre className="work-system-prompt">{prompt}</pre>
+        </div>
+      </div>
+    )
+  }
+  const boundary = prompt.indexOf('\n## Canonical Boundary')
+  const assignment = boundary === -1 ? prompt : prompt.slice(0, boundary)
+  const protocol = boundary === -1 ? '' : prompt.slice(boundary + 1)
+  return (
+    <div className="work-run-prompt">
+      <div>
+        <strong>Current assignment</strong>
+        <pre className="work-system-prompt">{assignment}</pre>
+      </div>
+      {protocol && (
+        <AppDisclosure summary="Canonical boundary, role protocol, and result contract">
+          <pre className="work-system-prompt">{protocol}</pre>
+        </AppDisclosure>
+      )}
     </div>
   )
 }
 
-function buildBoardRoute(projectKey: string, goalKey: string) {
-  return `/projects/${encodeURIComponent(projectKey)}/board/${encodeURIComponent(goalKey)}`
+function AttemptHistory({
+  projectId,
+  goalId,
+  workId,
+  attempts,
+  selectedAttempt,
+  loading,
+  error,
+  onSelect,
+}: {
+  projectId: string
+  goalId: string
+  workId: string
+  attempts: RunAttemptSummary[]
+  selectedAttempt: RunAttemptSummary | null
+  loading: boolean
+  error: Error | null
+  onSelect: (runId: string) => void
+}) {
+  const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
+    streamKey: selectedAttempt?.runId ?? 'no-attempt',
+    queryKey: [
+      'work-attempt-events',
+      projectId,
+      goalId,
+      workId,
+      selectedAttempt?.runId ?? null,
+    ],
+    readPage: (input) =>
+      readWorkAttemptEvents(
+        projectId,
+        goalId,
+        workId,
+        selectedAttempt?.runId ?? '',
+        input,
+      ),
+    getItemId: runEventId,
+    compareItems: compareRunEvents,
+    enabled: Boolean(selectedAttempt),
+    refetchInterval: selectedAttempt?.status === 'running' ? 1_000 : false,
+    tailPageSize: 200,
+  })
+  const messages = useMemo(() => {
+    if (!selectedAttempt) return []
+    const groupId = `attempt:${selectedAttempt.runId}`
+    const next = runEventsToMessageFeed(eventStream.items, {
+      namespace: groupId,
+      groupId,
+      active: selectedAttempt.status === 'running',
+    })
+    if (selectedAttempt.status === 'running') {
+      next.push({
+        id: `${groupId}:runtime-status`,
+        createdAt: next.at(-1)?.createdAt ?? selectedAttempt.startedAt,
+        kind: 'status',
+        role: 'system',
+        text: 'Agent is working',
+        label: selectedAttempt.responsibility,
+        groupId,
+        pending: true,
+      })
+    }
+    return next
+  }, [eventStream.items, selectedAttempt])
+  const streamError = error ?? eventStream.error
+  const streamLoading = loading || eventStream.isLoading
+
+  return (
+    <section className="attempt-workspace">
+      <aside className="attempt-sidebar">
+        <div className="attempt-history-heading">
+          <div>
+            <h2>Attempts</h2>
+            <p>Messages and tool activity</p>
+          </div>
+          <CountBadge>{attempts.length}</CountBadge>
+        </div>
+
+        {attempts.length > 0 ? (
+          <AppScrollShadow className="attempt-tabs" orientation="auto">
+            {attempts.map((attempt, index) => (
+              <AppButton
+                variant="ghost"
+                aria-pressed={attempt.runId === selectedAttempt?.runId}
+                className={attempt.runId === selectedAttempt?.runId ? 'active' : undefined}
+                key={attempt.runId}
+                type="button"
+                onClick={() => onSelect(attempt.runId)}
+              >
+                <span>
+                  <strong>Attempt {attempts.length - index}</strong>
+                  <small>
+                    {attempt.responsibility} · {formatAttemptTime(attempt.startedAt)}
+                  </small>
+                </span>
+                <StatusChip className={`attempt-status ${attempt.status}`} size="sm">
+                  {attempt.status === 'running' ? (
+                    <WorkingIndicator label={attemptStatus(attempt)} />
+                  ) : (
+                    attemptStatus(attempt)
+                  )}
+                </StatusChip>
+              </AppButton>
+            ))}
+          </AppScrollShadow>
+        ) : (
+          <p className="attempt-sidebar-empty">No attempts yet</p>
+        )}
+      </aside>
+
+      <div className="attempt-feed">
+        {streamError ? (
+          <AppAlert className="attempt-feed-empty error">{streamError.message}</AppAlert>
+        ) : streamLoading && eventStream.items.length === 0 ? (
+          <div className="attempt-feed-empty">
+            <AppSpinner size="sm" /> Loading Attempt
+          </div>
+        ) : !selectedAttempt ? (
+          <div className="attempt-feed-empty">No Attempt has been recorded for this Work.</div>
+        ) : (
+          <>
+            <header>
+              <div>
+                <StatusChip className={`attempt-status ${selectedAttempt.status}`} size="sm">
+                  {selectedAttempt.status === 'running' ? (
+                    <WorkingIndicator label={attemptStatus(selectedAttempt)} />
+                  ) : (
+                    attemptStatus(selectedAttempt)
+                  )}
+                </StatusChip>
+                <strong>{selectedAttempt.responsibility}</strong>
+                <small>{selectedAttempt.runId}</small>
+              </div>
+              <span>{selectedAttempt.application ?? 'responsibility process'}</span>
+            </header>
+            {selectedAttempt.summary && (
+              <p className="attempt-summary">{selectedAttempt.summary}</p>
+            )}
+            <UnifiedMessageFeed
+              feedKey={`attempt:${selectedAttempt.runId}`}
+              items={messages}
+              density="compact"
+              className="attempt-message-feed"
+              ariaLabel={`Attempt ${selectedAttempt.runId} message stream`}
+              isLoading={eventStream.isLoading}
+              hasMoreBefore={eventStream.hasMoreBefore}
+              isLoadingOlder={eventStream.isLoadingOlder}
+              onLoadOlder={eventStream.loadOlder}
+              emptyState={
+                <div className="attempt-feed-empty">This Attempt predates live event capture.</div>
+              }
+            />
+          </>
+        )}
+      </div>
+    </section>
+  )
 }
 
-function formatGoalOptionLabel(goal: ProjectGoalSummary) {
-  const trimmedTitle = goal.title.trim()
-  return trimmedTitle && trimmedTitle !== goal.goalKey
-    ? `${trimmedTitle} (${goal.goalKey})`
-    : goal.goalKey
+function attemptStatus(attempt: RunAttemptSummary) {
+  if (attempt.status === 'running') return 'working'
+  return attempt.result ?? attempt.status
 }
 
-function buildSelectableGoals(
-  projectGoals: ProjectGoalSummary[],
-  currentGoalKey: string | null,
-  currentGoalTitle?: string,
-) {
-  const goalsByKey = new Map(projectGoals.map((goal) => [goal.goalKey, goal] as const))
-  if (!currentGoalKey || goalsByKey.has(currentGoalKey)) {
-    return projectGoals
+function formatAttemptTime(timestamp: string) {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function runEventId(event: { eventId: string }) {
+  return event.eventId
+}
+
+function compareRunEvents(left: RunAttemptEvent, right: RunAttemptEvent) {
+  if (left.streamIndex !== undefined && right.streamIndex !== undefined) {
+    return left.streamIndex - right.streamIndex
   }
-
-  return [
-    {
-      goalKey: currentGoalKey,
-      title: currentGoalTitle?.trim() || currentGoalKey,
-    },
-    ...projectGoals,
-  ]
+  return left.createdAt.localeCompare(right.createdAt) || left.eventId.localeCompare(right.eventId)
 }

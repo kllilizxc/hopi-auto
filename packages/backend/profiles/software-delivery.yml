@@ -1,0 +1,26 @@
+version: 1
+id: software-delivery-v1
+
+dispatch:
+  - when: { kind: planning, stage: plan }
+    pass: planner
+    on: { success: done }
+
+  - when: { kind: engineering, stage: generate }
+    pass: generator
+    on: { success: review }
+    replan: ensure_planning
+
+  - when: { kind: engineering, stage: review }
+    pass: reviewer
+    on: { success: done, reject: generate }
+    replan: ensure_planning
+
+retry:
+  maxAttempts: 3
+  exhausted: create_attention
+
+concurrency:
+  planner: 1
+  generator: 3
+  reviewer: 1

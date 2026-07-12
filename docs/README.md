@@ -1,33 +1,25 @@
-# HOPI Docs
+# HOPI Documentation
 
-Start with `docs/zero-context-continuation.md`.
+## Current Authority
 
-## Core Authority
-
-- `docs/zero-context-continuation.md`: curated start-here continuation guide for a zero-context AI that needs to take over and keep shipping along the current authority route.
-- `docs/agent-handoff.md`: exhaustive current handoff ledger, guardrails, architecture notes, and next-work guidance.
-- `packages/frontend/MIGRATION.md`: current frontend authority and continuation guide for evolving the original frontend codebase in place.
-- `docs/hopi-phase-1-authority.md`: canonical Phase 1 schema and backend boundaries.
-- `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`: completed Phase 1 implementation plan and rationale.
-
-## Design Phase Index
-
-- `docs/superpowers/specs/README.md`: complete index of all current design-phase authority notes grouped by date.
-- `docs/superpowers/specs/README.md#2026-05-31`: foundation slices for the Phase 1 runtime, write-trace, vendor, and merge substrate.
-- `docs/superpowers/specs/README.md#2026-06-01`: Goal assistant, planning follow-through, workflow graph, and review/merge authority slices.
-- `docs/superpowers/specs/README.md#2026-06-02`: prompt authority, less-structured answer interpretation, transcript correlation, and workflow inspection slices.
-- `docs/superpowers/specs/README.md#2026-06-03`: assistant/runtime inspection authority, answer-source routing/keying, provenance surfacing, and `auto` hardening slices.
-- `docs/superpowers/specs/README.md#2026-06-04`: embedded question/topic anchor follow-through plus assistant decision/planning-result authority slices.
-
-## Implementation Plans
-
-- `docs/superpowers/plans/`: implementation-plan directory for shipped and in-flight execution slices.
-- `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`: Phase 1 takeover and Bun-first rebuild plan.
+- [`mvp_design.md`](./mvp_design.md): product concepts, scope, accepted choices, UI, and scenarios.
+- [`mvp_document_model.md`](./mvp_document_model.md): canonical home, Project, Goal, Work, Input,
+  Attention, and Evidence documents.
+- [`mvp_assistant.md`](./mvp_assistant.md): persistent Codex conversation, HOPI tools, turn
+  recovery, and Assistant UI behavior.
+- [`mvp_execution.md`](./mvp_execution.md): fixed responsibilities,
+  scheduling, worktrees, integration, completion, notification, and Preview.
+- [`mvp_publish_protocol.md`](./mvp_publish_protocol.md): single-Coordinator publication ADR and
+  process-crash recovery rules.
+- [`mvp_state_machine.md`](./mvp_state_machine.md): derived state charts, readiness, and Kanban
+  projection.
+- [`mvp_alignment_plan.md`](./mvp_alignment_plan.md): implementation evidence and cutover checklist;
+  it is not a design authority.
 
 ## Historical Reference
 
-The following documents predate the Phase 1 rebuild and contain obsolete prototype details such as `candidate`, task status `blocked`, `dependencyTaskList`, `todo.mjs`, Express, or execa. Treat them as product background only.
-
-- `docs/hopi-goal-kanban-assistant-unified-design.md`
-- `docs/hopi-multi-agent-architecture.md`
-- `docs/hopi-multi-agent-implementation-plan.md`
+`unified_design.md`, `agent-handoff.md`, `zero-context-continuation.md`, the Phase 1 documents,
+deep dives, and `superpowers/**` preserve pre-MVP rationale. Their references to Assistant Actions,
+decisions, planning requests, `todo.yml`, per-Run worktrees, merger, old server routes, the Vite
+runtime, or writable React workflow screens are intentionally historical. Do not use them to infer
+current state or extend the product.

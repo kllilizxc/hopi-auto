@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { HOPI_RELEASE_REF } from '../src/domain/project'
+import { PublicationCoordinator } from '../src/publication/publisher'
+import { CoordinatorBootError, bootstrapCoordinator } from '../src/runtime/coordinatorBootstrap'
+import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
+import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
+import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
+import { createGoalPackageStore } from '../src/storage/goalPackageStore'
+
+const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'coordinator-bootstrap')
+
+beforeEach(async () => {
+  await rm(temporaryRoot, { recursive: true, force: true })
+  await mkdir(temporaryRoot, { recursive: true })
+})
+
+afterEach(async () => {
+  await rm(temporaryRoot, { recursive: true, force: true })
+})
+
+describe('bootstrapCoordinator', () => {
+  test('enables a valid managed project without inspecting a dirty user checkout', async () => {
+    const fixture = await setup()
+    await Bun.write(join(fixture.repoRoot, 'local.txt'), 'dirty user checkout\n')
+    const legitimate = join(fixture.projectRoot, '.hopi', 'notes.tmp.keep')
+    const abandoned = join(
+      fixture.projectRoot,
+      '.hopi',
+      'source.ts.tmp.11111111-1111-4111-8111-111111111111',
+    )
+    await Bun.write(legitimate, 'keep\n')
+    await Bun.write(abandoned, 'remove\n')
+
+    const result = await fixture.bootstrap()
+
+    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
+    expect([...result.blockedProjectIds]).toEqual([])
+    expect(await Bun.file(legitimate).exists()).toBe(true)
+    expect(await Bun.file(abandoned).exists()).toBe(false)
+  })
+
+  test('creates and reuses one project Attention for invalid canonical identity', async () => {
+    const fixture = await setup()
+    await Bun.write(
+      fixture.home.paths.projectDocumentPath('P-1'),
+      'version: 1\nprojectId: another\n',
+    )
+
+    const first = await fixture.bootstrap()
+    const second = await fixture.bootstrap()
+    const workspace = await fixture.workspace.readWorkspace()
+
+    expect([...first.blockedProjectIds]).toEqual(['P-1'])
+    expect([...second.blockedProjectIds]).toEqual(['P-1'])
+    expect(
+      [...workspace.attentions.values()].filter(
+        (attention) =>
+          attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
+      ),
+    ).toHaveLength(1)
+  })
+
+  test('blocks a durable ref whose managed index was not materialized', async () => {
+    const fixture = await setup(true)
+    const parent = await git(fixture.projectRoot, ['rev-parse', `${HOPI_RELEASE_REF}^`])
+    await git(fixture.projectRoot, ['update-ref', HOPI_RELEASE_REF, parent])
+
+    const result = await fixture.bootstrap()
+
+    expect([...result.blockedProjectIds]).toEqual(['P-1'])
+    expect([...(await fixture.workspace.readWorkspace()).attentions.values()][0]?.body).toContain(
+      'does not materialize',
+    )
+  })
+
+  test('fails closed when Assistant-home truth is invalid', async () => {
+    const fixture = await setup()
+    await Bun.write(fixture.home.paths.homeDocumentPath, 'version: 1\nhomeId: invalid id\n')
+
+    await expect(fixture.bootstrap()).rejects.toBeInstanceOf(CoordinatorBootError)
+  })
+})
+
+async function setup(twoCommits = false) {
+  const repoRoot = join(temporaryRoot, 'repo')
+  await mkdir(repoRoot, { recursive: true })
+  await git(repoRoot, ['init', '-b', 'main'])
+  await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
+  await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
+  await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
+  await git(repoRoot, ['add', '.'])
+  await git(repoRoot, ['commit', '-m', 'initial'])
+  if (twoCommits) {
+    await Bun.write(join(repoRoot, 'source.ts'), 'export const value = 1\n')
+    await git(repoRoot, ['add', '.'])
+    await git(repoRoot, ['commit', '-m', 'source'])
+  }
+  const homeRoot = join(temporaryRoot, 'home')
+  const home = createAssistantHomeStore(homeRoot)
+  const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+  const publisher = new PublicationCoordinator()
+  const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+  const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+  const attentions = createWorkspaceAttentionController(
+    workspace,
+    () => new Date('2026-07-11T00:00:00Z'),
+  )
+  return {
+    repoRoot,
+    projectRoot: linked.integrationRoot,
+    home,
+    workspace,
+    bootstrap: () =>
+      bootstrapCoordinator({
+        homeRoot,
+        home,
+        workspace,
+        projects: [
+          {
+            projectId: 'P-1',
+            projectRoot: linked.integrationRoot,
+            store,
+          },
+        ],
+        attentions,
+      }),
+  }
+}
+
+async function git(cwd: string, args: string[]) {
+  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr || stdout)
+  return stdout.trim()
+}

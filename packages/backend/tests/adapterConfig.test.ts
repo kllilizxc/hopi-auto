@@ -110,6 +110,45 @@ describe('agent adapter config normalization', () => {
     })
   })
 
+  test('uses Project defaults for workflow roles without changing the workspace Assistant', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: {
+        transport: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+      },
+      roles: {
+        reviewer: {
+          transport: 'claude',
+          cwdMode: 'worktree',
+          model: 'claude-review',
+          permissionMode: 'dontAsk',
+        },
+      },
+    })
+    const projectDefaults = {
+      transport: 'codex' as const,
+      model: 'gpt-5.3-codex',
+      reasoningEffort: 'high' as const,
+    }
+
+    expect(resolveRoleTransportConfig(config, 'generator', projectDefaults)).toMatchObject({
+      transport: 'codex',
+      model: 'gpt-5.3-codex',
+      reasoningEffort: 'high',
+    })
+    expect(resolveRoleTransportConfig(config, 'reviewer', projectDefaults)).toMatchObject({
+      transport: 'claude',
+      model: 'claude-review',
+    })
+    expect(resolveAssistantTransportConfig(config)).toMatchObject({
+      transport: 'codex',
+      model: 'gpt-5.4',
+      reasoningEffort: 'xhigh',
+    })
+  })
+
   test('lets explicit codex overrides inherit model and effort unless a profile is set', () => {
     const inheritedConfig = normalizeAgentAdapterConfig({
       version: 3,
@@ -151,8 +190,6 @@ describe('agent adapter config normalization', () => {
       profile: 'team-default',
     })
     expect(resolveAssistantTransportConfig(profiledConfig)).not.toHaveProperty('model')
-    expect(resolveAssistantTransportConfig(profiledConfig)).not.toHaveProperty(
-      'reasoningEffort',
-    )
+    expect(resolveAssistantTransportConfig(profiledConfig)).not.toHaveProperty('reasoningEffort')
   })
 })

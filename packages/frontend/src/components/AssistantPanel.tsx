@@ -1,590 +1,604 @@
-import { type ChangeEvent, type ClipboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ImagePlus, Loader2, MessageSquare, Send, X } from 'lucide-react'
-import { UnifiedMessageFeed } from './UnifiedMessageFeed'
-import { goalScopedQueryKey } from '../lib/goalScope'
-import { useMessageFeed, mergeMessageFeedItems } from '../lib/messageFeed'
-import { cn } from '../lib/utils'
 import {
-  appendGoalAssistantMessage,
-  type GoalAssistantActionResult,
-  type GoalAttachmentRef,
-  openGoalAssistantFeedStream,
-  readGoalAssistantFeed,
-  runGoalAssistant,
-  type MessageFeedItem,
-  uploadGoalAssistantImages,
+  Activity,
+  ArrowLeft,
+  Bot,
+  CornerUpLeft,
+  ImagePlus,
+  RefreshCw,
+  Send,
+  X,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Virtuoso } from 'react-virtuoso'
+import { UnifiedMessageFeed } from './UnifiedMessageFeed'
+import {
+  readAssistantFeed,
+  readReflectionRunEvents,
+  readReflectionRuns,
+  sendInboxMessage,
+  type AssistantFeedEntry,
+  type AppSnapshot,
+  type AttentionView,
+  type ReflectionRunSummary,
+  type RunAttemptEvent,
 } from '../lib/api'
-
-interface DraftAttachment {
-  id: string
-  fileName: string
-  mediaType: string
-  url: string
-  status: 'uploading' | 'uploaded'
-  attachmentRef?: GoalAttachmentRef
-}
-
-export interface AssistantPanelProactiveMessage {
-  id: string
-  content: string
-  details?: string[]
-  label?: string
-  timestamp: string
-}
+import type { GoalScope } from '../lib/goalScope'
+import { resolveAssistantInboxContext } from '../lib/assistantContext'
+import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
+import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
+import { cn, excerpt, formatTime } from '../lib/utils'
+import {
+  AppAlert,
+  AppButton,
+  AppDisclosure,
+  AppScrollShadow,
+  AppSpinner,
+  AppTextArea,
+  IconButton,
+  WorkingIndicator,
+} from './ui'
 
 interface AssistantPanelProps {
-  goalKey: string
-  projectKey?: string
+  docked?: boolean
+  focusRequest?: number
+  initialReply: AttentionView | null
   isOpen: boolean
+  scope: GoalScope | null
+  snapshot?: AppSnapshot
   onClose: () => void
-  proactiveMessage?: AssistantPanelProactiveMessage | null
 }
 
-function hasAssistantDecisionMutations(actionResults: GoalAssistantActionResult[]) {
-  return actionResults.some(
-    (actionResult) =>
-      actionResult.kind === 'request_decision' ||
-      actionResult.kind === 'resolve_decisions' ||
-      actionResult.kind === 'resolve_decision' ||
-      actionResult.kind === 'record_answer' ||
-      actionResult.kind === 'record_answers',
-  )
+interface DraftImage {
+  id: string
+  file: File
+  url: string
 }
 
-function hasAssistantPlanningMutations(actionResults: GoalAssistantActionResult[]) {
-  return actionResults.some(
-    (actionResult) =>
-      actionResult.kind === 'request_planning' ||
-      actionResult.kind === 'request_planning_batch' ||
-      actionResult.kind === 'request_planning_workflows' ||
-      ((actionResult.kind === 'resolve_decisions' ||
-        actionResult.kind === 'resolve_decision' ||
-        actionResult.kind === 'record_answer' ||
-        actionResult.kind === 'record_answers') &&
-        (actionResult.followThrough?.requestKeys.length ?? 0) > 0),
-  )
-}
-
-function hasAssistantPreferenceMutations(actionResults: GoalAssistantActionResult[]) {
-  return actionResults.some(
-    (actionResult) =>
-      actionResult.kind === 'set_preference' ||
-      actionResult.kind === 'record_preference' ||
-      actionResult.kind === 'retire_preference' ||
-      actionResult.kind === 'update_preference',
-  )
-}
+const MAX_DRAFT_IMAGES = 4
+const MAX_DRAFT_IMAGE_BYTES = 10 * 1024 * 1024
+const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
 export function AssistantPanel({
-  goalKey,
-  projectKey,
+  docked = false,
+  focusRequest = 0,
+  initialReply,
   isOpen,
+  scope,
+  snapshot,
   onClose,
-  proactiveMessage,
 }: AssistantPanelProps) {
-  const [input, setInput] = useState('')
-  const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([])
-  const [optimisticMessages, setOptimisticMessages] = useState<MessageFeedItem[]>([])
-  const [statusMessages, setStatusMessages] = useState<MessageFeedItem[]>([])
-  const [assistantPendingMessage, setAssistantPendingMessage] = useState<MessageFeedItem | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const draftAttachmentsRef = useRef<DraftAttachment[]>([])
   const queryClient = useQueryClient()
-  const goalQueryKey = (key: string, ...rest: Array<string | number | null>) =>
-    goalScopedQueryKey(key, goalKey, projectKey, ...rest)
-
-  const loadFeedPage = useCallback(
-    (before?: string) =>
-      readGoalAssistantFeed(goalKey, {
-        before,
-        limit: 40,
-        projectKey,
-      }),
-    [goalKey, projectKey],
-  )
-  const openFeedStream = useCallback(
-    (after?: string) => openGoalAssistantFeedStream(goalKey, projectKey, after),
-    [goalKey, projectKey],
-  )
-
-  const feed = useMessageFeed({
-    enabled: isOpen && Boolean(goalKey),
-    queryKey: goalQueryKey('assistant-feed'),
-    loadPage: loadFeedPage,
-    openStream: openFeedStream,
-  })
-
-  const uploadImagesMutation = useMutation({
-    mutationFn: async (payload: { files: File[]; draftIds: string[] }) => {
-      if (!goalKey) {
-        throw new Error('Missing goal key')
-      }
-      const result = await uploadGoalAssistantImages(goalKey, payload.files, projectKey)
-      return {
-        draftIds: payload.draftIds,
-        attachments: result.attachments,
-      }
-    },
-    onSuccess: ({ draftIds, attachments }) => {
-      setDraftAttachments((current) =>
-        current.map((attachment) => {
-          const index = draftIds.indexOf(attachment.id)
-          if (index === -1) {
-            return attachment
-          }
-
-          const uploaded = attachments[index]
-          if (!uploaded) {
-            return attachment
-          }
-
-          revokeObjectUrlIfNeeded(attachment.url)
-          return {
-            ...attachment,
-            fileName: uploaded.fileName,
-            mediaType: uploaded.mediaType,
-            url: goalAssetUrl(goalKey, uploaded.assetPath, projectKey),
-            status: 'uploaded' as const,
-            attachmentRef: uploaded,
-          }
-        }),
-      )
-    },
-    onError: (_error, payload) => {
-      setDraftAttachments((current) => {
-        const removed = current.filter((attachment) => payload.draftIds.includes(attachment.id))
-        for (const attachment of removed) {
-          URL.revokeObjectURL(attachment.url)
-        }
-        return current.filter((attachment) => !payload.draftIds.includes(attachment.id))
-      })
-    },
-  })
-
-  const runAssistantMutation = useMutation({
-    mutationFn: async (payload: {
-      content: string
-      attachments: GoalAttachmentRef[]
-      optimisticId: string
-    }) => {
-      if (!goalKey) {
-        throw new Error('Missing goal key')
-      }
-
-      await appendGoalAssistantMessage(
-        goalKey,
-        {
-          content: payload.content,
-          attachments: payload.attachments,
-        },
-        projectKey,
-      )
-
-      setOptimisticMessages((current) =>
-        current.filter((message) => message.id !== payload.optimisticId),
-      )
-
-      return runGoalAssistant(
-        goalKey,
-        {
-          content: payload.content,
-          attachments: payload.attachments,
-          appendUserMessage: false,
-        },
-        projectKey,
-      )
-    },
-    onSuccess: async (run) => {
-      const actionResults = run.actionResults ?? []
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('automation') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('board') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('goal-docs') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('goal-runs') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('goal-run-detail') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('planning-workflows') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('planning-workflow-detail') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('task-write-traces') }),
-        queryClient.invalidateQueries({ queryKey: goalQueryKey('task-run-write-traces') }),
-        ...(hasAssistantDecisionMutations(actionResults)
-          ? [queryClient.invalidateQueries({ queryKey: goalQueryKey('goal-decisions') })]
-          : []),
-        ...(hasAssistantPlanningMutations(actionResults)
-          ? [queryClient.invalidateQueries({ queryKey: goalQueryKey('planning-requests') })]
-          : []),
-        ...(hasAssistantPreferenceMutations(actionResults)
-          ? [queryClient.invalidateQueries({ queryKey: ['preferences'] })]
-          : []),
-      ])
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: goalQueryKey('automation') }),
-        queryClient.refetchQueries({ queryKey: goalQueryKey('board') }),
-      ])
-    },
-    onError: async (_error, payload) => {
-      setOptimisticMessages((current) =>
-        current.filter((message) => message.id !== payload.optimisticId),
-      )
-    },
-    onSettled: () => {
-      setAssistantPendingMessage(null)
-    },
-  })
-
-  const readyAttachments = draftAttachments
-    .map((attachment) => attachment.attachmentRef)
-    .filter((attachment): attachment is GoalAttachmentRef => Boolean(attachment))
-  const hasUploadingAttachments = draftAttachments.some(
-    (attachment) => attachment.status === 'uploading',
-  )
-  const displayError = uploadImagesMutation.error ?? runAssistantMutation.error ?? feed.error
+  const [input, setInput] = useState('')
+  const [draftImages, setDraftImages] = useState<DraftImage[]>([])
+  const [imageError, setImageError] = useState<string | null>(null)
+  const [replyAttention, setReplyAttention] = useState<AttentionView | null>(null)
+  const [showReflectionDebug, setShowReflectionDebug] = useState(false)
+  const [assistantScrolling, setAssistantScrolling] = useState(false)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const draftImagesRef = useRef<DraftImage[]>([])
 
   useEffect(() => {
-    draftAttachmentsRef.current = draftAttachments
-  }, [draftAttachments])
+    draftImagesRef.current = draftImages
+  }, [draftImages])
 
   useEffect(
     () => () => {
-      for (const attachment of draftAttachmentsRef.current) {
-        revokeObjectUrlIfNeeded(attachment.url)
-      }
+      for (const image of draftImagesRef.current) URL.revokeObjectURL(image.url)
     },
     [],
   )
 
   useEffect(() => {
-    setStatusMessages([])
-    setOptimisticMessages([])
-    setAssistantPendingMessage(null)
-  }, [goalKey, projectKey])
+    if (focusRequest === 0) return
+    setReplyAttention(initialReply)
+    setShowReflectionDebug(false)
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [focusRequest, initialReply])
 
-  useEffect(() => {
-    if (!goalKey || !proactiveMessage) {
-      return
-    }
-
-    setStatusMessages((current) => {
-      if (current.some((message) => message.id === proactiveMessage.id)) {
-        return current
-      }
-
-      return [
-        ...current,
-        {
-          id: proactiveMessage.id,
-          createdAt: proactiveMessage.timestamp,
-          kind: 'system_message',
-          role: 'assistant',
-          label: proactiveMessage.label ?? 'Status update',
-          text: proactiveMessage.content,
-          details: proactiveMessage.details,
-          collapsedByDefault: true,
-        },
-      ]
-    })
-  }, [goalKey, proactiveMessage])
-
-  const queueDraftImages = (selected: File[]) => {
-    if (selected.length === 0) {
-      return
-    }
-
-    const nextDrafts = selected.map((image, index) => ({
-      id: crypto.randomUUID(),
-      fileName: getAttachmentDisplayName(image, index),
-      mediaType: image.type,
-      url: URL.createObjectURL(image),
-      status: 'uploading' as const,
-    }))
-    setDraftAttachments((current) => [...current, ...nextDrafts])
-    uploadImagesMutation.mutate({
-      files: selected,
-      draftIds: nextDrafts.map((draft) => draft.id),
-    })
-  }
-
-  const handleImageSelection = (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.target.files ?? [])
-    if (selected.length === 0) {
-      return
-    }
-    queueDraftImages(selected)
-    event.target.value = ''
-  }
-
-  const handleInputPaste = (event: ClipboardEvent<HTMLInputElement>) => {
-    const pastedImages = extractPastedImageFiles(event)
-    if (pastedImages.length === 0) {
-      return
-    }
-
-    const pastedText = event.clipboardData.getData('text/plain').trim()
-    if (!pastedText) {
-      event.preventDefault()
-    }
-
-    queueDraftImages(pastedImages)
-  }
-
-  const removePendingImage = (draftId: string) => {
-    setDraftAttachments((current) => {
-      const next = current.filter((attachment) => attachment.id !== draftId)
-      const removed = current.find((attachment) => attachment.id === draftId)
-      if (removed) {
-        revokeObjectUrlIfNeeded(removed.url)
-      }
-      return next
-    })
-  }
-
-  const handleRunAssistant = () => {
-    const trimmed = input.trim()
-    if (!trimmed || runAssistantMutation.isPending || hasUploadingAttachments) {
-      return
-    }
-
-    const optimisticId = `optimistic-user:${crypto.randomUUID()}`
-    const createdAt = new Date().toISOString()
-    setOptimisticMessages((current) => [
-      ...current,
-      {
-        id: optimisticId,
-        createdAt,
-        kind: 'user_message',
-        role: 'user',
-        text: trimmed,
-        attachments: readyAttachments,
-        collapsedByDefault: false,
-      },
-    ])
-    setAssistantPendingMessage({
-      id: `assistant-pending:${crypto.randomUUID()}`,
-      createdAt: new Date(Date.parse(createdAt) + 1).toISOString(),
-      kind: 'status',
-      role: 'assistant',
-      text: 'Assistant is working…',
-      collapsedByDefault: true,
-      pending: true,
-      label: 'Assistant',
-    })
-    setInput('')
-    setDraftAttachments((current) => {
-      for (const attachment of current) {
-        revokeObjectUrlIfNeeded(attachment.url)
-      }
-      return []
-    })
-
-    runAssistantMutation.mutate({
-      content: trimmed,
-      attachments: readyAttachments,
-      optimisticId,
-    })
-  }
-
+  const visibleAttentions = (snapshot?.attentions ?? [])
+    .filter(
+      (attention) =>
+        attention.target !== null && attention.resolvedAt === null,
+    )
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
+  const assistantStream = useInfiniteMessageStream({
+    streamKey: 'workspace-assistant',
+    queryKey: ['assistant-feed'],
+    readPage: readAssistantFeed,
+    getItemId: assistantFeedEntryId,
+    compareItems: compareAssistantFeedEntries,
+    enabled: isOpen && !showReflectionDebug,
+    refetchInterval: isOpen && !showReflectionDebug && !assistantScrolling ? 1_000 : false,
+    historyPageSize: 10,
+  })
+  const reflectionStream = useInfiniteMessageStream({
+    streamKey: 'reflection-runs',
+    queryKey: ['reflection-runs'],
+    readPage: readReflectionRuns,
+    getItemId: reflectionRunId,
+    compareItems: compareReflectionRuns,
+    enabled: isOpen && showReflectionDebug,
+    refetchInterval: isOpen && showReflectionDebug ? 1_000 : false,
+    reportRefreshing: true,
+  })
   const messages = useMemo(
-    () =>
-      mergeMessageFeedItems(
-        feed.items,
-        statusMessages,
-        optimisticMessages,
-        assistantPendingMessage ? [assistantPendingMessage] : [],
-      ),
-    [assistantPendingMessage, feed.items, optimisticMessages, statusMessages],
+    () => assistantFeedEntriesToMessageFeed(assistantStream.items),
+    [assistantStream.items],
   )
 
+  const sendMutation = useMutation({
+    mutationFn: async () => {
+      const draft = input.trim()
+      if (!draft && draftImages.length === 0) throw new Error('Message is empty')
+      const content =
+        replyAttention?.scope === 'workspace'
+          ? `Regarding workspace Attention ${replyAttention.id}:\n\n${draft}`
+          : draft
+      return sendInboxMessage({
+        content,
+        images: draftImages.map(({ file }) => file),
+        context: resolveAssistantInboxContext(scope, replyAttention),
+      })
+    },
+    onSuccess: async () => {
+      setInput('')
+      setDraftImages((current) => {
+        for (const image of current) URL.revokeObjectURL(image.url)
+        return []
+      })
+      setImageError(null)
+      setReplyAttention(null)
+      assistantStream.refresh()
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+
+  const handleSend = () => {
+    if ((input.trim() || draftImages.length > 0) && !sendMutation.isPending) {
+      sendMutation.mutate()
+    }
+  }
+
+  const queueImages = (files: File[]) => {
+    setImageError(null)
+    const selected = files.filter((file) => file.type.startsWith('image/'))
+    if (draftImages.length + selected.length > MAX_DRAFT_IMAGES) {
+      setImageError(`Attach at most ${MAX_DRAFT_IMAGES} images per message.`)
+      return
+    }
+    const unsupported = selected.find((file) => !ACCEPTED_IMAGE_TYPES.has(file.type))
+    if (unsupported) {
+      setImageError(`Unsupported image type: ${unsupported.type || unsupported.name}`)
+      return
+    }
+    const oversized = selected.find((file) => file.size > MAX_DRAFT_IMAGE_BYTES)
+    if (oversized) {
+      setImageError(`${oversized.name || 'Image'} exceeds the 10 MB limit.`)
+      return
+    }
+    setDraftImages((current) => [
+      ...current,
+      ...selected.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        url: URL.createObjectURL(file),
+      })),
+    ])
+  }
+
+  const removeImage = (imageId: string) => {
+    setDraftImages((current) => {
+      const removed = current.find((image) => image.id === imageId)
+      if (removed) URL.revokeObjectURL(removed.url)
+      return current.filter((image) => image.id !== imageId)
+    })
+  }
+
   return (
-    <div
-      className={cn(
-        'fixed inset-y-0 right-0 z-50 flex w-[30rem] max-w-full transform flex-col border-l border-[#333] bg-[#1A1A1A] shadow-2xl transition-transform duration-300 ease-in-out',
-        isOpen ? 'translate-x-0' : 'translate-x-full',
-      )}
+    <section
+      className={cn('assistant-drawer', isOpen && 'open', docked && 'docked')}
+      aria-hidden={!isOpen}
     >
-      <header className="flex items-center justify-between border-b border-[#333] bg-[#141414] px-4 py-3">
-        <div className="flex items-center gap-2 text-white">
-          <MessageSquare className="h-4 w-4 text-purple-400" />
-          <span className="font-medium">Goal Assistant</span>
-          <span className="rounded-full border border-[#3a3a3a] bg-[#1d1d1d] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
-            {messages.length} entries
+      <header className="assistant-header">
+        <div>
+          <span className={cn('assistant-avatar', showReflectionDebug && 'debug')}>
+            {showReflectionDebug ? <Activity /> : <Bot />}
+          </span>
+          <span>
+            <strong>{showReflectionDebug ? 'Reflection debug' : 'Assistant'}</strong>
+            <small>{showReflectionDebug ? 'Runtime event stream' : 'Workspace conversation'}</small>
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded p-1 text-gray-400 transition-colors hover:bg-[#333] hover:text-white"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <div className="assistant-header-actions">
+          <IconButton
+            className={cn('reflection-debug-button', showReflectionDebug && 'active')}
+            type="button"
+            onClick={() => setShowReflectionDebug((value) => !value)}
+            aria-label={showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'}
+            aria-pressed={showReflectionDebug}
+            title={showReflectionDebug ? 'Back to conversation' : 'Reflection debug'}
+          >
+            {showReflectionDebug ? <ArrowLeft /> : <Activity />}
+          </IconButton>
+          {!docked && (
+            <IconButton type="button" onClick={onClose} aria-label="Close assistant">
+              <X />
+            </IconButton>
+          )}
+        </div>
       </header>
 
-      <div className="min-h-0 flex-1 px-2 py-3">
-        {displayError && (
-          <div className="mx-2 mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            {(displayError as Error).message}
-          </div>
+      {showReflectionDebug ? (
+        <ReflectionDebugPanel
+          runs={reflectionStream.items}
+          loading={reflectionStream.isLoading}
+          error={reflectionStream.error}
+          refreshing={reflectionStream.isRefreshing}
+          hasMoreBefore={reflectionStream.hasMoreBefore}
+          loadingOlder={reflectionStream.isLoadingOlder}
+          onLoadOlder={reflectionStream.loadOlder}
+          onRefresh={reflectionStream.refresh}
+        />
+      ) : (
+        <>
+      <div className="assistant-body">
+        {visibleAttentions.length > 0 && (
+          <AppScrollShadow className="attention-list" role="region" aria-label="Attention">
+            {visibleAttentions.map((attention) => {
+              const canReply =
+                (attention.scope === 'goal' || attention.target?.includes('/event:') === true)
+              return (
+                <article
+                  className="attention-card"
+                  key={`${attention.scope}:${attention.id}`}
+                >
+                  <div className="attention-card-heading">
+                    <span><span className="attention-dot" /></span>
+                    <strong>Needs your input</strong>
+                  </div>
+                  <p>{excerpt(attention.body, 260)}</p>
+                  {canReply && (
+                    <AppButton variant="ghost" type="button" onClick={() => setReplyAttention(attention)}>
+                      <CornerUpLeft /> Respond
+                    </AppButton>
+                  )}
+                </article>
+              )
+            })}
+          </AppScrollShadow>
         )}
 
         <UnifiedMessageFeed
-          goalKey={goalKey}
-          projectKey={projectKey}
+          feedKey="workspace-assistant"
           items={messages}
-          isLoading={feed.isLoading}
-          hasMoreBefore={feed.hasMoreBefore}
-          isLoadingOlder={feed.isFetchingOlder}
-          onLoadOlder={() => {
-            void feed.fetchOlder()
-          }}
-          emptyLabel={`The assistant thread is empty for ${goalKey}. Send a message to start.`}
+          className="assistant-conversation-feed"
+          ariaLabel="Workspace Assistant conversation"
+          isLoading={assistantStream.isLoading}
+          hasMoreBefore={assistantStream.hasMoreBefore}
+          isLoadingOlder={assistantStream.isLoadingOlder}
+          onLoadOlder={assistantStream.loadOlder}
+          onScrollingChange={setAssistantScrolling}
+          emptyState={(
+            <div className="conversation-empty">
+              {assistantStream.error ? (
+                <>
+                  <Activity />
+                  <strong>Conversation unavailable.</strong>
+                  <p>{assistantStream.error.message}</p>
+                </>
+              ) : (
+                <>
+                  <Bot />
+                  <strong>No ceremony.</strong>
+                  <p>Describe an outcome, ask a question, or change the selected Goal.</p>
+                </>
+              )}
+            </div>
+          )}
         />
       </div>
 
-      <div className="border-t border-[#333] bg-[#141414] p-4">
-        {draftAttachments.length > 0 && (
-          <div className="mb-3 grid grid-cols-2 gap-2">
-            {draftAttachments.map((attachment) => (
-              <div
-                key={attachment.id}
-                className="overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#1d1d1d]"
-              >
-                <img
-                  src={attachment.url}
-                  alt={attachment.fileName}
-                  className={cn(
-                    'h-24 w-full object-cover',
-                    attachment.status === 'uploading' && 'opacity-60',
-                  )}
-                />
-                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-                  <div className="min-w-0">
-                    <div className="truncate text-[11px] text-gray-300">{attachment.fileName}</div>
-                    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-gray-500">
-                      {attachment.status === 'uploading' ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Uploading
-                        </>
-                      ) : (
-                        'Ready'
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removePendingImage(attachment.id)}
-                    className="rounded p-1 text-gray-500 transition-colors hover:bg-[#2a2a2a] hover:text-white"
-                    title="Remove image"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+      <footer className="assistant-composer">
+        {(sendMutation.error || imageError) && (
+          <AppAlert className="inline-error">{sendMutation.error?.message ?? imageError}</AppAlert>
+        )}
+        {replyAttention && (
+          <div className="composer-context">
+            <AppButton variant="ghost" type="button" onClick={() => setReplyAttention(null)}>
+              Responding to this request <X />
+            </AppButton>
           </div>
         )}
-
-        <div className="relative">
+        {draftImages.length > 0 && (
+          <AppScrollShadow
+            className="composer-images"
+            orientation="horizontal"
+            aria-label="Attached images"
+          >
+            {draftImages.map((image) => (
+              <figure key={image.id}>
+                <img src={image.url} alt={image.file.name || 'Pasted image'} />
+                <IconButton
+                  type="button"
+                  aria-label={`Remove ${image.file.name || 'image'}`}
+                  onClick={() => removeImage(image.id)}
+                  disabled={sendMutation.isPending}
+                >
+                  <X />
+                </IconButton>
+              </figure>
+            ))}
+          </AppScrollShadow>
+        )}
+        <div className="composer-box">
           <input
             ref={fileInputRef}
+            className="composer-file-input"
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
             multiple
-            className="hidden"
-            onChange={handleImageSelection}
+            onChange={(event) => {
+              queueImages(Array.from(event.target.files ?? []))
+              event.target.value = ''
+            }}
           />
-          <input
-            type="text"
+          <AppTextArea
+            ref={composerRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            onPaste={handleInputPaste}
-            onKeyDown={(event) => event.key === 'Enter' && handleRunAssistant()}
-            placeholder="Ask assistant to plan, fix tasks, or paste images with a thread note..."
-            className="w-full rounded-lg border border-[#444] bg-[#222] py-2.5 pr-10 pl-12 text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 focus:outline-none"
+            onPaste={(event) => {
+              const images = extractPastedImages(event.clipboardData)
+              if (images.length > 0) queueImages(images)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="Tell HOPI what should change…"
+            rows={3}
           />
-          <button
+          <IconButton
+            className="composer-image-button"
             type="button"
+            disabled={sendMutation.isPending || draftImages.length >= MAX_DRAFT_IMAGES}
             onClick={() => fileInputRef.current?.click()}
-            disabled={runAssistantMutation.isPending || uploadImagesMutation.isPending}
-            className="absolute top-1/2 left-2 -translate-y-1/2 rounded p-1.5 text-gray-400 transition-colors hover:text-white disabled:opacity-50"
+            aria-label="Attach images"
             title="Attach images"
           >
-            <ImagePlus className="h-4 w-4" />
-          </button>
-          <button
+            <ImagePlus />
+          </IconButton>
+          <IconButton
+            className="send-button"
             type="button"
-            onClick={handleRunAssistant}
-            disabled={!input.trim() || runAssistantMutation.isPending || hasUploadingAttachments}
-            className="absolute top-1/2 right-2 -translate-y-1/2 p-1.5 text-purple-400 transition-colors hover:text-purple-300 disabled:opacity-50 disabled:hover:text-purple-400"
-            title="Run assistant"
+            disabled={(!input.trim() && draftImages.length === 0) || sendMutation.isPending}
+            onClick={handleSend}
+            aria-label="Send message"
           >
-            <Send className="h-4 w-4" />
-          </button>
+            {sendMutation.isPending ? <AppSpinner size="sm" /> : <Send />}
+          </IconButton>
         </div>
-
-        <div className="mt-3 text-[11px] text-gray-500">
-          {uploadImagesMutation.isPending
-            ? 'Uploading images. Send is available when uploads finish.'
-            : 'Press Enter to run the assistant for this goal. Paste or attach images to send them with the current message.'}
-        </div>
-      </div>
-    </div>
+        <small>Paste or attach up to 4 images · Enter to send</small>
+      </footer>
+        </>
+      )}
+    </section>
   )
 }
 
-function goalAssetUrl(goalKey: string, assetPath: string, projectKey?: string) {
-  const encodedPath = assetPath
-    .split('/')
-    .filter((segment) => segment.length > 0)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
+function ReflectionDebugPanel({
+  runs,
+  loading,
+  error,
+  refreshing,
+  hasMoreBefore,
+  loadingOlder,
+  onLoadOlder,
+  onRefresh,
+}: {
+  runs: ReflectionRunSummary[]
+  loading: boolean
+  error: Error | null
+  refreshing: boolean
+  hasMoreBefore: boolean
+  loadingOlder: boolean
+  onLoadOlder: () => void
+  onRefresh: () => void
+}) {
+  const [firstItemIndex, setFirstItemIndex] = useState(100_000)
+  const previousRunsRef = useRef<{ firstId?: string; length: number }>({ length: 0 })
 
-  if (projectKey) {
-    return `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/assets/${encodedPath}`
-  }
+  useEffect(() => {
+    const previous = previousRunsRef.current
+    if (previous.length > 0 && runs.length > previous.length && previous.firstId) {
+      const previousFirstIndex = runs.findIndex(
+        (run) => run.manifest.reflectionId === previous.firstId,
+      )
+      if (previousFirstIndex > 0) {
+        setFirstItemIndex((current) => current - previousFirstIndex)
+      }
+    }
+    previousRunsRef.current = {
+      firstId: runs[0]?.manifest.reflectionId,
+      length: runs.length,
+    }
+  }, [runs])
 
-  return `/api/goals/${encodeURIComponent(goalKey)}/assets/${encodedPath}`
+  return (
+    <section className="reflection-debug-panel" aria-label="Reflection debug stream">
+      <div className="reflection-debug-toolbar">
+        <div>
+          <strong>Runtime reflections</strong>
+          <small>Read-only · refreshes every second while open</small>
+        </div>
+        <IconButton type="button" onClick={onRefresh} aria-label="Refresh reflections">
+          <RefreshCw className={cn(refreshing && 'spin')} />
+        </IconButton>
+      </div>
+
+      {loading ? (
+        <div className="reflection-debug-empty"><AppSpinner size="sm" /> Loading runtime stream</div>
+      ) : error ? (
+        <div className="reflection-debug-empty error">{error.message}</div>
+      ) : runs.length === 0 ? (
+        <div className="reflection-debug-empty">
+          <Activity />
+          <strong>No Reflection Runs yet</strong>
+          <p>The startup snapshot is only a baseline. A semantic state change creates the first Run.</p>
+        </div>
+      ) : (
+        <div className="reflection-run-list">
+          <Virtuoso
+            className="reflection-run-virtuoso"
+            data={runs}
+            firstItemIndex={firstItemIndex}
+            initialTopMostItemIndex={Math.max(runs.length - 1, 0)}
+            computeItemKey={(_, run) => run.manifest.reflectionId}
+            followOutput="auto"
+            atTopThreshold={48}
+            startReached={() => {
+              if (hasMoreBefore && !loadingOlder) onLoadOlder()
+            }}
+            increaseViewportBy={{ top: 220, bottom: 260 }}
+            components={{
+              Scroller: AppScrollShadow,
+              Header: () =>
+                hasMoreBefore || loadingOlder ? (
+                  <div className="reflection-history-status">
+                    {loadingOlder ? (
+                      <><AppSpinner size="sm" /> Loading older Runs…</>
+                    ) : (
+                      'Scroll up for older Runs'
+                    )}
+                  </div>
+                ) : null,
+            }}
+            itemContent={(_, run) => (
+              <div className="reflection-run-row">
+                <ReflectionRun
+                  run={run}
+                  latest={run.manifest.reflectionId === runs.at(-1)?.manifest.reflectionId}
+                />
+              </div>
+            )}
+          />
+        </div>
+      )}
+    </section>
+  )
 }
 
-function revokeObjectUrlIfNeeded(url: string) {
-  if (url.startsWith('blob:')) {
-    URL.revokeObjectURL(url)
-  }
+function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boolean }) {
+  const { manifest } = run
+  const [open, setOpen] = useState(latest)
+  const outcome =
+    manifest.status === 'completed'
+      ? manifest.handoffEventId
+        ? { className: 'sent', label: 'Sent' }
+        : { className: 'no-action', label: 'No action' }
+      : { className: manifest.status, label: manifest.status }
+  const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
+    streamKey: `reflection:${manifest.reflectionId}`,
+    queryKey: ['reflection-events', manifest.reflectionId],
+    readPage: (input) => readReflectionRunEvents(manifest.reflectionId, input),
+    getItemId: runEventId,
+    compareItems: compareRunEvents,
+    enabled: open,
+    refetchInterval: open && manifest.status === 'running' ? 1_000 : false,
+    tailPageSize: 200,
+  })
+  const messages = useMemo(
+    () =>
+      runEventsToMessageFeed(eventStream.items, {
+        namespace: `reflection:${manifest.reflectionId}`,
+        groupId: manifest.reflectionId,
+        active: manifest.status === 'running',
+      }),
+    [eventStream.items, manifest.reflectionId, manifest.status],
+  )
+  return (
+    <AppDisclosure
+      className={cn('reflection-run', outcome.className)}
+      isExpanded={open}
+      onExpandedChange={setOpen}
+      bodyClassName="reflection-run-body"
+      summary={
+        <>
+        <span className="reflection-status-dot" />
+        <span>
+          <strong>{manifest.reflectionId}</strong>
+          <small>{outcome.label}</small>
+        </span>
+        <time>{formatTime(manifest.startedAt)}</time>
+        {manifest.status === 'running' && <WorkingIndicator />}
+        </>
+      }
+    >
+        <dl>
+          <div><dt>Digest</dt><dd>{manifest.stateDigest.slice(0, 16)}</dd></div>
+          <div><dt>Handoff</dt><dd>{manifest.handoffEventId ?? 'none'}</dd></div>
+        </dl>
+        {manifest.error && <p className="reflection-run-error">{manifest.error}</p>}
+        <UnifiedMessageFeed
+          feedKey={`reflection:${manifest.reflectionId}`}
+          items={messages}
+          density="compact"
+          className="reflection-message-feed"
+          ariaLabel={`Reflection ${manifest.reflectionId} event stream`}
+          isLoading={eventStream.isLoading}
+          hasMoreBefore={eventStream.hasMoreBefore}
+          isLoadingOlder={eventStream.isLoadingOlder}
+          onLoadOlder={eventStream.loadOlder}
+          emptyState={<span className="reflection-event-empty">No normalized events recorded.</span>}
+        />
+        <AppDisclosure className="reflection-paths" summary="Local diagnostics">
+          <code>{run.paths.transcript}</code>
+          <code>{run.paths.prompt}</code>
+          <code>{run.paths.events}</code>
+        </AppDisclosure>
+    </AppDisclosure>
+  )
 }
 
-function extractPastedImageFiles(event: ClipboardEvent<HTMLInputElement>) {
-  const filesFromItems = Array.from(event.clipboardData.items)
+function assistantFeedEntryId(entry: AssistantFeedEntry) {
+  return entry.id
+}
+
+function compareAssistantFeedEntries(left: AssistantFeedEntry, right: AssistantFeedEntry) {
+  return left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id)
+}
+
+function reflectionRunId(run: ReflectionRunSummary) {
+  return run.manifest.reflectionId
+}
+
+function compareReflectionRuns(left: ReflectionRunSummary, right: ReflectionRunSummary) {
+  return (
+    left.manifest.startedAt.localeCompare(right.manifest.startedAt) ||
+    left.manifest.reflectionId.localeCompare(right.manifest.reflectionId)
+  )
+}
+
+function runEventId(event: { eventId: string }) {
+  return event.eventId
+}
+
+function compareRunEvents(left: RunAttemptEvent, right: RunAttemptEvent) {
+  if (left.streamIndex !== undefined && right.streamIndex !== undefined) {
+    return left.streamIndex - right.streamIndex
+  }
+  return left.createdAt.localeCompare(right.createdAt) || left.eventId.localeCompare(right.eventId)
+}
+
+function extractPastedImages(clipboard: DataTransfer) {
+  const itemImages = Array.from(clipboard.items)
     .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
     .map((item) => item.getAsFile())
     .filter((file): file is File => Boolean(file))
-
-  if (filesFromItems.length > 0) {
-    return filesFromItems
-  }
-
-  return Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'))
-}
-
-function getAttachmentDisplayName(file: File, index: number) {
-  const trimmed = file.name.trim()
-  if (trimmed.length > 0) {
-    return trimmed
-  }
-
-  const extension = mediaTypeToExtension(file.type)
-  return `pasted-image-${index + 1}${extension ? `.${extension}` : ''}`
-}
-
-function mediaTypeToExtension(mediaType: string) {
-  switch (mediaType) {
-    case 'image/png':
-      return 'png'
-    case 'image/jpeg':
-      return 'jpg'
-    case 'image/webp':
-      return 'webp'
-    case 'image/gif':
-      return 'gif'
-    default:
-      return ''
-  }
+  return itemImages.length > 0
+    ? itemImages
+    : Array.from(clipboard.files).filter((file) => file.type.startsWith('image/'))
 }

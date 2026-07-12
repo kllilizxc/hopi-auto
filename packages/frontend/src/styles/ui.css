@@ -1,0 +1,270 @@
+/* Stable HOPI-facing hooks around HeroUI primitives. */
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+:where(*:hover, *:focus-within) {
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: var(--app-scrollbar-size);
+  height: var(--app-scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  background-clip: padding-box;
+}
+
+:where(*:hover, *:focus-within)::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.scroll-shadow--hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.scroll-shadow--hide-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (forced-colors: active) {
+  :where(*) {
+    scrollbar-color: auto;
+  }
+
+  ::-webkit-scrollbar-thumb,
+  :where(*:hover, *:focus-within)::-webkit-scrollbar-thumb {
+    background: CanvasText;
+  }
+}
+
+.app-button.button,
+.app-link.link {
+  font: inherit;
+}
+
+.app-button.button:not(.icon-button) {
+  height: auto;
+}
+
+.app-button.button svg,
+.app-link.link svg {
+  flex: 0 0 auto;
+}
+
+.app-select {
+  min-width: 0;
+}
+
+.app-select__trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.app-select__value {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  font-size: inherit;
+  line-height: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select__value > .app-select__option-copy {
+  width: 100%;
+  align-content: center;
+}
+
+.app-select__popover {
+  min-width: var(--trigger-width);
+  max-height: min(320px, var(--available-height));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--overlay);
+  box-shadow: var(--overlay-shadow);
+}
+
+.app-select__scroll {
+  max-height: min(318px, calc(var(--available-height) - 2px));
+  overflow-y: auto;
+}
+
+.app-scroll-shadow[data-virtuoso-scroller="true"] {
+  --scroll-shadow-size: 22px;
+}
+
+.app-scroll-shadow {
+  --scroll-shadow-scrollbar-size: var(--app-scrollbar-size);
+}
+
+.app-select__indicator,
+.app-select__indicator svg,
+.app-select__option-indicator svg {
+  width: 13px;
+  height: 13px;
+}
+
+.app-select__option-indicator {
+  opacity: 0;
+}
+
+.list-box-item[data-selected="true"] .app-select__option-indicator {
+  opacity: 1;
+}
+
+.app-select__option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.app-select__option-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select__option-copy small {
+  color: var(--muted);
+  font-size: max(10px, 0.75em);
+}
+
+.app-disclosure__heading {
+  margin: 0;
+}
+
+.app-disclosure__trigger {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+
+.app-disclosure__content {
+  overflow: hidden;
+}
+
+.app-disclosure__body {
+  padding: 0;
+}
+
+.app-spinner.spinner {
+  flex: 0 0 auto;
+}
+
+.working-indicator {
+  --working-indicator-size: 10px;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-state-working);
+  line-height: inherit;
+}
+
+.working-indicator__spinner.app-spinner {
+  width: var(--working-indicator-size);
+  height: var(--working-indicator-size);
+  align-items: center;
+  justify-content: center;
+  color: currentcolor;
+  transform-origin: 50% 50%;
+}
+
+.working-indicator__spinner.app-spinner > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.working-indicator__label {
+  min-width: 0;
+}
+
+.app-breathing-indicator {
+  display: inline-grid;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--accent);
+}
+
+.app-breathing-indicator::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentcolor;
+  box-shadow: 0 0 9px color-mix(in srgb, currentcolor 38%, transparent);
+  content: "";
+  animation: app-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes app-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-breathing-indicator::before {
+    opacity: 0.72;
+    transform: none;
+    animation: none;
+  }
+}
+
+.app-status-chip.chip {
+  min-height: 0;
+  line-height: normal;
+}
+
+.app-status-chip .chip__label {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
+  padding: 0;
+}
+
+.app-count-badge.badge {
+  position: static;
+  transform: none;
+}
+
+.app-count-badge .badge__label {
+  padding: 0;
+}

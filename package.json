@@ -1,15 +1,19 @@
 {
   "name": "hopi-agent-orchestrator-root",
+  "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/backend",
+    "packages/frontend"
   ],
   "scripts": {
-    "dev:backend": "cd packages/backend && bun dev",
-    "dev:frontend": "cd packages/frontend && bun run dev",
-    "dev": "bun run dev:backend && bun run dev:frontend",
-    "check:frontend": "cd packages/frontend && bun run check",
-    "check": "bun run check:backend",
-    "check:backend": "cd packages/backend && bun run check"
+    "dev:backend": "cd packages/backend && bun start",
+    "dev:backend:watch": "cd packages/backend && bun dev",
+    "dev:frontend": "cd packages/frontend && bun dev",
+    "dev": "bun run dev:backend",
+    "build:frontend": "cd packages/frontend && bun run build",
+    "check": "bun run check:backend && bun run check:frontend",
+    "check:backend": "cd packages/backend && bun run check",
+    "check:frontend": "cd packages/frontend && bun run check"
   }
 }

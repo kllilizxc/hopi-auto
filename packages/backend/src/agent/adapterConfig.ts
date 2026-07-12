@@ -9,7 +9,7 @@ import {
 import type { RoleTransportConfig } from './vendorTransport'
 import { roleTransportConfigSchema } from './vendorTransport'
 
-const WORKFLOW_ROLE_KEYS = ['planner', 'generator', 'reviewer', 'merger'] as const
+const WORKFLOW_ROLE_KEYS = ['planner', 'generator', 'reviewer'] as const
 
 type WorkflowRoleKey = (typeof WORKFLOW_ROLE_KEYS)[number]
 type ProjectCodingDefaultSource = Extract<
@@ -32,8 +32,8 @@ const workflowRoleConfigMapSchema = z
     planner: workflowRoleTransportConfigSchema.optional(),
     generator: workflowRoleTransportConfigSchema.optional(),
     reviewer: workflowRoleTransportConfigSchema.optional(),
-    merger: workflowRoleTransportConfigSchema.optional(),
   })
+  .strict()
   .default({})
 
 const legacyRoleConfigMapSchema = z
@@ -54,7 +54,7 @@ const agentAdapterConfigV1Schema = z.object({
 const agentAdapterConfigV2Schema = z.object({
   version: z.literal(2),
   assistant: assistantTransportConfigSchema.optional(),
-  roles: workflowRoleConfigMapSchema,
+  roles: legacyRoleConfigMapSchema,
 })
 
 export const agentAdapterConfigSchema = z.object({
@@ -131,13 +131,17 @@ export function resolveAssistantTransportConfig(config: AgentAdapterConfig): Rol
 export function resolveRoleTransportConfig(
   config: AgentAdapterConfig,
   role: WorkflowRoleKey,
+  projectDefaults?: ProjectCodingDefaults,
 ): RoleTransportConfig {
+  const defaults = projectDefaults
+    ? normalizeProjectCodingDefaults(projectDefaults)
+    : config.defaults
   const override = config.roles[role]
   if (override) {
-    return resolveExplicitTransportConfig(config.defaults, override)
+    return resolveExplicitTransportConfig(defaults, override)
   }
 
-  return buildDefaultTransportConfig(config.defaults, 'worktree')
+  return buildDefaultTransportConfig(defaults, 'worktree')
 }
 
 function migrateAgentAdapterConfig(input: LegacyAgentAdapterConfig): AgentAdapterConfig {

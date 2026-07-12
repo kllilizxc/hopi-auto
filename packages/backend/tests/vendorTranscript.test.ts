@@ -161,6 +161,97 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
+  test('normalizes current Codex MCP started/completed events as one call and result pair', () => {
+    const toolStarted = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'mcp_1',
+          type: 'mcp_tool_call',
+          server: 'hopi',
+          tool: 'hopi_control_goal',
+          arguments: { projectId: 'P-1', goalId: 'G-1', operation: 'pause' },
+          status: 'in_progress',
+        },
+      }),
+    })
+    const toolCompleted = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'mcp_1',
+          type: 'mcp_tool_call',
+          server: 'hopi',
+          tool: 'hopi_control_goal',
+          arguments: { projectId: 'P-1', goalId: 'G-1', operation: 'pause' },
+          result: { content: [{ type: 'text', text: '{"summary":"Goal paused"}' }] },
+          status: 'completed',
+        },
+      }),
+    })
+
+    expect(toolStarted).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_call',
+        toolName: 'hopi_control_goal',
+        toolInvocationKey: 'mcp_1',
+        summary: 'Tool call: hopi_control_goal',
+        vendorEventType: 'item.started',
+      },
+    ])
+    expect(toolCompleted).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_result',
+        toolName: 'hopi_control_goal',
+        toolInvocationKey: 'mcp_1',
+        summary: '{"summary":"Goal paused"}',
+        vendorEventType: 'item.completed',
+      },
+    ])
+  })
+
+  test('normalizes a rejected Codex MCP call as a visible error', () => {
+    const entries = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'mcp_2',
+          type: 'mcp_tool_call',
+          server: 'hopi',
+          tool: 'hopi_control_goal',
+          arguments: {},
+          error: { message: 'user cancelled MCP tool call' },
+          status: 'failed',
+        },
+      }),
+    })
+
+    expect(entries).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'error',
+        toolName: 'hopi_control_goal',
+        toolInvocationKey: 'mcp_2',
+        summary: 'user cancelled MCP tool call',
+        vendorEventType: 'item.completed',
+      },
+    ])
+  })
+
   test('normalizes Claude stream-json assistant text, tool use, and tool result blocks', () => {
     const assistant = normalizeProcessOutputLine({
       format: 'claude_stream_json',
@@ -175,7 +266,7 @@ describe('normalizeProcessOutputLine', () => {
               type: 'tool_use',
               id: 'toolu_1',
               name: 'Read',
-              input: { file_path: 'src/server.ts' },
+              input: { file_path: 'src/service.ts' },
             },
           ],
         },
@@ -210,7 +301,7 @@ describe('normalizeProcessOutputLine', () => {
         entryKind: 'tool_call',
         toolName: 'Read',
         toolInvocationKey: 'toolu_1',
-        summary: 'Tool call: Read (src/server.ts)',
+        summary: 'Tool call: Read (src/service.ts)',
         vendorEventType: 'assistant',
       },
     ])

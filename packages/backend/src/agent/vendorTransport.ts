@@ -1,7 +1,34 @@
 import { z } from 'zod'
-import type { RoleProcessContextBundle } from '../runtime/roleProcessContext'
-import type { ProcessAgentCommand } from './ProcessAgentRunner'
 import { codingReasoningEffortSchema } from './projectCodingDefaults'
+import type { ProcessTranscriptFormat } from './vendorTranscript'
+
+export interface TransportCommand {
+  cmd: string[]
+  cwdMode: 'root' | 'worktree'
+  stdin?: string
+  transcriptFormat?: ProcessTranscriptFormat
+  env?: Record<string, string>
+  baseRef?: string
+  outcomeFile?: string
+  canonicalOutcomeFile?: string
+  browserHarnessArtifactDir?: string
+  canonicalBrowserHarnessArtifactDir?: string
+}
+
+export interface TransportContextBundle {
+  runtimeScratchDir: string
+  goalFile: string
+  designFile: string
+  extraWritableRoots?: string[]
+  contextFile: string
+  promptFile: string
+  outcomeFile: string
+  canonicalOutcomeFile: string
+  browserHarnessDir: string
+  browserHarnessArtifactDir: string
+  canonicalBrowserHarnessArtifactDir: string
+  imageFiles?: string[]
+}
 
 const cwdModeSchema = z.enum(['root', 'worktree'])
 const codexSandboxSchema = z.enum(['read-only', 'workspace-write', 'danger-full-access'])
@@ -63,14 +90,18 @@ export interface ConfiguredTransportInvocation {
   stepId: string
   taskRef?: string
   role?: string
+  projectId?: string
 }
 
 export async function resolveConfiguredTransportCommand(options: {
   config: RoleTransportConfig
-  bundle: RoleProcessContextBundle
+  bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
-}): Promise<ProcessAgentCommand> {
+}): Promise<TransportCommand> {
   const env = buildTransportEnv(options.bundle, options.input)
+  if ((options.bundle.imageFiles?.length ?? 0) > 0 && options.config.transport !== 'codex') {
+    throw new Error('Responsibility image inputs currently require the Codex transport')
+  }
 
   if ('cmd' in options.config) {
     return {
@@ -94,6 +125,12 @@ export async function resolveConfiguredTransportCommand(options: {
     cmd.push('-a', options.config.approvalPolicy)
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
+    }
+    if (
+      (options.input.role === 'generator' || options.input.role === 'reviewer') &&
+      options.config.sandbox === 'workspace-write'
+    ) {
+      cmd.push('-c', 'sandbox_workspace_write.network_access=true')
     }
     cmd.push('exec', '--skip-git-repo-check')
     cmd.push('-s', options.config.sandbox)
@@ -175,9 +212,9 @@ export async function resolveConfiguredTransportCommand(options: {
   }
 }
 
-function buildTransportEnv(bundle: RoleProcessContextBundle, input: ConfiguredTransportInvocation) {
+function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
   return {
-    HOPI_PROJECT_ROOT: bundle.projectRoot,
+    HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
     HOPI_CONTEXT_FILE: bundle.contextFile,
     HOPI_OUTCOME_FILE: bundle.outcomeFile,
     HOPI_GOAL_FILE: bundle.goalFile,
@@ -186,15 +223,18 @@ function buildTransportEnv(bundle: RoleProcessContextBundle, input: ConfiguredTr
     HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     HOPI_GOAL_KEY: input.goalKey,
+    HOPI_GOAL_ID: input.goalKey,
     HOPI_RUN_ID: input.runId,
     HOPI_STEP_ID: input.stepId,
+    ...(input.projectId ? { HOPI_PROJECT_ID: input.projectId } : {}),
+    ...(input.taskRef ? { HOPI_WORK_ID: input.taskRef } : {}),
     ...(input.taskRef ? { HOPI_TASK_REF: input.taskRef } : {}),
     ...(input.role ? { HOPI_ROLE: input.role } : {}),
   }
 }
 
 function placeholderValues(options: {
-  bundle: RoleProcessContextBundle
+  bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
 }) {
   return {
@@ -206,6 +246,9 @@ function placeholderValues(options: {
     BROWSER_HARNESS_DIR: options.bundle.browserHarnessDir,
     BROWSER_HARNESS_ARTIFACT_DIR: options.bundle.browserHarnessArtifactDir,
     GOAL_KEY: options.input.goalKey,
+    GOAL_ID: options.input.goalKey,
+    PROJECT_ID: options.input.projectId ?? '',
+    WORK_ID: options.input.taskRef ?? '',
     TASK_REF: options.input.taskRef ?? '',
     ROLE: options.input.role ?? '',
     RUN_ID: options.input.runId,

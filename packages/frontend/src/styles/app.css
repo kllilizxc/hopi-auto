@@ -1,0 +1,35 @@
+@layer theme, base, components, utilities;
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@import "@heroui/styles/base" layer(base);
+@import "@heroui/styles/base/scrollbar.css" layer(base);
+
+@import "@heroui/styles/components/alert.css" layer(components);
+@import "@heroui/styles/components/badge.css" layer(components);
+@import "@heroui/styles/components/button.css" layer(components);
+@import "@heroui/styles/components/button-group.css" layer(components);
+@import "@heroui/styles/components/card.css" layer(components);
+@import "@heroui/styles/components/chip.css" layer(components);
+@import "@heroui/styles/components/close-button.css" layer(components);
+@import "@heroui/styles/components/description.css" layer(components);
+@import "@heroui/styles/components/disclosure.css" layer(components);
+@import "@heroui/styles/components/field-error.css" layer(components);
+@import "@heroui/styles/components/input.css" layer(components);
+@import "@heroui/styles/components/label.css" layer(components);
+@import "@heroui/styles/components/link.css" layer(components);
+@import "@heroui/styles/components/list-box.css" layer(components);
+@import "@heroui/styles/components/list-box-item.css" layer(components);
+@import "@heroui/styles/components/modal.css" layer(components);
+@import "@heroui/styles/components/scroll-shadow.css" layer(components);
+@import "@heroui/styles/components/select.css" layer(components);
+@import "@heroui/styles/components/spinner.css" layer(components);
+@import "@heroui/styles/components/surface.css" layer(components);
+@import "@heroui/styles/components/tabs.css" layer(components);
+@import "@heroui/styles/components/textarea.css" layer(components);
+@import "@heroui/styles/components/textfield.css" layer(components);
+
+@import "@heroui/styles/themes/default";
+@import "@heroui/styles/utilities";
+@import "@heroui/styles/variants";

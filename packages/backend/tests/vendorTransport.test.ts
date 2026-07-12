@@ -5,7 +5,7 @@ import {
 } from '../src/agent/vendorTransport'
 
 const bundle = {
-  projectRoot: '/tmp/project',
+  runtimeScratchDir: '/tmp/run/scratch',
   goalFile: '/tmp/goal.md',
   designFile: '/tmp/design.md',
   contextFile: '/tmp/context.md',
@@ -58,6 +58,8 @@ describe('resolveConfiguredTransportCommand', () => {
       'never',
       '-c',
       'model_reasoning_effort="xhigh"',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
       'exec',
       '--skip-git-repo-check',
       '-s',
@@ -91,6 +93,8 @@ describe('resolveConfiguredTransportCommand', () => {
       '/usr/local/bin/codex',
       '-a',
       'never',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
       'exec',
       '--skip-git-repo-check',
       '-s',
@@ -102,6 +106,22 @@ describe('resolveConfiguredTransportCommand', () => {
       '--json',
       '-',
     ])
+  })
+
+  test('fails closed instead of dropping image inputs on an unsupported transport', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
+
+    await expect(
+      resolveConfiguredTransportCommand({
+        config: {
+          transport: 'claude',
+          cwdMode: 'root',
+          permissionMode: 'dontAsk',
+        } satisfies RoleTransportConfig,
+        bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
+        input,
+      }),
+    ).rejects.toThrow('require the Codex transport')
   })
 
   test('passes extra writable roots through codex --add-dir arguments', async () => {
@@ -138,6 +158,38 @@ describe('resolveConfiguredTransportCommand', () => {
       '--json',
       '-',
     ])
+  })
+
+  test('grants workspace-write Engineering Runs network access', async () => {
+    for (const role of ['generator', 'reviewer']) {
+      await Bun.write(bundle.promptFile, `# prompt for ${role}\n`)
+
+      const command = await resolveConfiguredTransportCommand({
+        config: {
+          transport: 'codex',
+          binary: '/usr/local/bin/codex',
+          cwdMode: 'worktree',
+          sandbox: 'workspace-write',
+          approvalPolicy: 'never',
+        } satisfies RoleTransportConfig,
+        bundle,
+        input: { ...input, role },
+      })
+
+      expect(command.cmd).toEqual([
+        '/usr/local/bin/codex',
+        '-a',
+        'never',
+        '-c',
+        'sandbox_workspace_write.network_access=true',
+        'exec',
+        '--skip-git-repo-check',
+        '-s',
+        'workspace-write',
+        '--json',
+        '-',
+      ])
+    }
   })
 
   test('builds a claude print command that reads the bundled prompt from stdin', async () => {
@@ -234,7 +286,7 @@ describe('resolveConfiguredTransportCommand', () => {
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       env: {
-        HOPI_PROJECT_ROOT: bundle.projectRoot,
+        HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
         HOPI_CONTEXT_FILE: bundle.contextFile,
         HOPI_OUTCOME_FILE: bundle.outcomeFile,
         HOPI_GOAL_FILE: bundle.goalFile,
@@ -243,6 +295,8 @@ describe('resolveConfiguredTransportCommand', () => {
         HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
         HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
         HOPI_GOAL_KEY: input.goalKey,
+        HOPI_GOAL_ID: input.goalKey,
+        HOPI_WORK_ID: input.taskRef,
         HOPI_TASK_REF: input.taskRef,
         HOPI_ROLE: input.role,
         HOPI_RUN_ID: input.runId,

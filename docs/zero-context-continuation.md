@@ -2,6 +2,10 @@
 
 Status date: 2026-06-04
 
+> This guide describes the deleted pre-MVP implementation. The MVP cutover completed on
+> 2026-07-11. Read [mvp_design.md](./mvp_design.md) for current work; every implementation path and
+> continuation instruction below is historical evidence only.
+
 This is the first document a zero-context AI should read before touching the repo.
 
 If you need deeper history after this guide, read:

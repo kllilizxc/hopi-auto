@@ -1,175 +1,100 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AlertCircle, ArrowLeft, FileText, Loader2 } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
-import { ScrollContainer } from '../components/ScrollContainer'
-import { type GoalDocsSnapshot, readGoalDocs } from '../lib/api'
-import { buildGoalRoute, goalScopedQueryKey } from '../lib/goalScope'
-import { cn } from '../lib/utils'
+import { Bot, FileText, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Navigate, useParams } from 'react-router-dom'
+import {
+  AppAlert,
+  AppButton,
+  AppScrollShadow,
+  AppSpinner,
+  CountBadge,
+  StatusChip,
+} from '../components/ui'
+import { readGoal } from '../lib/api'
+import { cn, excerpt, formatTime } from '../lib/utils'
+
+const CONTRACT_KEY = '__goal_contract__'
 
 export function GoalDocsPage() {
-  const routeParams = useParams<{ goalKey: string; projectKey: string }>()
-  const goalKey = routeParams.goalKey
-  const projectKey = routeParams.projectKey
-  const boardHref = buildGoalRoute(
-    goalKey ? { goalKey, projectKey: projectKey ?? null } : null,
-    'board',
-  )
-
-  const { data, isLoading, error } = useQuery<GoalDocsSnapshot>({
-    queryKey: goalScopedQueryKey('goal-docs-page', goalKey, projectKey),
-    queryFn: async () => {
-      if (!goalKey) {
-        throw new Error('Missing goal key')
-      }
-
-      return readGoalDocs(goalKey, projectKey)
-    },
-    enabled: Boolean(goalKey),
+  const { projectId, goalId } = useParams()
+  const [selectedDocument, setSelectedDocument] = useState(CONTRACT_KEY)
+  const goalQuery = useQuery({
+    queryKey: ['mvp-goal', projectId, goalId],
+    queryFn: () => readGoal(projectId ?? '', goalId ?? ''),
+    enabled: Boolean(projectId && goalId),
+    refetchInterval: 2_000,
   })
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-[#1A1A1A]">
-        <div className="flex items-center gap-2 text-gray-400">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          Loading docs…
-        </div>
-      </div>
-    )
+  useEffect(() => setSelectedDocument(CONTRACT_KEY), [projectId, goalId])
+
+  if (!projectId || !goalId) return <Navigate to="/projects" replace />
+  if (goalQuery.isLoading) return <div className="full-loading"><AppSpinner size="sm" /> Loading Goal documents</div>
+  if (!goalQuery.data) {
+    return <AppAlert className="full-error"><FileText /><h1>Documents unavailable</h1><p>{goalQuery.error?.message}</p></AppAlert>
   }
 
-  if (error) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-[#1A1A1A] p-6">
-        <div className="max-w-lg rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-200">
-          <div className="flex items-center gap-2 font-medium">
-            <AlertCircle className="w-4 h-4" />
-            Failed to load goal docs
-          </div>
-          <div className="mt-2 text-sm text-red-200/80">
-            {error instanceof Error ? error.message : 'Unknown error'}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const goal = goalQuery.data
+  const selected =
+    selectedDocument === CONTRACT_KEY
+      ? { path: 'goal.md', content: goal.goal.body }
+      : goal.design.find((document) => document.path === selectedDocument) ?? {
+          path: 'goal.md',
+          content: goal.goal.body,
+        }
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#1A1A1A]">
-      <header className="px-6 py-4 border-b border-[#333] shrink-0 flex items-center justify-between gap-4">
+    <div className="docs-page">
+      <header className="docs-header">
         <div>
-          <div className="flex items-center gap-3">
-            <Link
-              to={boardHref}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#333] bg-[#202020] px-3 py-1.5 text-sm text-gray-300 transition hover:border-purple-500/30 hover:text-white"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Board
-            </Link>
-            <h2 className="text-2xl font-bold text-white">Goal Docs</h2>
-          </div>
-          <p className="mt-2 text-sm text-gray-400">
-            Goal Key:{' '}
-            <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-purple-400">
-              {data?.goalKey ?? goalKey}
-            </code>
-            {projectKey && (
-              <>
-                {' '}· Project:{' '}
-                <code className="bg-[#2A2A2A] px-1.5 py-0.5 rounded text-amber-300">
-                  {projectKey}
-                </code>
-              </>
-            )}
-          </p>
+          <span className="eyebrow">{projectId} / {goalId}</span>
+          <h1>Goal Design</h1>
+          <p>Canonical documents are the durable design and traceability surface.</p>
         </div>
       </header>
 
-      <ScrollContainer
-        axis="vertical"
-        className="flex-1 min-h-0"
-        viewportClassName="h-full p-6"
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          <GoalDocCard
-            title="goal.md"
-            subtitle={data?.goal.path ?? 'Goal snapshot'}
-            status={data?.goal.status}
-            content={data?.goal.content}
-          />
-          <GoalDocCard
-            title="design.md"
-            subtitle={data?.design.path ?? 'Design snapshot'}
-            status={data?.design.status}
-            content={data?.design.content}
-          />
-        </div>
-      </ScrollContainer>
-    </div>
-  )
-}
+      {goalQuery.error && <AppAlert className="error-banner">{goalQuery.error.message}</AppAlert>}
 
-function GoalDocCard({
-  title,
-  subtitle,
-  status,
-  content,
-}: {
-  title: string
-  subtitle: string
-  status?: GoalDocsSnapshot['goal']['status']
-  content?: string
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const normalizedContent = content?.trim() || 'Loading document snapshot...'
-  const hasOverflow =
-    normalizedContent !== 'Loading document snapshot...' &&
-    (normalizedContent.split('\n').length > 6 || normalizedContent.length > 480)
-
-  return (
-    <div className="rounded-2xl border border-[#2f2f2f] bg-[#1D1D1D] p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 font-medium text-white">
-            <FileText className="w-4 h-4 text-purple-400" />
-            {title}
+      <div className="docs-layout">
+        <AppScrollShadow className="docs-index" orientation="auto" aria-label="Documents">
+          <div className="docs-index-heading"><FileText /><span>Documents</span></div>
+          <AppButton className={cn(selectedDocument === CONTRACT_KEY && 'active')} variant="ghost" type="button" onClick={() => setSelectedDocument(CONTRACT_KEY)}>
+            <strong>goal.md</strong>
+            <small>Contract · revision {goal.goal.contractRevision}</small>
+          </AppButton>
+          {goal.design.map((document) => (
+            <AppButton className={cn(selectedDocument === document.path && 'active')} variant="ghost" type="button" key={document.path} onClick={() => setSelectedDocument(document.path)}>
+              <strong>{document.path.split('/').at(-1)}</strong>
+              <small>{excerpt(document.content, 60) || 'Empty document'}</small>
+            </AppButton>
+          ))}
+          {goal.design.length === 0 && <p>No design documents yet.</p>}
+          <div className="docs-note">
+            <Bot />
+            <p>Tell Assistant what to change. It decides whether the instruction updates design only or also requires Planning and code.</p>
           </div>
-          <p className="mt-1 break-all text-xs text-gray-500">{subtitle}</p>
-        </div>
-        {status && (
-          <span
-            className={cn(
-              'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-              status === 'curated'
-                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                : 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300',
-            )}
-          >
-            {status}
-          </span>
-        )}
-      </div>
+        </AppScrollShadow>
 
-      <pre
-        className={cn(
-          'm-0 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-gray-400',
-          !expanded && 'line-clamp-6',
-        )}
-      >
-        {normalizedContent}
-      </pre>
-      {hasOverflow && (
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setExpanded((current) => !current)}
-            className="rounded-lg border border-[#343434] bg-[#111] px-3 py-1.5 text-[11px] font-medium text-gray-300 transition hover:border-purple-500/40 hover:text-white"
-          >
-            {expanded ? 'Collapse doc' : 'Show full doc'}
-          </button>
-        </div>
-      )}
+        <AppScrollShadow className="document-reader" aria-label="Canonical document">
+          <header>
+            <div><small>Canonical document</small><h2>{selected.path}</h2></div>
+            <StatusChip className={`lifecycle-pill ${goal.goal.lifecycle}`} size="sm">{goal.goal.lifecycle}</StatusChip>
+          </header>
+          <pre>{selected.content}</pre>
+        </AppScrollShadow>
+
+        <AppScrollShadow className="evidence-panel" aria-label="Evidence">
+          <div className="docs-index-heading"><ShieldCheck /><span>Evidence</span><CountBadge>{goal.evidence.length}</CountBadge></div>
+          {goal.evidence.length ? goal.evidence
+            .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
+            .map((evidence) => (
+              <article key={evidence.id}>
+                <div><strong>{evidence.id}</strong><time>{formatTime(evidence.createdAt)}</time></div>
+                <p>{excerpt(evidence.body, 150)}</p>
+                <small>{evidence.owner}{evidence.producerRun ? ` · ${evidence.producerRun}` : ''}</small>
+              </article>
+            )) : <p className="empty-copy">Evidence appears as passes complete.</p>}
+        </AppScrollShadow>
+      </div>
     </div>
   )
 }

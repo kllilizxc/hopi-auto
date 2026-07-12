@@ -1,116 +1,99 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from 'react'
-import { AlertCircle, ArrowDown, ChevronDown, ChevronRight, Loader2, Paperclip } from 'lucide-react'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { type GoalAttachmentRef, type MessageFeedItem, goalAssetUrl } from '../lib/api'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  AlertCircle,
+  ArrowDown,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react'
+import {
+  Virtuoso,
+  type Components,
+  type VirtuosoHandle,
+} from 'react-virtuoso'
+import {
+  buildMessageFeedRows,
+  commandTextFromToolSummary,
+  summarizeActivityGroup,
+  type MessageFeedActivityEntry,
+  type MessageFeedDisplayRow,
+  type MessageFeedItem,
+} from '../lib/messageFeed'
 import { cn } from '../lib/utils'
-import { ScrollContainer } from './ScrollContainer'
+import {
+  AppButton,
+  AppBreathingIndicator,
+  AppDisclosure,
+  AppLink,
+  AppScrollShadow,
+  AppSpinner,
+  StatusChip,
+  WorkingIndicator,
+} from './ui'
 
 interface UnifiedMessageFeedProps {
-  goalKey: string
-  projectKey?: string
+  feedKey: string
   items: MessageFeedItem[]
+  emptyState: ReactNode
   isLoading?: boolean
   hasMoreBefore?: boolean
   isLoadingOlder?: boolean
   onLoadOlder?: () => void
-  emptyLabel: string
+  mode?: 'scroll' | 'inline'
+  density?: 'comfortable' | 'compact'
   className?: string
+  ariaLabel?: string
+  onScrollingChange?: (scrolling: boolean) => void
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
+const FEED_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour12: false,
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+interface FeedVirtuosoContext {
+  hasMoreBefore: boolean
+  isLoadingOlder: boolean
+}
 
-const VirtuosoScroller = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<'div'>>(
-  ({ children, className, ...rest }, ref) => (
-    <ScrollContainer
-      axis="vertical"
-      className="h-full"
-      viewportClassName={cn('h-full', className)}
-      viewportRef={ref}
-      viewportProps={rest}
-    >
-      {children}
-    </ScrollContainer>
-  ),
-)
-VirtuosoScroller.displayName = 'VirtuosoScroller'
+const FEED_VIRTUOSO_COMPONENTS: Components<MessageFeedDisplayRow, FeedVirtuosoContext> = {
+  Header: FeedHistoryHeader,
+  Scroller: AppScrollShadow,
+}
 
-type ActivityEntry =
-  | {
-      type: 'tool_block'
-      id: string
-      createdAt: string
-      call?: MessageFeedItem
-      result?: MessageFeedItem
-      runId?: string
-      stepId?: string
-      stepRole?: string
-    }
-  | {
-      type: 'activity_message'
-      id: string
-      createdAt: string
-      item: MessageFeedItem
-      runId?: string
-      stepId?: string
-      stepRole?: string
-    }
-
-type DisplayFeedRow =
-  | {
-      type: 'message'
-      id: string
-      item: MessageFeedItem
-    }
-  | {
-      type: 'action_required'
-      id: string
-      item: MessageFeedItem
-    }
-  | {
-      type: 'activity_group'
-      id: string
-      createdAt: string
-      latestCreatedAt: string
-      entries: ActivityEntry[]
-      runId?: string
-      stepId?: string
-      stepRole?: string
-    }
-
-type NormalizedFeedRow =
-  | Extract<DisplayFeedRow, { type: 'message' }>
-  | Extract<DisplayFeedRow, { type: 'action_required' }>
-  | ActivityEntry
-
-export function UnifiedMessageFeed({
-  goalKey,
-  projectKey,
+export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
+  feedKey,
   items,
+  emptyState,
   isLoading = false,
   hasMoreBefore = false,
   isLoadingOlder = false,
   onLoadOlder,
-  emptyLabel,
+  mode = 'scroll',
+  density = 'comfortable',
   className,
+  ariaLabel = 'Message stream',
+  onScrollingChange,
 }: UnifiedMessageFeedProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const [firstItemIndex, setFirstItemIndex] = useState(INITIAL_FIRST_ITEM_INDEX)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [announceUpdates, setAnnounceUpdates] = useState(true)
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
-  const previousSnapshotRef = useRef<{
-    firstId?: string
-    lastId?: string
-    length: number
-  }>({ length: 0 })
+  const previousSnapshotRef = useRef<{ firstId?: string; lastId?: string; length: number }>({
+    length: 0,
+  })
+  const displayRows = useMemo(() => buildMessageFeedRows(items), [items])
 
   useEffect(() => {
     setExpandedItems({})
     setFirstItemIndex(INITIAL_FIRST_ITEM_INDEX)
+    setIsAtBottom(true)
     previousSnapshotRef.current = { length: 0 }
-  }, [goalKey, projectKey])
-
-  const orderedItems = useMemo(() => items, [items])
-  const displayRows = useMemo(() => buildDisplayRows(orderedItems), [orderedItems])
+  }, [feedKey])
 
   useEffect(() => {
     const previous = previousSnapshotRef.current
@@ -121,8 +104,7 @@ export function UnifiedMessageFeed({
       previous.lastId
     ) {
       const previousFirstIndex = displayRows.findIndex((row) => row.id === previous.firstId)
-      const previousLastIndex = displayRows.findIndex((row) => row.id === previous.lastId)
-      if (previousFirstIndex > 0 && previousLastIndex === displayRows.length - 1) {
+      if (previousFirstIndex > 0) {
         setFirstItemIndex((current) => current - previousFirstIndex)
       }
     }
@@ -134,225 +116,249 @@ export function UnifiedMessageFeed({
     }
   }, [displayRows])
 
+  useEffect(() => {
+    if (isLoadingOlder) {
+      setAnnounceUpdates(false)
+      return
+    }
+    const frame = requestAnimationFrame(() => setAnnounceUpdates(true))
+    return () => cancelAnimationFrame(frame)
+  }, [isLoadingOlder])
+
+  const renderRow = useCallback((row: MessageFeedDisplayRow) => {
+    if (row.type === 'activity_group') {
+      return (
+        <ActivityGroupRow
+          row={row}
+          expanded={expandedItems[row.id] ?? false}
+          onToggle={() =>
+            setExpandedItems((current) => ({
+              ...current,
+              [row.id]: !(current[row.id] ?? false),
+            }))
+          }
+        />
+      )
+    }
+    if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
+    if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
+    return <MessageRow item={row.item} />
+  }, [expandedItems])
+  const itemContent = useCallback(
+    (_index: number, row: MessageFeedDisplayRow) => renderRow(row),
+    [renderRow],
+  )
+  const virtuosoContext = useMemo(
+    () => ({ hasMoreBefore, isLoadingOlder }),
+    [hasMoreBefore, isLoadingOlder],
+  )
+
+  const rootClassName = cn(
+    'unified-message-feed',
+    `unified-message-feed--${mode}`,
+    `unified-message-feed--${density}`,
+    className,
+  )
+
   if (isLoading && displayRows.length === 0) {
     return (
-      <div className={cn('flex items-center gap-2 px-4 text-sm text-gray-500', className)}>
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading messages...
+      <div className={rootClassName}>
+        <div className="unified-message-feed__empty unified-message-feed__empty--loading">
+          <AppSpinner size="sm" />
+          <span>Loading messages…</span>
+        </div>
       </div>
     )
   }
 
-  if (!isLoading && displayRows.length === 0) {
+  if (displayRows.length === 0) {
     return (
-      <div className={cn('px-4 py-6 text-sm text-gray-500', className)}>
-        {emptyLabel}
+      <div className={rootClassName}>
+        <div className="unified-message-feed__empty">{emptyState}</div>
+      </div>
+    )
+  }
+
+  if (mode === 'inline') {
+    return (
+      <div
+        className={rootClassName}
+        role="log"
+        aria-label={ariaLabel}
+        aria-live={announceUpdates ? 'polite' : 'off'}
+      >
+        <div className="unified-message-feed__inline-list">
+          {displayRows.map((row) => (
+            <div key={row.id}>{renderRow(row)}</div>
+          ))}
+        </div>
       </div>
     )
   }
 
   return (
-    <div className={cn('relative h-full min-h-0', className)}>
+    <div
+      className={rootClassName}
+      role="log"
+      aria-label={ariaLabel}
+      aria-live={announceUpdates ? 'polite' : 'off'}
+    >
       <Virtuoso
+        key={feedKey}
         ref={virtuosoRef}
-        className="h-full"
+        className="unified-message-feed__virtuoso"
         data={displayRows}
         firstItemIndex={firstItemIndex}
         initialTopMostItemIndex={Math.max(displayRows.length - 1, 0)}
-        computeItemKey={(_, item) => item.id}
-        followOutput={isAtBottom ? 'smooth' : false}
+        computeItemKey={(_, row) => row.id}
+        followOutput={isAtBottom ? 'auto' : false}
         alignToBottom
+        atTopThreshold={32}
         atBottomThreshold={96}
         atBottomStateChange={setIsAtBottom}
+        isScrolling={onScrollingChange}
         startReached={() => {
-          if (hasMoreBefore && !isLoadingOlder) {
-            onLoadOlder?.()
-          }
+          if (hasMoreBefore && !isLoadingOlder) onLoadOlder?.()
         }}
-        components={{
-          Scroller: VirtuosoScroller,
-          Header: () =>
-            hasMoreBefore || isLoadingOlder ? (
-              <div className="px-4 py-3 text-center text-xs text-gray-500">
-                {isLoadingOlder ? 'Loading older messages…' : 'Scroll up for older messages'}
-              </div>
-            ) : null,
-        }}
-        itemContent={(_, row) =>
-          row.type === 'activity_group' ? (
-            <ActivityGroupRow
-              row={row}
-              expanded={expandedItems[row.id] ?? false}
-              onToggle={() =>
-                setExpandedItems((current) => ({
-                  ...current,
-                  [row.id]: !(current[row.id] ?? false),
-                }))
-              }
-            />
-          ) : row.type === 'action_required' ? (
-            <ActionRequiredRow item={row.item} />
-          ) : (
-            <MessageFeedRow goalKey={goalKey} projectKey={projectKey} item={row.item} />
-          )
-        }
+        increaseViewportBy={{ top: 240, bottom: 320 }}
+        context={virtuosoContext}
+        components={FEED_VIRTUOSO_COMPONENTS}
+        itemContent={itemContent}
       />
 
       {!isAtBottom && (
-        <button
+        <AppButton
+          variant="secondary"
           type="button"
           onClick={() =>
             virtuosoRef.current?.scrollToIndex({
               index: Math.max(displayRows.length - 1, 0),
               behavior: 'smooth',
+              align: 'end',
             })
           }
-          className="absolute right-4 bottom-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#1a1a1a]/95 px-3 py-2 text-xs font-medium text-gray-200 shadow-lg backdrop-blur transition hover:border-white/15 hover:text-white"
+          className="unified-message-feed__latest"
         >
-          <ArrowDown className="h-3.5 w-3.5" />
+          <ArrowDown />
           Latest
-        </button>
+        </AppButton>
       )}
     </div>
   )
-}
+}, messageFeedPropsEqual)
 
-function MessageFeedRow({
-  goalKey,
-  projectKey,
-  item,
-}: {
-  goalKey: string
-  projectKey?: string
-  item: MessageFeedItem
-}) {
-  const isUser = item.kind === 'user_message'
-  const isAssistant = item.kind === 'assistant_message' || item.kind === 'assistant_delta'
-
-  if (!isUser && !isAssistant) {
-    return null
+function messageFeedPropsEqual(
+  previous: UnifiedMessageFeedProps,
+  next: UnifiedMessageFeedProps,
+) {
+  if (
+    previous.feedKey !== next.feedKey ||
+    previous.items !== next.items ||
+    previous.isLoading !== next.isLoading ||
+    previous.hasMoreBefore !== next.hasMoreBefore ||
+    previous.isLoadingOlder !== next.isLoadingOlder ||
+    previous.onLoadOlder !== next.onLoadOlder ||
+    previous.mode !== next.mode ||
+    previous.density !== next.density ||
+    previous.className !== next.className ||
+    previous.ariaLabel !== next.ariaLabel ||
+    previous.onScrollingChange !== next.onScrollingChange
+  ) {
+    return false
   }
 
-  return (
-    <div className={cn('px-4 py-2', isUser ? 'flex justify-end' : 'flex justify-start')}>
-      <div className={cn('w-full', isUser ? 'max-w-[min(100%,42rem)]' : 'max-w-[min(100%,52rem)]')}>
-        {item.attachments && item.attachments.length > 0 ? (
-          <AttachmentRail
-            goalKey={goalKey}
-            projectKey={projectKey}
-            attachments={item.attachments}
-            align={isUser ? 'end' : 'start'}
-          />
-        ) : null}
-
-        {isUser ? (
-          <div className="rounded-[1.6rem] bg-[#2b2b2b] px-4 py-3 text-[15px] leading-7 text-white ring-1 ring-white/8">
-            <div className="whitespace-pre-wrap break-words">{item.text}</div>
-          </div>
-        ) : (
-          <div className="text-[15px] leading-7 text-gray-100">
-            <div className="whitespace-pre-wrap break-words">{item.text}</div>
-            {item.pending ? (
-              <div className="mt-2 inline-flex items-center gap-2 text-xs text-gray-500">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Streaming
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
-    </div>
-  )
+  // The empty-state node is commonly authored inline by the parent. Once the
+  // stream has data it is not rendered, so its changing identity must not
+  // invalidate the virtualized list while a composer or toolbar updates.
+  return previous.items.length > 0 || previous.emptyState === next.emptyState
 }
 
-function AttachmentRail({
-  goalKey,
-  projectKey,
-  attachments,
-  align,
-}: {
-  goalKey: string
-  projectKey?: string
-  attachments: GoalAttachmentRef[]
-  align: 'start' | 'end'
-}) {
+function MessageRow({ item }: { item: MessageFeedItem }) {
+  const isUser = item.kind === 'user_message'
   return (
-    <div className={cn('mb-2 flex flex-wrap gap-2', align === 'end' ? 'justify-end' : 'justify-start')}>
-      {attachments.map((attachment) => (
-        <a
-          key={attachment.assetPath}
-          href={goalAssetUrl(goalKey, attachment.assetPath, projectKey)}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-white/20 hover:bg-white/7"
-        >
-          <div className="h-5 w-5 overflow-hidden rounded-full bg-white/8">
-            <img
-              src={goalAssetUrl(goalKey, attachment.assetPath, projectKey)}
-              alt={attachment.fileName}
-              className="h-full w-full object-cover"
-            />
+    <article className={cn('unified-feed-message-row', isUser ? 'user' : 'assistant')}>
+      <div className="unified-feed-message">
+        {isUser && item.text.trim() ? (
+          <div className="unified-feed-message__bubble">{item.text}</div>
+        ) : !isUser ? (
+          <div className="unified-feed-message__text">{item.text}</div>
+        ) : null}
+        {item.attachments && item.attachments.length > 0 ? (
+          <div className="unified-feed-message__attachments">
+            {item.attachments.map((attachment) => (
+              <AppLink
+                href={attachment.url}
+                key={attachment.reference}
+                target="_blank"
+                rel="noreferrer"
+                title={attachment.fileName}
+              >
+                <img src={attachment.url} alt={attachment.fileName} loading="lazy" />
+              </AppLink>
+            ))}
           </div>
-          <Paperclip className="h-3 w-3 shrink-0 text-gray-400" />
-          <span className="truncate">{attachment.fileName}</span>
-        </a>
-      ))}
-    </div>
+        ) : null}
+        {item.details && item.details.length > 0 ? (
+          <div className="unified-feed-message__details">
+            {item.details.map((detail, index) => (
+              <span key={`${item.id}:detail:${index}`}>{detail}</span>
+            ))}
+          </div>
+        ) : null}
+        {item.pending ? (
+          <StatusChip className="unified-feed-message__pending" color="accent" size="sm" variant="soft">
+            <WorkingIndicator label="Streaming" />
+          </StatusChip>
+        ) : null}
+      </div>
+    </article>
   )
 }
 
 function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
   const [expanded, setExpanded] = useState(false)
   const details = item.details ?? []
-
   return (
-    <div className="px-4 py-2">
-      <div className="max-w-[min(100%,52rem)]">
-        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3 text-sm text-amber-50 shadow-[0_0_0_1px_rgba(0,0,0,0.16)]">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-[11px] font-medium uppercase text-amber-300/90">
-                  {item.label ?? 'Action required'}
-                </span>
-                <span className="text-[11px] text-amber-200/50">
-                  {formatFeedTimestamp(item.createdAt)}
-                </span>
+    <article className="unified-feed-action-row">
+      <AlertCircle />
+      <div>
+        <header>
+          <strong>{item.label ?? 'Action required'}</strong>
+          <time>{formatFeedTimestamp(item.createdAt)}</time>
+        </header>
+        <p>{item.text}</p>
+        {details.length > 0 ? (
+          <>
+            <AppButton variant="ghost" type="button" onClick={() => setExpanded((current) => !current)}>
+              {expanded ? <ChevronDown /> : <ChevronRight />}
+              Details
+            </AppButton>
+            {expanded ? (
+              <div className="unified-feed-action-row__details">
+                {details.map((detail, index) => (
+                  <span key={`${item.id}:action-detail:${index}`}>{detail}</span>
+                ))}
               </div>
-              <div className="mt-1 whitespace-pre-wrap break-words leading-6 text-amber-50">
-                {item.text}
-              </div>
-              {details.length > 0 ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded((current) => !current)}
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs text-amber-200/70 transition hover:text-amber-100"
-                  >
-                    {expanded ? (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    )}
-                    Details
-                  </button>
-                  {expanded ? (
-                    <div className="mt-2 space-y-1.5 text-xs leading-5 text-amber-100/75">
-                      {details.map((detail, index) => (
-                        <div key={`${item.id}:action-detail:${index}`} className="break-words">
-                          {detail}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
+            ) : null}
+          </>
+        ) : null}
       </div>
-    </div>
+    </article>
+  )
+}
+
+function SystemUpdateRow({ item }: { item: MessageFeedItem }) {
+  return (
+    <article className="unified-feed-system-update">
+      <CheckCircle2 />
+      <div>
+        <header>
+          <strong>{item.label ?? 'System update'}</strong>
+          <time>{formatFeedTimestamp(item.createdAt)}</time>
+        </header>
+        <p>{item.text}</p>
+      </div>
+    </article>
   )
 }
 
@@ -361,117 +367,171 @@ function ActivityGroupRow({
   expanded,
   onToggle,
 }: {
-  row: Extract<DisplayFeedRow, { type: 'activity_group' }>
+  row: Extract<MessageFeedDisplayRow, { type: 'activity_group' }>
   expanded: boolean
   onToggle: () => void
 }) {
   const summary = summarizeActivityGroup(row.entries)
+  const pendingStatus = row.entries.find(
+    (entry): entry is Extract<MessageFeedActivityEntry, { type: 'activity_message' }> =>
+      entry.type === 'activity_message' && entry.item.pending === true,
+  )
   const hasPendingEntries = row.entries.some((entry) =>
     entry.type === 'tool_block'
-      ? !entry.result || entry.call?.pending || entry.result?.pending
-      : entry.item.pending,
+      ? (entry.call?.pending === true && !entry.result) || entry.result?.pending === true
+      : entry.item.pending === true,
+  )
+  const hasErrors = row.entries.some((entry) =>
+    entry.type === 'tool_block'
+      ? entry.call?.kind === 'error' || entry.result?.kind === 'error'
+      : entry.item.kind === 'error',
   )
 
-  return (
-    <div className="px-4 py-1.5">
-      <div className="max-w-[min(100%,52rem)]">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition hover:bg-white/[0.04]"
-        >
-          <div className="flex min-w-0 items-center gap-2 text-sm text-gray-400">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 shrink-0 text-gray-600" />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 text-gray-600" />
-            )}
-            {hasPendingEntries ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-500" />
-            ) : null}
-            <span className="truncate">{summary}</span>
-          </div>
-          <span className="shrink-0 text-[11px] text-gray-600">
-            {formatFeedTimestamp(row.latestCreatedAt)}
-          </span>
-        </button>
-
-        {expanded ? (
-          <div className="mt-1 ml-4 border-l border-white/8 pl-4">
-            <div className="space-y-3 py-2">
-              {row.entries.map((entry) =>
-                entry.type === 'tool_block' ? (
-                  <ToolActivityEntry key={entry.id} entry={entry} />
-                ) : (
-                  <StatusActivityEntry key={entry.id} item={entry.item} />
-                ),
-              )}
-            </div>
-          </div>
-        ) : null}
+  if (row.entries.length === 1 && pendingStatus) {
+    return (
+      <div className="unified-feed-waiting" role="status" aria-live="polite">
+        <AppBreathingIndicator />
+        <span>{pendingStatus.item.text}</span>
       </div>
-    </div>
+    )
+  }
+
+  return (
+    <AppDisclosure
+      className={cn('unified-feed-activity', hasErrors && 'error')}
+      isExpanded={expanded}
+      onExpandedChange={onToggle}
+      bodyClassName="unified-feed-activity__entries"
+      summary={
+        <>
+        <span className="unified-feed-activity__summary">
+          {expanded ? <ChevronDown /> : <ChevronRight />}
+          {hasPendingEntries ? <AppBreathingIndicator /> : null}
+          <span>{summary}</span>
+        </span>
+        <time>{formatFeedTimestamp(row.latestCreatedAt)}</time>
+        </>
+      }
+    >
+      {row.entries.map((entry) =>
+        entry.type === 'tool_block' ? (
+          <ToolActivityEntry key={entry.id} entry={entry} />
+        ) : (
+          <StatusActivityEntry key={entry.id} item={entry.item} />
+        ),
+      )}
+    </AppDisclosure>
   )
 }
 
 function ToolActivityEntry({
   entry,
 }: {
-  entry: Extract<ActivityEntry, { type: 'tool_block' }>
+  entry: Extract<MessageFeedActivityEntry, { type: 'tool_block' }>
 }) {
   const toolName = entry.call?.toolName ?? entry.result?.toolName
-  const pending = !entry.result || entry.call?.pending || entry.result?.pending
+  const pending = entry.call?.pending === true && !entry.result
+  const failed = entry.result?.kind === 'error'
   const toolHeader = toolName === 'command' ? 'Command' : toolName ? `Tool · ${toolName}` : 'Tool'
-  const callText = entry.call?.text?.trim()
-  const resultText = entry.result?.text?.trim()
+  const callText = entry.call?.text.trim()
+  const resultText = entry.result?.text.trim()
+
+  if (toolName === 'command') {
+    return (
+      <CommandActivityEntry
+        entry={entry}
+        commandText={commandTextFromToolSummary(callText)}
+        resultText={resultText}
+        pending={pending}
+        failed={failed}
+      />
+    )
+  }
 
   return (
-    <div className="rounded-xl bg-[#151515] px-3 py-3 ring-1 ring-white/6">
-      <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium uppercase tracking-wide text-gray-400">
-            {toolHeader}
-          </span>
+    <div className={cn('unified-feed-tool', failed && 'error')}>
+      <header>
+        <span>
+          <strong>{toolHeader}</strong>
           {pending ? (
-            <span className="inline-flex items-center gap-1 text-gray-500">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Running
-            </span>
+            <em>
+              <WorkingIndicator label="Running" />
+            </em>
           ) : null}
-        </div>
-        <span>{formatFeedTimestamp(entry.result?.createdAt ?? entry.createdAt)}</span>
-      </div>
-
-      {callText ? (
-        <div className="mt-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-gray-300">
-          {callText}
-        </div>
-      ) : null}
-
+        </span>
+        <time>{formatFeedTimestamp(entry.result?.createdAt ?? entry.createdAt)}</time>
+      </header>
+      {callText ? <pre>{callText}</pre> : null}
       {resultText ? (
-        <div className="mt-3 rounded-lg bg-black/20 px-3 py-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-gray-200">
-          {resultText}
-        </div>
+        <pre className="unified-feed-tool__result">{resultText}</pre>
       ) : pending ? (
-        <div className="mt-3 text-xs text-gray-500">Waiting for tool result…</div>
-      ) : null}
+        <p>Waiting for tool result…</p>
+      ) : (
+        <p>No tool result was recorded.</p>
+      )}
     </div>
+  )
+}
+
+function CommandActivityEntry({
+  entry,
+  commandText,
+  resultText,
+  pending,
+  failed,
+}: {
+  entry: Extract<MessageFeedActivityEntry, { type: 'tool_block' }>
+  commandText: string
+  resultText?: string
+  pending: boolean
+  failed: boolean
+}) {
+  return (
+    <AppDisclosure
+      className={cn('unified-feed-command', failed && 'error')}
+      summary={
+        <>
+        <ChevronRight className="unified-feed-command__chevron" />
+        <span className="unified-feed-command__line">
+          {pending ? <WorkingIndicator /> : null}
+          <strong>{pending ? 'Running' : failed ? 'Failed' : 'Ran'}</strong>
+          <code title={commandText || 'Command'}>{commandText || 'Command'}</code>
+        </span>
+        <time>{formatFeedTimestamp(entry.result?.createdAt ?? entry.createdAt)}</time>
+        </>
+      }
+      bodyClassName="unified-feed-command__body"
+    >
+        {commandText ? (
+          <div>
+            <span>Command</span>
+            <pre>{commandText}</pre>
+          </div>
+        ) : null}
+        <div>
+          <span>{failed ? 'Error' : 'Output'}</span>
+          {resultText ? (
+            <pre className="unified-feed-command__result">{resultText}</pre>
+          ) : (
+            <p>{pending ? 'Waiting for command output…' : 'No command output was recorded.'}</p>
+          )}
+        </div>
+    </AppDisclosure>
   )
 }
 
 function StatusActivityEntry({ item }: { item: MessageFeedItem }) {
   return (
-    <div className="text-sm leading-6 text-gray-400">
-      {item.label ? (
-        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">
-          {item.label}
-        </div>
-      ) : null}
-      <div className="whitespace-pre-wrap break-words">{item.text}</div>
+    <div className={cn('unified-feed-status', item.kind === 'error' && 'error')}>
+      <header>
+        <strong>{item.label ?? (item.kind === 'error' ? 'Error' : 'Status')}</strong>
+        <time>{formatFeedTimestamp(item.createdAt)}</time>
+      </header>
+      <p>{item.text}</p>
       {item.details && item.details.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
+        <div>
           {item.details.map((detail, index) => (
-            <span key={`${item.id}:detail:${index}`}>{detail}</span>
+            <span key={`${item.id}:status-detail:${index}`}>{detail}</span>
           ))}
         </div>
       ) : null}
@@ -479,210 +539,21 @@ function StatusActivityEntry({ item }: { item: MessageFeedItem }) {
   )
 }
 
-function buildDisplayRows(items: MessageFeedItem[]): DisplayFeedRow[] {
-  const normalized = buildNormalizedRows(items)
-  const rows: DisplayFeedRow[] = []
-  let activeGroup: Extract<DisplayFeedRow, { type: 'activity_group' }> | null = null
-
-  const flushGroup = () => {
-    if (activeGroup) {
-      rows.push(activeGroup)
-      activeGroup = null
-    }
-  }
-
-  for (const entry of normalized) {
-    if (entry.type === 'message') {
-      flushGroup()
-      rows.push(entry)
-      continue
-    }
-
-    if (entry.type === 'action_required') {
-      flushGroup()
-      rows.push(entry)
-      continue
-    }
-
-    if (!activeGroup || !canJoinActivityGroup(activeGroup, entry)) {
-      flushGroup()
-      activeGroup = {
-        type: 'activity_group',
-        id: `activity-group:${entry.id}`,
-        createdAt: entry.createdAt,
-        latestCreatedAt: entry.createdAt,
-        entries: [entry],
-        runId: entry.runId,
-        stepId: entry.stepId,
-        stepRole: entry.stepRole,
-      }
-      continue
-    }
-
-    activeGroup.entries.push(entry)
-    activeGroup.latestCreatedAt = entry.createdAt
-  }
-
-  flushGroup()
-  return rows
-}
-
-function buildNormalizedRows(items: MessageFeedItem[]) {
-  const rows: NormalizedFeedRow[] = []
-  const toolRowIndexById = new Map<string, number>()
-
-  for (const item of items) {
-    if (item.notification) {
-      rows.push({
-        type: 'action_required',
-        id: `action-required:${item.id}`,
-        item,
-      })
-      continue
-    }
-
-    if (isTextMessage(item)) {
-      rows.push({
-        type: 'message',
-        id: `message:${item.id}`,
-        item,
-      })
-      continue
-    }
-
-    const toolRowId = getToolRowId(item)
-    if (item.kind === 'tool_call' && toolRowId) {
-      rows.push({
-        type: 'tool_block',
-        id: toolRowId,
-        createdAt: item.createdAt,
-        call: item,
-        runId: item.runId,
-        stepId: item.stepId,
-        stepRole: item.stepRole,
-      })
-      toolRowIndexById.set(toolRowId, rows.length - 1)
-      continue
-    }
-
-    if (item.kind === 'tool_result' && toolRowId) {
-      const existingIndex = toolRowIndexById.get(toolRowId)
-      if (existingIndex !== undefined) {
-        const existingRow = rows[existingIndex]
-        if (existingRow && 'type' in existingRow && existingRow.type === 'tool_block') {
-          rows[existingIndex] = {
-            ...existingRow,
-            result: item,
-          }
-          continue
-        }
-      }
-
-      rows.push({
-        type: 'tool_block',
-        id: toolRowId,
-        createdAt: item.createdAt,
-        result: item,
-        runId: item.runId,
-        stepId: item.stepId,
-        stepRole: item.stepRole,
-      })
-      continue
-    }
-
-    rows.push({
-      type: 'activity_message',
-      id: `activity:${item.id}`,
-      createdAt: item.createdAt,
-      item,
-      runId: item.runId,
-      stepId: item.stepId,
-      stepRole: item.stepRole,
-    })
-  }
-
-  return rows
-}
-
-function canJoinActivityGroup(
-  group: Extract<DisplayFeedRow, { type: 'activity_group' }>,
-  entry: ActivityEntry,
-) {
-  return (group.runId ?? '') === (entry.runId ?? '') && (group.stepId ?? '') === (entry.stepId ?? '')
-}
-
-function summarizeActivityGroup(entries: ActivityEntry[]) {
-  const toolEntries = entries.filter(
-    (entry): entry is Extract<ActivityEntry, { type: 'tool_block' }> => entry.type === 'tool_block',
-  )
-  const statusEntries = entries.filter(
-    (entry): entry is Extract<ActivityEntry, { type: 'activity_message' }> =>
-      entry.type === 'activity_message',
-  )
-
-  const pendingAssistantStatus = statusEntries.find(
-    (entry) => entry.item.pending && entry.item.role === 'assistant',
-  )?.item
-
-  if (pendingAssistantStatus) {
-    return pendingAssistantStatus.text
-  }
-
-  if (toolEntries.length > 0) {
-    if (toolEntries.length === 1) {
-      const toolName = toolEntries[0].call?.toolName ?? toolEntries[0].result?.toolName
-      if (toolName === 'command') {
-        return '已运行命令'
-      }
-      if (toolName) {
-        return `已调用 ${toolName}`
-      }
-      return '已调用工具'
-    }
-
-    const isCommandBurst = toolEntries.every(
-      (entry) => (entry.call?.toolName ?? entry.result?.toolName) === 'command',
-    )
-    return isCommandBurst
-      ? `已运行 ${toolEntries.length} 条命令`
-      : `已调用 ${toolEntries.length} 个工具步骤`
-  }
-
-  const firstStatus = statusEntries[0]?.item
-  if (!firstStatus) {
-    return '系统活动'
-  }
-
-  const compact = firstStatus.text.trim().replace(/\s+/g, ' ')
-  if (compact.length <= 72) {
-    return compact
-  }
-
-  return statusEntries.length > 1 ? `已更新 ${statusEntries.length} 条状态` : '状态更新'
-}
-
-function getToolRowId(item: MessageFeedItem) {
-  if (!item.toolInvocationKey) {
-    return undefined
-  }
-
-  return `tool:${item.runId ?? ''}:${item.stepId ?? ''}:${item.toolInvocationKey}`
-}
-
-function isTextMessage(item: MessageFeedItem) {
-  return (
-    item.kind === 'user_message' ||
-    item.kind === 'assistant_message' ||
-    item.kind === 'assistant_delta'
-  )
-}
-
 function formatFeedTimestamp(timestamp: string) {
-  return new Date(timestamp).toLocaleString([], {
-    hour12: false,
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return FEED_TIME_FORMATTER.format(new Date(timestamp))
+}
+
+function FeedHistoryHeader({ context }: { context: FeedVirtuosoContext }) {
+  if (!context.hasMoreBefore && !context.isLoadingOlder) return null
+  return (
+    <div className="unified-message-feed__history-status">
+      {context.isLoadingOlder ? (
+        <>
+          <AppSpinner size="sm" /> Loading older messages…
+        </>
+      ) : (
+        'Scroll up for older messages'
+      )}
+    </div>
+  )
 }

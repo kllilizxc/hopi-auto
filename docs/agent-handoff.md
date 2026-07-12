@@ -2,6 +2,10 @@
 
 Status date: 2026-06-04
 
+> This ledger describes the deleted pre-MVP implementation. The MVP cutover completed on
+> 2026-07-11. Forward work follows [mvp_design.md](./mvp_design.md); every path and "current"
+> statement below is historical evidence, not an available compatibility surface.
+
 This document is the exhaustive handoff ledger for an agent with no prior chat context.
 
 Read [docs/zero-context-continuation.md](/Users/realizer/Code/hopi-claude/docs/zero-context-continuation.md) first if you need the curated start-here guide. This file remains the exhaustive ledger.

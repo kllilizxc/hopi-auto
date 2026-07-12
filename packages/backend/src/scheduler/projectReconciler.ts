@@ -1,0 +1,516 @@
+import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
+import type { WorkRuntimeFacts } from '../domain/workProjection'
+import type { PublicationCoordinator } from '../publication/publisher'
+import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
+import { createCompletionStructureVerifier } from '../runtime/completionVerifier'
+import { type GoalController, createGoalController } from '../runtime/goalController'
+import {
+  type PassOutcomeApplication,
+  type PassOutcomeCoordinator,
+  createPassOutcomeCoordinator,
+} from '../runtime/passOutcomeCoordinator'
+import {
+  type ProjectPreparationResult,
+  type ProjectPreparer,
+  createProjectPreparer,
+} from '../runtime/projectPreparation'
+import { type RoleContextStager, createRoleContextStager } from '../runtime/roleContextStager'
+import {
+  type RunAttemptRecorder,
+  type RunAttemptStore,
+  createRunAttemptStore,
+} from '../runtime/runAttemptStore'
+import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
+import {
+  type StableWorktreeManager,
+  createStableWorktreeManager,
+} from '../runtime/stableWorktreeManager'
+import { TaskCheckpointError, checkpointTaskWorktree } from '../runtime/taskCheckpoint'
+import type { GoalPackageStore } from '../storage/goalPackageStore'
+import { type ReconcileDecision, decideGoalReconciliation } from './reconcileDecision'
+
+export interface ProjectReconcilerOptions {
+  homeRoot: string
+  projectId: string
+  projectRoot: string
+  store: GoalPackageStore
+  publisher: PublicationCoordinator
+  roleRunner: RoleRunner
+  contextStager?: RoleContextStager
+  worktrees?: StableWorktreeManager
+  outcomes?: PassOutcomeCoordinator
+  attempts?: RunAttemptStore
+  integrator?: C1Integrator
+  goalController?: GoalController
+  now?: () => Date
+  createRunId?: () => string
+  checkpointTask?: typeof checkpointTaskWorktree
+  preparer?: ProjectPreparer
+  preparationTimeoutMs?: number
+  operationalRetryBaseMs?: number
+  onProjectBlocked?(input: {
+    projectId: string
+    reason: string
+    commit?: string
+  }): Promise<void> | void
+  onReleaseUpdated?(input: { projectId: string; commit: string }): Promise<void> | void
+}
+
+export type ProjectReconcileResult =
+  | { kind: 'wait'; decision: ReconcileDecision }
+  | { kind: 'planning_ensured'; workId: string }
+  | { kind: 'attention_ensured'; attentionId: string }
+  | { kind: 'goal_completed'; attentionId: string }
+  | { kind: 'cancellation_finished' }
+  | {
+      kind: 'pass_finished'
+      workId: string
+      runId: string
+      result: string
+      application: string
+    }
+  | { kind: 'project_blocked'; reason: string; commit?: string }
+
+export interface ProjectReconciler {
+  reconcileGoal(
+    goalId: string,
+    runtime?: Partial<WorkRuntimeFacts>,
+  ): Promise<ProjectReconcileResult>
+  liveWorkIds(): ReadonlySet<string>
+  operationallyDeferredWorkIds?(goalId: string, observedAt?: Date): ReadonlySet<string>
+  interruptRuns(goalId?: string): void
+}
+
+export function createProjectReconciler(options: ProjectReconcilerOptions): ProjectReconciler {
+  const now = options.now ?? (() => new Date())
+  const createRunId = options.createRunId ?? (() => `R-${crypto.randomUUID()}`)
+  const checkpointTask = options.checkpointTask ?? checkpointTaskWorktree
+  const preparer = options.preparer ?? createProjectPreparer()
+  const contextStager =
+    options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
+  const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
+  const outcomes =
+    options.outcomes ?? createPassOutcomeCoordinator(options.store, options.publisher, { now })
+  const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
+  const integrator =
+    options.integrator ??
+    createC1Integrator(options.homeRoot, options.store, options.publisher, now)
+  const completion = createCompletionStructureVerifier(options.store)
+  const goalController =
+    options.goalController ??
+    createGoalController(options.store, {
+      now,
+      verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
+    })
+  const live = new Set<string>()
+  const runControllers = new Map<string, AbortController>()
+  const operationalRetries = new Map<string, { failures: number; retryAt: number }>()
+  const operationalRetryBaseMs = options.operationalRetryBaseMs ?? 30_000
+  const deferredWorkIds = (goalId: string, observedAt = now()) => {
+    const prefix = `${goalId}/`
+    return new Set(
+      [...operationalRetries.entries()].flatMap(([key, retry]) =>
+        key.startsWith(prefix) && retry.retryAt > observedAt.getTime()
+          ? [key.slice(prefix.length)]
+          : [],
+      ),
+    )
+  }
+
+  return {
+    interruptRuns(goalId) {
+      const goalPrefix = goalId ? `${goalId}/` : null
+      for (const [key, controller] of runControllers) {
+        if (!goalPrefix || key.startsWith(goalPrefix)) controller.abort()
+      }
+    },
+    liveWorkIds() {
+      return new Set(live)
+    },
+    operationallyDeferredWorkIds(goalId, observedAt = now()) {
+      return deferredWorkIds(goalId, observedAt)
+    },
+    async reconcileGoal(goalId, runtime = {}) {
+      await readSoftwareDeliveryProfile()
+      const goalPackage = await options.store.readPackage(goalId)
+      const livePrefix = `${goalId}/`
+      const localLiveWorkIds = [...live]
+        .filter((key) => key.startsWith(livePrefix))
+        .map((key) => key.slice(livePrefix.length))
+      const facts: WorkRuntimeFacts = {
+        projectEligible: runtime.projectEligible ?? true,
+        projectAttentionOpen: runtime.projectAttentionOpen ?? false,
+        liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
+        operationallyDeferredWorkIds:
+          runtime.operationallyDeferredWorkIds ?? deferredWorkIds(goalId),
+        passCapacity: {
+          planner: runtime.passCapacity?.planner ?? true,
+          generator: runtime.passCapacity?.generator ?? true,
+          reviewer: runtime.passCapacity?.reviewer ?? true,
+        },
+        now: runtime.now ?? now(),
+        maxAttempts: 3,
+      }
+      const decision = decideGoalReconciliation({
+        projectId: options.projectId,
+        goalId,
+        goalPackage,
+        runtime: facts,
+        completionStructureValid: true,
+      })
+
+      if (decision.kind === 'wait') return { kind: 'wait', decision }
+      if (decision.kind === 'ensure_planning') {
+        const work = await goalController.ensurePlanning(
+          goalId,
+          'Perform the final semantic assessment or refresh the delivery plan.',
+        )
+        return { kind: 'planning_ensured', workId: work.attributes.id }
+      }
+      if (decision.kind === 'ensure_attention') {
+        const attention = await goalController.ensureAttemptsAttention(goalId, decision.workId)
+        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
+      }
+      if (decision.kind === 'complete_goal') {
+        await goalController.completeGoal(goalId, decision.attentionId)
+        return { kind: 'goal_completed', attentionId: decision.attentionId }
+      }
+      if (decision.kind === 'finish_cancellation') {
+        await goalController.cancelGoal(goalId)
+        return { kind: 'cancellation_finished' }
+      }
+
+      const { workId, responsibility } = decision
+      const liveKey = `${goalId}/${workId}`
+      if (live.has(liveKey)) return { kind: 'wait', decision }
+      live.add(liveKey)
+      const runController = new AbortController()
+      runControllers.set(liveKey, runController)
+      const runId = createRunId()
+      let attempt: RunAttemptRecorder | null = null
+      try {
+        const worktreeInput = {
+          projectRoot: options.projectRoot,
+          projectId: options.projectId,
+          goalId,
+          workId,
+        }
+        const worktree =
+          responsibility === 'planner'
+            ? null
+            : responsibility === 'reviewer'
+              ? await worktrees.prepareClean(worktreeInput)
+              : await worktrees.prepare(worktreeInput)
+        const context = await contextStager.prepare({
+          projectRoot: options.projectRoot,
+          projectId: options.projectId,
+          goalId,
+          workId,
+          runId,
+          responsibility,
+        })
+        attempt = await attempts
+          .start({
+            projectId: options.projectId,
+            goalId,
+            workId,
+            runId,
+            responsibility,
+            runRoot: context.runRoot,
+          })
+          .catch(() => null)
+        if (worktree) {
+          const preparation = await preparer.prepare({
+            projectRoot: worktree.path,
+            runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
+            timeoutMs: options.preparationTimeoutMs,
+          })
+          await attempt?.record(preparationEvent(responsibility, preparation))
+          if (preparation.kind !== 'ready') {
+            if (preparation.kind === 'source_changed') {
+              await worktrees.prepareClean({
+                projectRoot: options.projectRoot,
+                projectId: options.projectId,
+                goalId,
+                workId,
+              })
+            }
+            if (responsibility === 'reviewer') {
+              const outcome: RoleRunResult = {
+                result: 'reject',
+                summary: preparationFailureSummary(preparation),
+                artifacts: [preparation.logPath],
+                exitCode: preparation.exitCode,
+              }
+              const application = await outcomes.apply({
+                goalId,
+                workId,
+                runId,
+                responsibility,
+                context,
+                outcome,
+              })
+              await finishAttempt(attempt, options.store, goalId, outcome, application)
+              return {
+                kind: 'pass_finished',
+                workId,
+                runId,
+                result: outcome.result,
+                application: application.kind,
+              }
+            }
+            await appendPreparationDiagnostic(context.promptFile, preparation)
+          }
+        }
+        let outcome = await options.roleRunner.run(
+          {
+            projectId: options.projectId,
+            goalId,
+            workId,
+            runId,
+            responsibility,
+            cwd: worktree?.path ?? context.proposalRoot,
+            context,
+            signal: runController.signal,
+          },
+          attempt ? { onEvent: (event) => attempt?.record(event) } : undefined,
+        )
+        if (runController.signal.aborted) {
+          await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
+          return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+        }
+        if (responsibility === 'generator' && worktree) {
+          try {
+            await checkpointTask({
+              worktreePath: worktree.path,
+              projectId: options.projectId,
+              goalId,
+              workId,
+              runId,
+            })
+          } catch (error) {
+            const summary = `Task checkpoint failed: ${errorMessage(error)}`
+            if (!(error instanceof TaskCheckpointError) || error.code === 'infrastructure') {
+              await options.onProjectBlocked?.({
+                projectId: options.projectId,
+                reason: summary,
+              })
+              await attempt?.finish({
+                outcome: {
+                  result: 'fail',
+                  summary,
+                  exitCode: outcome.exitCode,
+                },
+                application: 'project_blocked',
+              })
+              return {
+                kind: 'project_blocked',
+                reason: summary,
+              }
+            }
+            outcome = {
+              result: 'fail',
+              summary,
+              artifacts: [],
+              exitCode: outcome.exitCode,
+            }
+          }
+        }
+
+        if (outcome.failureKind === 'operational') {
+          scheduleOperationalRetry(operationalRetries, liveKey, now(), operationalRetryBaseMs)
+          await attempt?.finish({ outcome, application: 'operational_failure' })
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: outcome.result,
+            application: 'operational_failure',
+          }
+        }
+        operationalRetries.delete(liveKey)
+
+        const pass = { goalId, workId, runId, responsibility, context, outcome }
+        const application = await outcomes.apply(pass)
+        if (application.kind !== 'integration_required') {
+          await finishAttempt(attempt, options.store, goalId, outcome, application)
+          if (application.kind === 'stale') {
+            await goalController.ensurePlanning(
+              goalId,
+              `Reassess stale ${responsibility} output for Work ${workId}.`,
+            )
+          }
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: application.kind === 'published' ? application.result : outcome.result,
+            application: application.kind,
+          }
+        }
+        if (!worktree) throw new Error('Reviewer integration has no task worktree')
+        const integration = await integrator.integrate({
+          pass,
+          taskWorktreePath: worktree.path,
+          evidence: application.evidence,
+          completedWork: application.work,
+        })
+        if (integration.kind === 'integrated' || integration.kind === 'already_integrated') {
+          await attempt?.finish({ outcome, application: integration.kind })
+          try {
+            await options.onReleaseUpdated?.({
+              projectId: options.projectId,
+              commit: integration.commit,
+            })
+          } catch {
+            // Disposable Preview cleanup cannot change an already durable C1 outcome.
+          }
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: 'success',
+            application: integration.kind,
+          }
+        }
+        if (integration.kind === 'rejected') {
+          const rejectedOutcome = {
+            result: 'reject' as const,
+            summary: `Deterministic integration rejected the reviewed result: ${integration.reason}`,
+            artifacts: [],
+            exitCode: outcome.exitCode,
+          }
+          const rejected = await outcomes.apply({
+            ...pass,
+            outcome: rejectedOutcome,
+          })
+          await finishAttempt(attempt, options.store, goalId, rejectedOutcome, rejected)
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: 'reject',
+            application: rejected.kind,
+          }
+        }
+
+        await options.onProjectBlocked?.({
+          projectId: options.projectId,
+          reason: integration.reason,
+          commit: integration.commit,
+        })
+        await attempt?.finish({
+          outcome: {
+            result: 'fail',
+            summary: integration.reason,
+            exitCode: outcome.exitCode,
+          },
+          application: 'project_blocked',
+        })
+        return {
+          kind: 'project_blocked',
+          reason: integration.reason,
+          commit: integration.commit,
+        }
+      } catch (error) {
+        await attempt?.interrupt(error)
+        throw error
+      } finally {
+        live.delete(liveKey)
+        runControllers.delete(liveKey)
+      }
+    },
+  }
+}
+
+function preparationEvent(responsibility: string, preparation: ProjectPreparationResult) {
+  return {
+    kind: 'message' as const,
+    level: preparation.kind === 'ready' ? ('info' as const) : ('error' as const),
+    role: 'coordinator',
+    content:
+      preparation.kind === 'ready'
+        ? `Project preparation completed before ${responsibility}.`
+        : `Project preparation ${preparation.kind} before ${responsibility}: ${boundedPreparationLogs(preparation.logs)}`,
+  }
+}
+
+function preparationFailureSummary(preparation: ProjectPreparationResult) {
+  return `Project preparation is not ready, so Reviewer was skipped. ${boundedPreparationLogs(preparation.logs)}`
+}
+
+async function appendPreparationDiagnostic(
+  promptFile: string,
+  preparation: ProjectPreparationResult,
+) {
+  const prompt = await Bun.file(promptFile).text()
+  await Bun.write(
+    promptFile,
+    [
+      prompt.trimEnd(),
+      '',
+      '## Project Preparation Diagnostic',
+      '',
+      `Status: ${preparation.kind}`,
+      `Adapter: ${preparation.adapterPath}`,
+      `Log: ${preparation.logPath}`,
+      '',
+      boundedPreparationLogs(preparation.logs),
+      '',
+      'Repair or create scripts/hopi/prepare as part of this Engineering Work when needed. It must be executable, idempotent, and leave Project source unchanged.',
+      '',
+    ].join('\n'),
+  )
+}
+
+function scheduleOperationalRetry(
+  retries: Map<string, { failures: number; retryAt: number }>,
+  key: string,
+  observedAt: Date,
+  baseMs: number,
+) {
+  const failures = (retries.get(key)?.failures ?? 0) + 1
+  const delay = Math.min(baseMs * 2 ** Math.min(failures - 1, 5), 15 * 60_000)
+  retries.set(key, { failures, retryAt: observedAt.getTime() + delay })
+}
+
+function boundedPreparationLogs(logs: string) {
+  return logs.length <= 4_000 ? logs : `${logs.slice(0, 4_000)}\n[prepare log truncated]`
+}
+
+async function finishAttempt(
+  recorder: RunAttemptRecorder | null,
+  store: GoalPackageStore,
+  goalId: string,
+  outcome: RoleRunResult,
+  application: PassOutcomeApplication,
+) {
+  if (!recorder) return
+  const evidenceId = 'evidenceId' in application ? application.evidenceId : null
+  let appliedResult = application.kind === 'published' ? application.result : outcome.result
+  let appliedSummary = outcome.summary
+  if (evidenceId) {
+    const evidence = (await store.readPackage(goalId)).evidence.get(evidenceId)
+    appliedSummary = evidence ? evidenceSummary(evidence.body) : appliedSummary
+  }
+  if (application.kind === 'stale') {
+    appliedSummary = `${appliedSummary} Stale result: ${application.reason}`
+  }
+  if (application.kind === 'attention') appliedResult = outcome.result
+  await recorder.finish({
+    outcome: {
+      result: appliedResult,
+      summary: appliedSummary,
+      exitCode: outcome.exitCode,
+    },
+    application: application.kind,
+  })
+}
+
+function evidenceSummary(body: string) {
+  return body.match(/## Summary\s+([\s\S]+)$/)?.[1]?.trim() ?? body.trim()
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}

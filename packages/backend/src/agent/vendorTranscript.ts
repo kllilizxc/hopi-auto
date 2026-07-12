@@ -2,7 +2,7 @@ import type {
   AgentRuntimeEvent,
   AgentTranscriptEntryKind,
   AgentTranscriptTransport,
-} from './AgentRunner'
+} from './runtimeEvents'
 
 export type ProcessTranscriptFormat =
   | 'plain'
@@ -51,6 +51,10 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
 
   if (itemType === 'command_execution') {
     return normalizeCodexCommandExecutionEvent(eventType, item)
+  }
+
+  if (itemType === 'mcp_tool_call') {
+    return normalizeCodexMcpToolCallEvent(eventType, item)
   }
 
   if (itemType === 'agent_message') {
@@ -110,23 +114,70 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
   return [transcriptEvent('codex', 'status', compactSummary(JSON.stringify(parsed)))]
 }
 
+function normalizeCodexMcpToolCallEvent(
+  eventType: string | undefined,
+  item: Record<string, unknown> | undefined,
+): AgentRuntimeEvent[] {
+  const normalizedEventType = normalizeEventType(eventType)
+  const toolName = extractToolName(item)
+  const invocationKey = stringValue(item?.id) ?? extractToolInvocationKey(item, 'tool_call')
+
+  if (normalizedEventType === 'item.started') {
+    return [
+      transcriptEvent('codex', 'tool_call', buildToolCallSummary(toolName, item), {
+        toolName: toolName ?? undefined,
+        toolInvocationKey: invocationKey ?? undefined,
+        vendorEventType: eventType ?? 'item.started',
+      }),
+    ]
+  }
+
+  if (normalizedEventType === 'item.completed') {
+    const error = extractCodexMcpError(item)
+    return [
+      transcriptEvent(
+        'codex',
+        error ? 'error' : 'tool_result',
+        error ?? extractText(item?.result) ?? 'Tool completed.',
+        {
+          toolName: toolName ?? undefined,
+          toolInvocationKey: invocationKey ?? undefined,
+          vendorEventType: eventType ?? 'item.completed',
+        },
+      ),
+    ]
+  }
+
+  return [
+    transcriptEvent('codex', 'status', humanizeEventType(eventType ?? 'MCP tool call'), {
+      toolName: toolName ?? undefined,
+      toolInvocationKey: invocationKey ?? undefined,
+      vendorEventType: eventType,
+    }),
+  ]
+}
+
 function normalizeCodexCommandExecutionEvent(
   eventType: string | undefined,
   item: Record<string, unknown> | undefined,
 ): AgentRuntimeEvent[] {
   const normalizedEventType = normalizeEventType(eventType)
-  const commandDetail =
-    stringValue(item?.command) ?? extractCommandDetail(item ?? {})
+  const commandDetail = stringValue(item?.command) ?? extractCommandDetail(item ?? {})
   const invocationKey = stringValue(item?.id) ?? extractToolInvocationKey(item, 'tool_call')
   const toolName = 'command'
 
   if (normalizedEventType === 'item.started') {
     return [
-      transcriptEvent('codex', 'tool_call', `Tool call: ${toolName}${commandDetail ? ` (${commandDetail})` : ''}`, {
-        toolName,
-        toolInvocationKey: invocationKey ?? undefined,
-        vendorEventType: eventType ?? 'item.started',
-      }),
+      transcriptEvent(
+        'codex',
+        'tool_call',
+        `Tool call: ${toolName}${commandDetail ? ` (${commandDetail})` : ''}`,
+        {
+          toolName,
+          toolInvocationKey: invocationKey ?? undefined,
+          vendorEventType: eventType ?? 'item.started',
+        },
+      ),
     ]
   }
 
@@ -384,9 +435,15 @@ function extractToolName(value: Record<string, unknown> | undefined) {
   return (
     stringValue(value?.tool_name) ??
     stringValue(value?.name) ??
+    stringValue(value?.tool) ??
     stringValue(objectValue(value?.tool)?.name) ??
     stringValue(objectValue(value?.invocation)?.tool_name)
   )
+}
+
+function extractCodexMcpError(value: Record<string, unknown> | undefined) {
+  const error = value?.error
+  return typeof error === 'string' ? stringValue(error) : extractText(error)
 }
 
 function extractToolInvocationKey(

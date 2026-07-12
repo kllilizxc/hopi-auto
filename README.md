@@ -1,69 +1,50 @@
-# hopi-claude
+# HOPI Auto
 
-HOPI is a file-native autonomous goal orchestration prototype being rebuilt around a Bun-first deterministic core.
+HOPI is a Bun-first, file-native assistant that turns operator conversation into durable Goals and
+keeps advancing them through a fixed Planner, Generator, Reviewer, and deterministic integration
+loop. The operator is interrupted only by targeted Attention, explicit lifecycle controls, or a
+completion update.
 
-## Start Here
+## Authority
 
-For a zero-context handoff, read:
+Read these documents in order:
 
-- `docs/zero-context-continuation.md`
-- `docs/agent-handoff.md`
-- `docs/README.md`
+1. [`docs/mvp_design.md`](docs/mvp_design.md) for product scope and accepted decisions.
+2. [`docs/mvp_document_model.md`](docs/mvp_document_model.md) for canonical files and invariants.
+3. [`docs/mvp_execution.md`](docs/mvp_execution.md) for execution, Assistant, scheduling, and Preview.
+4. [`docs/mvp_publish_protocol.md`](docs/mvp_publish_protocol.md) for publication and crash safety.
+5. [`docs/mvp_state_machine.md`](docs/mvp_state_machine.md) for the derived state-machine reference.
 
-## Core Authority
+Older handoff, deep-dive, Phase 1, and `superpowers` documents are historical evidence only. They
+describe the retired pre-MVP Action, `todo.yml`, merger, Vite runtime, and writable workflow screens
+and are not implementation authority.
 
-The main authority docs are:
-
-- `docs/hopi-phase-1-authority.md`
-- `packages/frontend/MIGRATION.md`
-- `docs/superpowers/plans/2026-05-31-hopi-takeover-stabilization-plan.md`
-- `docs/superpowers/specs/README.md`
-
-`docs/superpowers/specs/README.md` is the complete design-phase index grouped by date, including the 2026-06-02 and 2026-06-03 authority slices that were not previously surfaced from this root README.
-
-## Commands
-
-Install dependencies:
+## Run
 
 ```sh
 bun install
-```
-
-Run the backend API and compatibility UI:
-
-```sh
 bun run dev
 ```
 
-Run the product frontend package:
+Open `http://localhost:3000`. Set `HOPI_HOME` to keep Assistant-home documents and managed Project
+worktrees outside this repository. Set `HOPI_ATTENTION_WEBHOOK_URL` to POST Needs-you and completion
+messages to one provider-neutral notification endpoint; HOPI sends the canonical delivery key in
+the `Idempotency-Key` header. A linked user checkout is never HOPI's publication root.
 
-```sh
-bun run dev:frontend
-```
+For standalone frontend HMR, keep `bun run dev:backend` running and start `bun run dev:frontend` in
+another terminal, then open `http://localhost:5173`. The frontend dev server proxies to port 3000;
+use `HOPI_BACKEND_URL` to override the backend origin.
 
-Current frontend direction:
+`dev:backend` deliberately runs a stable Coordinator process so source edits cannot interrupt an
+active responsibility Run. Use `bun run dev:backend:watch` only for isolated backend development
+when no Goal is executing.
 
-- `packages/frontend` is the active product frontend package.
-- The existing React/Vite code in `packages/frontend` is the baseline to preserve and evolve in place.
-- `packages/backend/src/ui` is a capability and API reference surface, not a UI to copy wholesale.
-- Frontend work should continue in `packages/frontend`, starting from its existing `App.tsx`, `Layout.tsx`, `BoardView.tsx`, `SessionView.tsx`, and `AssistantPanel.tsx`.
-- Before substantial frontend work, read `packages/frontend/MIGRATION.md`.
-
-Run all repo checks:
+Run all production checks with:
 
 ```sh
 bun run check
 ```
 
-Start the backend only:
-
-```sh
-cd packages/backend
-bun run start
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
+The product UI lives in the restored React package at `packages/frontend` and keeps the original
+visual language. Bun imports that package's `index.html` from the backend, so production still has
+one server process and no Vite runtime.

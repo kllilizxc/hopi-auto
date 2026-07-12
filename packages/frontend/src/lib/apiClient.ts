@@ -1,420 +1,194 @@
 import type {
-  TodoBoard,
-  GoalAttachmentRef,
-  AssistantThreadEntry,
-  GoalAssistantThread,
-  GoalAssistantAttachmentUploadResult,
-  AssistantRunSummary,
-  MessageFeedPage,
-  AgentRole,
-  GoalWriteTraceEntry,
-  GoalRunSummary,
-  GoalRunDetail,
-  GoalRunStepBundle,
-  GoalAssistantRunDetail,
-  GoalAssistantRunBundle,
-  GoalDocsSnapshot,
+  AssistantFeedEntry,
+  AppSnapshot,
+  CursorPage,
+  GoalDetail,
+  PreviewStartResult,
   ProjectCodingDefaults,
-  ProjectRecord,
-  ProjectGoalSummary,
-  LaneParallelism,
-  AutomationStatus,
-  ReconcileResult,
+  ReflectionRunSummary,
+  RunAttemptDetail,
+  RunAttemptEvent,
+  RunAttemptSummary,
 } from './apiTypes'
 
-const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? ''
-function apiUrl(path: string) {
-  return configuredApiBase ? `${configuredApiBase}${path}` : path
+interface ApiOptions {
+  method?: 'GET' | 'POST' | 'PATCH'
+  body?: unknown
 }
 
-function goalApiPath(goalKey: string, projectKey: string | undefined, suffix: string) {
-  if (projectKey) {
-    return `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}${suffix}`
-  }
+export type GoalControl = 'pause' | 'resume' | 'cancel' | 'reopen'
 
-  return `/api/goals/${encodeURIComponent(goalKey)}${suffix}`
+export interface CursorPageRequest {
+  before?: string
+  after?: string
+  limit?: number
 }
 
-export function goalAssetUrl(goalKey: string, assetPath: string, projectKey?: string) {
-  const normalized = assetPath.startsWith('assets/') ? assetPath.slice('assets/'.length) : assetPath
-  const encodedPath = normalized
-    .split('/')
-    .filter((segment) => segment.length > 0)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
-  return apiUrl(goalApiPath(goalKey, projectKey, `/assets/${encodedPath}`))
+export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  const formData = options.body instanceof FormData
+  const response = await fetch(path, {
+    method: options.method,
+    headers:
+      options.body === undefined || formData ? undefined : { 'content-type': 'application/json' },
+    body:
+      options.body === undefined
+        ? undefined
+        : formData
+          ? (options.body as FormData)
+          : JSON.stringify(options.body),
+  })
+  const payload = (await response.json()) as T & { error?: string }
+  if (!response.ok) throw new Error(payload.error ?? `Request failed (${response.status})`)
+  return payload
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), init)
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)
-  }
-
-  return (await response.json()) as T
+export function readState() {
+  return apiRequest<AppSnapshot>('/api/state')
 }
 
-export function openGoalEventStream() {
-  return new EventSource(apiUrl('/api/events'))
+export function readAssistantFeed(input: CursorPageRequest = {}) {
+  return apiRequest<CursorPage<AssistantFeedEntry>>(withPage('/api/assistant/feed', input))
 }
 
-export function openGoalAssistantFeedStream(goalKey: string, projectKey?: string, after?: string) {
-  const query = new URLSearchParams()
-  if (after) {
-    query.set('after', after)
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  return new EventSource(
-    apiUrl(`${goalApiPath(goalKey, projectKey, '/assistant/feed/stream')}${suffix}`),
+export function readReflectionRuns(input: CursorPageRequest = {}) {
+  return apiRequest<CursorPage<ReflectionRunSummary>>(
+    withPage('/api/debug/reflections', input),
   )
 }
 
-export function openGoalRunFeedStream(
-  goalKey: string,
-  runId: string,
-  options?: {
-    projectKey?: string
-    stepId?: string | null
-    after?: string
-  },
+export function readReflectionRunEvents(
+  reflectionId: string,
+  input: CursorPageRequest = {},
 ) {
-  const query = new URLSearchParams()
-  if (options?.stepId) {
-    query.set('stepId', options.stepId)
-  }
-  if (options?.after) {
-    query.set('after', options.after)
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  return new EventSource(
-    apiUrl(
-      `${goalApiPath(goalKey, options?.projectKey, `/runs/${encodeURIComponent(runId)}/feed/stream`)}${suffix}`,
+  return apiRequest<CursorPage<RunAttemptEvent>>(
+    withPage(`/api/debug/reflections/${encodeURIComponent(reflectionId)}/events`, input),
+  )
+}
+
+export function readGoal(projectId: string, goalId: string) {
+  return apiRequest<GoalDetail>(goalPath(projectId, goalId))
+}
+
+export function readWorkAttempts(projectId: string, goalId: string, workId: string) {
+  return apiRequest<{ attempts: RunAttemptSummary[] }>(attemptPath(projectId, goalId, workId))
+}
+
+export function readWorkAttempt(
+  projectId: string,
+  goalId: string,
+  workId: string,
+  runId: string,
+) {
+  return apiRequest<RunAttemptDetail>(
+    `${attemptPath(projectId, goalId, workId)}/${encodeURIComponent(runId)}`,
+  )
+}
+
+export function readWorkAttemptEvents(
+  projectId: string,
+  goalId: string,
+  workId: string,
+  runId: string,
+  input: CursorPageRequest = {},
+) {
+  return apiRequest<CursorPage<RunAttemptEvent>>(
+    withPage(
+      `${attemptPath(projectId, goalId, workId)}/${encodeURIComponent(runId)}/events`,
+      input,
     ),
   )
 }
 
-export function readProjects() {
-  return apiRequest<{ projects: ProjectRecord[] }>('/api/projects')
+export function createProject(input: { projectId?: string; repoPath: string }) {
+  return apiRequest<AppSnapshot>('/api/projects', { method: 'POST', body: input })
 }
 
-export function createProject(input: {
-  projectKey?: string
-  name?: string
-  rootDir: string
-  codingDefaults?: ProjectCodingDefaults
-}) {
-  return apiRequest<ProjectRecord>('/api/projects', {
+export function rebindProject(projectId: string, repoPath: string) {
+  return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/rebind`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: { repoPath },
   })
 }
 
 export function updateProjectSettings(
-  projectKey: string,
-  input: {
-    codingDefaults?: ProjectCodingDefaults
-  },
+  projectId: string,
+  codingDefaults: ProjectCodingDefaults | null,
 ) {
-  return apiRequest<ProjectRecord>(`/api/projects/${encodeURIComponent(projectKey)}/settings`, {
+  return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/settings`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: { codingDefaults },
   })
 }
 
-export function readProjectGoals(projectKey: string) {
-  return apiRequest<{ projectKey: string; goals: ProjectGoalSummary[] }>(
-    `/api/projects/${encodeURIComponent(projectKey)}/goals`,
-  )
-}
-
-export function createProjectGoal(
-  projectKey: string,
-  input: {
-    goalKey: string
-    title: string
-    objective: string
-    successCriteria?: string[]
-  },
+export function createGoal(
+  projectId: string,
+  input: { goalId?: string; title: string; objective: string; priority?: number },
 ) {
-  return apiRequest<ProjectGoalSummary>(`/api/projects/${encodeURIComponent(projectKey)}/goals`, {
+  return apiRequest<GoalDetail>(`/api/projects/${encodeURIComponent(projectId)}/goals`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: input,
   })
 }
 
-export function readGoalAutomation(projectKey: string, goalKey: string) {
-  return apiRequest<{ status: AutomationStatus }>(
-    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/automation`,
-  )
-}
-
-export function startGoalAutomation(
-  projectKey: string,
-  goalKey: string,
-  input: {
-    maxSteps?: number
-    maxParallel?: number
-    laneParallelism?: Partial<LaneParallelism>
-  } = {},
-) {
-  return apiRequest<{ status: AutomationStatus; alreadyRunning: boolean }>(
-    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/start`,
-    {
+export function sendInboxMessage(input: {
+  content: string
+  images?: File[]
+  context?: { projectId: string; goalId: string; attentionId?: string }
+}) {
+  if (input.images?.length) {
+    const form = new FormData()
+    form.set('content', input.content)
+    if (input.context) form.set('context', JSON.stringify(input.context))
+    for (const image of input.images) form.append('images', image, image.name)
+    return apiRequest<{ eventId: string; status: 'pending' | 'handled' }>('/api/inbox', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    },
-  )
-}
-
-export function stopGoalAutomation(projectKey: string, goalKey: string) {
-  return apiRequest<{ status: AutomationStatus }>(
-    `/api/projects/${encodeURIComponent(projectKey)}/goals/${encodeURIComponent(goalKey)}/stop`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    },
-  )
-}
-
-export function readGoalBoard(goalKey: string, projectKey?: string) {
-  return apiRequest<TodoBoard>(goalApiPath(goalKey, projectKey, '/board'))
-}
-
-export function readGoalDocs(goalKey: string, projectKey?: string) {
-  return apiRequest<GoalDocsSnapshot>(goalApiPath(goalKey, projectKey, '/docs'))
-}
-
-export async function readGoalAssistantThread(goalKey: string, projectKey?: string) {
-  return apiRequest<GoalAssistantThread>(goalApiPath(goalKey, projectKey, '/assistant/thread'))
-}
-
-export async function readGoalAssistantFeed(
-  goalKey: string,
-  options?: {
-    before?: string
-    limit?: number
-    projectKey?: string
-  },
-) {
-  const query = new URLSearchParams()
-  if (options?.before) {
-    query.set('before', options.before)
-  }
-  if (typeof options?.limit === 'number') {
-    query.set('limit', String(options.limit))
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  return apiRequest<MessageFeedPage>(
-    `${goalApiPath(goalKey, options?.projectKey, '/assistant/feed')}${suffix}`,
-  )
-}
-
-export async function readGoalAssistantRuns(goalKey: string, projectKey?: string) {
-  return apiRequest<{ goalKey: string; runs: AssistantRunSummary[] }>(
-    goalApiPath(goalKey, projectKey, '/assistant/runs'),
-  )
-}
-
-export async function readGoalRuns(goalKey: string, projectKey?: string) {
-  return apiRequest<{ goalKey: string; runs: GoalRunSummary[] }>(
-    goalApiPath(goalKey, projectKey, '/runs'),
-  )
-}
-
-export async function readGoalRun(goalKey: string, runId: string, projectKey?: string) {
-  return apiRequest<GoalRunDetail>(
-    goalApiPath(goalKey, projectKey, `/runs/${encodeURIComponent(runId)}`),
-  )
-}
-
-export async function readGoalRunStepBundle(
-  goalKey: string,
-  runId: string,
-  stepId: string,
-  projectKey?: string,
-) {
-  return apiRequest<GoalRunStepBundle>(
-    goalApiPath(
-      goalKey,
-      projectKey,
-      `/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/bundle`,
-    ),
-  )
-}
-
-export async function readGoalRunFeed(
-  goalKey: string,
-  runId: string,
-  options?: {
-    before?: string
-    limit?: number
-    stepId?: string | null
-    projectKey?: string
-  },
-) {
-  const query = new URLSearchParams()
-  if (options?.before) {
-    query.set('before', options.before)
-  }
-  if (typeof options?.limit === 'number') {
-    query.set('limit', String(options.limit))
-  }
-  if (options?.stepId) {
-    query.set('stepId', options.stepId)
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  return apiRequest<MessageFeedPage>(
-    `${goalApiPath(goalKey, options?.projectKey, `/runs/${encodeURIComponent(runId)}/feed`)}${suffix}`,
-  )
-}
-
-export async function readGoalWriteTraces(
-  goalKey: string,
-  filters?: {
-    taskRef?: string
-    runId?: string
-    stepId?: string
-    role?: AgentRole
-    limit?: number
-  },
-  projectKey?: string,
-) {
-  const query = new URLSearchParams()
-  if (filters?.taskRef) {
-    query.set('taskRef', filters.taskRef)
-  }
-  if (filters?.runId) {
-    query.set('runId', filters.runId)
-  }
-  if (filters?.stepId) {
-    query.set('stepId', filters.stepId)
-  }
-  if (filters?.role) {
-    query.set('role', filters.role)
-  }
-  if (typeof filters?.limit === 'number') {
-    query.set('limit', String(filters.limit))
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-
-  return apiRequest<{ goalKey: string; entries: GoalWriteTraceEntry[] }>(
-    `${goalApiPath(goalKey, projectKey, '/write-traces')}${suffix}`,
-  )
-}
-
-export async function readGoalAssistantRun(
-  goalKey: string,
-  assistantRunId: string,
-  projectKey?: string,
-) {
-  return apiRequest<GoalAssistantRunDetail>(
-    goalApiPath(goalKey, projectKey, `/assistant/runs/${encodeURIComponent(assistantRunId)}`),
-  )
-}
-
-export async function readGoalAssistantRunBundle(
-  goalKey: string,
-  assistantRunId: string,
-  projectKey?: string,
-) {
-  return apiRequest<GoalAssistantRunBundle>(
-    goalApiPath(
-      goalKey,
-      projectKey,
-      `/assistant/runs/${encodeURIComponent(assistantRunId)}/bundle`,
-    ),
-  )
-}
-
-export async function appendGoalAssistantMessage(
-  goalKey: string,
-  input: { content: string; attachments?: GoalAttachmentRef[] },
-  projectKey?: string,
-) {
-  return apiRequest<AssistantThreadEntry>(goalApiPath(goalKey, projectKey, '/assistant/messages'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      content: input.content,
-      attachments: input.attachments ?? [],
-    }),
-  })
-}
-
-export async function runGoalAssistant(
-  goalKey: string,
-  input: {
-    content: string
-    images?: File[]
-    attachments?: GoalAttachmentRef[]
-    appendUserMessage?: boolean
-  },
-  projectKey?: string,
-) {
-  const path = goalApiPath(goalKey, projectKey, '/assistant/run')
-  if (!input.images || input.images.length === 0) {
-    return apiRequest<GoalAssistantRunDetail>(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: input.content,
-        attachments: input.attachments ?? [],
-        appendUserMessage: input.appendUserMessage ?? true,
-      }),
+      body: form,
     })
   }
-
-  const formData = new FormData()
-  formData.set('content', input.content)
-  formData.set('appendUserMessage', String(input.appendUserMessage ?? true))
-  for (const image of input.images) {
-    formData.append('images[]', image)
-  }
-
-  const response = await fetch(apiUrl(path), {
+  return apiRequest<{ eventId: string; status: 'pending' | 'handled' }>('/api/inbox', {
     method: 'POST',
-    body: formData,
+    body: { content: input.content, context: input.context },
   })
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)
-  }
-
-  return (await response.json()) as GoalAssistantRunDetail
 }
 
-export async function uploadGoalAssistantImages(
-  goalKey: string,
-  images: File[],
-  projectKey?: string,
-) {
-  const formData = new FormData()
-  for (const image of images) {
-    formData.append('images[]', image)
-  }
-
-  const response = await fetch(apiUrl(goalApiPath(goalKey, projectKey, '/assistant/attachments')), {
-    method: 'POST',
-    body: formData,
-  })
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(errorBody?.error ?? `Request failed with ${response.status}`)
-  }
-
-  return (await response.json()) as GoalAssistantAttachmentUploadResult
+export function controlGoal(projectId: string, goalId: string, control: GoalControl) {
+  return apiRequest<GoalDetail>(`${goalPath(projectId, goalId)}/${control}`, { method: 'POST' })
 }
 
-export async function reconcileGoal(goalKey: string, projectKey?: string) {
-  return apiRequest<ReconcileResult>(goalApiPath(goalKey, projectKey, '/reconcile'), {
+export function startPreview(projectId: string) {
+  return apiRequest<PreviewStartResult>(
+    `/api/projects/${encodeURIComponent(projectId)}/preview/start`,
+    { method: 'POST' },
+  )
+}
+
+export function stopPreview(projectId: string) {
+  return apiRequest<{ session: unknown }>(
+    `/api/projects/${encodeURIComponent(projectId)}/preview/stop`,
+    { method: 'POST' },
+  )
+}
+
+export function requestPreviewRepair(prompt: string) {
+  return apiRequest<{ eventId: string }>('/api/preview/repair', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
+    body: { prompt },
   })
+}
+
+function goalPath(projectId: string, goalId: string) {
+  return `/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}`
+}
+
+function attemptPath(projectId: string, goalId: string, workId: string) {
+  return `${goalPath(projectId, goalId)}/works/${encodeURIComponent(workId)}/attempts`
+}
+
+function withPage(path: string, input: CursorPageRequest) {
+  const query = new URLSearchParams()
+  if (input.before) query.set('before', input.before)
+  if (input.after) query.set('after', input.after)
+  if (input.limit !== undefined) query.set('limit', String(input.limit))
+  const suffix = query.toString()
+  return suffix ? `${path}?${suffix}` : path
 }

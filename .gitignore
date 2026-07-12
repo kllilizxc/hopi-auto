@@ -9,11 +9,17 @@ dist
 # HOPI runtime artifacts
 .hopi/runtime/
 .hopi/worktrees/
+.hopi/home.yml
+.hopi/projects.yml
+.hopi/projects/
 packages/backend/.hopi/
 packages/backend/tests/tmp/
 packages/backend/tests/shadow-project/.git/
 packages/backend/tests/shadow-project/.hopi/runtime/
 packages/backend/tests/shadow-project/.hopi/worktrees/
+
+# Local UI diagnostics
+/scroll-shadow-*.png
 
 # code coverage
 coverage
@@ -41,4 +47,15 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
-docs
+
+# Keep untracked historical drafts ignored while versioning current authority docs.
+.hopi/docs/
+docs/*
+!docs/mvp_design.md
+!docs/mvp_assistant.md
+!docs/mvp_alignment_plan.md
+!docs/mvp_document_model.md
+!docs/mvp_execution.md
+!docs/mvp_publish_protocol.md
+!docs/mvp_state_machine.md
+!docs/unified_design.md

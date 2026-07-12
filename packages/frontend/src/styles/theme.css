@@ -1,0 +1,217 @@
+/*
+ * HOPI color contract.
+ *
+ * Raw color values live only in this file. Application styles consume the
+ * palette or the semantic aliases below, which keeps every screen on the same
+ * dark, low-saturation system and makes future themes a single-file change.
+ */
+:root,
+.dark,
+[data-theme="dark"] {
+  color-scheme: dark;
+  color: var(--color-text-primary);
+  background: var(--color-bg-app);
+  font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  /* Neutral palette */
+  --color-white: #ffffff;
+  --color-neutral-50: #f4f4f5;
+  --color-neutral-100: #eeeef1;
+  --color-neutral-150: #e3e3e7;
+  --color-neutral-200: #d5d5da;
+  --color-neutral-250: #c7c7cd;
+  --color-neutral-300: #b8b8c0;
+  --color-neutral-350: #aaaab2;
+  --color-neutral-400: #9a9aa3;
+  --color-neutral-450: #888891;
+  --color-neutral-500: #777780;
+  --color-neutral-550: #686870;
+  --color-neutral-600: #5e5e66;
+  --color-neutral-650: #505058;
+  --color-neutral-700: #414147;
+  --color-neutral-750: #343438;
+  --color-neutral-775: #303034;
+  --color-neutral-800: #29292d;
+  --color-neutral-825: #24272e;
+  --color-neutral-850: #20232a;
+  --color-neutral-875: #1a1c22;
+  --color-neutral-900: #171719;
+  --color-neutral-925: #121318;
+  --color-neutral-940: #0e0f13;
+  --color-neutral-950: #0b0c0f;
+  --color-black: #000000;
+
+  /* Brand / Build / Working */
+  --color-accent-100: #eeeaf2;
+  --color-accent-200: #d8b4fe;
+  --color-accent-300: #c9a8e5;
+  --color-accent-400: #af8fc7;
+  --color-accent-450: #9972b5;
+  --color-accent-500: #a855f7;
+  --color-accent-550: #77568d;
+  --color-accent-600: #9333ea;
+  --color-accent-700: #7e22ce;
+  --color-accent-800: #581c87;
+  --color-accent-900: #2d1444;
+
+  /* Success / Done */
+  --color-success-100: #cbd9d3;
+  --color-success-200: #9bc6b2;
+  --color-success-300: #78aa92;
+  --color-success-400: #46d6a0;
+  --color-success-600: #528d76;
+  --color-success-800: #3a4d46;
+  --color-success-900: #1a1d1c;
+
+  /* Warning / Plan */
+  --color-warning-100: #f8dfa8;
+  --color-warning-200: #dfc27f;
+  --color-warning-300: #c8ad67;
+  --color-warning-400: #f5c76b;
+  --color-warning-600: #9a8964;
+  --color-warning-700: #73684f;
+  --color-warning-950: #241800;
+
+  /* Danger */
+  --color-danger-100: #fecdd3;
+  --color-danger-200: #e7a0aa;
+  --color-danger-400: #d98291;
+  --color-danger-800: #7f1d2d;
+  --color-danger-950: #4e141e;
+
+  /* Information / Review */
+  --color-info-100: #cbd9e3;
+  --color-info-200: #a9c4d8;
+  --color-info-300: #7fa4c5;
+  --color-info-400: #67b8d4;
+  --color-info-500: #67a8ff;
+  --color-info-700: #4f7497;
+
+  /* Semantic surfaces and text */
+  --color-bg-app: var(--color-neutral-950);
+  --color-bg-canvas: var(--color-neutral-925);
+  --color-bg-sidebar: var(--color-neutral-940);
+  --color-surface-sunken: var(--color-neutral-950);
+  --color-surface-base: var(--color-neutral-900);
+  --color-surface-raised: var(--color-neutral-850);
+  --color-surface-soft: var(--color-neutral-800);
+  --color-surface-hover: var(--color-neutral-750);
+  --color-surface-overlay: var(--color-neutral-850);
+  --color-text-primary: var(--color-neutral-50);
+  --color-text-secondary: var(--color-neutral-200);
+  --color-text-muted: var(--color-neutral-400);
+  --color-text-faint: var(--color-neutral-500);
+  --color-text-disabled: var(--color-neutral-600);
+  --color-brand: var(--color-accent-500);
+  --color-brand-strong: var(--color-accent-700);
+  --color-brand-text: var(--color-accent-200);
+  --color-working: var(--color-accent-400);
+  --color-success: var(--color-success-400);
+  --color-warning: var(--color-warning-400);
+  --color-danger: var(--color-danger-400);
+  --color-info: var(--color-info-500);
+  --color-state-working: var(--color-working);
+  --color-state-active: var(--color-state-working);
+  --color-state-live: var(--color-success);
+  --color-state-success: var(--color-success);
+  --color-state-done: var(--color-phase-done);
+  --color-state-warning: var(--color-warning);
+  --color-state-danger: var(--color-danger);
+  --color-state-info: var(--color-info);
+
+  /* Kanban phases share the same status families. */
+  --color-phase-plan: var(--color-warning-300);
+  --color-phase-build: var(--color-accent-400);
+  --color-phase-review: var(--color-info-300);
+  --color-phase-done: var(--color-success-300);
+  --color-phase-plan-soft: color-mix(in srgb, var(--color-phase-plan) 12%, transparent);
+  --color-phase-build-soft: color-mix(in srgb, var(--color-phase-build) 12.5%, transparent);
+  --color-phase-review-soft: color-mix(in srgb, var(--color-phase-review) 12.5%, transparent);
+  --color-phase-done-soft: color-mix(in srgb, var(--color-phase-done) 12.5%, transparent);
+
+  /* Elevation is part of the theme because it controls perceived color depth. */
+  --shadow-xs: 0 2px 8px color-mix(in srgb, var(--color-black) 18%, transparent);
+  --shadow-sm: 0 8px 24px color-mix(in srgb, var(--color-black) 20%, transparent);
+  --shadow-md: 0 18px 48px color-mix(in srgb, var(--color-black) 28%, transparent);
+  --shadow-lg: 0 30px 80px color-mix(in srgb, var(--color-black) 46%, transparent);
+  --shadow: var(--shadow-lg);
+
+  /* Stable HOPI aliases used by application styles. */
+  --bg: var(--color-bg-app);
+  --canvas: var(--color-bg-canvas);
+  --sidebar: var(--color-bg-sidebar);
+  --surface-sunken: var(--color-surface-sunken);
+  --surface-raised: var(--color-surface-raised);
+  --surface-soft: var(--color-surface-soft);
+  --surface-hover: var(--color-surface-hover);
+  --border-strong: transparent;
+  --text: var(--color-text-primary);
+  --faint: var(--color-text-faint);
+  --purple: var(--color-brand);
+  --purple-soft: color-mix(in srgb, var(--color-working) 12.5%, transparent);
+  --amber: var(--color-warning);
+  --amber-soft: color-mix(in srgb, var(--color-warning) 11%, transparent);
+  --green: var(--color-success);
+  --red: var(--color-danger);
+  --blue: var(--color-info);
+
+  /* HeroUI semantic tokens */
+  --background: var(--color-bg-app);
+  --foreground: var(--color-text-primary);
+  --surface: var(--color-surface-base);
+  --surface-foreground: var(--color-text-primary);
+  --surface-secondary: var(--color-surface-raised);
+  --surface-secondary-foreground: var(--color-text-primary);
+  --surface-tertiary: var(--color-surface-soft);
+  --surface-tertiary-foreground: var(--color-text-primary);
+  --overlay: var(--color-surface-overlay);
+  --overlay-foreground: var(--color-text-primary);
+  --muted: var(--color-text-muted);
+  --default: var(--color-surface-soft);
+  --default-foreground: var(--color-text-secondary);
+  --accent: var(--color-brand);
+  --accent-foreground: var(--color-white);
+  --success: var(--color-success);
+  --success-foreground: var(--color-neutral-950);
+  --warning: var(--color-warning);
+  --warning-foreground: var(--color-neutral-950);
+  --danger: var(--color-danger);
+  --danger-foreground: var(--color-white);
+  --field-background: var(--color-surface-raised);
+  --field-foreground: var(--color-text-secondary);
+  --field-placeholder: var(--color-text-faint);
+  --field-border: transparent;
+  --field-border-width: 0px;
+  --border: transparent;
+  --separator: transparent;
+  --focus: var(--color-brand);
+  --link: var(--color-text-secondary);
+  --backdrop: color-mix(in srgb, var(--color-black) 70%, transparent);
+  --radius: 0.5rem;
+  --field-radius: 0.5rem;
+  --surface-shadow: var(--shadow-sm);
+  --overlay-shadow: var(--shadow-lg);
+  --app-scrollbar-size: 6px;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--color-neutral-400) 30%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--color-neutral-300) 48%, transparent);
+  --scrollbar-width: thin;
+  --scrollbar-color: transparent transparent;
+  --scrollbar-thumb: var(--app-scrollbar-thumb);
+  --scrollbar-track: transparent;
+  --scrollbar-gutter: auto;
+  --field-shadow:
+    inset 0 1px color-mix(in srgb, var(--color-white) 3.5%, transparent),
+    var(--shadow-xs);
+  --accent-soft: color-mix(in srgb, var(--color-brand) 12%, transparent);
+  --accent-soft-foreground: var(--color-brand-text);
+  --accent-soft-hover: color-mix(in srgb, var(--color-brand) 18%, transparent);
+  --success-soft: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --success-soft-foreground: var(--color-success-200);
+  --warning-soft: color-mix(in srgb, var(--color-warning) 11%, transparent);
+  --warning-soft-foreground: var(--color-warning-200);
+  --danger-soft: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  --danger-soft-foreground: var(--color-danger-200);
+}

@@ -1,0 +1,233 @@
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir, realpath, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { parse } from 'yaml'
+import { HOPI_RELEASE_BRANCH } from '../src/domain/project'
+import {
+  AssistantHomeStoreError,
+  createAssistantHomeStore,
+} from '../src/storage/assistantHomeStore'
+
+const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-home-store')
+
+beforeEach(async () => {
+  await rm(temporaryRoot, { recursive: true, force: true })
+  await mkdir(temporaryRoot, { recursive: true })
+})
+
+afterAll(async () => {
+  await rm(temporaryRoot, { recursive: true, force: true })
+})
+
+describe('createAssistantHomeStore', () => {
+  test('initializes one stable home identity and an empty project-link document', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const store = createAssistantHomeStore(homeRoot)
+
+    const first = await store.initialize()
+    const second = await store.initialize()
+
+    expect(first).toEqual(second)
+    expect(first.homeId).toMatch(/^H-/)
+    expect(await readYaml(store.paths.homeDocumentPath)).toEqual(first)
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 1, projects: [] })
+  })
+
+  test('links a Repo through hopi/release without changing the user checkout', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    await Bun.write(join(repoPath, 'local.txt'), 'uncommitted user content\n')
+    const before = await snapshotUserCheckout(repoPath)
+    const store = createAssistantHomeStore(homeRoot)
+
+    const project = await store.linkProject({ projectId: 'P-1', repoPath })
+
+    expect(project).toEqual({
+      projectId: 'P-1',
+      repoPath: await realpath(repoPath),
+      integrationRoot: store.paths.integrationRoot('P-1'),
+    })
+    expect(await snapshotUserCheckout(repoPath)).toEqual(before)
+    expect(await git(project.integrationRoot, ['branch', '--show-current'])).toBe(
+      HOPI_RELEASE_BRANCH,
+    )
+    expect(await git(project.integrationRoot, ['rev-parse', 'HEAD'])).toBe(before.head)
+    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toEqual({
+      version: 1,
+      projectId: 'P-1',
+    })
+    expect(await store.validateProject('P-1')).toEqual(project)
+  })
+
+  test('reuses an exact link request and rejects identity or Repo conflicts', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const firstRepo = await createRepo(join(temporaryRoot, 'repo-a'))
+    const secondRepo = await createRepo(join(temporaryRoot, 'repo-b'))
+    const first = await store.linkProject({ projectId: 'P-1', repoPath: firstRepo })
+
+    await expect(store.linkProject({ projectId: 'P-1', repoPath: firstRepo })).resolves.toEqual(
+      first,
+    )
+    await expect(
+      store.linkProject({ projectId: 'P-1', repoPath: secondRepo }),
+    ).rejects.toMatchObject({ code: 'project_conflict' })
+    await expect(
+      store.linkProject({ projectId: 'P-2', repoPath: firstRepo }),
+    ).rejects.toMatchObject({ code: 'project_conflict' })
+  })
+
+  test('persists and clears one Project coding-default override in projects.yml', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    await store.linkProject({ projectId: 'P-1', repoPath })
+
+    const configured = await store.updateProjectSettings({
+      projectId: 'P-1',
+      codingDefaults: {
+        transport: 'codex',
+        model: 'gpt-5.3-codex',
+        reasoningEffort: 'high',
+      },
+    })
+
+    expect(configured.codingDefaults).toEqual({
+      transport: 'codex',
+      model: 'gpt-5.3-codex',
+      reasoningEffort: 'high',
+    })
+    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          codingDefaults: {
+            transport: 'codex',
+            model: 'gpt-5.3-codex',
+            reasoningEffort: 'high',
+          },
+        },
+      ],
+    })
+
+    const inherited = await store.updateProjectSettings({
+      projectId: 'P-1',
+      codingDefaults: null,
+    })
+
+    expect(inherited.codingDefaults).toBeUndefined()
+    expect(await readYaml(store.paths.projectLinksPath)).not.toHaveProperty(
+      'projects.0.codingDefaults',
+    )
+  })
+
+  test('rejects another checkout of an already linked Repo', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const alternateCheckout = join(temporaryRoot, 'alternate-checkout')
+    await git(repoPath, ['worktree', 'add', '-b', 'alternate', alternateCheckout, 'HEAD'])
+    await store.linkProject({ projectId: 'P-1', repoPath })
+
+    await expect(
+      store.linkProject({ projectId: 'P-2', repoPath: alternateCheckout }),
+    ).rejects.toMatchObject({ code: 'project_conflict' })
+  })
+
+  test('recovers an initialized managed root whose final project link was not written', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const store = createAssistantHomeStore(homeRoot)
+    await store.initialize()
+
+    const integrationRoot = store.paths.integrationRoot('P-1')
+    await mkdir(join(integrationRoot, '..'), { recursive: true })
+    await git(repoPath, ['worktree', 'add', '-b', HOPI_RELEASE_BRANCH, integrationRoot, 'HEAD'])
+    await mkdir(dirname(store.paths.projectDocumentPath('P-1')), { recursive: true })
+    await Bun.write(store.paths.projectDocumentPath('P-1'), 'version: 1\nprojectId: P-1\n')
+
+    const project = await store.linkProject({ projectId: 'P-1', repoPath })
+
+    expect(project.integrationRoot).toBe(integrationRoot)
+    expect(await store.listProjects()).toEqual([project])
+  })
+
+  test('fails closed when canonical project identity no longer matches', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    await store.linkProject({ projectId: 'P-1', repoPath })
+    await Bun.write(store.paths.projectDocumentPath('P-1'), 'version: 1\nprojectId: P-other\n')
+
+    const validation = store.validateProject('P-1')
+
+    await expect(validation).rejects.toBeInstanceOf(AssistantHomeStoreError)
+    await expect(validation).rejects.toMatchObject({ code: 'invalid_project' })
+  })
+
+  test('rebinds an exported managed worktree after its Repo path moves', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const originalRepo = await createRepo(join(temporaryRoot, 'repo'))
+    const project = await store.linkProject({ projectId: 'P-1', repoPath: originalRepo })
+    const canonicalPath = join(project.integrationRoot, '.hopi/docs/preserved.md')
+    await mkdir(dirname(canonicalPath), { recursive: true })
+    await Bun.write(canonicalPath, '# Preserved canonical state\n')
+    const movedRepo = join(temporaryRoot, 'moved-repo')
+    await rename(originalRepo, movedRepo)
+    const before = await snapshotUserCheckout(movedRepo)
+
+    const rebound = await store.rebindProject({ projectId: 'P-1', repoPath: movedRepo })
+
+    expect(rebound.repoPath).toBe(await realpath(movedRepo))
+    expect(await store.validateProject('P-1')).toEqual(rebound)
+    expect(await Bun.file(canonicalPath).text()).toBe('# Preserved canonical state\n')
+    expect(await snapshotUserCheckout(movedRepo)).toEqual(before)
+  })
+
+  test('does not reconstruct a missing managed root from a potentially stale release ref', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const originalRepo = await createRepo(join(temporaryRoot, 'repo'))
+    const project = await store.linkProject({ projectId: 'P-1', repoPath: originalRepo })
+    await git(originalRepo, ['worktree', 'remove', '--force', project.integrationRoot])
+    const movedRepo = join(temporaryRoot, 'moved-repo')
+    await rename(originalRepo, movedRepo)
+
+    await expect(store.rebindProject({ projectId: 'P-1', repoPath: movedRepo })).rejects.toThrow(
+      'refusing to reconstruct',
+    )
+    expect(await Bun.file(store.paths.projectDocumentPath('P-1')).exists()).toBe(false)
+  })
+})
+
+async function createRepo(path: string) {
+  await mkdir(path, { recursive: true })
+  await git(path, ['init', '-b', 'main'])
+  await git(path, ['config', 'user.email', 'hopi@example.test'])
+  await git(path, ['config', 'user.name', 'HOPI Test'])
+  await Bun.write(join(path, 'README.md'), '# Test Repo\n')
+  await git(path, ['add', 'README.md'])
+  await git(path, ['commit', '-m', 'initial'])
+  return realpath(path)
+}
+
+async function snapshotUserCheckout(repoPath: string) {
+  const [head, branch, status] = await Promise.all([
+    git(repoPath, ['rev-parse', 'HEAD']),
+    git(repoPath, ['branch', '--show-current']),
+    git(repoPath, ['status', '--porcelain']),
+  ])
+  return { head, branch, status }
+}
+
+async function readYaml(path: string) {
+  return parse(await Bun.file(path).text())
+}
+
+async function git(cwd: string, args: string[]) {
+  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${stderr.trim()}`)
+  }
+  return stdout.trim()
+}

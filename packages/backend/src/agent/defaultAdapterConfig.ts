@@ -1,4 +1,4 @@
-import { createProjectPaths } from '../storage/paths'
+import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import {
   type AgentAdapterConfig,
   readAndMigrateAgentAdapterConfig,
@@ -26,8 +26,7 @@ export async function ensureDefaultAgentAdapterConfig(
   rootDir: string,
   codingDefaults?: ProjectCodingDefaultsInput,
 ) {
-  const paths = createProjectPaths(rootDir)
-  const path = paths.adapterConfigPath()
+  const path = agentAdapterConfigPath(rootDir)
   const normalizedDefaults = codingDefaults
     ? normalizeProjectCodingDefaults(codingDefaults)
     : undefined

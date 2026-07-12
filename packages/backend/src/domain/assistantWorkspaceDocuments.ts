@@ -1,0 +1,106 @@
+import { z } from 'zod'
+import {
+  type MarkdownDocument,
+  parseMarkdownDocument,
+  renderMarkdownDocument,
+} from './markdownDocument'
+
+export const INBOX_STATUSES = ['pending', 'handled'] as const
+export const INBOX_SOURCES = ['user', 'reflection'] as const
+export const INBOX_VISIBILITIES = ['public', 'internal'] as const
+export const ROUTE_MODES = ['existing', 'create'] as const
+
+const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+const timestampSchema = z.string().datetime({ offset: true })
+
+export const inboxRouteClaimSchema = z
+  .object({
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    mode: z.enum(ROUTE_MODES),
+  })
+  .strict()
+
+export const inboxContextSchema = z
+  .object({
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    attentionId: stableIdSchema.optional(),
+  })
+  .strict()
+
+export const inboxEventAttributesSchema = z
+  .object({
+    id: stableIdSchema,
+    receivedAt: timestampSchema,
+    status: z.enum(INBOX_STATUSES),
+    source: z.enum(INBOX_SOURCES).default('user'),
+    visibility: z.enum(INBOX_VISIBILITIES).default('public'),
+    sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    attachments: z.array(z.string().min(1)),
+    context: inboxContextSchema.nullable().optional(),
+    routeClaim: inboxRouteClaimSchema.nullable().optional(),
+    handledAt: timestampSchema.nullable(),
+    reply: z.string().min(1).nullable(),
+    disposition: z.string().min(1).nullable(),
+  })
+  .strict()
+  .superRefine((event, context) => {
+    if (event.source === 'user' && event.visibility !== 'public') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'User Inbox events must remain public',
+      })
+    }
+    const handlingFacts = [event.handledAt, event.reply, event.disposition]
+    const handledFacts = handlingFacts.every((value) => value !== null)
+    if ((event.status === 'handled') !== handledFacts) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'handledAt, reply, and disposition must be present exactly when status is handled',
+      })
+    }
+    if (event.status === 'pending' && handlingFacts.some((value) => value !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'pending Inbox event cannot contain partial handling facts',
+      })
+    }
+  })
+
+export const workspaceAttentionAttributesSchema = z
+  .object({
+    id: stableIdSchema,
+    target: z.string().min(1),
+    createdAt: timestampSchema,
+    resolvedAt: timestampSchema.nullable(),
+    notifiedAt: timestampSchema.nullable(),
+  })
+  .strict()
+
+export type InboxRouteClaim = z.infer<typeof inboxRouteClaimSchema>
+export type InboxContext = z.infer<typeof inboxContextSchema>
+export type InboxEventAttributes = z.infer<typeof inboxEventAttributesSchema>
+export type WorkspaceAttentionAttributes = z.infer<typeof workspaceAttentionAttributesSchema>
+export type InboxEventDocument = MarkdownDocument<InboxEventAttributes>
+export type WorkspaceAttentionDocument = MarkdownDocument<WorkspaceAttentionAttributes>
+
+export function parseInboxEventDocument(source: string) {
+  return parseMarkdownDocument(source, inboxEventAttributesSchema, 'Inbox event')
+}
+
+export function parseWorkspaceAttentionDocument(source: string) {
+  return parseMarkdownDocument(source, workspaceAttentionAttributesSchema, 'Workspace Attention')
+}
+
+export const renderInboxEventDocument = renderMarkdownDocument<InboxEventAttributes>
+export const renderWorkspaceAttentionDocument = renderMarkdownDocument<WorkspaceAttentionAttributes>
+
+export async function inboxSourceDigest(content: string, attachments: readonly string[]) {
+  const normalized = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+  const payload = new TextEncoder().encode(
+    `${normalized}\n\u0000${JSON.stringify([...attachments])}`,
+  )
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
+  return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
