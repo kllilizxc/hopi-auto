@@ -244,7 +244,9 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('is not candidate evidence')
     expect(reviewerPrompt).toContain('short-lived local services for this Run')
     expect(reviewerPrompt).toContain('Decide the proof plan before installing optional tools')
-    expect(reviewerPrompt).toContain('If direct proof requires a missing Repo, return replan')
+    expect(reviewerPrompt).toContain(
+      'If direct proof requires a missing Repo, request Assistant management through attention',
+    )
     expect(reviewerPrompt).toContain('Batch independent inspection and checks')
     expect(reviewerPrompt).toContain('accepting a bare URL would leave Project Preview stuck')
     expect(reviewerPrompt).toContain('final post-C1 Preview proof belongs to Planner')

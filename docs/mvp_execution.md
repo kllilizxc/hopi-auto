@@ -430,7 +430,7 @@ an inability to run `git add` inside the model sandbox is therefore expected and
 A responsibility Run resolves ordinary project paths only from the Repo IDs and roots in its
 `HOPI_REPOS_FILE`, and reads integration truth only through the immutable context bundle. It never
 searches sibling, historical, or other Work runtime directories for missing source. If a Repo needed
-to implement or prove the contract is absent from the manifest, Generator returns `replan` instead
+to implement or prove the contract is absent from the manifest, Generator returns `attention` instead
 of guessing a path. Independent reads and checks should be batched where practical; repeated
 discovery and progress narration are not evidence. The Run does not receive the Preview-adapter
 `HOPI_PROJECT_ROOT` variable: exporting the managed integration root there could make a task script
