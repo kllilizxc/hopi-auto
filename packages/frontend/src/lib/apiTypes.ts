@@ -1,8 +1,8 @@
 export type GoalLifecycle = 'active' | 'paused' | 'done' | 'cancelled'
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
-export type WorkBadge = 'Needs you' | 'working' | 'scheduled' | 'queued' | 'waiting'
+export type WorkBadge = 'Waiting for Assistant' | 'working' | 'scheduled' | 'queued' | 'waiting'
 export type Responsibility = 'planner' | 'generator' | 'reviewer'
-export type PassResult = 'success' | 'reject' | 'replan' | 'fail'
+export type PassResult = 'success' | 'reject' | 'attention' | 'fail' | 'replan'
 export type RunAttemptStatus = 'running' | 'finished' | 'interrupted'
 export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
 export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
@@ -69,7 +69,13 @@ export interface InboxEventView {
   attachments: InboxImageAttachmentView[]
   reply: string | null
   disposition: string | null
-  context: { projectId: string; goalId: string; attentionId?: string } | null
+  context: {
+    projectId: string
+    goalId: string
+    attentionId?: string
+    attentionRefs?: string[]
+    observedDigest?: string
+  } | null
   routeClaim: { projectId: string; goalId: string; mode: 'existing' | 'create' } | null
   runtimeStatus: 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
   runtimeEvents: RunAttemptEvent[]

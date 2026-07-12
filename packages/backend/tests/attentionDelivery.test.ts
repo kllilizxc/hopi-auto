@@ -9,6 +9,7 @@ import {
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import {
   type AttentionDeliveryMessage,
+  createAssistantReplyDeliveryWorker,
   createAttentionDeliveryWorker,
   createWebhookAttentionTransport,
 } from '../src/runtime/attentionDelivery'
@@ -30,6 +31,37 @@ afterEach(async () => {
 })
 
 describe('AttentionDeliveryWorker', () => {
+  test('mirrors only a handled public speaking reply instead of raw Attention', async () => {
+    const fixture = await setup()
+    const event = await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-speaking',
+      content: 'Internal board assessment.',
+    })
+    await fixture.workspace.exposeEvent(event.attributes.id)
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'Please choose the release window.',
+      disposition: 'answered',
+    })
+    const worker = createAssistantReplyDeliveryWorker(fixture.workspace, {
+      send(message) {
+        fixture.messages.push(message)
+        return Promise.resolve()
+      },
+    })
+
+    expect(await worker.deliverOnce([])).toBe(1)
+    expect(fixture.messages).toEqual([
+      expect.objectContaining({
+        eventId: 'EV-speaking',
+        body: 'Please choose the release window.',
+      }),
+    ])
+    expect(
+      (await fixture.workspace.readEvent('EV-speaking'))?.attributes.webhookDeliveredAt,
+    ).not.toBeNull()
+    expect(await worker.deliverOnce([])).toBe(0)
+  })
+
   test('notifies targeted Attention without resolving it', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous.' })

@@ -3,7 +3,12 @@ import { type WorkAttributes, isPlanningWork, isWorkTerminal } from './canonical
 import type { GoalPackage } from './goalPackage'
 
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
-export type WorkPrimaryBadge = 'Needs you' | 'working' | 'scheduled' | 'queued' | 'waiting'
+export type WorkPrimaryBadge =
+  | 'Waiting for Assistant'
+  | 'working'
+  | 'scheduled'
+  | 'queued'
+  | 'waiting'
 
 export type WorkReadinessReason =
   | 'terminal'
@@ -125,7 +130,7 @@ export function deriveWorkProjection(
     primaryBadge: terminal
       ? null
       : needsAttention
-        ? 'Needs you'
+        ? 'Waiting for Assistant'
         : working
           ? 'working'
           : scheduled

@@ -14,7 +14,6 @@ const scrollSurfaceChecks = [
   {
     file: '../AssistantPanel.tsx',
     patterns: [
-      /<AppScrollShadow className="attention-list"/,
       /className="composer-images"[\s\S]*?orientation="horizontal"/,
       /Scroller: AppScrollShadow/,
     ],

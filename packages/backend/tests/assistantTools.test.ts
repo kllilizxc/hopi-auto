@@ -359,10 +359,13 @@ describe('Assistant HOPI tools', () => {
     expect(
       await fixture.tools.executeForEvent('EV-1', 'hopi_resolve_attention', resolution),
     ).toMatchObject({ changed: true })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
-    ).not.toBeNull()
+    const resolvedPackage = await fixture.goalStore.readPackage('G-1')
+    expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolutionInput: expect.stringContaining('/EV-1.md'),
+    })
+    expect(resolvedPackage.inputs).toHaveLength(1)
+    expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
   })
 
   test('requires a live per-turn capability for MCP calls', async () => {
@@ -419,9 +422,14 @@ describe('Assistant HOPI tools', () => {
         }),
       },
     })
-    let handedOff: string | null = null
-    const reflectionToken = fixture.tools.issueReflection('RF-1', (eventId) => {
-      handedOff = eventId
+    const prepared: {
+      current: {
+        brief: string
+        context?: { projectId: string; goalId: string; attentionId?: string }
+      } | null
+    } = { current: null }
+    const reflectionToken = fixture.tools.issueReflection('RF-1', (handoff) => {
+      prepared.current = handoff
     })
 
     await expect(
@@ -435,10 +443,13 @@ describe('Assistant HOPI tools', () => {
       brief: 'The latest Attempt needs a speaking-thread decision.',
       context: { projectId: 'P-1', goalId: 'G-1', attentionId },
     })
-    expect(handoff.changed).toBe(true)
-    expect(handedOff).not.toBeNull()
-    const event = await fixture.workspace.readEvent(handedOff ?? '')
-    expect(event?.attributes).toMatchObject({
+    expect(handoff.changed).toBe(false)
+    expect(prepared.current).not.toBeNull()
+    const event = await fixture.workspace.receiveReflectionEvent({
+      content: prepared.current?.brief ?? '',
+      context: prepared.current?.context,
+    })
+    expect(event.attributes).toMatchObject({
       source: 'reflection',
       visibility: 'internal',
       context: { projectId: 'P-1', goalId: 'G-1', attentionId },
@@ -447,7 +458,7 @@ describe('Assistant HOPI tools', () => {
       fixture.tools.execute(reflectionToken, 'hopi_handoff_to_main', { brief: 'Again.' }),
     ).rejects.toThrow('already handed off')
 
-    const mainToken = fixture.tools.issue(handedOff ?? '')
+    const mainToken = fixture.tools.issue(event.attributes.id)
     expect(await fixture.tools.execute(mainToken, 'hopi_notify_user', {})).toMatchObject({
       changed: true,
       value: { visibility: 'public', attentionId, attentionAcknowledged: true },

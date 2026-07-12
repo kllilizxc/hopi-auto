@@ -4,9 +4,10 @@ import { resolveAssistantInboxContext } from './assistantContext'
 
 describe('Assistant automatic context', () => {
   test('uses the current Goal as the default page context', () => {
-    expect(
-      resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, null),
-    ).toEqual({ projectId: 'P-1', goalId: 'G-current' })
+    expect(resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, null)).toEqual({
+      projectId: 'P-1',
+      goalId: 'G-current',
+    })
   })
 
   test('lets an exact Goal Attention override the current page', () => {
@@ -34,6 +35,19 @@ describe('Assistant automatic context', () => {
 
   test('uses Workspace scope when no Goal page is selected', () => {
     expect(resolveAssistantInboxContext(null, null)).toBeUndefined()
+  })
+
+  test('binds unresolved internal Goal Attention without exposing its body', () => {
+    expect(
+      resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, null, [
+        attention({ projectId: 'P-1', goalId: 'G-current', id: 'A-1' }),
+        attention({ projectId: 'P-1', goalId: 'G-current', id: 'A-2' }),
+      ]),
+    ).toEqual({
+      projectId: 'P-1',
+      goalId: 'G-current',
+      attentionRefs: ['A-1', 'A-2'],
+    })
   })
 })
 

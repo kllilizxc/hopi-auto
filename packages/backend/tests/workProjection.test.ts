@@ -51,7 +51,7 @@ describe('derived Work projection', () => {
 
     expect(Object.fromEntries(projections.map((item) => [item.workId, item.primaryBadge]))).toEqual(
       {
-        'W-attention': 'Needs you',
+        'W-attention': 'Waiting for Assistant',
         'W-working': 'working',
         'W-scheduled': 'scheduled',
         'W-queued': 'queued',

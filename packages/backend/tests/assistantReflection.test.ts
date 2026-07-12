@@ -128,20 +128,24 @@ describe('Assistant Reflection', () => {
     expect(prompt.length).toBeLessThan(30_000)
   })
 
-  test('does not assess an interrupted digest and retries it from a fresh Run', async () => {
+  test('does not interrupt for a newer state and discards the stale handoff before rerunning', async () => {
     let digest = 'a'.repeat(64)
     let calls = 0
+    let releaseFirst: (() => void) | undefined
     const fixture = await setup(
       () => ({ digest }),
-      () => ({
+      (tools) => ({
         async run(input) {
           calls += 1
-          if (calls === 1 && !input.signal?.aborted) {
-            await new Promise<void>((resolve) =>
-              input.signal?.addEventListener('abort', () => resolve(), { once: true }),
-            )
+          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: `Assessment ${calls}.`,
+          })
+          if (calls === 1) {
+            await new Promise<void>((resolve) => {
+              releaseFirst = resolve
+            })
           }
-          return { reply: 'No handoff.', threadId: `reflection-${calls}` }
+          return { reply: 'Handoff prepared.', threadId: `reflection-${calls}` }
         },
       }),
     )
@@ -149,13 +153,18 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
     digest = 'c'.repeat(64)
     expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    fixture.reflection.interruptForUser()
+    digest = 'd'.repeat(64)
+    expect(await fixture.reflection.observe({ settled: true })).toBe('running')
+    while (!releaseFirst) await Bun.sleep(1)
+    releaseFirst?.()
     await fixture.reflection.waitForIdle()
     expect(fixture.reflection.isActive()).toBe(false)
+    expect([...(await fixture.workspace.readWorkspace()).events.values()]).toHaveLength(0)
 
     expect(await fixture.reflection.observe({ settled: true })).toBe('started')
     await fixture.reflection.waitForIdle()
     expect(calls).toBe(2)
+    expect([...(await fixture.workspace.readWorkspace()).events.values()]).toHaveLength(1)
   })
 
   test('defers ordinary changes without assessing them, then runs the same digest when settled', async () => {
@@ -180,6 +189,30 @@ describe('Assistant Reflection', () => {
     await fixture.reflection.waitForIdle()
     expect(calls).toBe(1)
     expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
+  })
+
+  test('does not mark a failed digest assessed and retries the same canonical state', async () => {
+    let calls = 0
+    const fixture = await setup(
+      () => ({
+        digest: 'f'.repeat(64),
+        workspaceAttentions: [{ resolvedAt: null, notifiedAt: null }],
+      }),
+      () => ({
+        async run() {
+          calls += 1
+          if (calls === 1) throw new Error('temporary model failure')
+          return { reply: 'Recovered.', threadId: `reflection-${calls}` }
+        },
+      }),
+    )
+
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(calls).toBe(2)
+    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
   })
 
   test('starts unsettled snapshots only for immediate signals, including after startup', async () => {

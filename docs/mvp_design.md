@@ -47,7 +47,7 @@ The operator needs only three durable concepts:
    operator.
 
 Attention remains an internal durable control document, not a separate product concept. Open
-Attention with a target appears as a pinned **Needs you** message in the Assistant conversation and
+Attention with a target is routed internally through Reflection and appears on the board as **Waiting for Assistant**; only the speaking Assistant decides whether the user must be asked, and
 relevant Goal. Targetless completion Attention appears as a normal Assistant and Goal update.
 There is no separate Attention page.
 
@@ -245,7 +245,7 @@ The authority is split by concern rather than repeated in one large document:
 The MVP UI contains:
 
 1. Global Assistant conversation with live Codex messages and tool activity, queued turns,
-   **Needs you** messages, an unresolved filter, and ordinary completion updates. Internal Reflection
+   Assistant-mediated clarification messages and ordinary completion updates. Internal Reflection
    turns remain hidden unless the speaking thread explicitly promotes its reply. A header debug
    entry may inspect disposable Reflection runtime streams on demand without adding product state.
    The composer supports bounded image selection and paste, and the conversation preserves image
@@ -257,7 +257,7 @@ The MVP UI contains:
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
    Work hidden by default behind an archive filter.
 
-Each nonterminal card shows one primary badge derived in priority order: **Needs you**, `working`,
+Each nonterminal card shows one primary badge derived in priority order: **Waiting for Assistant**, `working`,
 `scheduled`, `queued`, then `waiting`. Terminal and cancelled cards receive no readiness badge.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
 canonical Work, Evidence, dependency, timing, and error facts. A `working` badge contains one small

@@ -116,9 +116,9 @@ export function createPassOutcomeCoordinator(
     }
     const targetedAttention = targetedAttentions[0]
     if (targetedAttention) {
-      if (input.outcome.result !== 'fail') {
+      if (input.outcome.result !== 'attention') {
         throw new PassProposalError(
-          `Targeted Attention requires fail, received ${input.outcome.result}`,
+          `Targeted Attention requires attention, received ${input.outcome.result}`,
         )
       }
       const application = buildAttentionApplication(
@@ -433,25 +433,6 @@ function buildEngineeringApplication(
   const next = appendEvidence(currentWork, evidence.attributes.id)
   const evidenceSupport = evidenceWrite(store, input.goalId, evidence)
 
-  if (input.outcome.result === 'replan') {
-    const planning = createPlanningGuard(current, input, evidence.attributes.id)
-    return {
-      supportingWrites: [evidenceSupport],
-      gateWrite: workWrite(store, input.goalId, planning, null),
-      async validateTransition(before, candidate, currentAuthority) {
-        await validatePassSemanticGuard(store, input, before, [evidenceSupport], {
-          currentAuthority,
-        })
-        validateEngineeringReplanTransition(
-          before,
-          candidate,
-          evidence.attributes.id,
-          planning.attributes.id,
-        )
-      },
-    }
-  }
-
   if (input.responsibility === 'generator' && input.outcome.result === 'success') {
     next.attributes.stage = 'review'
   } else if (input.responsibility === 'reviewer' && input.outcome.result === 'reject') {
@@ -740,26 +721,6 @@ function assertOnlyOwningWorkAndEvidenceChanged(
   }
 }
 
-function validateEngineeringReplanTransition(
-  before: GoalPackage,
-  after: GoalPackage,
-  evidenceId: string,
-  planningWorkId: string,
-) {
-  assertDocumentsEqualExcept(before, after, {
-    workIds: [planningWorkId],
-    attentionIds: [],
-    evidenceIds: [evidenceId],
-  })
-  const planning = requireWork(after, planningWorkId)
-  if (!isPlanningWork(planning.attributes) || planning.attributes.stage !== 'plan') {
-    throw new PassProposalError('Replan gate must create Planning Work')
-  }
-  if (!planning.attributes.evidenceRefs.includes(evidenceId)) {
-    throw new PassProposalError('Replan Planning gate must consume its Run Evidence')
-  }
-}
-
 function assertDocumentsEqualExcept(
   before: GoalPackage,
   after: GoalPackage,
@@ -940,40 +901,6 @@ function appendEvidence(work: WorkDocument, evidenceId: string): WorkDocument {
   }
 }
 
-function createPlanningGuard(
-  current: GoalPackage,
-  input: ApplyPassOutcomeInput,
-  evidenceId: string,
-): WorkDocument {
-  const existing = [...current.works.values()].find(
-    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-  )
-  if (existing) throw new StalePassResultError('Planning guard already exists')
-  return {
-    attributes: {
-      id: `plan-${input.workId}-${input.runId}`,
-      title: `Replan after ${input.workId}`,
-      kind: 'planning',
-      stage: 'plan',
-      notBefore: null,
-      dependsOn: [],
-      contractRevision: current.goal.attributes.contractRevision,
-      evidenceRefs: [evidenceId],
-      attempts: 0,
-    },
-    body: [
-      '## Objective',
-      '',
-      `Reassess the Goal after ${input.responsibility} requested replanning for ${input.workId}.`,
-      '',
-      '## Acceptance Criteria',
-      '',
-      '- The design and Engineering Work DAG reflect the accepted Goal contract.',
-      '',
-    ].join('\n'),
-  }
-}
-
 function requireWork(goalPackage: GoalPackage, workId: string) {
   const work = goalPackage.works.get(workId)
   if (!work) throw new StalePassResultError(`Work no longer exists: ${workId}`)
@@ -1008,10 +935,10 @@ function appendUnique(values: readonly string[], value: string) {
 function assertInputRole(input: ApplyPassOutcomeInput) {
   const allowed =
     input.responsibility === 'planner'
-      ? new Set<PassResultKind>(['success', 'fail'])
+      ? new Set<PassResultKind>(['success', 'attention', 'fail'])
       : input.responsibility === 'generator'
-        ? new Set<PassResultKind>(['success', 'replan', 'fail'])
-        : new Set<PassResultKind>(['success', 'reject', 'replan', 'fail'])
+        ? new Set<PassResultKind>(['success', 'attention', 'fail'])
+        : new Set<PassResultKind>(['success', 'reject', 'attention', 'fail'])
   if (!allowed.has(input.outcome.result)) {
     throw new PassProposalError(`${input.responsibility} cannot return ${input.outcome.result}`)
   }

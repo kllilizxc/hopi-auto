@@ -249,7 +249,21 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
     throw invalid(`Inbox route claim is immutable: ${before.id}`)
   }
   if (before.status === 'handled' && JSON.stringify(previous) !== JSON.stringify(next)) {
-    throw invalid(`Handled Inbox event is immutable: ${before.id}`)
+    const previousWithoutDelivery = {
+      ...previous,
+      attributes: { ...before, webhookDeliveredAt: null },
+    }
+    const nextWithoutDelivery = {
+      ...next,
+      attributes: { ...after, webhookDeliveredAt: null },
+    }
+    if (
+      JSON.stringify(previousWithoutDelivery) !== JSON.stringify(nextWithoutDelivery) ||
+      before.webhookDeliveredAt != null ||
+      after.webhookDeliveredAt == null
+    ) {
+      throw invalid(`Handled Inbox event is immutable: ${before.id}`)
+    }
   }
   if (before.status === 'pending' && after.status === 'handled' && !after.reply?.trim()) {
     throw invalid(`Handled Inbox event requires a reply: ${before.id}`)

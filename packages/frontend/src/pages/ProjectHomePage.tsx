@@ -1,14 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  ArrowRight,
-  Cpu,
-  FolderGit2,
-  Link2,
-  Plus,
-  Radio,
-  RefreshCw,
-  Settings2,
-} from 'lucide-react'
+import { ArrowRight, Cpu, FolderGit2, Link2, Plus, Radio, RefreshCw, Settings2 } from 'lucide-react'
 import { useState } from 'react'
 import {
   AppAlert,
@@ -21,23 +12,49 @@ import {
   AppSpinner,
   AppSurface,
   AppTextField,
+  ComboBoxField,
   CountBadge,
   SelectField,
   StatusChip,
 } from '../components/ui'
 import {
+  type CodingAgentTransport,
+  type CodingReasoningEffort,
+  type ProjectCodingDefaults,
+  type ProjectSummary,
   createProject,
   linkProjectRepo,
   readState,
   rebindProjectRepo,
   updateProjectSettings,
-  type CodingAgentTransport,
-  type CodingReasoningEffort,
-  type ProjectCodingDefaults,
-  type ProjectSummary,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
 import { excerpt } from '../lib/utils'
+
+const MODEL_OPTIONS: Record<string, { label: string; value: string }[]> = {
+  codex: [
+    { label: 'GPT-5.4', value: 'gpt-5.4' },
+    { label: 'GPT-4o', value: 'gpt-4o' },
+    { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
+    { label: 'o1-preview', value: 'o1-preview' },
+    { label: 'o1-mini', value: 'o1-mini' },
+  ],
+  claude: [
+    { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-20241022' },
+    { label: 'Claude 3.5 Haiku', value: 'claude-3-5-haiku-20241022' },
+    { label: 'Claude 3 Opus', value: 'claude-3-opus-20240229' },
+  ],
+  opencode: [
+    { label: 'Gemini 3.1 Pro Preview', value: 'gemini-proxy/gemini-3.1-pro-preview' },
+    { label: 'Gemini 3.5 Flash', value: 'gemini-proxy/gemini-3.5-flash' },
+    { label: 'Gemini 2.5 Flash', value: 'genai-gemini/gemini-2.5-flash' },
+    { label: 'Gemini 2.5 Pro', value: 'genai-gemini/gemini-2.5-pro' },
+    {
+      label: 'AWS Claude 3.5 Sonnet',
+      value: 'genai-claude/aws:anthropic.claude-sonnet-4-5-20250929-v1:0',
+    },
+  ],
+}
 
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
@@ -80,12 +97,16 @@ export function ProjectHomePage() {
         <section className="projects-grid">
           <AppSurface className="project-list-panel panel-card">
             <div className="panel-title">
-              <span><FolderGit2 /> Linked projects</span>
+              <span>
+                <FolderGit2 /> Linked projects
+              </span>
               <CountBadge>{snapshotQuery.data?.projects.length ?? 0}</CountBadge>
             </div>
             <div className="project-cards">
               {snapshotQuery.isLoading ? (
-                <div className="loading-state"><AppSpinner size="sm" /> Reading project documents</div>
+                <div className="loading-state">
+                  <AppSpinner size="sm" /> Reading project documents
+                </div>
               ) : snapshotQuery.data?.projects.length ? (
                 snapshotQuery.data.projects.map((project) => (
                   <ProjectCard key={project.projectId} project={project} />
@@ -94,7 +115,10 @@ export function ProjectHomePage() {
                 <div className="empty-state">
                   <FolderGit2 />
                   <strong>No Project bound</strong>
-                  <p>Link a Git repository. HOPI creates a managed release worktree without touching your checkout.</p>
+                  <p>
+                    Link a Git repository. HOPI creates a managed release worktree without touching
+                    your checkout.
+                  </p>
                 </div>
               )}
             </div>
@@ -111,9 +135,14 @@ export function ProjectHomePage() {
               })
             }}
           >
-            <div className="panel-title"><span><Link2 /> Link repository</span></div>
+            <div className="panel-title">
+              <span>
+                <Link2 /> Link repository
+              </span>
+            </div>
             <p className="panel-intro">
-              The selected path identifies the Repo. Canonical documents and Preview run from HOPI's managed integration root.
+              The selected path identifies the Repo. Canonical documents and Preview run from HOPI's
+              managed integration root.
             </p>
             <AppTextField
               className="field"
@@ -124,7 +153,11 @@ export function ProjectHomePage() {
             />
             <AppTextField
               className="field"
-              label={<>Project ID <small>optional</small></>}
+              label={
+                <>
+                  Project ID <small>optional</small>
+                </>
+              }
               onValueChange={setProjectId}
               placeholder="Derived when omitted"
               value={projectId}
@@ -190,7 +223,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <span className="project-initial">{project.projectId.slice(0, 2).toUpperCase()}</span>
         <div>
           <h2>{project.projectId}</h2>
-          <p>{project.primaryRepoId} · {project.repoPath}</p>
+          <p>
+            {project.primaryRepoId} · {project.repoPath}
+          </p>
         </div>
         <StatusChip className={`preview-status ${project.preview?.status ?? 'stopped'}`} size="sm">
           {project.preview?.stoppedReason === 'release_updated'
@@ -200,13 +235,24 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       </div>
 
       <div className="project-stats">
-        <span><strong>{project.goals.length}</strong> Goals</span>
-        <span><strong>{project.goals.filter((goal) => goal.lifecycle === 'active').length}</strong> Active</span>
-        <span><strong>{project.goals.reduce((sum, goal) => sum + goal.openAttentionCount, 0)}</strong> Need you</span>
+        <span>
+          <strong>{project.goals.length}</strong> Goals
+        </span>
+        <span>
+          <strong>{project.goals.filter((goal) => goal.lifecycle === 'active').length}</strong>{' '}
+          Active
+        </span>
+        <span>
+          <strong>{project.goals.reduce((sum, goal) => sum + goal.openAttentionCount, 0)}</strong>{' '}
+          Waiting for Assistant
+        </span>
       </div>
 
       <p className="project-guidance">
-        {excerpt(project.guidance ?? 'Planner will create AGENTS.md guidance on its first pass.', 170)}
+        {excerpt(
+          project.guidance ?? 'Planner will create AGENTS.md guidance on its first pass.',
+          170,
+        )}
       </p>
 
       <div className="project-repos">
@@ -218,7 +264,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           <div key={repo.repoId} className="project-repo-entry">
             <div className="project-repo-row">
               <span className="project-repo-id">{repo.repoId}</span>
-              <span className="project-repo-path" title={repo.repoPath}>{repo.repoPath}</span>
+              <span className="project-repo-path" title={repo.repoPath}>
+                {repo.repoPath}
+              </span>
               {repo.primary && <small>primary</small>}
               {showRepoManager && (
                 <AppButton
@@ -329,11 +377,10 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             ]}
             value={modelDraft.transport}
           />
-          <AppTextField
+          <ComboBoxField
             label="Model"
-            onValueChange={(model) =>
-              setModelDraft((current) => ({ ...current, model }))
-            }
+            onInputChange={(model) => setModelDraft((current) => ({ ...current, model }))}
+            options={MODEL_OPTIONS[modelDraft.transport] ?? []}
             placeholder={modelDraft.transport === 'codex' ? 'gpt-5.4' : 'Provider default'}
             value={modelDraft.model}
           />
@@ -393,7 +440,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
                 <small>{goal.currentSummary}</small>
                 <small>Next: {goal.nextSummary}</small>
               </span>
-              {goal.openAttentionCount > 0 && <CountBadge color="warning">{goal.openAttentionCount}</CountBadge>}
+              {goal.openAttentionCount > 0 && (
+                <CountBadge color="warning">{goal.openAttentionCount}</CountBadge>
+              )}
               <ArrowRight />
             </AppRouterLink>
           ))
@@ -422,7 +471,10 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         >
           {showRepoManager ? 'Close repositories' : `Manage ${project.repos.length} repos`}
         </AppButton>
-        <AppRouterLink className="secondary-button" to={`/projects/${encodeURIComponent(project.projectId)}/goals/new`}>
+        <AppRouterLink
+          className="secondary-button"
+          to={`/projects/${encodeURIComponent(project.projectId)}/goals/new`}
+        >
           <Plus /> New Goal
         </AppRouterLink>
         {firstGoal && (

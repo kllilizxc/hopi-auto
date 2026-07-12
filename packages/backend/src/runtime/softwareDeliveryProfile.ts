@@ -19,7 +19,6 @@ const profileSchema = z
           when: z.object({ kind: z.literal('engineering'), stage: z.literal('generate') }).strict(),
           pass: z.literal('generator'),
           on: z.object({ success: z.literal('review') }).strict(),
-          replan: z.literal('ensure_planning'),
         })
         .strict(),
       z
@@ -27,7 +26,6 @@ const profileSchema = z
           when: z.object({ kind: z.literal('engineering'), stage: z.literal('review') }).strict(),
           pass: z.literal('reviewer'),
           on: z.object({ success: z.literal('done'), reject: z.literal('generate') }).strict(),
-          replan: z.literal('ensure_planning'),
         })
         .strict(),
     ]),

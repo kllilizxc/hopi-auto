@@ -71,7 +71,10 @@ assessed snapshot, the relevant current-state slice, and bounded public conversa
 Reflection briefs are not fed back into later Reflection prompts. The implementation does not require
 a model vendor to clone a live session.
 
-Reflection follows one small protocol:
+Reflection is a single read-only background analyst. User input never interrupts its model Run.
+Every Run owns an immutable semantic snapshot; changes observed while it runs make the result stale,
+so Coordinator lets the process finish, discards its prepared handoff, and assesses the latest
+snapshot. Reflection follows one small protocol:
 
 1. A meaningful state digest change records that a newer snapshot has not yet been assessed; it does
    not by itself start a model Run. Ordinary log appends remain outside the digest.
@@ -83,14 +86,16 @@ Reflection follows one small protocol:
    progress therefore coalesces across Planning, Generation, Review, C1, and final Planning. This
    immediate rule also applies to the first snapshot after process startup; only a non-urgent first
    snapshot establishes the silent baseline.
-3. At most one Reflection runs per Home. Changes coalesce to the newest eligible snapshot instead of
-   forming an unbounded queue.
+3. At most one Reflection runs per Home. Changes coalesce through the current digest instead of
+   forming an event queue. A failed Run never marks its digest assessed and retries with backoff.
 4. Reflection first decides from the supplied trigger and delta. It may reread bounded scoped HOPI
    state and follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does
    not scan the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
-5. If no response or action is useful, it ends silently. Otherwise it may submit one concise internal
-   brief through `handoff_to_main`; it does not return an `actions[]` plan.
-6. The brief becomes an internal pending Inbox turn. The speaking thread rereads current state and
+5. If no response or action is useful, it ends silently. Otherwise it may prepare one concise
+   internal brief. Coordinator publishes that brief only after confirming the observed digest is
+   still current; it does not accept an `actions[]` plan.
+6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
+   persistent speaking thread used for user turns rereads current state and
    decides whether to call normal HOPI tools, remain silent, or explicitly expose a final reply
    rewritten under the operator-facing communication policy. Internal IDs and diagnostics from the
    brief are not copied into that reply by default.
@@ -102,13 +107,10 @@ list of model-call triggers. The single eligibility rule is whether HOPI needs i
 can still make deterministic automatic progress. A time-derived stale-Run observation is included
 because a hung process may produce no state transition.
 
-New user input has strict priority. Receiving a public user turn interrupts any active Reflection
-and any currently running Reflection-sourced internal speaking turn, then lets the speaking thread
-handle the public turn first. An interrupted internal turn remains pending and may be revalidated
-after public input; it never blocks user speech merely because handoff already occurred. The
-interrupted digest is not considered assessed; after the user turn, HOPI may assess one fresh
-snapshot. State changes during a Reflection need not cancel it because the speaking thread always
-revalidates before acting.
+New user input has strict speaking priority. It may interrupt a Reflection-sourced internal speaking
+turn, which remains pending and is revalidated later, but it never interrupts the read-only
+Reflection Run. A user effect that changes canonical state invalidates the Reflection snapshot; the
+finished stale result is discarded before any internal Inbox publication.
 
 One eligible state digest is assessed at most once unless a user interruption invalidates that
 assessment. A digest deferred while automatic work is progressing is not assessed and may become

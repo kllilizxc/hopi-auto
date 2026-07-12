@@ -2,6 +2,7 @@ import { appendFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
+import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import type { AssistantTools } from './assistantTools'
@@ -40,7 +41,6 @@ export interface ReflectionRunDetail extends ReflectionRunSummary {
 
 export interface AssistantReflection {
   observe(input: ReflectionObservation): Promise<ReflectionObserveResult>
-  interruptForUser(): void
   isActive(): boolean
   listRuns(limit?: number): Promise<ReflectionRunDetail[]>
   listRunSummaries(): Promise<ReflectionRunSummary[]>
@@ -127,25 +127,13 @@ export function createAssistantReflection(options: {
             consecutiveHandoffs = 0
           }
         })
-        .catch(() => {
-          if (!entry.interruptedForUser) {
-            lastAssessedDigest = entry.digest
-            lastAssessedSnapshot = snapshot
-          }
-        })
+        .catch(() => undefined)
         .finally(() => {
           if (active === entry) active = undefined
           options.onWake?.()
         })
       active = entry
       return 'started'
-    },
-
-    interruptForUser() {
-      consecutiveHandoffs = 0
-      if (!active) return
-      active.interruptedForUser = true
-      active.controller.abort()
     },
 
     isActive() {
@@ -189,6 +177,9 @@ export function createAssistantReflection(options: {
     const lastMessagePath = join(root, 'last-message.txt')
     const startedAt = now().toISOString()
     let handoffEventId: string | null = null
+    const preparedHandoff: {
+      current: { brief: string; context?: InboxContext } | null
+    } = { current: null }
     const manifest: ReflectionManifest = {
       version: 1,
       reflectionId,
@@ -203,8 +194,8 @@ export function createAssistantReflection(options: {
     await Bun.write(eventsPath, '')
     await Bun.write(transcriptPath, '')
     await writeManifest(manifestPath, manifest)
-    const token = options.tools.issueReflection(reflectionId, (eventId) => {
-      handoffEventId = eventId
+    const token = options.tools.issueReflection(reflectionId, (handoff) => {
+      preparedHandoff.current = handoff
     })
     const observer = {
       onEvent: (event: AgentRuntimeEvent) => appendReflectionEvent(eventsPath, event, now()),
@@ -238,6 +229,19 @@ export function createAssistantReflection(options: {
           handoffEventId,
         })
         return { handoffEventId: null }
+      }
+      const latest = await options.state.read()
+      if (latest.stateDigest === snapshot.stateDigest && preparedHandoff.current) {
+        const event = await options.workspace.receiveReflectionEvent({
+          content: preparedHandoff.current.brief,
+          context: preparedHandoff.current.context
+            ? {
+                ...preparedHandoff.current.context,
+                observedDigest: snapshot.stateDigest,
+              }
+            : undefined,
+        })
+        handoffEventId = event.attributes.id
       }
       await writeManifest(manifestPath, {
         ...manifest,
@@ -301,10 +305,10 @@ async function reflectionPrompt(
     'Do not mutate canonical files or source. You only have hopi_read_state and hopi_handoff_to_main.',
     'Use hopi_read_state only to revalidate a concrete candidate, scoped to the exact Project or Goal when known.',
     'Use local read-only shell access only for an exact diagnostic path already present in state. Never scan .hopi or search historical Runs speculatively.',
-    'Call hopi_handoff_to_main at most once, only when the speaking thread should reply, perform a concrete safe repair, or ask the operator for authority. Otherwise finish silently.',
+    'Call hopi_handoff_to_main at most once to prepare a concise internal brief only when the speaking thread should revalidate a useful action or user decision. The Coordinator publishes it only if this snapshot remains current. Otherwise finish silently.',
     'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
     'Do not draft polished operator-facing prose or narrate the whole workflow. The speaking thread will revalidate the brief and translate only the useful outcome and required action for the operator.',
-    'When the brief exists to notify one Goal Attention, include its exact projectId, goalId, and attentionId in the handoff context so the speaking thread can acknowledge that canonical delivery. Never rely on the brief text for notification identity.',
+    'When one Goal has unresolved Attention that speaking should manage, include its exact projectId, goalId, and every related local ID in context.attentionRefs. Keep one handoff Goal-scoped; the next Reflection can handle another Goal. Never rely on brief text for identity.',
     'Do not assume this snapshot is still current; the speaking thread will revalidate before acting.',
     '',
     `State digest: ${snapshot.stateDigest}`,
@@ -610,8 +614,33 @@ function compactReflectionState(snapshot: AssistantStateSnapshot, scopes: Reflec
       (run) => allProjects || scopes.projects.has(run.projectId),
     ),
     workspaceAttentions: snapshot.workspaceAttentions.map(compactAttention),
+    unresolvedAttentions: collectUnresolvedAttentions(snapshot),
     projects,
   }
+}
+
+function collectUnresolvedAttentions(snapshot: AssistantStateSnapshot) {
+  const unresolved: unknown[] = snapshot.workspaceAttentions
+    .filter(isUnresolvedAttention)
+    .map((attention) => ({ scope: 'workspace', attention: compactAttention(attention) }))
+  for (const project of snapshot.projects) {
+    if (!isRecord(project) || !Array.isArray(project.goals)) continue
+    const projectId = stringValue(project.projectId, 'unknown-project')
+    for (const goal of project.goals) {
+      if (!isRecord(goal) || !Array.isArray(goal.attentions)) continue
+      const goalId = nestedId(goal.goal, 'unknown-goal')
+      for (const attention of goal.attentions) {
+        if (!isUnresolvedAttention(attention)) continue
+        unresolved.push({
+          scope: 'goal',
+          projectId,
+          goalId,
+          attention: compactAttention(attention),
+        })
+      }
+    }
+  }
+  return unresolved
 }
 
 function compactProjection(value: unknown) {
@@ -717,4 +746,10 @@ function isUnnotifiedAttention(value: unknown) {
   if (!isRecord(value)) return false
   const attributes = isRecord(value.attributes) ? value.attributes : value
   return attributes.resolvedAt === null && attributes.notifiedAt === null
+}
+
+function isUnresolvedAttention(value: unknown) {
+  if (!isRecord(value)) return false
+  const attributes = isRecord(value.attributes) ? value.attributes : value
+  return attributes.resolvedAt === null
 }

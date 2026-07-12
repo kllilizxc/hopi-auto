@@ -87,6 +87,7 @@ export const attentionAttributesSchema = z
     createdAt: timestampSchema,
     resolvedAt: timestampSchema.nullable(),
     notifiedAt: timestampSchema.nullable(),
+    resolutionInput: canonicalRefSchema.nullable().optional(),
   })
   .strict()
 

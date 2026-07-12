@@ -312,12 +312,20 @@ function selectGuardFiles(
     work.attributes.dependsOn.map((workId) => paths.workDocument(input.goalId, workId)),
   )
   const referencedImages = collectReferencedImages(work.body, paths, input.goalId)
+  const latestResolvedAttention = latestResolvedAttentionForTarget(
+    files,
+    `${paths.attentionRoot(input.goalId)}/`,
+    workTarget,
+  )
+  const latestResolutionInput = latestResolvedAttention?.document.attributes.resolutionInput
   const selected = files.filter((file) => {
     if (file.path === '.hopi/project.yml') return false
     if (!file.path.startsWith(`${goalRoot}/`)) return true
     if (file.path === paths.goalDocument(input.goalId)) return true
     if (file.path.startsWith(`${paths.designRoot(input.goalId)}/`)) return true
     if (referencedImages.has(file.path)) return true
+    if (file.path === latestResolvedAttention?.path || file.path === latestResolutionInput)
+      return true
     if (file.path === paths.workDocument(input.goalId, input.workId)) return true
     if (dependencyWork.has(file.path) || referencedEvidence.has(file.path)) return true
     if (file.path.startsWith(`${paths.workRoot(input.goalId)}/`) && file.content) {
@@ -350,6 +358,12 @@ function selectPlannerAuthorityFiles(
   const selectedWorkPaths = new Set([paths.workDocument(input.goalId, input.workId)])
   const selectedEvidencePaths = new Set<string>()
   const referencedImages = collectReferencedImages(owningWork.body, paths, input.goalId)
+  const owningWorkTarget = `project:${input.projectId}/goal:${input.goalId}/work:${input.workId}`
+  const latestResolvedAttention = latestResolvedAttentionForTarget(
+    files,
+    attentionRoot,
+    owningWorkTarget,
+  )
 
   for (const file of files) {
     if (!file.content || !file.path.startsWith(workRoot)) continue
@@ -372,6 +386,9 @@ function selectPlannerAuthorityFiles(
         : []
     }),
   )
+  if (latestResolvedAttention?.document.attributes.resolutionInput) {
+    acceptedInputs.add(latestResolvedAttention.document.attributes.resolutionInput)
+  }
 
   return files.filter((file) => {
     if (!file.path.startsWith(`${goalRoot}/`)) return true
@@ -381,12 +398,33 @@ function selectPlannerAuthorityFiles(
     if (selectedWorkPaths.has(file.path)) return true
     if (acceptedInputs.has(file.path)) return true
     if (selectedEvidencePaths.has(file.path)) return true
+    if (file.path === latestResolvedAttention?.path) return true
     if (file.path.startsWith(attentionRoot) && file.content) {
       return parseAttentionDocument(decode(file.content)).attributes.resolvedAt === null
     }
     if (file.path.startsWith(evidenceRoot) || file.path.startsWith(inputRoot)) return false
     return false
   })
+}
+
+function latestResolvedAttentionForTarget(
+  files: readonly PublicationSnapshotFile[],
+  attentionRoot: string,
+  target: string,
+) {
+  return files
+    .flatMap((file) => {
+      if (!file.content || !file.path.startsWith(attentionRoot)) return []
+      const document = parseAttentionDocument(decode(file.content))
+      return document.attributes.target === target && document.attributes.resolvedAt !== null
+        ? [{ path: file.path, document }]
+        : []
+    })
+    .sort((left, right) =>
+      (right.document.attributes.resolvedAt ?? '').localeCompare(
+        left.document.attributes.resolvedAt ?? '',
+      ),
+    )[0]
 }
 
 interface RunAssignment {
@@ -426,8 +464,21 @@ function createRunAssignment(
             return []
           }
           const document = parseInputDocument(decode(file.content))
+          const referencedByResolution = authorityFiles.some((candidate) => {
+            if (
+              !candidate.content ||
+              !candidate.path.startsWith(`${paths.attentionRoot(input.goalId)}/`)
+            ) {
+              return false
+            }
+            return (
+              parseAttentionDocument(decode(candidate.content)).attributes.resolutionInput ===
+              file.path
+            )
+          })
           return work.body.includes(file.path) ||
-            work.body.includes(document.attributes.sourceEventId)
+            work.body.includes(document.attributes.sourceEventId) ||
+            referencedByResolution
             ? [{ path: file.path, body: document.body }]
             : []
         })
@@ -618,7 +669,7 @@ function renderResponsibilityPrompt(
     `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
-    'If you stage targeted Attention, result must be fail. Never combine targeted Attention with success, reject, or replan.',
+    'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
     '',
   ]
   const responsibility =
@@ -689,7 +740,9 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Clarify only material ambiguity. If current information is sufficient, do not ask a ceremonial question.',
+    'Clarify only material ambiguity. First inspect staged code and documents; never ask what the available evidence can answer.',
+    'Walk the decision tree in dependency order. One Attention may group all currently knowable independent material questions, but must defer questions whose meaning depends on an earlier answer.',
+    'For every question include your recommended answer, alternatives, trade-offs, and the design or acceptance impact. Record established decisions in the relevant design document and in design/decisions.md before asking the next round.',
     'The staged goal.md is immutable accepted authority. Never edit it or change contractRevision; contract changes come only from an operator instruction interpreted by Assistant.',
     'Record established decisions in design/** before exposing implementation Work.',
     'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
@@ -740,7 +793,7 @@ function plannerPrompt(paths: {
       : [
           'scripts/hopi/prepare already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.',
         ]),
-    `When operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} and leave Planning Work at plan.`,
+    `When Assistant management or operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}, return attention, and leave Planning Work at plan.`,
     'When final proof is sufficient, create the one target-null completion Attention and mark Planning Work done. Otherwise mark Planning Work done only after its complete design and Work proposal is staged.',
     '',
   ]
@@ -760,9 +813,9 @@ function generatorPrompt(paths: {
     'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
     'You may inspect Git status and diff, but never run Git write operations such as add, commit, checkout, switch, merge, rebase, reset, or clean.',
     'Coordinator alone owns the Git index, task-branch checkpoints, and commits after this Run.',
-    `If retry cannot resolve a condition without operator authority, stage one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}.`,
+    `If accepted design, missing information, or an external condition prevents safe progress, stage one targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management and return attention.`,
     'Do not rerun an unchanged passing check. One passing run after the final relevant source change is sufficient unless distinct acceptance criteria require distinct evidence.',
-    'Return success only after the acceptance criteria have evidence. Return replan only when the accepted design or Work contract cannot be implemented safely; use fail when this Run cannot complete valid implementation proof.',
+    'Return success only after the acceptance criteria have evidence. Return attention when Assistant management is required; use fail for a retryable execution failure that does not require Assistant input.',
     '',
   ]
 }
@@ -783,8 +836,8 @@ function reviewerPrompt(paths: {
     'A helper-only change normally needs focused tests, not browser exploration. A visual, crash, or interaction Work needs one direct runtime exercise of the reported path. Do not rerun an unchanged passing check.',
     'When the Work addresses an operator-reported runtime path, crash, interaction, or visual behavior, exercise that exact path through the point after the reported failure. Unit or shell-level tests alone are insufficient unless existing evidence is strictly stronger and you explain why.',
     'This is an evidence obligation, not a fixed browser workflow. You may start short-lived local services for this Run; persistent Project Preview and integration are not your responsibility.',
-    `If operator authority is required, stage one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}.`,
-    'Return reject for an implementation defect, replan for an invalid design or Work contract, and fail when this Run cannot produce a valid review.',
+    `If design, information, or operator authority is required, stage one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management.`,
+    'Return reject for an implementation defect, attention when Assistant management is required, and fail for a retryable review failure.',
     '',
   ]
 }
@@ -792,10 +845,10 @@ function reviewerPrompt(paths: {
 function resultInstruction(resultFile: string, responsibility: Responsibility) {
   const allowed =
     responsibility === 'planner'
-      ? 'success or fail'
+      ? 'success, attention, or fail'
       : responsibility === 'generator'
-        ? 'success, replan, or fail'
-        : 'success, reject, replan, or fail'
+        ? 'success, attention, or fail'
+        : 'success, reject, attention, or fail'
   return [
     '## Required Result',
     '',

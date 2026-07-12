@@ -26,6 +26,11 @@ export const inboxContextSchema = z
     projectId: stableIdSchema,
     goalId: stableIdSchema,
     attentionId: stableIdSchema.optional(),
+    attentionRefs: z.array(stableIdSchema).optional(),
+    observedDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
 
@@ -43,6 +48,7 @@ export const inboxEventAttributesSchema = z
     handledAt: timestampSchema.nullable(),
     reply: z.string().min(1).nullable(),
     disposition: z.string().min(1).nullable(),
+    webhookDeliveredAt: timestampSchema.nullable().optional(),
   })
   .strict()
   .superRefine((event, context) => {
@@ -64,6 +70,12 @@ export const inboxEventAttributesSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'pending Inbox event cannot contain partial handling facts',
+      })
+    }
+    if (event.webhookDeliveredAt && (event.status !== 'handled' || event.visibility !== 'public')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'webhook delivery requires a handled public Inbox event',
       })
     }
   })

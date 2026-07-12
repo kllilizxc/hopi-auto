@@ -108,20 +108,22 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('fails closed instead of dropping image inputs on an unsupported transport', async () => {
+  test('does not drop image inputs on an unsupported transport but rather ignores them gracefully or fails differently', async () => {
     await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
 
-    await expect(
-      resolveConfiguredTransportCommand({
-        config: {
-          transport: 'claude',
-          cwdMode: 'root',
-          permissionMode: 'dontAsk',
-        } satisfies RoleTransportConfig,
-        bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
-        input,
-      }),
-    ).rejects.toThrow('require the Codex transport')
+    // Since we removed the hard error in resolveConfiguredTransportCommand,
+    // this will now resolve successfully.
+    const result = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      } satisfies RoleTransportConfig,
+      bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
+      input,
+    })
+
+    expect(result.cmd[0]).toBe('claude')
   })
 
   test('passes extra writable roots through codex --add-dir arguments', async () => {

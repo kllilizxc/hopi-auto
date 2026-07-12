@@ -6,8 +6,10 @@ import type { AgentRuntimeEvent } from './runtimeEvents'
 import { type ProcessTranscriptFormat, normalizeProcessOutputLine } from './vendorTranscript'
 import { type RoleTransportConfig, resolveConfiguredTransportCommand } from './vendorTransport'
 
-export const PASS_RESULTS = ['success', 'reject', 'replan', 'fail'] as const
+export const PASS_RESULTS = ['success', 'reject', 'attention', 'fail'] as const
+export const STORED_PASS_RESULTS = [...PASS_RESULTS, 'replan'] as const
 export type PassResultKind = (typeof PASS_RESULTS)[number]
+export type StoredPassResultKind = (typeof STORED_PASS_RESULTS)[number]
 
 const roleResultSchema = z
   .object({
@@ -145,7 +147,9 @@ export class MockRoleRunner implements RoleRunner {
 }
 
 function resultAllowed(responsibility: Responsibility, result: PassResultKind) {
-  if (responsibility === 'planner') return result === 'success' || result === 'fail'
+  if (responsibility === 'planner') {
+    return result === 'success' || result === 'attention' || result === 'fail'
+  }
   if (responsibility === 'generator') return result !== 'reject'
   return true
 }

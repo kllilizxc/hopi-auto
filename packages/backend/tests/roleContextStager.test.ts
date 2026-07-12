@@ -220,12 +220,12 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('### Latest Owning Work Evidence')
     expect(generatorPrompt).toContain('Repair this first.')
     expect(generatorPrompt).toContain(
-      'Allowed result for this generator Run: success, replan, or fail',
+      'Allowed result for this generator Run: success, attention, or fail',
     )
     expect(await Bun.file(generator.contextFile).text()).toContain(
       `${fixture.store.paths.evidenceDocument('goal-1', 'E-latest')} (latest)`,
     )
-    expect(generatorPrompt).toContain('If you stage targeted Attention, result must be fail')
+    expect(generatorPrompt).toContain('If you stage targeted Attention, result must be attention')
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
     expect(reviewerPrompt).toContain('short-lived local services for this Run')
     expect(reviewerPrompt).toContain('Decide the proof plan before installing optional tools')

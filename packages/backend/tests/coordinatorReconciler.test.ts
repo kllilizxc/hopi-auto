@@ -245,7 +245,6 @@ describe('CoordinatorReconciler', () => {
         observations.push(input.settled)
         return 'baseline' as const
       },
-      interruptForUser() {},
       isActive: () => false,
       listRuns: async () => [],
       listRunSummaries: async () => [],

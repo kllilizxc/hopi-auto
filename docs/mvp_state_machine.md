@@ -13,7 +13,7 @@ Assistant behavior to [the Assistant design](./mvp_assistant.md), execution beha
 
 The operator-facing product has **Assistant**, **Project**, and **Goal**. Project is stable context
 without a workflow lifecycle. Attention is an internal control document. Targeted Attention appears
-as a pinned **Needs you** message and blocks its target; targetless Attention appears as a normal
+as internal **Waiting for Assistant** state and blocks its target; targetless Attention appears as a normal
 Goal completion update. It is not another product concept.
 
 Five internal document types have these minimal durable control fields:
@@ -41,7 +41,7 @@ Inbox `source: user | reflection` and `visibility: public | internal` are proven
 facts, not more status values. Reflection itself has no canonical lifecycle. Its runtime manifest is
 disposable; only a useful internal brief enters the ordinary Inbox state machine.
 
-Pass results remain `success | reject | replan | fail`. Prose explains a result but cannot invent a
+Pass results are `success | reject | attention | fail`. Prose explains a result but cannot invent a
 transition. A tool error observed by Coordinator is `fail`. If the Coordinator or runner process
 disappears before a Work gate is published, no result is consumed and `attempts` may remain
 unchanged.
@@ -119,7 +119,7 @@ project. Delivery identity is `(projectId, goalId, attentionId)` for Goal-local 
 
 Every open Attention with a non-null target has exactly the same kernel behavior:
 
-- it appears as **Needs you**
+- it appears as **Waiting for Assistant**
 - it blocks its target and deterministic descendants
 - it remains open after notification
 - it resolves only after an answer or verified condition change
@@ -180,7 +180,7 @@ flowchart LR
     W -->|yes| RUN[Dispatch pass Run; stage unchanged]
     RUN --> O{Validated pass output}
     O -->|Reviewer success| C1[Independent durable C1 integration]
-    O -->|replan| PG
+    O -->|attention| A[Assistant-managed Attention]
     O -->|targeted Attention proposed| TA
     O -->|Planner completion proposal| PC[Prepare targetless Attention and Planning Work done gate]
     O -->|other accepted result| WG[Prepare Evidence and one Work gate]
@@ -342,13 +342,12 @@ Input. A design-file write does not mechanically trigger a revision, Planning Wo
 or code change; the model proposes those effects only when the instruction and current Goal require
 them.
 
-For an Engineering `replan` result, available Evidence may be published and Planning Work is then
-ensured. If the process stops before that guard, the result is unconsumed and the Engineering Work
-may run again. Once the guard exists, Planner takes over from current documents. There is no special
-recovery path; ordinary readiness and guards apply.
+For an Engineering `attention` result, available Evidence and one targeted Attention are published
+without a Work gate. Speaking Assistant decides whether current authority answers it, Planning is
+needed, or the operator must decide. There is no direct responsibility-to-responsibility handoff.
 
 Planning triggers include Goal creation, material contract change, resume, reopen, stale output,
-Engineering `replan`, explicit replanning, and an active Goal with neither nonterminal Work nor a
+explicit Assistant-requested planning and an active Goal with neither nonterminal Work nor a
 current completion proposal. An interrupted Planner simply runs again while its Planning Work
 remains at `plan`.
 
@@ -396,13 +395,13 @@ Dispatch never changes stage. Responsibility is a pure function of Work kind and
 | Pass | Stage | Accepted result and effect |
 | --- | --- | --- |
 | Planner | `plan` | `success -> done`; `fail -> retry` |
-| Generator | `generate` | `success -> review`; `replan -> Planner`; `fail -> retry` |
-| Reviewer | `review` | success -> C1; reject -> generate; replan -> Planner; fail -> retry |
+| Generator | `generate` | `success -> review`; `attention -> Assistant`; `fail -> retry` |
+| Reviewer | `review` | success -> C1; reject -> generate; attention -> Assistant; fail -> retry |
 
 After every Generator Run, Coordinator may create a task-branch source savepoint. The savepoint has
 no state-machine meaning and may preserve partial output from any result. Artifacts and Evidence are
-supporting writes. One Work-file update is the result gate: ordinary results update the owning Work, while `replan`
-creates the Planning Work guard and references its Evidence there. The gate appends relevant
+supporting writes. One Work-file update is the result gate for ordinary outcomes; `attention`
+instead publishes Evidence plus one targeted Attention without changing Work. Ordinary gates append relevant
 `evidenceRefs`, changes stage if required, and increments top-level `attempts` for `fail`, `reject`,
 or deterministic pre-C1 rejection. If that Work gate is absent after a process stop, the result was
 not consumed. Evidence alone remains provenance and does not prevent a new Run.
@@ -482,8 +481,8 @@ runnable.
 - A runner or Coordinator stop before the Work gate may leave source or Evidence but does not
   consume the result and may not increment `attempts`. Restart releases the stale lease and starts a
   new Run when readiness allows; it never reattaches the old child process.
-- `replan` ensures Planning Work and lets Planner take over. Reconciliation uses ordinary readiness
-  and Planning and Attention guards rather than an intermediate result state.
+- `attention` leaves Work stage and attempts unchanged. Speaking Assistant may request Planning;
+  reconciliation uses ordinary readiness plus Planning and Attention guards.
 - Targeted Attention remains the only durable operator block. It stays open until answered or its
   condition is verified clear, after which Reconciler starts fresh work.
 - Startup validates every root before enabling control loops. Ambiguous project truth creates or
@@ -511,7 +510,7 @@ Each nonterminal card shows exactly one primary badge, chosen by this priority:
 
 | Badge | Derivation |
 | --- | --- |
-| `Needs you` | Open targeted Attention covers the Work or Goal |
+| `Waiting for Assistant` | Open targeted Attention covers the Work or Goal |
 | `working` | A live Run owns the Work lease |
 | `scheduled` | Nonterminal Work has a future `notBefore` |
 | `queued` | `ready(work)` and no live Run |
@@ -560,7 +559,7 @@ outcome. Other state and document changes do not participate in this runtime tra
   may dispatch, publish a returning result, or enter `C1`. Planning Work never appears in
   Engineering `dependsOn`.
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
-  non-null target always blocks and appears as **Needs you**; a null target is Goal completion and
+  non-null target always blocks and appears as **Waiting for Assistant**; a null target is Goal completion and
   never blocks.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
@@ -575,9 +574,9 @@ outcome. Other state and document changes do not participate in this runtime tra
   success may create the Goal's one open unclaimed targetless completion proposal; Coordinator may
   only claim it after structural guards pass. Completion creates no second document or
   content-derived identity.
-- A Work result is consumed only by one Work gate: its owning Work for ordinary outcomes or the new
-  Planning Work for `replan`. Evidence without that gate is provenance and permits a new Run; no
-  result-recovery state or special guard bypass exists.
+- A Work result is consumed only by its owning Work gate for ordinary outcomes. An `attention`
+  outcome instead publishes Evidence plus the targeted Attention and leaves Work unchanged;
+  Evidence without a Work gate remains provenance and permits a new Run after resolution.
 - `work.attempts >= profile.maxAttempts` is never ready and gains targeted Attention.
 - An Engineering Work's integration commit is the unique reachable durable-ref `C1` carrying its
   qualified Work trailer; the same tree contains Work `done` and its Evidence references.

@@ -23,7 +23,7 @@ import { createAssistantHomeStore } from '../storage/assistantHomeStore'
 import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../storage/goalPackageStore'
-import { type AttentionTransport, createAttentionDeliveryWorker } from './attentionDelivery'
+import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
 import { createCompletionStructureVerifier } from './completionVerifier'
 import { bootstrapCoordinator } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
@@ -215,7 +215,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     },
   })
   const delivery = options.attentionTransport
-    ? createAttentionDeliveryWorker(workspace, options.attentionTransport)
+    ? createAssistantReplyDeliveryWorker(workspace, options.attentionTransport)
     : undefined
   const coordinator = createCoordinatorReconciler({
     workspace,

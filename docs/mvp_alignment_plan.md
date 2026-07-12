@@ -113,7 +113,7 @@ Alignment is complete only when:
    clean selected-Repo target advances, recovers secondary release projections, fails invalid
    projects closed, completes only from Planner proof, and delivers Attention through one optional
    webhook channel.
-7. The restored React UI exposes Assistant, Project, Goal contract/design, Pause/Resume, Needs you,
+7. The restored React UI exposes Assistant, Project, Goal contract/design, Pause/Resume, Waiting for Assistant,
    completion updates, four-column Kanban, cancelled archive, Project model defaults, Repo add and
    rebind, Work Repo badges, Work Attempt message streams, an on-demand Reflection debug stream, and
    managed-target Preview; Bun serves it through one backend process.

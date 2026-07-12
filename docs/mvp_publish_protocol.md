@@ -191,8 +191,9 @@ answer turn; the older turn stays pending and becomes independently eligible wit
 in durable conversation history.
 Project-target Attention resolves only after deterministic repair validation.
 
-A read-only Reflection has no publication capability except `handoff_to_main`, which may create one
-new internal pending Inbox turn as its single gate. It cannot publish Project state. If the speaking
+A read-only Reflection may only prepare one handoff brief. Coordinator confirms the observed digest
+is still current before creating one new internal pending speaking Inbox item as its single gate.
+Reflection cannot publish Project state. If the speaking
 thread decides the operator should see the eventual reply, `notify_user` promotes that same pending
 turn from internal to public in a separate Assistant-home publication before the ordinary handled
 gate. When the turn context names one Goal Attention, `notify_user` then acknowledges that Attention

@@ -9,12 +9,10 @@ dispatch:
   - when: { kind: engineering, stage: generate }
     pass: generator
     on: { success: review }
-    replan: ensure_planning
 
   - when: { kind: engineering, stage: review }
     pass: reviewer
     on: { success: done, reject: generate }
-    replan: ensure_planning
 
 retry:
   maxAttempts: 3

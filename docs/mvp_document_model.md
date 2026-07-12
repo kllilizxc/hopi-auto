@@ -99,10 +99,11 @@ user-sourced turn can never become internal.
   context, create Project or Goal effects.
 - A turn may call no tools, one tool, or tools targeting more than one Goal. The Inbox event stores
   no single-destination route state.
-- Assistant clarification is ordinary conversation. Targeted Attention is reserved for a durable
-  condition that blocks progress or bounded processing failure.
+- Targeted Attention is an internal durable request for speaking-Assistant management. It is not
+  user-visible until speaking revalidates, cannot safely resolve it, and publishes one reply.
 - Processing failure that cannot be repaired creates targeted Attention for the event.
-- Ordinary replies live in the conversation feed. Only Attention uses out-of-band delivery.
+- Ordinary and Needs-you replies live in the speaking conversation. External webhook delivery may
+  mirror that exact public reply; raw Attention never uses an out-of-band user path.
 - Internal Reflection turns are absent from the conversation projection. If promoted, the projection
   shows only the speaking thread's reply and does not invent a user message for the Reflection brief.
 
@@ -410,9 +411,9 @@ every linked Repo. Branch HEAD remains checkpoint authority but never owns Work 
 Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present;
 otherwise it creates a stable ID from the triggering event or planning cause.
 
-Triggers include Goal creation, material contract change, resume, reopen, stale output, an
-engineering `replan` result, and an active Goal with neither nonterminal Work nor a current
-completion proposal.
+Triggers include Goal creation, material contract change, resume, reopen, stale output, an explicit
+speaking-Assistant planning request after Attention, and an active Goal with neither nonterminal
+Work nor a current completion proposal.
 
 Clarification and final assessment remain model judgment inside the same Planning Work. The
 document model adds no `clarify` or completion stage, approval flag, structured question, or
@@ -484,10 +485,10 @@ attempts: 2
 
 `attempts` is the number of published unsuccessful Work outcomes in the current recovery episode,
 including `fail`, `reject`, and deterministic pre-C1 integration rejection. Every such outcome
-increments the same counter regardless of the current engineering stage. `replan` transfers control
-to Planner instead of publishing an owning-Work outcome; its Planning Work gate references the Run
-Evidence as the consumed-result marker. The ordered `evidenceRefs` retains consumed Evidence, from
-which models derive repair context.
+increments the same counter regardless of the current engineering stage. `attention` publishes no
+owning-Work outcome and does not increment attempts; speaking Assistant decides whether Planning or
+operator input is needed. The ordered `evidenceRefs` retains consumed Evidence, from which models
+derive repair context.
 
 Ordinary pass success never clears recovery. The counter clears only when a material contract
 revision invalidates the episode, Planning publishes a materially changed plan, or the operator
@@ -516,7 +517,7 @@ notifiedAt: null
 ---
 ```
 
-`target` is exactly one canonical event, project, Goal, or Work reference for **Needs you**, or
+`target` is exactly one canonical event, project, Goal, or Work reference for **Waiting for Assistant**, or
 null for completion.
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
@@ -548,7 +549,7 @@ is needed on Attention. Work and inbox events do not copy a blocking field.
 The body is free Markdown. The following headings are a writing convention for models, not a
 schema or parser contract:
 
-- Needs you notification: exact question or condition, context, recommendation, trade-offs,
+- Assistant clarification: exact question or condition, context, recommendation, trade-offs,
   consequence of delay, owner, retry condition, and Evidence. For Work-targeted problems, Work
   `attempts` remains authoritative; Attention may include only a creation-time summary.
 - completion notification: delivered outcome, commits, checks, Evidence, limitations, and

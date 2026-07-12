@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
-  ArrowUpRight,
   CirclePause,
   CirclePlay,
   ExternalLink,
@@ -159,11 +158,11 @@ export function BoardView() {
     )
   }
 
-  const openAttention = goal.attentions.find(
+  const assistantAttention = goal.attentions.find(
     (attention) => attention.target !== null && attention.resolvedAt === null,
   )
   const focus =
-    goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
+    goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
     goal.works.find((work) => work.projection.primaryBadge === 'working') ??
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
   const cancelled = goal.works.filter((work) => work.projection.cancelled)
@@ -275,11 +274,11 @@ export function BoardView() {
         <div>
           <small>Current focus</small>
           <strong>
-            {openAttention ? 'Needs your decision' : (focus?.title ?? goal.goal.lifecycle)}
+            {assistantAttention ? 'Waiting for Assistant' : (focus?.title ?? goal.goal.lifecycle)}
           </strong>
           <p>
-            {openAttention
-              ? excerpt(openAttention.body, 180)
+            {assistantAttention
+              ? 'Assistant is consolidating the blocked work and will ask only if your input is required.'
               : (focus?.projection.primaryBadge ?? 'No pending Work')}
           </p>
         </div>
@@ -292,22 +291,16 @@ export function BoardView() {
         </div>
       </section>
 
-      {openAttention && (
-        <AppButton
-          variant="ghost"
-          className="needs-you-banner"
-          type="button"
-          onClick={() => openAssistant(openAttention)}
-        >
+      {assistantAttention && (
+        <div className="needs-you-banner" role="status">
           <span>
             <AlertCircle />
           </span>
           <span>
-            <strong>Needs you</strong>
-            <small>{excerpt(openAttention.body, 220)}</small>
+            <strong>Waiting for Assistant</strong>
+            <small>Assistant is reviewing the internal Attention before deciding whether to act or ask you.</small>
           </span>
-          <ArrowUpRight />
-        </AppButton>
+        </div>
       )}
 
       <AppScrollShadow className="kanban-scroll" orientation="horizontal">

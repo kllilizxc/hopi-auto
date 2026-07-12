@@ -10,48 +10,61 @@ export function createFrontendDevServer(options: FrontendDevServerOptions = {}) 
     options.backendOrigin ?? process.env.HOPI_BACKEND_URL ?? 'http://127.0.0.1:3000',
   )
 
-  return Bun.serve({
-    port: options.port ?? readPort(process.env.HOPI_FRONTEND_PORT, 5173),
-    routes: {
-      '/': indexPage,
-      '/projects': indexPage,
-      '/projects/*': indexPage,
-    },
-    development: {
-      hmr: true,
-      console: true,
-    },
-    async fetch(request) {
-      const source = new URL(request.url)
-      if (source.pathname !== '/api' && !source.pathname.startsWith('/api/')) {
-        return new Response('Not found', { status: 404 })
-      }
+  let port = options.port ?? readPort(process.env.HOPI_FRONTEND_PORT, 5173)
+  const maxPort = port + 100
 
-      const target = new URL(`${source.pathname}${source.search}`, backendOrigin)
-      const headers = new Headers(request.headers)
-      headers.delete('host')
-      headers.delete('content-length')
+  while (true) {
+    try {
+      return Bun.serve({
+        port,
+        routes: {
+          '/': indexPage,
+          '/projects': indexPage,
+          '/projects/*': indexPage,
+        },
+        development: {
+          hmr: true,
+          console: true,
+        },
+        async fetch(request) {
+          const source = new URL(request.url)
+          if (source.pathname !== '/api' && !source.pathname.startsWith('/api/')) {
+            return new Response('Not found', { status: 404 })
+          }
 
-      try {
-        return await fetch(target, {
-          method: request.method,
-          headers,
-          body:
-            request.method === 'GET' || request.method === 'HEAD'
-              ? undefined
-              : await request.arrayBuffer(),
-          redirect: 'manual',
-        })
-      } catch (error) {
-        return Response.json(
-          {
-            error: `Frontend dev proxy could not reach ${backendOrigin.origin}: ${errorMessage(error)}`,
-          },
-          { status: 502 },
-        )
+          const target = new URL(`${source.pathname}${source.search}`, backendOrigin)
+          const headers = new Headers(request.headers)
+          headers.delete('host')
+          headers.delete('content-length')
+
+          try {
+            return await fetch(target, {
+              method: request.method,
+              headers,
+              body:
+                request.method === 'GET' || request.method === 'HEAD'
+                  ? undefined
+                  : await request.arrayBuffer(),
+              redirect: 'manual',
+            })
+          } catch (error) {
+            return Response.json(
+              {
+                error: `Frontend dev proxy could not reach ${backendOrigin.origin}: ${errorMessage(error)}`,
+              },
+              { status: 502 },
+            )
+          }
+        },
+      })
+    } catch (error: any) {
+      if (error.code === 'EADDRINUSE' && port < maxPort) {
+        port++
+      } else {
+        throw error
       }
-    },
-  })
+    }
+  }
 }
 
 function readPort(value: string | undefined, fallback: number) {

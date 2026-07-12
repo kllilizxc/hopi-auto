@@ -1,7 +1,11 @@
 import { appendFile, mkdir, readdir, rename, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import { PASS_RESULTS, type PassResultKind, type RoleRunResult } from '../agent/RoleRunner'
+import {
+  type RoleRunResult,
+  STORED_PASS_RESULTS,
+  type StoredPassResultKind,
+} from '../agent/RoleRunner'
 import {
   AGENT_TRANSCRIPT_ENTRY_KINDS,
   AGENT_TRANSCRIPT_TRANSPORTS,
@@ -13,7 +17,7 @@ export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as co
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
 const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-const nullableResultSchema = z.enum(PASS_RESULTS).nullable()
+const nullableResultSchema = z.enum(STORED_PASS_RESULTS).nullable()
 const attemptManifestSchema = z
   .object({
     version: z.literal(1),
@@ -63,7 +67,7 @@ const storedEventSchema = z.discriminatedUnion('kind', [
 ])
 const legacyResultSchema = z
   .object({
-    result: z.enum(PASS_RESULTS),
+    result: z.enum(STORED_PASS_RESULTS),
     summary: z.string(),
     artifacts: z.array(z.string()).optional(),
   })
@@ -365,7 +369,9 @@ async function readLegacySummary(
   }
 }
 
-function parseLegacyResult(source: string): { result: PassResultKind; summary: string } | null {
+function parseLegacyResult(
+  source: string,
+): { result: StoredPassResultKind; summary: string } | null {
   if (!source.trim()) return null
   try {
     const parsed = legacyResultSchema.safeParse(JSON.parse(source))

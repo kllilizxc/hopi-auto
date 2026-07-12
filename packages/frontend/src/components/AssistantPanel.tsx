@@ -3,7 +3,6 @@ import {
   Activity,
   ArrowLeft,
   Bot,
-  CornerUpLeft,
   ImagePlus,
   RefreshCw,
   Send,
@@ -27,7 +26,7 @@ import type { GoalScope } from '../lib/goalScope'
 import { resolveAssistantInboxContext } from '../lib/assistantContext'
 import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
-import { cn, excerpt, formatTime } from '../lib/utils'
+import { cn, formatTime } from '../lib/utils'
 import {
   AppAlert,
   AppButton,
@@ -97,12 +96,6 @@ export function AssistantPanel({
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [focusRequest, initialReply])
 
-  const visibleAttentions = (snapshot?.attentions ?? [])
-    .filter(
-      (attention) =>
-        attention.target !== null && attention.resolvedAt === null,
-    )
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
   const assistantStream = useInfiniteMessageStream({
     streamKey: 'workspace-assistant',
     queryKey: ['assistant-feed'],
@@ -139,7 +132,7 @@ export function AssistantPanel({
       return sendInboxMessage({
         content,
         images: draftImages.map(({ file }) => file),
-        context: resolveAssistantInboxContext(scope, replyAttention),
+        context: resolveAssistantInboxContext(scope, replyAttention, snapshot?.attentions),
       })
     },
     onSuccess: async () => {
@@ -244,32 +237,6 @@ export function AssistantPanel({
       ) : (
         <>
       <div className="assistant-body">
-        {visibleAttentions.length > 0 && (
-          <AppScrollShadow className="attention-list" role="region" aria-label="Attention">
-            {visibleAttentions.map((attention) => {
-              const canReply =
-                (attention.scope === 'goal' || attention.target?.includes('/event:') === true)
-              return (
-                <article
-                  className="attention-card"
-                  key={`${attention.scope}:${attention.id}`}
-                >
-                  <div className="attention-card-heading">
-                    <span><span className="attention-dot" /></span>
-                    <strong>Needs your input</strong>
-                  </div>
-                  <p>{excerpt(attention.body, 260)}</p>
-                  {canReply && (
-                    <AppButton variant="ghost" type="button" onClick={() => setReplyAttention(attention)}>
-                      <CornerUpLeft /> Respond
-                    </AppButton>
-                  )}
-                </article>
-              )
-            })}
-          </AppScrollShadow>
-        )}
-
         <UnifiedMessageFeed
           feedKey="workspace-assistant"
           items={messages}

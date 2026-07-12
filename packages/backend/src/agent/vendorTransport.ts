@@ -100,9 +100,6 @@ export async function resolveConfiguredTransportCommand(options: {
   input: ConfiguredTransportInvocation
 }): Promise<TransportCommand> {
   const env = buildTransportEnv(options.bundle, options.input)
-  if ((options.bundle.imageFiles?.length ?? 0) > 0 && options.config.transport !== 'codex') {
-    throw new Error('Responsibility image inputs currently require the Codex transport')
-  }
 
   if ('cmd' in options.config) {
     return {

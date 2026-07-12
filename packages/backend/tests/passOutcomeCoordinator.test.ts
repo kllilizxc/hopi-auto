@@ -176,25 +176,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-new-design')).toBe(true)
   })
 
-  test('turns replan into Evidence support consumed by one Planning gate', async () => {
-    const fixture = await createEngineeringFixture('generate')
-    const context = await fixture.stage('W-1', 'run-replan', 'generator')
-
-    const result = await fixture.outcomes.apply(
-      fixture.input('W-1', 'run-replan', 'generator', context, 'replan'),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(result).toMatchObject({ kind: 'published', result: 'replan' })
-    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
-    expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
-    const planning = [...goalPackage.works.values()].filter(
-      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-    )
-    expect(planning).toHaveLength(1)
-    expect(planning[0]?.attributes.evidenceRefs).toEqual(['E-run-replan'])
-  })
-
   test('publishes targeted Attention without advancing Work or consuming the Run', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-attention', 'generator')
@@ -216,7 +197,7 @@ describe('PassOutcomeCoordinator', () => {
     )
 
     const result = await fixture.outcomes.apply(
-      fixture.input('W-1', 'run-attention', 'generator', context, 'fail'),
+      fixture.input('W-1', 'run-attention', 'generator', context, 'attention'),
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
@@ -429,7 +410,7 @@ async function createFixture() {
       runId: string,
       responsibility: 'planner' | 'generator' | 'reviewer',
       context: Awaited<ReturnType<typeof stager.prepare>>,
-      result: 'success' | 'reject' | 'replan' | 'fail',
+      result: 'success' | 'reject' | 'attention' | 'fail',
     ) {
       return {
         goalId: 'goal-1',

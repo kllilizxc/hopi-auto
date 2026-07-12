@@ -1,3 +1,4 @@
+import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import {
   isWorkTerminal,
   parseAttentionDocument,
@@ -40,7 +41,10 @@ export interface AssistantToolResult {
 
 export interface AssistantTools {
   issue(eventId: string): string
-  issueReflection(reflectionId: string, onHandoff?: (eventId: string) => void): string
+  issueReflection(
+    reflectionId: string,
+    onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void,
+  ): string
   revoke(token: string): void
   execute(token: string, name: AssistantToolName, input: unknown): Promise<AssistantToolResult>
   executeForEvent(
@@ -65,7 +69,7 @@ export function createAssistantTools(options: {
         reflectionId: string
         expiresAt: number
         handedOff: boolean
-        onHandoff?: (eventId: string) => void
+        onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void
       }
   const capabilities = new Map<string, Capability>()
   const now = options.now ?? (() => new Date())
@@ -117,20 +121,21 @@ export function createAssistantTools(options: {
         if (args.context) {
           const project = requireProject(options.projects, args.context.projectId)
           const goalPackage = await project.store.readPackage(args.context.goalId)
-          if (args.context.attentionId && !goalPackage.attentions.has(args.context.attentionId)) {
-            throw new Error(`Goal Attention not found: ${args.context.attentionId}`)
+          for (const attentionId of [
+            ...(args.context.attentionId ? [args.context.attentionId] : []),
+            ...args.context.attentionRefs,
+          ]) {
+            if (!goalPackage.attentions.has(attentionId)) {
+              throw new Error(`Goal Attention not found: ${attentionId}`)
+            }
           }
         }
-        const event = await options.workspace.receiveReflectionEvent({
-          content: args.brief,
-          context: args.context,
-        })
         capability.handedOff = true
-        capability.onHandoff?.(event.attributes.id)
+        capability.onHandoff?.({ brief: args.brief, context: args.context })
         return {
-          summary: `Handed Reflection ${capability.reflectionId} to the speaking thread.`,
-          changed: true,
-          value: { eventId: event.attributes.id },
+          summary: `Prepared Reflection ${capability.reflectionId} brief for the speaking thread.`,
+          changed: false,
+          value: { prepared: true },
         }
       }
       if (!mainAssistantToolNames.includes(name as never)) {
@@ -466,12 +471,18 @@ export function createAssistantTools(options: {
           }
           const project = requireProject(options.projects, args.projectId ?? '')
           const goalId = args.goalId ?? ''
-          await publishInput(options.workspace, project.store, goalId, event)
+          const admission = await goalInputAdmission(
+            options.workspace,
+            project.store,
+            goalId,
+            event,
+          )
           const changed = await resolveGoalAttention(
             project.store,
             goalId,
             args.attentionId,
             args.resolution,
+            admission,
             now(),
           )
           return {
@@ -537,23 +548,35 @@ export function createAssistantTools(options: {
           const changed = event.attributes.visibility === 'internal'
           const exposed = await options.workspace.exposeEvent(eventId)
           const context = event.attributes.context
-          const attentionAcknowledged = context?.attentionId
-            ? await acknowledgeGoalAttention(
-                requireProject(options.projects, context.projectId).store,
-                context.goalId,
-                context.attentionId,
-                now(),
-              )
-            : false
+          const attentionIds = context
+            ? [
+                ...new Set([
+                  ...(context.attentionId ? [context.attentionId] : []),
+                  ...(context.attentionRefs ?? []),
+                ]),
+              ]
+            : []
+          const acknowledgedAttentionIds: string[] = []
+          if (context) {
+            const store = requireProject(options.projects, context.projectId).store
+            for (const attentionId of attentionIds) {
+              if (await acknowledgeGoalAttention(store, context.goalId, attentionId, now())) {
+                acknowledgedAttentionIds.push(attentionId)
+              }
+            }
+          }
+          const attentionAcknowledged = acknowledgedAttentionIds.length > 0
           return {
             summary: attentionAcknowledged
-              ? `The current reply is public and acknowledges Goal Attention ${context?.attentionId}.`
+              ? `The current reply is public and acknowledges ${acknowledgedAttentionIds.length} Goal Attention item(s).`
               : 'The current Reflection-driven reply will be shown to the operator.',
             changed: changed || attentionAcknowledged,
             value: {
               eventId,
               visibility: exposed.attributes.visibility,
               attentionId: context?.attentionId ?? null,
+              attentionIds,
+              acknowledgedAttentionIds,
               attentionAcknowledged,
             },
           }
@@ -723,6 +746,7 @@ async function resolveGoalAttention(
   goalId: string,
   attentionId: string,
   resolution: string,
+  admission: Awaited<ReturnType<typeof goalInputAdmission>>,
   resolvedAt: Date,
 ) {
   const path = store.paths.attentionDocument(goalId, attentionId)
@@ -731,12 +755,27 @@ async function resolveGoalAttention(
   if (!(await file.exists())) throw new Error(`Goal Attention not found: ${attentionId}`)
   const source = await file.text()
   const attention = parseAttentionDocument(source)
-  if (attention.attributes.resolvedAt !== null) return false
+  if (attention.attributes.resolvedAt !== null) {
+    if (admission.write) {
+      await store.publishGoal(goalId, { supportingWrites: [], gateWrite: admission.write })
+    }
+    return Boolean(admission.write)
+  }
   await assertAttentionBlockerChanged(store, goalId, attention.attributes.target)
   attention.attributes.resolvedAt = resolvedAt.toISOString()
-  attention.body = `${attention.body}\n## Resolution\n\n${resolution.trim()}\n`
+  attention.attributes.resolutionInput = admission.path
+  attention.body = [
+    attention.body.trimEnd(),
+    '',
+    '## Resolution',
+    '',
+    `Answer Input: \`${admission.path}\``,
+    '',
+    resolution.trim(),
+    '',
+  ].join('\n')
   await store.publishGoal(goalId, {
-    supportingWrites: [],
+    supportingWrites: admission.write ? [admission.write] : [],
     gateWrite: {
       path,
       expectedHash: await hashBytes(new TextEncoder().encode(source)),

@@ -726,7 +726,8 @@ function deriveGoalSummaries(
       const columns = ['Plan', 'Build', 'Review', 'Done']
       return columns.indexOf(left.column ?? 'Done') - columns.indexOf(right.column ?? 'Done')
     })
-  const focus = ordered.find((projection) => projection.primaryBadge === 'Needs you') ?? ordered[0]
+  const focus =
+    ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ?? ordered[0]
   if (lifecycle === 'paused') {
     return {
       currentSummary: focus
@@ -769,7 +770,9 @@ export function presentAttempt<
     (document) => document.attributes.producerRun === producerRun,
   )
   if (!evidence) return attempt
-  const publishedResult = evidence.body.match(/^- Result: (success|reject|replan|fail)$/m)?.[1]
+  const publishedResult = evidence.body.match(
+    /^- Result: (success|reject|attention|replan|fail)$/m,
+  )?.[1]
   const consumed = [...goalPackage.works.values()].some((work) =>
     work.attributes.evidenceRefs.includes(evidence.attributes.id),
   )
@@ -786,7 +789,6 @@ async function receiveUserEvent(
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
 ) {
   const event = await runtime.workspace.receiveEvent(input)
-  runtime.reflection.interruptForUser()
   runtime.coordinator.interruptInternalAssistant()
   return event
 }

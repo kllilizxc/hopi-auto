@@ -54,6 +54,7 @@ export interface AssistantWorkspaceStore {
     eventId: string,
     input: { reply: string; disposition: string; handledAt?: Date },
   ): Promise<InboxEventDocument>
+  markEventWebhookDelivered(eventId: string, deliveredAt?: Date): Promise<InboxEventDocument>
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
   markAttentionNotified(attentionId: string, notifiedAt?: Date): Promise<WorkspaceAttentionDocument>
   resolveAttention(
@@ -133,6 +134,16 @@ export function createAssistantWorkspaceStore(
       await publishEvent(this, publisher, eventId, source, event)
       return event
     },
+    async markEventWebhookDelivered(eventId, deliveredAt = new Date()) {
+      const { source, event } = await requireEvent(this, homeRoot, eventId)
+      if (event.attributes.status !== 'handled' || event.attributes.visibility !== 'public') {
+        throw new AssistantWorkspaceStoreError('Only handled public events can be delivered')
+      }
+      if (event.attributes.webhookDeliveredAt) return event
+      event.attributes.webhookDeliveredAt = deliveredAt.toISOString()
+      await publishEvent(this, publisher, eventId, source, event)
+      return event
+    },
     async createAttention(attention) {
       await publisher.publish({
         root,
@@ -191,6 +202,7 @@ async function receiveEvent(
       handledAt: null,
       reply: null,
       disposition: null,
+      webhookDeliveredAt: null,
     },
     body,
   }

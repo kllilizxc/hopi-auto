@@ -27,9 +27,10 @@ bun run dev
 ```
 
 Open `http://localhost:3000`. Set `HOPI_HOME` to keep Assistant-home documents and managed Project
-worktrees outside this repository. Set `HOPI_ATTENTION_WEBHOOK_URL` to POST Needs-you and completion
-messages to one provider-neutral notification endpoint; HOPI sends the canonical delivery key in
-the `Idempotency-Key` header. A linked user checkout is never HOPI's publication root.
+worktrees outside this repository. Set `HOPI_ATTENTION_WEBHOOK_URL` to mirror public speaking-
+Assistant updates to one provider-neutral notification endpoint; raw internal Attention is never
+delivered. HOPI sends the public Inbox event identity in the `Idempotency-Key` header. A linked user
+checkout is never HOPI's publication root.
 
 For standalone frontend HMR, keep `bun run dev:backend` running and start `bun run dev:frontend` in
 another terminal, then open `http://localhost:5173`. The frontend dev server proxies to port 3000;

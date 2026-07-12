@@ -102,8 +102,8 @@ current truth, and requires:
 If the guard fails, the result cannot advance state. Source and Evidence are preserved when
 useful. Stale contract output goes through Planning; terminal output remains Evidence only.
 A Work reference to Evidence with the same qualified `producerRun` is the durable
-consumed-result marker. Ordinary outcomes reference it from the owning Work gate; `replan` references
-it from the new Planning Work gate. Unreferenced Evidence is provenance only and does not suppress a
+consumed-result marker. Ordinary outcomes reference it from the owning Work gate; an `attention`
+result preserves it beside the Attention without claiming Work progress. Unreferenced Evidence is provenance only and does not suppress a
 rerun. The append-only referenced Evidence list is ordered oldest to newest, so a retry reads its
 final reference first and expands backward only as needed. This existing order is the repair
 context. The Run manifest may render that same order and label its final item for model salience;
@@ -166,12 +166,10 @@ dispatch:
   - when: { kind: engineering, stage: generate }
     pass: generator
     on: { success: review }
-    replan: ensure_planning
 
   - when: { kind: engineering, stage: review }
     pass: reviewer
     on: { success: done, reject: generate }
-    replan: ensure_planning
 
 retry:
   maxAttempts: 3
@@ -184,7 +182,7 @@ concurrency:
 ```
 
 The profile supports only exact kind-stage matching, one responsibility pass per dispatch rule,
-explicit success/reject transitions, one built-in replanning handoff, one retry limit, and per-pass
+explicit success/reject transitions, one Assistant-managed Attention handoff, one retry limit, and per-pass
 concurrency. Reviewer `success -> done` is publishable only after the built-in deterministic
 integration postcondition succeeds; integration behavior is Coordinator code, not profile syntax.
 The profile has no hooks, expression language, inheritance, project variables, arbitrary actions,
@@ -213,11 +211,13 @@ Pass result values are:
 - `success`: no operator intervention remains; apply the profile transition after validation and
   any built-in postcondition
 - `reject`: Reviewer returns engineering Work to `generate` with findings
-- `replan`: ensure the Goal-wide Planning guard; Planner owns later Engineering Work changes
+- `attention`: keep the current stage and publish one internal Assistant-management request without
+  consuming an attempt
 - `fail`: keep stage and apply bounded recovery
 
-`blocked` is not a pass result. Ordinary failures retry according to recovery facts and budget;
-conditions requiring operator authority may create targeted Attention immediately. Coordinator
+`blocked` is not a Work field. Open targeted Attention is the one derived readiness blocker.
+Ordinary failures retry according to recovery facts and budget; design ambiguity, missing
+information, or external authority returns `attention`. Coordinator
 validates the staged Attention document rather than parsing pass prose for control. Process
 interruption, invalid output, and invalid pass-result combinations normalize to `fail`.
 
@@ -228,14 +228,13 @@ Work, and let current canonical state determine the next reconciliation. It neve
 Attention merely because Goal lifecycle, revision, Work ownership, dependency truth, or another
 guard changed while the Run was active.
 
-A pass that knows retry cannot resolve the condition returns `fail` and may include a staged
-targeted Attention document. In that case Coordinator publishes Evidence plus Attention and does
-not publish a Work gate or increment `attempts`; after resolution a new Run starts. A `replan`
-publishes Evidence plus the Planning guard, and Planner owns the later Work update. If the project
-root is invalid or unwritable, Coordinator publishes only Assistant-home project Attention. This is
-a document proposal, not a second pass result or prose interpretation.
+A pass that needs Assistant management returns `attention` with one staged targeted Attention.
+Coordinator publishes Evidence plus Attention, does not publish a Work gate or increment attempts,
+and starts a fresh Run only after speaking Assistant resolves the request. Speaking may answer from
+current authority, update design, request Planning, or ask the operator. Responsibilities never
+handoff directly to one another.
 
-A targeted Attention proposal is valid only with `result: fail`. `success`, `reject`, or `replan`
+A targeted Attention proposal is valid only with `result: attention`. `success`, `reject`, or `fail`
 combined with targeted Attention is an invalid pass result and normalizes to ordinary `fail` without
 publishing the proposed Attention. A responsibility must not classify its own sandbox restrictions,
 Git metadata access, unavailable local port, or missing optional tool as operator authority. It
@@ -246,9 +245,9 @@ Valid results by responsibility pass:
 
 | Pass      | Results  |
 | --------- | -------- |
-| Planner   | `success | fail`  |
-| Generator | `success | replan | fail`  |
-| Reviewer  | `success | reject | replan | fail` |
+| Planner   | `success | attention | fail`  |
+| Generator | `success | attention | fail`  |
+| Reviewer  | `success | reject | attention | fail` |
 
 ## Fixed Responsibility Passes
 
@@ -331,8 +330,11 @@ run; adoption cannot race Planning dispatch.
 It first reads root `AGENTS.md`; when missing, it silently scans the Repo and includes a concise
 bootstrap file as a supporting write in the same Planning publication. This is not an initialization
 task or separate gate, and an existing file is not automatically replaced. Planner then resolves
-material ambiguity through purpose-driven questions, updating `design/**` with decisions already
-established, and proposes the smallest independently schedulable engineering Work set, complete
+material ambiguity with the grill-me protocol: inspect code and authority before asking, traverse
+dependent decisions in order, group only currently independent material questions, and include a
+recommendation, alternatives, trade-offs, and downstream impact for each. It updates the relevant
+`design/**` document plus `design/decisions.md` with established decisions, then proposes the
+smallest independently schedulable engineering Work set, complete
 acceptance criteria, all known ordering edges, and current contract revisions. It proposes targeted
 Attention when an answer may materially change that output or when it cannot safely infer operator
 authority; it does not ask merely to satisfy a fixed interview ritual.
@@ -402,8 +404,8 @@ Generator edits only the stable task worktree. Its current assignment inlines th
 objective and acceptance criteria, plus the latest referenced Evidence as the reason for a retry when
 present. It reads the Work contract, design, current target state, and findings from the staged
 canonical context bundle; changes source and normal project docs; runs focused checks; and produces
-Evidence. It returns `success`, `replan`, or `fail`: replan means the accepted design cannot be
-implemented safely, while fail means this Run did not complete valid implementation proof.
+Evidence. It returns `success`, `attention`, or `fail`: attention means Assistant management is
+required, while fail means this Run did not complete valid implementation proof.
 
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every
@@ -422,7 +424,7 @@ bypass its stable worktree. Project Preview alone owns that variable.
 
 Reviewer independently checks acceptance criteria, diff, tests, and material runtime behavior.
 It normally reads without editing source. Implementation rejection records findings and returns
-the same Work to `generate`; invalid design returns `replan`. Reviewer success keeps the durable
+the same Work to `generate`; invalid design returns `attention` for Assistant management. Reviewer success keeps the durable
 stage at `review` while Coordinator immediately attempts deterministic integration under the same
 Work lease.
 
@@ -455,8 +457,8 @@ entrypoint and existing test/browser stack, does not install competing harnesses
 already exists, and does not rerun an unchanged passing check. Helper-only changes normally stop at
 focused tests; an operator-reported visual or interaction path receives one direct runtime exercise.
 
-Reviewer may return `success`, `reject`, `replan`, or `fail`: reject identifies an implementation
-defect against accepted criteria, replan identifies an invalid design or Work contract, and fail means
+Reviewer may return `success`, `reject`, `attention`, or `fail`: reject identifies an implementation
+defect against accepted criteria, attention identifies an invalid design or missing authority, and fail means
 the Run could not produce a valid review. Every role's result may list Run-local logs, screenshots, or
 other proof paths in `artifacts`; omit artifacts when no preserved file adds evidence.
 
@@ -552,7 +554,7 @@ sync watcher, import Action, or special Work kind.
 After every Generator Run, Coordinator commits any safe source changes on the task branch before it
 applies the pass outcome. Task branch HEAD is a durable savepoint and derived Git state rather than
 duplicated Work front matter. It carries no success, retry, or stage semantics: partial changes from
-`fail`, `replan`, or legitimate Attention remain isolated and recoverable, while only a validated
+`fail` or `attention` remain isolated and recoverable, while only a validated
 Work gate can advance the workflow. Planning has no task worktree and a read-only Reviewer does not
 create an empty commit.
 
@@ -740,7 +742,7 @@ inconsistency after its durable ref. Neither adds another Goal or Work lifecycle
 
 ### Notification
 
-Open targeted Attention appears as pinned **Needs you** messages and an unresolved filter inside
+Open targeted Attention appears as **Waiting for Assistant** on the board and is handled through Reflection and the speaking Assistant rather than exposed raw inside
 conversation and Goal views. Targetless completion Attention appears in the normal update feed.
 Both can use the provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL`. The built-in
 Assistant path may also deliver an Attention when Reflection decides a speaking-thread update is
