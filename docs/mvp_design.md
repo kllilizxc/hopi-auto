@@ -173,15 +173,17 @@ meaningful after runtime cleanup.
 
 #### Project and Repo boundary
 
-`Project` is the user's durable product context; `Repo` is a Git object and ref namespace. The MVP
-enforces exactly one Repo per Project and colocates the Project package with source in the
-HOPI-managed integration worktree. Because cardinality is one, it stores no separate `repoId`.
-`project root` means that managed worktree, never an arbitrary user checkout. This is an explicit
-delivery limit, not a claim that future Projects are intrinsically single-repo.
+`Project` is the user's durable product context; `Repo` is a Git object and ref namespace. A Project
+owns one or more Repos with stable `repoId` values and exactly one `primaryRepoId`. The primary Repo
+contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md`, preparation,
+and Preview entrypoints. Every Repo has a HOPI-owned `hopi/release` ref and managed integration
+worktree; no user checkout is a publication or materialization root.
 
-True one-to-many Projects are deferred because they separate the Goal document root from source
-integration roots. Supporting them safely requires an explicit Work-to-Repo binding and a new
-cross-root integration completion protocol; adding a repository list alone is insufficient.
+Engineering Work explicitly names the Repos in its source workspace. Goal, Work, Kanban, and the
+fixed responsibility passes remain Project-scoped rather than multiplying per Repo. The primary
+`hopi/release` ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
+for each secondary Repo, whose managed refs and worktrees are recoverable projections after C1.
+The complete protocol belongs to [the multi-Repo design](./mvp_multi_repo.md).
 
 ### 8. Structured control, unstructured semantics
 
@@ -215,6 +217,8 @@ The authority is split by concern rather than repeated in one large document:
   turn recovery, and live conversation behavior.
 - [Execution](./mvp_execution.md): Planner responsibilities, fixed profile, semantic
   guards, worktrees, scheduling, completion, notification, and Preview.
+- [Multi-Repo](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution, primary
+  C1 release manifests, and projection recovery.
 - [State machine](./mvp_state_machine.md): derived lifecycle, readiness, and Kanban visualization.
 - [Publish protocol](./mvp_publish_protocol.md): single-gate file publication, cross-root receipts,
   C1 durability, and crash boundaries.
@@ -227,8 +231,8 @@ The authority is split by concern rather than repeated in one large document:
   a portable Goal asset whose path and purpose live in editable design Markdown.
 - Reflection proactively assesses meaningful state changes but can only hand a brief to that same
   Assistant; it never mutates state or appears as another product thread.
-- Project owns stable context and the fixed HOPI-managed `hopi/release` worktree; it has no
-  workflow lifecycle.
+- Project owns stable context, one primary Repo, and one or more HOPI-managed `hopi/release`
+  worktrees; it has no workflow lifecycle.
 - Goal owns the outcome contract and lifecycle.
 - Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
   sparse Work DAG, and makes the final semantic completion assessment.
@@ -281,8 +285,8 @@ The MVP does not include:
 - Schedule documents, recurring schedules, or Goal-level time state
 - resource claims or inferred file-overlap locks
 - per-project, per-Goal, or target-aware publication locks
-- a Project containing multiple Repos or a Goal delivering across Repo roots
-- cross-root atomic transactions
+- switching or removing the primary Repo after Project creation
+- a general cross-root transaction layer outside the fixed primary-C1 Repo projection protocol
 - automatic import from or publication into a user checkout or user-owned branch
 - one writable project attached to multiple active HOPI homes
 - child-process reattachment
@@ -411,10 +415,11 @@ canonical Attention identity.
 ### Project migration
 
 Git refs and canonical `.hopi` files move to another machine. Goal Inputs, contracts, DAG, timing,
-task branches, Attention, and Evidence remain self-contained. Assistant-home Inbox turns and
-workspace Attention move with the HOPI-home export together with `home.yml`; `repoPath` and Git
-worktree administration are explicitly rebound before startup validation allows work to resume.
-HOPI refuses to reconstruct a missing managed root from a potentially older Git checkpoint.
+task branches, Attention, Evidence, stable Repo IDs, and the primary release manifest remain
+self-contained. Assistant-home Inbox turns and workspace Attention move with the HOPI-home export
+together with `home.yml`; every local `repoPath` and Git worktree administration entry is explicitly
+rebound before startup validation allows work to resume. HOPI refuses to reconstruct a missing
+primary managed root from a potentially older Git checkpoint.
 
 ## Evidence From CardGame
 

@@ -141,17 +141,22 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 required before Coordinator starts and travels with every lossless Assistant-home export; the
 filesystem path of Assistant home is only a current machine binding.
 
-Each `projects.yml` link owns `{ projectId, repoPath, codingDefaults? }`: the expected stable
-identity, current machine binding to the Git Repo through a user-selected checkout, and an optional
-Project-level responsibility-runner default. Coordinator derives the managed integration path under
-Assistant home, creates it on the HOPI-owned target, and uses that path as the canonical project
-root. The user checkout may be dirty and is never reset, checked out, or written by HOPI.
+Each `projects.yml` link owns `{ projectId, primaryRepoId, repos, codingDefaults? }`. Each Repo entry
+owns a stable `repoId` and its current-machine `repoPath` binding through a user-selected checkout.
+Coordinator derives one managed integration path per Repo under Assistant home. The primary managed
+root is the canonical Project document root. User checkouts may be dirty and are never reset,
+checked out, or written by HOPI.
 
 ```yaml
-version: 1
+version: 2
 projects:
   - projectId: product-a
-    repoPath: /home/operator/Code/product-a
+    primaryRepoId: web
+    repos:
+      - repoId: web
+        repoPath: /home/operator/Code/product-web
+      - repoId: api
+        repoPath: /home/operator/Code/product-api
     codingDefaults:
       transport: codex
       model: gpt-5.4
@@ -164,10 +169,14 @@ Claude and OpenCode store `transport` plus an optional non-empty `model`. The li
 `project.yml`, Goal documents, and runtime indexes do not duplicate it. Editing it does not change a
 Goal contract revision or any Work document.
 
-After a Repo or Assistant-home move, explicit rebind repairs Git's managed-worktree administration,
-validates `hopi/release` and `project.yml`, then changes `repoPath`. A missing managed integration
-root is not reconstructed from Git because its uncheckpointed canonical documents may be newer than
-the ref; that loss remains Project Attention.
+Version 1 `{ projectId, repoPath }` links normalize to one Repo and preserve their existing managed
+primary root. A missing Engineering Work `repos` field likewise means the Project primary Repo.
+Newly published links and Engineering Work always use the explicit form.
+
+After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
+administration, validates its `hopi/release` projection, then changes only that Repo's local path.
+A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
+canonical documents may be newer than the ref; that loss remains Project Attention.
 
 The managed root's `project.yml` remains authority for Project identity, and both IDs must match.
 If the release ref or project file is missing, corrupt, or disagrees, the home link still supplies
@@ -176,7 +185,7 @@ the canonical project target for workspace Attention; it never guesses or replac
 ### Managed project root
 
 ```text
-<hopi-home>/.hopi/projects/<projectId>/integration/
+<hopi-home>/.hopi/projects/<projectId>/integration/       # primary Repo
   AGENTS.md
   .hopi/
     project.yml
@@ -202,6 +211,8 @@ the canonical project target for workspace Attention; it never guesses or replac
             <attentionId>.md
           evidence/
             <evidenceId>.md
+
+<hopi-home>/.hopi/projects/<projectId>/repos/<repoId>/integration/  # secondary Repo
 ```
 
 Runs, leases, generated projections, Preview sessions, and task worktree checkouts live under
@@ -236,9 +247,12 @@ message stream or raw transcript. Work front matter `attempts` remains the autho
 published unsuccessful outcomes in the current recovery episode; it is not the number of runtime
 Attempt records.
 
-`project.yml` owns only the stable Project ID. The MVP integration target is the kernel convention
-`hopi/release`, not project configuration. Goal completion means required code is integrated into
-this target; it does not mean a user checkout or its current branch was changed.
+`project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership, and the current
+secondary release commits. Local filesystem paths remain solely in Assistant-home `projects.yml`.
+The primary Repo's release commit is the `project.yml`-containing C1 itself and is therefore implicit;
+embedding its own hash would be self-referential. The integration target remains the kernel
+convention `hopi/release`, not editable Project configuration. Goal completion means the primary C1
+and all secondary release projections are verified; it does not change a user checkout.
 
 Root `AGENTS.md` is the model-readable project context entrypoint. It may describe stable repository
 structure, responsibilities, commands, constraints, and links to deeper authoritative documents,
@@ -351,6 +365,7 @@ id: W-12
 title: Harden expedition scene re-entry
 kind: engineering
 stage: generate
+repos: [web, api]
 notBefore: null
 dependsOn: [W-11]
 contractRevision: 4
@@ -375,17 +390,20 @@ not change stage.
 
 Planning Work omits engineering Git fields. For engineering Work:
 
-- branch and worktree paths are deterministic functions of project, Goal, and Work identities
-- task branch HEAD is the current source checkpoint and is not copied into Work front matter
-- a missing disposable task checkout may be rebuilt from that stable branch after migration
+- `repos` is the non-empty, unique set of stable Repo IDs included in this Work workspace; omission
+  is accepted only as the legacy shorthand for the primary Repo
+- branch and worktree paths are deterministic functions of Project, Goal, Work, and Repo identities
+- each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
+- a missing disposable task checkout may be rebuilt from that Repo's stable branch after migration
 - `evidenceRefs` is an append-only ordered list of consumed Run and supporting Evidence; it
   does not map criteria through a schema or replace model judgment
 
-The qualified identity derives the task branch and integration commit. The target history must
+The qualified Work identity derives each task branch and the one primary C1. Primary history must
 contain exactly one reachable commit whose qualified Work trailer equals that identity exactly, and
 that commit's tree must contain the engineering Work at `done`. Prefix or substring matches between
-Work IDs are invalid. Coordinator verifies this relation against Git. Branch HEAD is checkpoint
-authority but never owns Work stage or completion.
+Work IDs are invalid. Secondary component commits are named by Repo and producer trailers but are
+not independent C1 gates. Coordinator verifies the primary relation and the release manifest against
+every linked Repo. Branch HEAD remains checkpoint authority but never owns Work stage or completion.
 
 #### Planning Work invariant
 

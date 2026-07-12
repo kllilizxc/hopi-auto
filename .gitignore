@@ -56,6 +56,7 @@ docs/*
 !docs/mvp_alignment_plan.md
 !docs/mvp_document_model.md
 !docs/mvp_execution.md
+!docs/mvp_multi_repo.md
 !docs/mvp_publish_protocol.md
 !docs/mvp_state_machine.md
 !docs/unified_design.md

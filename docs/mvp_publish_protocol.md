@@ -43,11 +43,11 @@ The deployment runs one Coordinator:
 - Responsibility passes and subprocesses never write canonical control documents directly.
 - One writable project may belong to only one active Assistant home.
 
-In the MVP, a Project contains exactly one Repo, and that Repo is the `project` root accepted by
-`publish` through a stable HOPI-managed integration worktree on `hopi/release`. The user-selected
-`repoPath` only locates the Git Repo; it is never a publication or materialization root. A Project
-spanning multiple Repo roots would require a separate integration and receipt protocol and is not
-simulated by placing multiple paths in one bundle.
+Ordinary `publish` still changes exactly one root. Project canonical documents live in the primary
+Repo's stable HOPI-managed integration worktree on `hopi/release`; user-selected `repoPath` values
+only locate Git Repos. Cross-Repo Engineering completion does not pretend that one ordinary bundle
+is atomic. It uses the fixed primary-C1 manifest and secondary projection protocol specified in
+[the multi-Repo design](./mvp_multi_repo.md).
 
 A bundle contains stable root identity, its current path, writes, and expected prior hashes:
 
@@ -299,7 +299,9 @@ C1 carries qualified Work and producer Run trailers, and its first parent is the
 integration target. Work stores no copy of the commit hash; Coordinator derives the integration
 commit from the unique reachable qualified trailer.
 
-Coordinator:
+For a single-Repo Work, Coordinator retains the following behavior. For multi-Repo Work, the same
+primary steps wrap durable secondary component candidates and the Project release manifest as
+specified in the multi-Repo design. Coordinator:
 
 1. constructs and validates every C1 object without changing the target ref or canonical working
    tree; the candidate snapshots the complete validated managed root plus accepted task changes
@@ -422,8 +424,8 @@ Add only after measured need:
 - full per-file and directory durability plus sudden-power-loss fault injection
 - automatic post-C1 managed-worktree repair that preserves newer canonical publications
 - synchronous Git audit commits for selected ordinary publications
-- stronger multi-file or cross-root atomicity
-- multi-Repo Project membership and cross-Repo Goal integration
+- stronger general multi-file or cross-root atomicity outside the fixed Project release projection
+- primary Repo switching or removal after Project creation
 - coordination with supported external canonical-file writers
 
 These remain kernel improvements. They must not introduce new Goal, Work, Inbox, or Attention

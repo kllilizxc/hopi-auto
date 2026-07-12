@@ -9,6 +9,8 @@
   recovery, and Assistant UI behavior.
 - [`mvp_execution.md`](./mvp_execution.md): fixed responsibilities,
   scheduling, worktrees, integration, completion, notification, and Preview.
+- [`mvp_multi_repo.md`](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution,
+  the primary C1 release manifest, and projection recovery.
 - [`mvp_publish_protocol.md`](./mvp_publish_protocol.md): single-Coordinator publication ADR and
   process-crash recovery rules.
 - [`mvp_state_machine.md`](./mvp_state_machine.md): derived state charts, readiness, and Kanban

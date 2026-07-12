@@ -494,24 +494,27 @@ merge stage. Mechanical guarantees belong to the publish ADR.
 
 ## Worktrees and Parallelism
 
-The stable managed integration worktree materializes `hopi/release` and is the base for Planner,
-canonical publication, Preview, and task creation. It is distinct from every user checkout.
+Each linked Repo has a stable managed integration worktree materializing its `hopi/release`. The
+primary root remains the base for canonical publication and Project entrypoint scripts; all managed
+roots are distinct from user checkouts.
 
-An engineering Work identity deterministically maps to one stable task branch and worktree. Retries
-reuse the same branch. Task worktrees live under Assistant-home runtime storage and start from the
-current `hopi/release` target. Their checkout directories are disposable: after migration HOPI may
-rebuild a missing checkout from the stable task branch without changing that branch or a user
-checkout.
+An engineering Work deterministically maps to one stable task branch and worktree in each Repo named
+by its `repos` field. Retries reuse those branches. Task worktrees live under Assistant-home runtime
+storage and start from their Repo's current `hopi/release`. A responsibility receives one logical
+workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
+directories are disposable and may be rebuilt from their stable branches after migration.
 
 ### Project preparation
 
-`scripts/hopi/prepare` is the Project's one reviewed, executable preparation contract. It is a fixed
+Primary `scripts/hopi/prepare` is the Project's one reviewed, executable preparation contract. It is a fixed
 convention rather than Project configuration or lifecycle state. The script is foreground,
 non-interactive, idempotent, and returns zero only when the current checkout can build, test, and run.
 It may populate ignored dependencies and caches but must not modify tracked or non-ignored Project
-files. Coordinator invokes it in the checkout that will actually be consumed before every Generator,
-Reviewer, and Preview start; repeated invocation, rather than a HOPI-maintained lockfile fingerprint,
-is the freshness check. The script or native package manager owns any fast no-op behavior.
+files. Coordinator invokes it with the primary root as cwd and a runtime-only `HOPI_REPOS_FILE`
+mapping stable Repo IDs to the exact task or integration roots that will be consumed before every
+Generator, Reviewer, and Preview start. Repeated invocation, rather than a HOPI-maintained lockfile
+fingerprint, is the freshness check. The script may call Repo-native setup commands through that
+manifest; HOPI does not add per-Repo preparation configuration.
 
 A missing script is allowed only for bootstrap. Planner records its creation in the first real
 Engineering Work that needs an executable environment; it does not create a separate Init Work.
@@ -524,7 +527,7 @@ Preparation is best-effort before Generator so a missing or broken script cannot
 that can repair it. Its path and captured failure log are added to that Run's assignment. Preparation
 is strict before Reviewer: missing, non-executable, failing, or source-mutating preparation skips the
 model call and returns the same Work to Generator with the exact log. Preview runs the same preparation
-contract before `scripts/hopi/preview`, leaving Preview responsible only for service startup and its
+contract before primary `scripts/hopi/preview`, leaving Preview responsible only for service startup and its
 ready URL. There is no initialized flag, prepare revision, setup Action, or preparation Kanban state.
 
 If a code change makes preparation obsolete, the candidate fails this existing pre-review check and
@@ -532,6 +535,13 @@ the same Work repairs it. If the script exits successfully but the environment i
 checks and Reviewer expose the defect. Process launch, provider quota, interruption, and malformed Run
 protocol failures are operational Run failures: they remain in Attempt diagnostics, receive bounded
 runtime backoff, publish no responsibility Evidence, and do not increment Work `attempts`.
+
+Planner reads every linked Repo's current managed source and existing Repo-local `AGENTS.md`, while
+the primary root `AGENTS.md` remains the single automatically bootstrapped Project entrypoint. It
+maintains `.hopi/docs/repos.md` as natural-language topology, responsibility, command, and shared
+contract context when missing or materially stale. Engineering responsibilities receive the roots
+listed by their owning Work and may change any of them; Reviewer read-only checks and Generator
+checkpointing cover every root as one logical result.
 
 User-authored code enters `hopi/release` only through an explicit ordinary Assistant Input naming a
 committed branch or commit. Planner first reuses any Work already handling the same change and

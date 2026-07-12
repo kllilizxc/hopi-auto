@@ -27,10 +27,11 @@ Five internal document types have these minimal durable control fields:
 | Inbox turn | `status` | `pending \| handled` |
 
 Work also stores `kind`, permanent `dependsOn`, `notBefore`, `contractRevision`, top-level
-`attempts: 0`, and append-only `evidenceRefs`. Failure context is read from referenced immutable
-Evidence. These are control facts, not additional states. A Run, process, lease, root eligibility,
-and Kanban badge are runtime facts or derived projections. `running`, `queued`, `scheduled`, and
-`waiting` are not Work stages.
+`attempts: 0`, and append-only `evidenceRefs`; Engineering Work additionally stores its non-empty
+Repo workspace. Failure context is read from referenced immutable Evidence. These are control facts,
+not additional states. A Run, process, lease, Repo projection, root eligibility, and Kanban badge are
+runtime facts or derived projections. `running`, `queued`, `scheduled`, and `waiting` are not Work
+stages.
 
 Run records and processes are disposable, but a `runId` is never reused within its Work. Evidence
 and Git may retain qualified producer identity `(projectId, goalId, workId, runId)` after runtime
@@ -48,11 +49,12 @@ unchanged.
 Stable identity is explicit: event `(homeId, eventId)`, Goal `(projectId, goalId)`, Work
 `(projectId, goalId, workId)`, producer Run `(projectId, goalId, workId, runId)`, Goal-local
 Attention `(projectId, goalId, attentionId)`, and workspace Attention `(homeId, attentionId)`.
-Each Assistant-home project link retains expected `{ projectId, repoPath, codingDefaults? }`.
+Each Assistant-home project link retains expected `{ projectId, primaryRepoId, repos,
+codingDefaults? }`, where every Repo owns a stable ID and local path.
 `codingDefaults` selects defaults for future responsibility Runs but is not lifecycle state. The
 selected user checkout locates the Repo but is never a canonical root. Coordinator derives a stable
-managed integration worktree on `hopi/release`; a missing or corrupt Project package is blocked
-under the expected identity.
+managed integration worktree on `hopi/release` for every Repo; a missing, corrupt, or divergent
+Project release projection is blocked under the expected identity.
 
 ## Publication Boundary
 
@@ -521,9 +523,9 @@ dependencies, priority, or lifecycle. Assistant conversation is the general cont
 explicit **Pause** and **Resume** remain available on Goal. A separate Diagnostics surface is
 deferred beyond MVP.
 
-P2 Preview adds no canonical state. Coordinator starts the reviewed Project adapter against the
-managed `hopi/release` integration worktree and keeps its process, logs, health, and endpoint in
-disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
+P2 Preview adds no canonical state. Coordinator starts the reviewed primary Project adapter against
+the complete managed `hopi/release` Repo projection and keeps its process, logs, health, and endpoint
+in disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
 Assistant turn. Codex reuses current Preview setup Work when it exists or calls its Planning tool
 for a repair; it does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
@@ -540,10 +542,10 @@ outcome. Other state and document changes do not participate in this runtime tra
 
 - Canonical documents are the sole durable product truth; runtime indexes, leases, Runs, and Kanban
   badges rebuild from them.
-- An MVP Project contains exactly one Repo. Its HOPI-managed integration worktree owns canonical
-  documents and materializes `hopi/release`; user checkouts are outside publication and repair.
-  Missing root `AGENTS.md` is Planner context bootstrap, not a lifecycle state or initialization
-  Work.
+- An MVP Project contains one primary Repo and zero or more secondary Repos. The primary managed
+  worktree owns canonical documents and the single C1; every managed Repo materializes the release
+  recorded by that C1. User checkouts are outside publication and repair. Missing primary root
+  `AGENTS.md` is Planner context bootstrap, not a lifecycle state or initialization Work.
 - A Project may bootstrap one reviewed `scripts/hopi/prepare` through its first real Engineering
   Work. Coordinator runs it repeatedly before consuming a checkout; there is no initialized or
   prepare-stale state. Reviewer always starts from a clean task-branch checkpoint, never from
