@@ -97,6 +97,23 @@ describe('GoalController', () => {
     expect(laterCycle.attributes.id).toStartWith('attempts-plan-initial-3-')
   })
 
+  test('resolves an operational failure Attention when Work is explicitly retried', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await controller.ensureOperationalAttemptsAttention(
+      'G-1',
+      'plan-initial',
+      3,
+      'OpenCode model was invalid.',
+    )
+
+    await controller.retryWork('G-1', 'plan-initial', null)
+
+    const resolved = (await store.readPackage('G-1')).attentions.get(attention.attributes.id)
+    expect(resolved?.attributes.resolvedAt).toBe('2026-07-11T00:00:00.000Z')
+    expect(resolved?.body).toContain('Resolved by an explicit Work retry.')
+  })
+
   test('installs Planning before a material revision and invalidates nonterminal Work', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

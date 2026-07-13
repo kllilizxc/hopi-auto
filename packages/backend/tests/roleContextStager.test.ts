@@ -58,14 +58,19 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Never reconstruct or consume stale Run output')
     expect(prompt).toContain('never inspect another Goal or historical Run')
     expect(prompt).toContain('New Engineering Work frontmatter')
+    expect(prompt).toContain('Write each new Engineering Work as work/<id>.md')
     expect(prompt).toContain('kind: engineering')
     expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(prompt).toContain('.hopi/docs/repos.md')
     expect(prompt).toContain('New Attention frontmatter')
+    expect(prompt).toContain('the filename stem must exactly equal the frontmatter id')
     expect(prompt).toContain('notifiedAt: null')
     expect(prompt).toContain('scripts/hopi/prepare is absent')
     expect(prompt).toContain('do not create a separate Init Work')
     expect(prompt).toContain('Independent testability alone does not justify a separate Work')
+    expect(prompt).toContain(
+      'Never create completion Attention merely because Planning is complete',
+    )
     expect(bundle.authorityFiles.find((file) => file.path === 'AGENTS.md')?.hash).toBeNull()
   })
 
@@ -226,6 +231,12 @@ describe('RoleContextStager', () => {
       `${fixture.store.paths.evidenceDocument('goal-1', 'E-latest')} (latest)`,
     )
     expect(generatorPrompt).toContain('If you stage targeted Attention, result must be attention')
+    expect(generatorPrompt).toContain('Try to resolve blockers safely')
+    expect(generatorPrompt).toContain('let the Coordinator bounded retry policy decide')
+    expect(generatorPrompt).toContain('only when current evidence shows retry cannot help')
+    expect(generatorPrompt).toContain('Never ask the operator to do something HOPI can safely do')
+    expect(generatorPrompt).toContain('target: project:project-1/goal:goal-1/work:W-1')
+    expect(generatorPrompt).toContain('the filename stem must exactly equal its frontmatter id')
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
     expect(reviewerPrompt).toContain('short-lived local services for this Run')
     expect(reviewerPrompt).toContain('Decide the proof plan before installing optional tools')
@@ -235,7 +246,7 @@ describe('RoleContextStager', () => {
     )
     expect(reviewerPrompt).toContain(`git merge-base ${HOPI_RELEASE_REF} HEAD`)
     expect(reviewerPrompt).toContain('C1 owns integration')
-    expect(reviewerPrompt).toContain('local port')
+    expect(reviewerPrompt).toContain('target: project:project-1/goal:goal-1/work:W-1')
     expect(reviewerPrompt).toContain('$HOPI_RUN_SCRATCH')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
     expect(

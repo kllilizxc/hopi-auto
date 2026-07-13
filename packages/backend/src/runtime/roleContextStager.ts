@@ -663,13 +663,13 @@ function renderResponsibilityPrompt(
     'Do not invent actions, workflow states, roles, or control fields.',
     'Coordinator validates every proposed document and owns all state transitions.',
     'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
-    'Sandbox, Git metadata, local port, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
     'Use $HOPI_RUN_SCRATCH for disposable temporary or cache files when a tool default is not writable.',
     `Use ${paths.reposFile} as the exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names.`,
     `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
+    ...(input.responsibility === 'planner' ? [] : targetedAttentionInstructions(input, paths)),
     '',
   ]
   const responsibility =
@@ -686,6 +686,31 @@ function renderResponsibilityPrompt(
     ...responsibility,
     resultInstruction(paths.resultFile, input.responsibility),
   ].join('\n')
+}
+
+function targetedAttentionInstructions(
+  input: PrepareRoleContextInput,
+  paths: { proposalRoot: string; attentionRoot: string },
+) {
+  const target = `project:${input.projectId}/goal:${input.goalId}/work:${input.workId}`
+  return [
+    'Try to resolve blockers safely within the current responsibility and preserve evidence of the relevant attempts.',
+    'If a safe retry or later Run may succeed without operator action, return fail and let the Coordinator bounded retry policy decide when to escalate.',
+    'Stage targeted Attention immediately only when current evidence shows retry cannot help and identifies the exact operator decision, authority, or external action required. Never ask the operator to do something HOPI can safely do itself.',
+    'Do not loop or make unrelated or destructive changes merely to force progress.',
+    `When targeted Attention is justified, write exactly one ${join(paths.proposalRoot, paths.attentionRoot, '<id>.md')}; the filename stem must exactly equal its frontmatter id.`,
+    'Use this exact frontmatter shape:',
+    '```yaml',
+    '---',
+    'id: <stable-id>',
+    `target: ${target}`,
+    'createdAt: <ISO-8601-timestamp>',
+    'resolvedAt: null',
+    'notifiedAt: null',
+    '---',
+    '```',
+    'The Markdown body must state the evidence that retry cannot help, the exact operator action needed, its consequence, and the recommended next step.',
+  ]
 }
 
 function renderCurrentAssignment(assignment: RunAssignment) {
@@ -755,6 +780,7 @@ function plannerPrompt(paths: {
     'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
     'The fixed control fields are listed below. Use them directly; never inspect another Goal or historical Run to infer document format. Markdown bodies remain free-form.',
     'New Engineering Work frontmatter:',
+    'Write each new Engineering Work as work/<id>.md: the filename stem must exactly equal the frontmatter id.',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -770,6 +796,7 @@ function plannerPrompt(paths: {
     '---',
     '```',
     'New Attention frontmatter (target is null for completion, otherwise the canonical Work reference):',
+    'Write each new Attention as attention/<id>.md: the filename stem must exactly equal the frontmatter id.',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -794,7 +821,7 @@ function plannerPrompt(paths: {
           'scripts/hopi/prepare already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.',
         ]),
     `When Assistant management or operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}, return attention, and leave Planning Work at plan.`,
-    'When final proof is sufficient, create the one target-null completion Attention and mark Planning Work done. Otherwise mark Planning Work done only after its complete design and Work proposal is staged.',
+    'Create the one target-null completion Attention only when the entire Goal already has sufficient final proof and the proposal contains zero nonterminal Engineering Work. Never create completion Attention merely because Planning is complete or alongside newly proposed Engineering Work. Otherwise mark Planning Work done only after its complete design and Work proposal is staged.',
     '',
   ]
 }

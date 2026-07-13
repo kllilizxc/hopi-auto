@@ -148,7 +148,11 @@ export interface CursorPage<T> {
 }
 
 export interface AppSnapshot {
-  home: { homeId: string }
+  home: {
+    homeId: string
+    assistantCodingDefaults: ProjectCodingDefaults
+    assistantCodingDefaultsInherited: boolean
+  }
   projects: ProjectSummary[]
   attentions: AttentionView[]
   activeRuns: Array<{ key: string; responsibility: Responsibility }>
@@ -165,6 +169,7 @@ export interface WorkView {
   contractRevision: number
   evidenceRefs: string[]
   attempts: number
+  operationalAttempts: number
   body: string
   projection: {
     workId: string

@@ -1,5 +1,8 @@
+import { mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import { codingReasoningEffortSchema } from './projectCodingDefaults'
+import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
+import { codingReasoningEffortSchema, providerQualifiedModelSchema } from './projectCodingDefaults'
 import type { ProcessTranscriptFormat } from './vendorTranscript'
 
 export interface TransportCommand {
@@ -66,12 +69,12 @@ const codexTransportSchema = commonTransportSchema.extend({
 const claudeTransportSchema = commonTransportSchema.extend({
   transport: z.literal('claude'),
   model: z.string().min(1).optional(),
-  permissionMode: claudePermissionSchema.default('dontAsk'),
+  permissionMode: claudePermissionSchema.default('acceptEdits'),
 })
 
 const opencodeTransportSchema = commonTransportSchema.extend({
   transport: z.literal('opencode'),
-  model: z.string().min(1).optional(),
+  model: providerQualifiedModelSchema.optional(),
   agent: z.string().min(1).optional(),
   variant: z.string().min(1).optional(),
 })
@@ -99,7 +102,10 @@ export async function resolveConfiguredTransportCommand(options: {
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
 }): Promise<TransportCommand> {
-  const env = buildTransportEnv(options.bundle, options.input)
+  const env = {
+    ...buildTransportEnv(options.bundle, options.input),
+    ...(options.config.transport === 'claude' ? await readClaudeProviderEnvironment() : {}),
+  }
 
   if ('cmd' in options.config) {
     return {
@@ -161,14 +167,45 @@ export async function resolveConfiguredTransportCommand(options: {
   }
 
   if (options.config.transport === 'claude') {
+    const settingsPath = join(options.bundle.runtimeScratchDir, 'claude-settings.json')
+    await mkdir(dirname(settingsPath), { recursive: true })
+    await Bun.write(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          sandbox: {
+            enabled: true,
+            failIfUnavailable: true,
+            autoAllowBashIfSandboxed: true,
+            allowUnsandboxedCommands: false,
+            filesystem: {
+              allowWrite: options.bundle.extraWritableRoots ?? [],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
     const cmd = [
       options.config.binary ?? 'claude',
       '--print',
       '--output-format',
       'stream-json',
-      '--permission-mode',
-      options.config.permissionMode,
+      '--verbose',
+      '--settings',
+      settingsPath,
+      '--setting-sources',
+      '',
     ]
+    if (options.config.permissionMode === 'bypassPermissions') {
+      cmd.push('--dangerously-skip-permissions')
+    } else {
+      cmd.push('--permission-mode', options.config.permissionMode)
+    }
+    const accessibleDirs = new Set(options.bundle.extraWritableRoots ?? [])
+    for (const imageFile of options.bundle.imageFiles ?? []) accessibleDirs.add(dirname(imageFile))
+    for (const dir of accessibleDirs) cmd.push('--add-dir', dir)
     if (options.config.model) {
       cmd.push('--model', options.config.model)
     }
@@ -196,7 +233,7 @@ export async function resolveConfiguredTransportCommand(options: {
   if (options.config.variant) {
     cmd.push('--variant', options.config.variant)
   }
-  cmd.push(prompt)
+  for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('--file', imageFile)
   return {
     cmd,
     cwdMode: options.config.cwdMode,
@@ -206,6 +243,7 @@ export async function resolveConfiguredTransportCommand(options: {
     browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
     canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
     env,
+    stdin: prompt,
     transcriptFormat: 'opencode_json',
   }
 }

@@ -21,6 +21,7 @@ import {
   createMvpRuntime,
   requireProject,
 } from './runtime/mvpRuntime'
+import { operationalFailureResetAt } from './runtime/runAttemptStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 
 export interface ServerOptions {
@@ -53,6 +54,9 @@ const projectRepoSchema = z.object({
   repoPath: z.string().min(1),
 })
 const projectSettingsSchema = z
+  .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
+  .strict()
+const assistantSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
 const goalSchema = z.object({
@@ -140,6 +144,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
+        }
+        if (request.method === 'PATCH' && url.pathname === '/api/assistant/settings') {
+          const body = await parseBody(request, assistantSettingsSchema)
+          await runtime.updateAssistantCodingDefaults(
+            body.codingDefaults === null
+              ? null
+              : normalizeProjectCodingDefaults(body.codingDefaults),
+          )
+          return json(await presentState(runtime))
         }
         if (
           request.method === 'GET' &&
@@ -515,9 +528,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
 }
 
 async function presentState(runtime: MvpRuntime) {
-  const [home, workspace] = await Promise.all([
+  const [home, workspace, assistantModelSettings] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspace(),
+    runtime.readAssistantCodingDefaults(),
   ])
   const projects = []
   const goalAttentions = []
@@ -591,7 +605,11 @@ async function presentState(runtime: MvpRuntime) {
     })
   }
   return {
-    home,
+    home: {
+      ...home,
+      assistantCodingDefaults: assistantModelSettings.codingDefaults,
+      assistantCodingDefaultsInherited: assistantModelSettings.inherited,
+    },
     projects,
     attentions: [
       ...[...workspace.attentions.values()].map((attention) => ({
@@ -808,6 +826,22 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
       attention.attributes.target === `project:${projectId}` &&
       attention.attributes.resolvedAt === null,
   )
+  const operationalAttemptsByWork = new Map(
+    await Promise.all(
+      [...goalPackage.works.values()].map(
+        async (work) =>
+          [
+            work.attributes.id,
+            await runtime.attempts.countConsecutiveOperationalFailures(
+              projectId,
+              goalId,
+              work.attributes.id,
+              operationalFailureResetAt(goalPackage, projectId, goalId, work.attributes.id),
+            ),
+          ] as const,
+      ),
+    ),
+  )
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: !projectAttentionOpen,
     projectAttentionOpen,
@@ -827,6 +861,7 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
     works: [...goalPackage.works.values()].map((work) => ({
       ...work.attributes,
+      operationalAttempts: operationalAttemptsByWork.get(work.attributes.id) ?? 0,
       body: work.body,
       projection: projectionByWork.get(work.attributes.id),
     })),

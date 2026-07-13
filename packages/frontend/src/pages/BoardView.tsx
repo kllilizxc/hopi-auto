@@ -264,7 +264,9 @@ export function BoardView() {
         </div>
       </header>
 
-      {error && <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>}
+      {error && (
+        <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>
+      )}
 
       <section className="goal-focus-strip">
         <div>
@@ -298,7 +300,10 @@ export function BoardView() {
           </span>
           <span>
             <strong>Waiting for Assistant</strong>
-            <small>Assistant is reviewing the internal Attention before deciding whether to act or ask you.</small>
+            <small>
+              Assistant is reviewing the internal Attention before deciding whether to act or ask
+              you.
+            </small>
           </span>
         </div>
       )}
@@ -346,9 +351,9 @@ export function BoardView() {
           bodyClassName="cancelled-archive__content"
           summary={`Cancelled archive · ${cancelled.length}`}
         >
-            {cancelled.map((work) => (
-              <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
-            ))}
+          {cancelled.map((work) => (
+            <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
+          ))}
         </AppDisclosure>
       )}
 
@@ -376,15 +381,12 @@ export function BoardView() {
           </IconButton>
         </aside>
       )}
-      {mutationError && <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>}
+      {mutationError && (
+        <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>
+      )}
 
       {selectedWork && (
-        <WorkDetail
-          projectId={projectId}
-          goalId={goalId}
-          work={selectedWork}
-          onClose={closeWork}
-        />
+        <WorkDetail projectId={projectId} goalId={goalId} work={selectedWork} onClose={closeWork} />
       )}
     </div>
   )
@@ -405,7 +407,10 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
       <div className="work-card-top">
         <span>{work.id}</span>
         {badge && (
-          <StatusChip className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`} size="sm">
+          <StatusChip
+            className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`}
+            size="sm"
+          >
             {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
           </StatusChip>
         )}
@@ -414,12 +419,16 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
       <p>{excerpt(work.body)}</p>
       {work.repos && work.repos.length > 0 && (
         <div className="work-repos" aria-label="Repositories">
-          {work.repos.map((repoId) => <span key={repoId}>{repoId}</span>)}
+          {work.repos.map((repoId) => (
+            <span key={repoId}>{repoId}</span>
+          ))}
         </div>
       )}
       <div className="work-card-foot">
         <span>{work.projection.responsibility ?? work.stage}</span>
-        <span>{work.attempts}/3 recovery</span>
+        <span>
+          {work.attempts}/3 recovery · {work.operationalAttempts}/3 operational
+        </span>
       </div>
       {work.dependsOn.length > 0 && (
         <small className="depends-line">after {work.dependsOn.join(', ')}</small>
@@ -495,10 +504,7 @@ function WorkDetail({
                       </AppTabs.Tab>
                     </AppTabs.List>
                   </AppTabs.ListContainer>
-                  <AppModal.CloseTrigger
-                    className="icon-button"
-                    aria-label="Close Work detail"
-                  >
+                  <AppModal.CloseTrigger className="icon-button" aria-label="Close Work detail">
                     <X />
                   </AppModal.CloseTrigger>
                 </div>
@@ -523,6 +529,10 @@ function WorkDetail({
                 <span>
                   <small>Recovery</small>
                   <strong>{work.attempts} / 3</strong>
+                </span>
+                <span>
+                  <small>Operational</small>
+                  <strong>{work.operationalAttempts} / 3</strong>
                 </span>
                 <span>
                   <small>Not before</small>
@@ -592,7 +602,9 @@ function WorkContract({
           <h2>Depends on</h2>
           <div className="chip-list">
             {work.dependsOn.map((item) => (
-              <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>
+              <StatusChip key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
             ))}
           </div>
         </section>
@@ -602,7 +614,9 @@ function WorkContract({
           <h2>Waiting predicates</h2>
           <div className="chip-list warning">
             {work.projection.failedPredicates.map((item) => (
-              <StatusChip color="warning" key={item} size="sm" variant="soft">{item}</StatusChip>
+              <StatusChip color="warning" key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
             ))}
           </div>
         </section>
@@ -611,7 +625,11 @@ function WorkContract({
         <h2>Evidence</h2>
         <div className="chip-list">
           {work.evidenceRefs.length ? (
-            work.evidenceRefs.map((item) => <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>)
+            work.evidenceRefs.map((item) => (
+              <StatusChip key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
+            ))
           ) : (
             <small>No Evidence yet</small>
           )}
@@ -727,21 +745,9 @@ function AttemptHistory({
 }) {
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: selectedAttempt?.runId ?? 'no-attempt',
-    queryKey: [
-      'work-attempt-events',
-      projectId,
-      goalId,
-      workId,
-      selectedAttempt?.runId ?? null,
-    ],
+    queryKey: ['work-attempt-events', projectId, goalId, workId, selectedAttempt?.runId ?? null],
     readPage: (input) =>
-      readWorkAttemptEvents(
-        projectId,
-        goalId,
-        workId,
-        selectedAttempt?.runId ?? '',
-        input,
-      ),
+      readWorkAttemptEvents(projectId, goalId, workId, selectedAttempt?.runId ?? '', input),
     getItemId: runEventId,
     compareItems: compareRunEvents,
     enabled: Boolean(selectedAttempt),

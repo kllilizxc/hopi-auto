@@ -132,9 +132,8 @@ export function createCoordinatorReconciler(
         .then(async (result) => {
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspace()
-            const publicPending = [...workspace.events.values()].some(
-              (event) =>
-                event.attributes.status === 'pending' && event.attributes.source === 'user',
+            const publicPending = eligiblePendingEvents(workspace, assistantActive).some(
+              (event) => event.attributes.source === 'user',
             )
             if (!publicPending) {
               await options.reflection.observe({
@@ -342,6 +341,10 @@ export function createCoordinatorReconciler(
 }
 
 function eligiblePendingEvent<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {
+  return eligiblePendingEvents(workspace, active)[0]
+}
+
+function eligiblePendingEvents<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {
   const blockedTargets = new Set(
     [...workspace.attentions.values()]
       .filter((attention) => attention.attributes.resolvedAt === null)
@@ -355,7 +358,7 @@ function eligiblePendingEvent<T>(workspace: AssistantWorkspace, active: Readonly
         inboxSourceRank(left.attributes.source) - inboxSourceRank(right.attributes.source) ||
         left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
         left.attributes.id.localeCompare(right.attributes.id),
-    )[0]
+    )
 }
 
 function inboxSourceRank(source: 'user' | 'reflection') {

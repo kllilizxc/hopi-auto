@@ -185,7 +185,7 @@ transaction; the pending Assistant turn and idempotent HOPI tool deterministical
 current documents after a crash.
 
 Inbox turn handling and Attention resolution are separate gates. A Goal-local answer completes its
-project Input gate, then its Attention resolution gate, then Codex continues toward the final home
+project Input gate, then its Attention resolution gate, then Assistant continues toward the final home
 turn gate. An answer to event-target Workspace Attention resolves that guard and handles only the
 answer turn; the older turn stays pending and becomes independently eligible with the answer visible
 in durable conversation history.
@@ -204,7 +204,7 @@ identity from reply prose.
 ## Process-Crash Reconciliation
 
 The ordinary Reconciler uses current domain facts; it never guesses an interrupted publication
-intent. A still-pending Assistant turn resumes through Codex; repeated HOPI tools use their named
+intent. A still-pending Assistant turn resumes through the configured vendor; repeated HOPI tools use their named
 target, current guards, expected content, and Input source identity to complete safely.
 
 A Reflection process interrupted before its handoff owns no durable effect. A durable internal turn
@@ -261,14 +261,14 @@ Assistant home and a project are independent roots. A mutating HOPI tool uses th
 publications:
 
 1. The source Inbox turn, whether public operator input or an internal Reflection brief, is already
-   durable and remains `pending` while Codex runs.
+   durable and remains `pending` while the configured vendor runs.
 2. The tool validates its explicit target and any selected durable Inbox attachments. When creating
    a Goal or requiring planning, it publishes the Goal, adopted Goal-local image bytes, reference
    Markdown, and Goal Input as support and Planning Work as that publication's gate.
 3. It publishes operation-specific project effects under the existing one-gate rules, then
    publishes immutable Goal Input `inputs/<homeId>/<eventId>.md` as the effect receipt when another
    gate was required. A design-only tool may publish design support and Input together.
-4. Codex may call more tools. Only its final reply atomically stores home reply and disposition and
+4. Assistant may call more tools. Only its final reply atomically stores home reply and disposition and
    marks the Inbox turn `handled`.
 
 The tool call fixes its own destination; Input proves that project phase completed. Input contains
@@ -278,7 +278,7 @@ targeted Goals.
 
 After a process stop:
 
-- a pending turn resumes through the persistent Codex conversation or a rebuilt session
+- a pending turn resumes through the persistent configured-vendor conversation or a rebuilt session
 - missing Input makes a repeated tool reread current state and complete or safely reject the effect
 - matching Input proves that Goal accepted the turn and lets later idempotent phases continue
 

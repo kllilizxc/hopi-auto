@@ -348,6 +348,19 @@ export function buildMessageFeedRows(items: MessageFeedItem[]): MessageFeedDispl
       continue
     }
 
+    if (entry.type === 'activity_message' && entry.item.pending === true) {
+      flushGroup(entry.id)
+      rows.push({
+        type: 'activity_group',
+        id: `activity-group:${entry.groupId ?? 'ungrouped'}:${entry.id}`,
+        createdAt: entry.createdAt,
+        latestCreatedAt: entry.createdAt,
+        entries: [entry],
+        groupId: entry.groupId,
+      })
+      continue
+    }
+
     if (!activeGroup || activeGroup.groupId !== entry.groupId) {
       flushGroup(`scope:${entry.groupId ?? entry.id}`)
       activeGroup = {

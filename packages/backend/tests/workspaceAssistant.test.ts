@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
@@ -114,6 +114,122 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).toContain('resume')
     expect(args.slice(args.indexOf('resume'))).toContain('-i')
     expect(args).toContain(imagePath)
+  })
+
+  test('runs Claude with explicit MCP config, true session resume, and full final output', async () => {
+    const binary = join(temporaryRoot, 'fake-claude')
+    const argsFile = join(temporaryRoot, 'claude-args.json')
+    const promptFile = join(temporaryRoot, 'claude-prompt.txt')
+    const finalReply = 'x'.repeat(800)
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))`,
+        `console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:${JSON.stringify(finalReply)}}))`,
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const imagePath = join(temporaryRoot, 'claude-image.png')
+    await Bun.write(imagePath, pngBytes())
+    const cwd = join(temporaryRoot, 'claude-assistant')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+        model: 'sonnet',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const result = await runner.run({
+      eventId: 'EV-claude',
+      prompt: 'Inspect the image.',
+      threadId: 'claude-session',
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'claude-token',
+      imageFiles: [imagePath],
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    const mcpConfig = await Bun.file(join(cwd, 'claude-mcp.json')).json()
+    expect(result).toEqual({ reply: finalReply, threadId: 'claude-session' })
+    for (const expected of [
+      '--mcp-config',
+      '--strict-mcp-config',
+      '--setting-sources',
+      '--verbose',
+      '--resume',
+      'claude-session',
+    ]) {
+      expect(args).toContain(expected)
+    }
+    expect(args).toContain(dirname(imagePath))
+    expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
+    expect(await Bun.file(promptFile).text()).toContain(imagePath)
+  })
+
+  test('runs OpenCode with isolated HOPI tools, true session resume, and file attachments', async () => {
+    const binary = join(temporaryRoot, 'fake-opencode')
+    const argsFile = join(temporaryRoot, 'opencode-args.json')
+    const promptFile = join(temporaryRoot, 'opencode-prompt.txt')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        'console.log(JSON.stringify({type:"text",sessionID:"ses_1",part:{id:"part-1",messageID:"msg-1",type:"text",text:"OpenCode reply.",time:{start:1,end:2}}}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const imagePath = join(temporaryRoot, 'opencode-image.png')
+    await Bun.write(imagePath, pngBytes())
+    const cwd = join(temporaryRoot, 'opencode-assistant')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'opencode',
+        cwdMode: 'root',
+        binary,
+        model: 'anthropic/claude-sonnet-4-5',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const result = await runner.run({
+      eventId: 'EV-opencode',
+      prompt: 'Continue.',
+      threadId: 'ses_1',
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'opencode-token',
+      imageFiles: [imagePath],
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    const config = await Bun.file(join(cwd, 'opencode.json')).json()
+    expect(result).toEqual({ reply: 'OpenCode reply.', threadId: 'ses_1' })
+    for (const expected of ['--pure', '--session', 'ses_1', '--file', imagePath]) {
+      expect(args).toContain(expected)
+    }
+    expect(config.mcp.hopi).toMatchObject({
+      type: 'local',
+      enabled: true,
+      environment: { HOPI_TOOL_TOKEN: 'opencode-token' },
+    })
+    expect(config.permission).toEqual({ '*': 'deny', 'hopi_*': 'allow' })
+    expect(await Bun.file(promptFile).text()).toBe('Continue.')
   })
 
   test('attaches current Inbox images and names their durable references in the prompt', async () => {

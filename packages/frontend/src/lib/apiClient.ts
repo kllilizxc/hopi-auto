@@ -50,16 +50,18 @@ export function readAssistantFeed(input: CursorPageRequest = {}) {
   return apiRequest<CursorPage<AssistantFeedEntry>>(withPage('/api/assistant/feed', input))
 }
 
-export function readReflectionRuns(input: CursorPageRequest = {}) {
-  return apiRequest<CursorPage<ReflectionRunSummary>>(
-    withPage('/api/debug/reflections', input),
-  )
+export function updateAssistantSettings(codingDefaults: ProjectCodingDefaults | null) {
+  return apiRequest<AppSnapshot>('/api/assistant/settings', {
+    method: 'PATCH',
+    body: { codingDefaults },
+  })
 }
 
-export function readReflectionRunEvents(
-  reflectionId: string,
-  input: CursorPageRequest = {},
-) {
+export function readReflectionRuns(input: CursorPageRequest = {}) {
+  return apiRequest<CursorPage<ReflectionRunSummary>>(withPage('/api/debug/reflections', input))
+}
+
+export function readReflectionRunEvents(reflectionId: string, input: CursorPageRequest = {}) {
   return apiRequest<CursorPage<RunAttemptEvent>>(
     withPage(`/api/debug/reflections/${encodeURIComponent(reflectionId)}/events`, input),
   )
@@ -73,12 +75,7 @@ export function readWorkAttempts(projectId: string, goalId: string, workId: stri
   return apiRequest<{ attempts: RunAttemptSummary[] }>(attemptPath(projectId, goalId, workId))
 }
 
-export function readWorkAttempt(
-  projectId: string,
-  goalId: string,
-  workId: string,
-  runId: string,
-) {
+export function readWorkAttempt(projectId: string, goalId: string, workId: string, runId: string) {
   return apiRequest<RunAttemptDetail>(
     `${attemptPath(projectId, goalId, workId)}/${encodeURIComponent(runId)}`,
   )
@@ -103,10 +100,7 @@ export function createProject(input: { projectId?: string; repoPath: string; rep
   return apiRequest<AppSnapshot>('/api/projects', { method: 'POST', body: input })
 }
 
-export function linkProjectRepo(
-  projectId: string,
-  input: { repoId: string; repoPath: string },
-) {
+export function linkProjectRepo(projectId: string, input: { repoId: string; repoPath: string }) {
   return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/repos`, {
     method: 'POST',
     body: input,

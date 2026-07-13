@@ -11,6 +11,7 @@ import {
   AGENT_TRANSCRIPT_TRANSPORTS,
   type AgentRuntimeEvent,
 } from '../agent/runtimeEvents'
+import type { GoalPackage } from '../domain/goalPackage'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 
 export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as const
@@ -107,6 +108,12 @@ export interface RunAttemptRecorder {
 export interface RunAttemptStore {
   start(input: StartRunAttemptInput): Promise<RunAttemptRecorder>
   list(projectId: string, goalId: string, workId: string): Promise<RunAttemptSummary[]>
+  countConsecutiveOperationalFailures(
+    projectId: string,
+    goalId: string,
+    workId: string,
+    after?: string | null,
+  ): Promise<number>
   read(
     projectId: string,
     goalId: string,
@@ -126,6 +133,27 @@ export interface RunAttemptStore {
     runId: string,
   ): Promise<StoredRunAttemptEvent[] | null>
   interruptRunningAttempts(): Promise<number>
+}
+
+export function operationalFailureResetAt(
+  goalPackage: GoalPackage,
+  projectId: string,
+  goalId: string,
+  workId: string,
+) {
+  const target = `project:${projectId}/goal:${goalId}/work:${workId}`
+  return (
+    [...goalPackage.attentions.values()]
+      .filter(
+        (attention) =>
+          attention.attributes.id.startsWith(`operational-attempts-${workId}-`) &&
+          attention.attributes.target === target &&
+          attention.attributes.resolvedAt !== null,
+      )
+      .map((attention) => attention.attributes.resolvedAt as string)
+      .sort()
+      .at(-1) ?? null
+  )
 }
 
 export function createRunAttemptStore(
@@ -251,6 +279,20 @@ export function createRunAttemptStore(
           (left, right) =>
             right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
         )
+    },
+
+    async countConsecutiveOperationalFailures(projectId, goalId, workId, after = null) {
+      const attempts = await this.list(projectId, goalId, workId)
+      let count = 0
+      for (const attempt of attempts) {
+        if (after && attempt.startedAt <= after) break
+        // Running and interrupted records do not have a classified outcome. In
+        // particular, a Coordinator restart must not erase the durable failure streak.
+        if (attempt.status !== 'finished') continue
+        if (attempt.application !== 'operational_failure') break
+        count += 1
+      }
+      return count
     },
 
     async read(projectId, goalId, workId, runId) {

@@ -20,6 +20,7 @@ import {
 import {
   type CodingAgentTransport,
   type CodingReasoningEffort,
+  type AppSnapshot,
   type ProjectCodingDefaults,
   type ProjectSummary,
   createProject,
@@ -27,33 +28,23 @@ import {
   readState,
   rebindProjectRepo,
   updateProjectSettings,
+  updateAssistantSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
 import { excerpt } from '../lib/utils'
 
 const MODEL_OPTIONS: Record<string, { label: string; value: string }[]> = {
-  codex: [
-    { label: 'GPT-5.4', value: 'gpt-5.4' },
-    { label: 'GPT-4o', value: 'gpt-4o' },
-    { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
-    { label: 'o1-preview', value: 'o1-preview' },
-    { label: 'o1-mini', value: 'o1-mini' },
-  ],
+  codex: [{ label: 'GPT-5.4', value: 'gpt-5.4' }],
   claude: [
-    { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-20241022' },
-    { label: 'Claude 3.5 Haiku', value: 'claude-3-5-haiku-20241022' },
-    { label: 'Claude 3 Opus', value: 'claude-3-opus-20240229' },
-  ],
-  opencode: [
-    { label: 'Gemini 3.1 Pro Preview', value: 'gemini-proxy/gemini-3.1-pro-preview' },
-    { label: 'Gemini 3.5 Flash', value: 'gemini-proxy/gemini-3.5-flash' },
-    { label: 'Gemini 2.5 Flash', value: 'genai-gemini/gemini-2.5-flash' },
-    { label: 'Gemini 2.5 Pro', value: 'genai-gemini/gemini-2.5-pro' },
     {
-      label: 'AWS Claude 3.5 Sonnet',
-      value: 'genai-claude/aws:anthropic.claude-sonnet-4-5-20250929-v1:0',
+      label: 'Gemini 3.1 Pro Preview (local proxy)',
+      value: 'gemini-3.1-pro-preview',
     },
+    { label: 'Sonnet (latest)', value: 'sonnet' },
+    { label: 'Opus (latest)', value: 'opus' },
+    { label: 'Haiku (latest)', value: 'haiku' },
   ],
+  opencode: [],
 }
 
 export function ProjectHomePage() {
@@ -93,6 +84,8 @@ export function ProjectHomePage() {
             {(snapshotQuery.error as Error | null)?.message ?? createMutation.error?.message}
           </AppAlert>
         )}
+
+        {snapshotQuery.data && <AssistantModelSettings home={snapshotQuery.data.home} />}
 
         <section className="projects-grid">
           <AppSurface className="project-list-panel panel-card">
@@ -177,6 +170,114 @@ export function ProjectHomePage() {
   )
 }
 
+function AssistantModelSettings({ home }: { home: AppSnapshot['home'] }) {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState(() => codingDefaultsToDraft(home.assistantCodingDefaults))
+  const mutation = useMutation({
+    mutationFn: (codingDefaults: ProjectCodingDefaults | null) =>
+      updateAssistantSettings(codingDefaults),
+    onSuccess: async (snapshot) => {
+      setDraft(codingDefaultsToDraft(snapshot.home.assistantCodingDefaults))
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+  const openCodeModelInvalid = isOpenCodeModelInvalid(draft)
+
+  return (
+    <AppSurface className="assistant-model-panel panel-card">
+      <div className="assistant-model-summary">
+        <span className="assistant-model-icon">
+          <Cpu />
+        </span>
+        <span>
+          <small>Workspace runtime</small>
+          <strong>Assistant model</strong>
+          <p>Used by conversation turns and background Reflection across every Project.</p>
+        </span>
+        <StatusChip size="sm">
+          {home.assistantCodingDefaultsInherited ? 'Home default' : 'Assistant override'}
+        </StatusChip>
+      </div>
+      <AppForm
+        className="assistant-model-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          mutation.mutate(modelDraftToCodingDefaults(draft))
+        }}
+      >
+        <SelectField
+          label="Agent"
+          onValueChange={(transport) =>
+            setDraft((current) => ({
+              ...current,
+              transport: transport as CodingAgentTransport,
+            }))
+          }
+          options={[
+            { label: 'Codex', value: 'codex' },
+            { label: 'Claude', value: 'claude' },
+            { label: 'OpenCode', value: 'opencode' },
+          ]}
+          value={draft.transport}
+        />
+        <ComboBoxField
+          label="Model"
+          onInputChange={(model) => setDraft((current) => ({ ...current, model }))}
+          options={MODEL_OPTIONS[draft.transport] ?? []}
+          placeholder={modelPlaceholder(draft.transport)}
+          value={draft.model}
+        />
+        {draft.transport === 'codex' && (
+          <SelectField
+            label="Reasoning"
+            onValueChange={(reasoningEffort) =>
+              setDraft((current) => ({
+                ...current,
+                reasoningEffort: reasoningEffort as CodingReasoningEffort,
+              }))
+            }
+            options={[
+              { label: 'Low', value: 'low' },
+              { label: 'Medium', value: 'medium' },
+              { label: 'High', value: 'high' },
+              { label: 'xHigh', value: 'xhigh' },
+            ]}
+            value={draft.reasoningEffort}
+          />
+        )}
+        {openCodeModelInvalid && (
+          <small className="project-model-error">
+            OpenCode requires provider/model, for example gemini-proxy/gemini-3.1-pro-preview.
+          </small>
+        )}
+        <div className="assistant-model-actions">
+          <AppButton
+            variant="ghost"
+            type="button"
+            disabled={mutation.isPending || home.assistantCodingDefaultsInherited}
+            onClick={() => mutation.mutate(null)}
+          >
+            Use Home default
+          </AppButton>
+          <AppButton
+            className="secondary-button"
+            type="submit"
+            disabled={
+              mutation.isPending ||
+              (draft.transport === 'codex' && !draft.model.trim()) ||
+              openCodeModelInvalid
+            }
+          >
+            {mutation.isPending ? <AppSpinner size="sm" /> : <Settings2 />}
+            Save Assistant
+          </AppButton>
+        </div>
+      </AppForm>
+      {mutation.error && <AppAlert className="inline-error">{mutation.error.message}</AppAlert>}
+    </AppSurface>
+  )
+}
+
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
   const [showRepoManager, setShowRepoManager] = useState(false)
@@ -216,6 +317,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
+  const openCodeModelInvalid = isOpenCodeModelInvalid(modelDraft)
 
   return (
     <AppCard className="project-card">
@@ -381,9 +483,14 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             label="Model"
             onInputChange={(model) => setModelDraft((current) => ({ ...current, model }))}
             options={MODEL_OPTIONS[modelDraft.transport] ?? []}
-            placeholder={modelDraft.transport === 'codex' ? 'gpt-5.4' : 'Provider default'}
+            placeholder={modelPlaceholder(modelDraft.transport)}
             value={modelDraft.model}
           />
+          {openCodeModelInvalid && (
+            <small className="project-model-error">
+              OpenCode requires provider/model, for example gemini-proxy/gemini-3.1-pro-preview.
+            </small>
+          )}
           {modelDraft.transport === 'codex' && (
             <SelectField
               label="Reasoning"
@@ -417,7 +524,8 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
               type="submit"
               disabled={
                 settingsMutation.isPending ||
-                (modelDraft.transport === 'codex' && !modelDraft.model.trim())
+                (modelDraft.transport === 'codex' && !modelDraft.model.trim()) ||
+                openCodeModelInvalid
               }
             >
               {settingsMutation.isPending ? <AppSpinner size="sm" /> : <Settings2 />}
@@ -524,4 +632,18 @@ function formatCodingDefaults(defaults: ProjectCodingDefaults) {
   return defaults.transport === 'codex'
     ? `${model} · ${defaults.reasoningEffort}`
     : `${defaults.transport} · ${model}`
+}
+
+function modelPlaceholder(transport: CodingAgentTransport) {
+  if (transport === 'codex') return 'gpt-5.4'
+  if (transport === 'claude') return 'Provider default or alias'
+  return 'provider/model'
+}
+
+function isOpenCodeModelInvalid(draft: CodingDefaultsDraft) {
+  return (
+    draft.transport === 'opencode' &&
+    Boolean(draft.model.trim()) &&
+    !/^[^/\s]+\/[^/\s]+$/.test(draft.model.trim())
+  )
 }

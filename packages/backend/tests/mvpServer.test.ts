@@ -147,6 +147,43 @@ describe('MVP server', () => {
       }),
     ).toMatchObject({ projects: [{ projectId: 'P-1' }] })
     expect(
+      await request(base, '/api/assistant/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'opencode',
+            model: 'gemini-proxy/gemini-3.1-pro-preview',
+          },
+        },
+      }),
+    ).toMatchObject({
+      home: {
+        assistantCodingDefaults: {
+          transport: 'opencode',
+          model: 'gemini-proxy/gemini-3.1-pro-preview',
+        },
+        assistantCodingDefaultsInherited: false,
+      },
+      projects: [
+        {
+          projectId: 'P-1',
+          codingDefaults: { transport: 'codex', model: 'gpt-5.4' },
+          codingDefaultsInherited: true,
+        },
+      ],
+    })
+    await expect(
+      request(base, '/api/assistant/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'opencode',
+            model: 'gemini-3.1-pro-preview',
+          },
+        },
+      }),
+    ).rejects.toThrow('OpenCode model must use the provider/model format')
+    expect(
       await request(base, '/api/projects/P-1/settings', {
         method: 'PATCH',
         body: {
@@ -170,6 +207,17 @@ describe('MVP server', () => {
         },
       ],
     })
+    await expect(
+      request(base, '/api/projects/P-1/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'opencode',
+            model: 'gemini-3.1-pro-preview',
+          },
+        },
+      }),
+    ).rejects.toThrow('OpenCode model must use the provider/model format')
     const created = await request(base, '/api/projects/P-1/goals', {
       method: 'POST',
       body: { goalId: 'G-1', title: 'Ship MVP', objective: 'Align implementation.' },

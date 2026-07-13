@@ -1,5 +1,9 @@
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
-import { engineeringWorkRepoIds, isEngineeringWork } from '../domain/canonicalDocuments'
+import {
+  engineeringWorkRepoIds,
+  isEngineeringWork,
+  isWorkTerminal,
+} from '../domain/canonicalDocuments'
 import {
   DEFAULT_PRIMARY_REPO_ID,
   type LinkedProjectRepo,
@@ -25,6 +29,7 @@ import {
   type RunAttemptRecorder,
   type RunAttemptStore,
   createRunAttemptStore,
+  operationalFailureResetAt,
 } from '../runtime/runAttemptStore'
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import {
@@ -56,6 +61,7 @@ export interface ProjectReconcilerOptions {
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
   operationalRetryBaseMs?: number
+  maxOperationalAttempts?: number
   onProjectBlocked?(input: {
     projectId: string
     reason: string
@@ -136,6 +142,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const runControllers = new Map<string, AbortController>()
   const operationalRetries = new Map<string, { failures: number; retryAt: number }>()
   const operationalRetryBaseMs = options.operationalRetryBaseMs ?? 30_000
+  const maxOperationalAttempts = options.maxOperationalAttempts ?? 3
   const deferredWorkIds = (goalId: string, observedAt = now()) => {
     const prefix = `${goalId}/`
     return new Set(
@@ -163,6 +170,43 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     async reconcileGoal(goalId, runtime = {}) {
       await readSoftwareDeliveryProfile()
       const goalPackage = await options.store.readPackage(goalId)
+      for (const work of goalPackage.works.values()) {
+        if (isWorkTerminal(work.attributes)) continue
+        const resetAt = operationalFailureResetAt(
+          goalPackage,
+          options.projectId,
+          goalId,
+          work.attributes.id,
+        )
+        const operationalAttempts = await attempts.countConsecutiveOperationalFailures(
+          options.projectId,
+          goalId,
+          work.attributes.id,
+          resetAt,
+        )
+        if (operationalAttempts < maxOperationalAttempts) continue
+        const target = `project:${options.projectId}/goal:${goalId}/work:${work.attributes.id}`
+        const existingAttention = [...goalPackage.attentions.values()].some(
+          (attention) =>
+            attention.attributes.target === target && attention.attributes.resolvedAt === null,
+        )
+        if (existingAttention) continue
+        const latestFailure = (
+          await attempts.list(options.projectId, goalId, work.attributes.id)
+        ).find(
+          (candidate) =>
+            candidate.application === 'operational_failure' &&
+            (!resetAt || candidate.startedAt > resetAt),
+        )
+        const attention = await goalController.ensureOperationalAttemptsAttention(
+          goalId,
+          work.attributes.id,
+          operationalAttempts,
+          latestFailure?.summary ?? 'No failure summary was recorded.',
+        )
+        operationalRetries.delete(`${goalId}/${work.attributes.id}`)
+        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
+      }
       const livePrefix = `${goalId}/`
       const localLiveWorkIds = [...live]
         .filter((key) => key.startsWith(livePrefix))
@@ -409,8 +453,34 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (outcome.failureKind === 'operational') {
-          scheduleOperationalRetry(operationalRetries, liveKey, now(), operationalRetryBaseMs)
           await attempt?.finish({ outcome, application: 'operational_failure' })
+          const persistedFailures = await attempts.countConsecutiveOperationalFailures(
+            options.projectId,
+            goalId,
+            workId,
+            operationalFailureResetAt(goalPackage, options.projectId, goalId, workId),
+          )
+          const operationalAttempts = Math.max(
+            persistedFailures,
+            (operationalRetries.get(liveKey)?.failures ?? 0) + 1,
+          )
+          if (operationalAttempts >= maxOperationalAttempts) {
+            operationalRetries.delete(liveKey)
+            const attention = await goalController.ensureOperationalAttemptsAttention(
+              goalId,
+              workId,
+              operationalAttempts,
+              outcome.summary,
+            )
+            return { kind: 'attention_ensured', attentionId: attention.attributes.id }
+          }
+          scheduleOperationalRetry(
+            operationalRetries,
+            liveKey,
+            now(),
+            operationalRetryBaseMs,
+            operationalAttempts,
+          )
           return {
             kind: 'pass_finished',
             workId,
@@ -585,8 +655,8 @@ function scheduleOperationalRetry(
   key: string,
   observedAt: Date,
   baseMs: number,
+  failures: number,
 ) {
-  const failures = (retries.get(key)?.failures ?? 0) + 1
   const delay = Math.min(baseMs * 2 ** Math.min(failures - 1, 5), 15 * 60_000)
   retries.set(key, { failures, retryAt: observedAt.getTime() + delay })
 }

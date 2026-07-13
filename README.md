@@ -11,7 +11,9 @@ Read these documents in order:
 
 1. [`docs/mvp_design.md`](docs/mvp_design.md) for product scope and accepted decisions.
 2. [`docs/mvp_document_model.md`](docs/mvp_document_model.md) for canonical files and invariants.
-3. [`docs/mvp_execution.md`](docs/mvp_execution.md) for execution, Assistant, scheduling, and Preview.
+3. [`docs/mvp_execution.md`](docs/mvp_execution.md) for execution, Assistant, scheduling, and Preview,
+   with [`docs/multi_vendor_agent_support.md`](docs/multi_vendor_agent_support.md) refining the
+   built-in coding-agent transport boundary.
 4. [`docs/mvp_publish_protocol.md`](docs/mvp_publish_protocol.md) for publication and crash safety.
 5. [`docs/mvp_state_machine.md`](docs/mvp_state_machine.md) for the derived state-machine reference.
 

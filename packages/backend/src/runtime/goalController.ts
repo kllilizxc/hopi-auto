@@ -47,6 +47,12 @@ export interface GoalController {
     },
   ): Promise<GoalDocument>
   ensureAttemptsAttention(goalId: string, workId: string): Promise<AttentionDocument>
+  ensureOperationalAttemptsAttention(
+    goalId: string,
+    workId: string,
+    operationalAttempts: number,
+    latestFailure: string,
+  ): Promise<AttentionDocument>
   completeGoal(goalId: string, attentionId: string): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
@@ -295,6 +301,52 @@ export function createGoalController(
       })
       return attention
     },
+    async ensureOperationalAttemptsAttention(goalId, workId, operationalAttempts, latestFailure) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot create operational retry Attention for missing or terminal Work: ${workId}`,
+        )
+      }
+      const target = `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+      const existing = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.target === target && attention.attributes.resolvedAt === null,
+      )
+      if (existing) return existing
+
+      const attention: AttentionDocument = {
+        attributes: {
+          id: `operational-attempts-${workId}-${operationalAttempts}-${crypto.randomUUID()}`,
+          target,
+          createdAt: now().toISOString(),
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: [
+          '## Needs you',
+          '',
+          `Work ${workId} reached ${operationalAttempts} consecutive operational failures and automatic retry stopped.`,
+          '',
+          `Latest failure: ${latestFailure.trim() || 'No failure summary was recorded.'}`,
+          '',
+          'Repair the agent provider/model, authentication, executable, or runtime environment, then explicitly retry Work.',
+          '',
+          `These failures did not consume the Work's ${work.attributes.attempts} published recovery attempts.`,
+          '',
+        ].join('\n'),
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path: store.paths.attentionDocument(goalId, attention.attributes.id),
+          expectedHash: null,
+          content: renderAttentionDocument(attention),
+        },
+      })
+      return attention
+    },
     async completeGoal(goalId, attentionId) {
       const goalPackage = await store.readPackage(goalId)
       const goal = goalPackage.goal
@@ -418,8 +470,25 @@ export function createGoalController(
       if (notBefore !== null && Number.isNaN(Date.parse(notBefore))) {
         throw new GoalControllerError('Work notBefore must be an ISO timestamp or null')
       }
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
+      let goalPackage = await store.readPackage(goalId)
+      let work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(`Cannot retry missing or terminal Work: ${workId}`)
+      }
+      const target = `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+      for (const attention of goalPackage.attentions.values()) {
+        if (attention.attributes.target === target && attention.attributes.resolvedAt === null) {
+          await resolveAttention(
+            store,
+            goalId,
+            attention,
+            now(),
+            'Resolved by an explicit Work retry.',
+          )
+        }
+      }
+      goalPackage = await store.readPackage(goalId)
+      work = goalPackage.works.get(workId)
       if (!work || isWorkTerminal(work.attributes)) {
         throw new GoalControllerError(`Cannot retry missing or terminal Work: ${workId}`)
       }

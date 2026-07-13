@@ -1,8 +1,11 @@
 import { ConfiguredRoleRunner, type RoleRunner } from '../agent/RoleRunner'
 import {
   readAndMigrateAgentAdapterConfig,
+  readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
+  updateAssistantCodingDefaults,
+  writeAgentAdapterConfig,
 } from '../agent/adapterConfig'
 import { ensureDefaultAgentAdapterConfig } from '../agent/defaultAdapterConfig'
 import { createAssistantConversationStore } from '../assistant/assistantConversationStore'
@@ -15,7 +18,10 @@ import {
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
 import type { LinkedProjectRepo } from '../domain/project'
-import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
+import type {
+  ProjectCodingDefaults,
+  ProjectCodingDefaultsInput,
+} from '../domain/projectCodingDefaults'
 import { PublicationCoordinator } from '../publication/publisher'
 import { createCoordinatorReconciler } from '../scheduler/coordinatorReconciler'
 import { createProjectReconciler } from '../scheduler/projectReconciler'
@@ -64,6 +70,11 @@ export interface MvpRuntime {
     codingDefaults: ProjectCodingDefaults
     inherited: boolean
   }>
+  readAssistantCodingDefaults(): Promise<{
+    codingDefaults: ProjectCodingDefaults
+    inherited: boolean
+  }>
+  updateAssistantCodingDefaults(input: ProjectCodingDefaultsInput | null): Promise<void>
 }
 
 export interface CreateMvpRuntimeOptions {
@@ -270,6 +281,15 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     }
   }
 
+  async function readAssistantModelSettings() {
+    return readAssistantCodingDefaults(await readAdapterConfig())
+  }
+
+  async function updateAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
+    const current = await readAdapterConfig()
+    await writeAgentAdapterConfig(adapterPath, updateAssistantCodingDefaults(current, input))
+  }
+
   return {
     homeRoot: options.homeRoot,
     publisher,
@@ -288,6 +308,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     rebindProject,
     rebindRepo,
     readProjectCodingDefaults,
+    readAssistantCodingDefaults: readAssistantModelSettings,
+    updateAssistantCodingDefaults: updateAssistantModelSettings,
   }
 }
 

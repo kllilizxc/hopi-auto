@@ -245,6 +245,7 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
   const value = objectValue(parsed)
   const eventType =
     stringValue(value?.type) ?? stringValue(value?.event) ?? stringValue(value?.kind)
+  const part = objectValue(value?.part)
   const blocks = arrayValue(value?.content) ?? arrayValue(value?.parts) ?? []
 
   if (eventType?.includes('error')) {
@@ -252,6 +253,42 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
       transcriptEvent('opencode', 'error', extractText(value) ?? humanizeEventType(eventType), {
         vendorEventType: eventType,
       }),
+    ]
+  }
+
+  const opencodeText = stringValue(part?.text)
+  if (eventType === 'text' && opencodeText) {
+    return [
+      transcriptEvent('opencode', 'assistant', opencodeText, {
+        vendorEventType: eventType,
+      }),
+    ]
+  }
+
+  if (eventType === 'tool_use' && part?.type === 'tool') {
+    const toolName = stringValue(part.tool)
+    const state = objectValue(part.state)
+    const invocationKey = stringValue(part.id)
+    if (state?.status === 'error') {
+      return [
+        transcriptEvent('opencode', 'error', extractText(state.error) ?? 'Tool failed.', {
+          toolName,
+          toolInvocationKey: invocationKey,
+          vendorEventType: eventType,
+        }),
+      ]
+    }
+    return [
+      transcriptEvent(
+        'opencode',
+        'tool_result',
+        extractText(state?.output) ?? `${toolName ?? 'Tool'} completed.`,
+        {
+          toolName,
+          toolInvocationKey: invocationKey,
+          vendorEventType: eventType,
+        },
+      ),
     ]
   }
 

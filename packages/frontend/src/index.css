@@ -273,9 +273,11 @@ textarea:focus-visible {
   min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-white) 1.8%, transparent), transparent 36%),
-    var(--sidebar);
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-white) 1.8%, transparent),
+      transparent 36%
+    ), var(--sidebar);
 }
 
 .brand {
@@ -295,7 +297,11 @@ textarea:focus-visible {
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--color-accent-500) 42%, transparent);
   border-radius: 12px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent-500) 28%, transparent), color-mix(in srgb, var(--color-accent-500) 6%, transparent));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-accent-500) 28%, transparent),
+    color-mix(in srgb, var(--color-accent-500) 6%, transparent)
+  );
   color: var(--color-accent-200);
   font-family: Georgia, serif;
   font-size: 20px;
@@ -376,7 +382,11 @@ textarea:focus-visible {
   padding: 13px;
   border: 1px solid color-mix(in srgb, var(--color-accent-500) 24%, transparent);
   border-radius: 13px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent-500) 14%, transparent), color-mix(in srgb, var(--color-accent-500) 4.5%, transparent));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-accent-500) 14%, transparent),
+    color-mix(in srgb, var(--color-accent-500) 4.5%, transparent)
+  );
   cursor: pointer;
   text-align: left;
   transition: 180ms ease;
@@ -466,17 +476,31 @@ textarea:focus-visible {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 18% -10%, color-mix(in srgb, var(--color-accent-500) 7.5%, transparent), transparent 32%),
-    radial-gradient(circle at 96% 88%, color-mix(in srgb, var(--color-warning-400) 4.5%, transparent), transparent 27%),
-    var(--canvas);
+  background: radial-gradient(
+      circle at 18% -10%,
+      color-mix(in srgb, var(--color-accent-500) 7.5%, transparent),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 96% 88%,
+      color-mix(in srgb, var(--color-warning-400) 4.5%, transparent),
+      transparent 27%
+    ), var(--canvas);
 }
 
 .app-main::before {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background-image: linear-gradient(color-mix(in srgb, var(--color-white) 1.2%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--color-white) 1.2%, transparent) 1px, transparent 1px);
+  background-image: linear-gradient(
+      color-mix(in srgb, var(--color-white) 1.2%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-white) 1.2%, transparent) 1px,
+      transparent 1px
+    );
   background-size: 36px 36px;
   content: "";
   pointer-events: none;
@@ -589,7 +613,11 @@ textarea:focus-visible {
 .panel-card {
   border: 1px solid var(--border);
   border-radius: 18px;
-  background: linear-gradient(150deg, color-mix(in srgb, var(--color-white) 2.5%, transparent), transparent 40%), var(--surface);
+  background: linear-gradient(
+      150deg,
+      color-mix(in srgb, var(--color-white) 2.5%, transparent),
+      transparent 40%
+    ), var(--surface);
   box-shadow: 0 16px 48px color-mix(in srgb, var(--color-black) 14%, transparent);
 }
 
@@ -884,6 +912,104 @@ button:disabled,
 }
 
 /* Projects */
+.assistant-model-panel {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+}
+
+.assistant-model-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.assistant-model-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent-500) 28%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-accent-500) 10%, transparent);
+  color: var(--color-accent-300);
+}
+
+.assistant-model-icon svg {
+  width: 18px;
+}
+
+.assistant-model-summary > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+
+.assistant-model-summary small {
+  color: var(--color-neutral-500);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.assistant-model-summary strong {
+  color: var(--color-neutral-100);
+  font-size: 14px;
+}
+
+.assistant-model-summary p {
+  margin: 1px 0 0;
+  color: var(--color-neutral-500);
+  font-size: 11px;
+}
+
+.assistant-model-form {
+  display: grid;
+  grid-template-columns: 0.75fr 1.25fr 0.75fr auto;
+  gap: 8px;
+  align-items: end;
+  margin: 14px 0 0 54px;
+}
+
+.assistant-model-form > .app-select,
+.assistant-model-form > .app-text-field {
+  display: grid;
+  gap: 5px;
+}
+
+.assistant-model-form .app-select__label,
+.assistant-model-form .app-field-label {
+  color: var(--color-neutral-450);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.assistant-model-form input,
+.assistant-model-form .app-select__trigger {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid var(--color-neutral-700);
+  border-radius: 8px;
+  background: var(--color-neutral-925);
+  color: var(--color-neutral-150);
+  font-size: 10px;
+}
+
+.assistant-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.assistant-model-actions .app-button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
 .projects-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
@@ -1121,6 +1247,12 @@ button:disabled,
 .project-model-form .app-select__trigger[data-focus-visible="true"] {
   border-color: color-mix(in srgb, var(--color-accent-500) 68%, transparent);
   outline: none;
+}
+
+.project-model-error {
+  grid-column: 1 / -1;
+  color: var(--color-danger-400);
+  font-size: 10px;
 }
 
 .project-model-actions {
@@ -1511,7 +1643,11 @@ button:disabled,
   padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--color-warning-400) 28%, transparent);
   border-radius: 11px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--color-warning-400) 12%, transparent), color-mix(in srgb, var(--color-warning-400) 3.5%, transparent));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-warning-400) 12%, transparent),
+    color-mix(in srgb, var(--color-warning-400) 3.5%, transparent)
+  );
   cursor: pointer;
   text-align: left;
 }
@@ -1648,7 +1784,11 @@ button:disabled,
   padding: 13px;
   border: 1px solid var(--color-neutral-750);
   border-radius: 11px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-white) 2.5%, transparent), transparent 45%), var(--color-neutral-875);
+  background: linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--color-white) 2.5%, transparent),
+      transparent 45%
+    ), var(--color-neutral-875);
   cursor: pointer;
   text-align: left;
   animation: card-in 220ms ease both;
@@ -1705,7 +1845,10 @@ button:disabled,
 }
 
 .badge-working {
-  background: var(--lane-tint-strong, color-mix(in srgb, var(--color-accent-400) 12.5%, transparent));
+  background: var(
+    --lane-tint-strong,
+    color-mix(in srgb, var(--color-accent-400) 12.5%, transparent)
+  );
   color: var(--lane-accent, var(--color-state-working));
 }
 
@@ -2648,7 +2791,11 @@ button:disabled,
   padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--color-accent-500) 22%, transparent);
   border-radius: 17px 17px 5px 17px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent-700) 20%, transparent), color-mix(in srgb, var(--color-accent-800) 14%, transparent));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-accent-700) 20%, transparent),
+    color-mix(in srgb, var(--color-accent-800) 14%, transparent)
+  );
   color: var(--color-neutral-100);
   font-size: 12px;
   line-height: 1.62;
@@ -3292,9 +3439,11 @@ button:disabled,
   flex-direction: column;
   overflow: hidden;
   padding: 12px 5px 8px;
-  background:
-    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--color-accent-500) 3.5%, transparent), transparent 30%),
-    var(--color-neutral-900);
+  background: radial-gradient(
+      circle at 50% 0,
+      color-mix(in srgb, var(--color-accent-500) 3.5%, transparent),
+      transparent 30%
+    ), var(--color-neutral-900);
 }
 
 .reflection-debug-panel {
@@ -3304,11 +3453,20 @@ button:disabled,
   min-height: 0;
   overflow: hidden;
   padding: 12px 13px 24px;
-  background:
-    linear-gradient(color-mix(in srgb, var(--color-success-400) 2.5%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--color-success-400) 2.5%, transparent) 1px, transparent 1px),
-    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--color-success-400) 6.5%, transparent), transparent 34%),
-    var(--color-neutral-900);
+  background: linear-gradient(
+      color-mix(in srgb, var(--color-success-400) 2.5%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-success-400) 2.5%, transparent) 1px,
+      transparent 1px
+    ),
+    radial-gradient(
+      circle at 50% 0,
+      color-mix(in srgb, var(--color-success-400) 6.5%, transparent),
+      transparent 34%
+    ), var(--color-neutral-900);
   background-size: 24px 24px, 24px 24px, auto, auto;
 }
 
@@ -4183,7 +4341,8 @@ samp {
 .project-model-form .app-select__trigger[data-focus-visible="true"],
 .work-system-prompt-heading .app-select__trigger:focus,
 .work-system-prompt-heading .app-select__trigger[data-focus-visible="true"] {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 70%, transparent), var(--shadow-xs);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 70%, transparent),
+    var(--shadow-xs);
 }
 
 .workspace-tabs {
@@ -4230,9 +4389,8 @@ samp {
 }
 
 .assistant-drawer.docked {
-  box-shadow:
-    30px 0 72px color-mix(in srgb, var(--color-black) 50%, transparent),
-    8px 0 30px color-mix(in srgb, var(--color-accent-500) 9%, transparent);
+  box-shadow: 30px 0 72px color-mix(in srgb, var(--color-black) 50%, transparent), 8px 0 30px
+    color-mix(in srgb, var(--color-accent-500) 9%, transparent);
 }
 
 .workspace-main {
@@ -4256,9 +4414,11 @@ samp {
 
 .assistant-body {
   padding: 14px 0 10px;
-  background:
-    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--color-accent-500) 5.5%, transparent), transparent 34%),
-    var(--surface-sunken);
+  background: radial-gradient(
+      circle at 50% 0,
+      color-mix(in srgb, var(--color-accent-500) 5.5%, transparent),
+      transparent 34%
+    ), var(--surface-sunken);
 }
 
 .assistant-conversation-feed .unified-feed-message-row,
@@ -4280,7 +4440,8 @@ samp {
 }
 
 .composer-box:focus-within {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 72%, transparent), var(--shadow-sm);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 72%, transparent),
+    var(--shadow-sm);
 }
 
 .composer-box textarea {
@@ -4313,7 +4474,11 @@ samp {
 }
 
 .unified-feed-message__bubble {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent-700) 30%, transparent), color-mix(in srgb, var(--color-accent-800) 20%, transparent));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-accent-700) 30%, transparent),
+    color-mix(in srgb, var(--color-accent-800) 20%, transparent)
+  );
   box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 5.5%, transparent), var(--shadow-xs);
 }
 
@@ -4352,10 +4517,16 @@ samp {
 }
 
 .app-main {
-  background:
-    radial-gradient(circle at 16% -8%, color-mix(in srgb, var(--color-accent-500) 9%, transparent), transparent 32%),
-    radial-gradient(circle at 100% 92%, color-mix(in srgb, var(--color-warning-400) 4.5%, transparent), transparent 28%),
-    var(--canvas);
+  background: radial-gradient(
+      circle at 16% -8%,
+      color-mix(in srgb, var(--color-accent-500) 9%, transparent),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 100% 92%,
+      color-mix(in srgb, var(--color-warning-400) 4.5%, transparent),
+      transparent 28%
+    ), var(--canvas);
 }
 
 .app-main::before {
@@ -4384,9 +4555,11 @@ samp {
 }
 
 .panel-card {
-  background:
-    linear-gradient(150deg, color-mix(in srgb, var(--color-white) 2.8%, transparent), transparent 42%),
-    var(--surface);
+  background: linear-gradient(
+      150deg,
+      color-mix(in srgb, var(--color-white) 2.8%, transparent),
+      transparent 42%
+    ), var(--surface);
   box-shadow: var(--shadow-md);
 }
 
@@ -4648,7 +4821,8 @@ samp {
 .field textarea:focus,
 .rebind-form input:focus {
   background: var(--color-neutral-825);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 72%, transparent), var(--shadow-xs);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-500) 72%, transparent),
+    var(--shadow-xs);
 }
 
 .primary-button {
@@ -4750,7 +4924,11 @@ samp {
 
 .needs-you-banner,
 .preview-repair-banner {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--color-warning-400) 15%, transparent), color-mix(in srgb, var(--color-warning-400) 5.5%, transparent));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-warning-400) 15%, transparent),
+    color-mix(in srgb, var(--color-warning-400) 5.5%, transparent)
+  );
   box-shadow: var(--shadow-sm);
 }
 
@@ -4770,12 +4948,10 @@ samp {
   --lane-tint-soft: color-mix(in srgb, var(--color-neutral-350) 4.5%, transparent);
   --lane-card-tint: color-mix(in srgb, var(--color-neutral-350) 3.5%, transparent);
   border-radius: 16px;
-  background:
-    linear-gradient(180deg, var(--lane-tint-soft), transparent 52%),
+  background: linear-gradient(180deg, var(--lane-tint-soft), transparent 52%),
     var(--color-neutral-925);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--color-white) 3%, transparent),
-    0 14px 32px color-mix(in srgb, var(--color-black) 24%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 3%, transparent), 0 14px 32px
+    color-mix(in srgb, var(--color-black) 24%, transparent);
 }
 
 .kanban-column > header {
@@ -4783,8 +4959,7 @@ samp {
   z-index: 1;
   min-height: 66px;
   padding: 14px 15px;
-  background:
-    linear-gradient(180deg, var(--lane-tint-strong), transparent 92%),
+  background: linear-gradient(180deg, var(--lane-tint-strong), transparent 92%),
     var(--color-neutral-875);
   box-shadow: 0 10px 24px color-mix(in srgb, var(--color-black) 18%, transparent);
 }
@@ -4847,25 +5022,24 @@ samp {
   overflow: hidden;
   padding: 15px;
   border-radius: 14px;
-  background:
-    linear-gradient(145deg, var(--lane-card-tint), transparent 52%),
-    linear-gradient(180deg, color-mix(in srgb, var(--color-white) 2.8%, transparent), transparent 42%),
-    var(--color-neutral-850);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--color-white) 3.5%, transparent),
-    0 8px 20px color-mix(in srgb, var(--color-black) 22%, transparent);
+  background: linear-gradient(145deg, var(--lane-card-tint), transparent 52%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-white) 2.8%, transparent),
+      transparent 42%
+    ), var(--color-neutral-850);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 3.5%, transparent), 0 8px 20px
+    color-mix(in srgb, var(--color-black) 22%, transparent);
   transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
 .work-card:hover {
-  background:
-    linear-gradient(145deg, var(--lane-tint-soft), transparent 54%),
+  background: linear-gradient(145deg, var(--lane-tint-soft), transparent 54%),
     linear-gradient(180deg, color-mix(in srgb, var(--color-white) 4%, transparent), transparent 46%),
     var(--color-neutral-825);
   transform: translateY(-2px);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--color-white) 4%, transparent),
-    0 12px 28px color-mix(in srgb, var(--color-black) 30%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 4%, transparent), 0 12px 28px
+    color-mix(in srgb, var(--color-black) 30%, transparent);
 }
 
 .work-card h2 {
@@ -5176,27 +5350,51 @@ samp {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes page-in {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes card-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes modal-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 @media (max-width: 1180px) {
@@ -5319,6 +5517,16 @@ samp {
     grid-template-columns: 1fr;
   }
 
+  .assistant-model-form {
+    grid-template-columns: 1fr 1fr;
+    margin-left: 0;
+  }
+
+  .assistant-model-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
   .link-project-panel {
     position: static;
   }
@@ -5340,10 +5548,32 @@ samp {
   .goal-focus-strip > div:last-child {
     display: none;
   }
-
 }
 
 @media (max-width: 660px) {
+  .assistant-model-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .assistant-model-summary > .app-status-chip {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .assistant-model-form {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-model-actions {
+    grid-column: 1;
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .assistant-model-actions .app-button {
+    flex: 1;
+  }
+
   .goal-workspace {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(310px, 44vh) minmax(0, 1fr);

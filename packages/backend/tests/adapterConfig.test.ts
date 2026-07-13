@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
   normalizeAgentAdapterConfig,
+  readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
+  updateAssistantCodingDefaults,
 } from '../src/agent/adapterConfig'
 
 describe('agent adapter config normalization', () => {
@@ -146,6 +148,66 @@ describe('agent adapter config normalization', () => {
       transport: 'codex',
       model: 'gpt-5.4',
       reasoningEffort: 'xhigh',
+    })
+  })
+
+  test('applies and clears an Assistant-only model override without changing role defaults', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: {
+        transport: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+      },
+      roles: {},
+    })
+    const overridden = updateAssistantCodingDefaults(config, {
+      transport: 'opencode',
+      model: 'gemini-proxy/gemini-3.1-pro-preview',
+    })
+
+    expect(readAssistantCodingDefaults(overridden)).toEqual({
+      codingDefaults: {
+        transport: 'opencode',
+        model: 'gemini-proxy/gemini-3.1-pro-preview',
+      },
+      inherited: false,
+    })
+    expect(resolveAssistantTransportConfig(overridden)).toMatchObject({
+      transport: 'opencode',
+      cwdMode: 'root',
+      model: 'gemini-proxy/gemini-3.1-pro-preview',
+    })
+    expect(resolveRoleTransportConfig(overridden, 'planner')).toMatchObject({
+      transport: 'codex',
+      model: 'gpt-5.4',
+    })
+
+    const cleared = updateAssistantCodingDefaults(overridden, null)
+    expect(readAssistantCodingDefaults(cleared)).toMatchObject({
+      codingDefaults: { transport: 'codex', model: 'gpt-5.4' },
+      inherited: true,
+    })
+  })
+
+  test('uses autonomous edit mode for generated Claude defaults without bypassing permissions', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: { transport: 'claude', model: 'sonnet' },
+      roles: {},
+    })
+
+    expect(resolveAssistantTransportConfig(config)).toEqual({
+      transport: 'claude',
+      cwdMode: 'root',
+      model: 'sonnet',
+      permissionMode: 'acceptEdits',
+    })
+    expect(resolveRoleTransportConfig(config, 'generator')).toEqual({
+      transport: 'claude',
+      cwdMode: 'worktree',
+      model: 'sonnet',
+      permissionMode: 'acceptEdits',
     })
   })
 

@@ -52,6 +52,11 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
       integration/
 ```
 
+`runtime/agent-adapters.json` owns Home agent configuration: `defaults` supplies the fallback for
+Assistant and Projects, while optional `assistant` is an Assistant-only transport/model override.
+Removing `assistant` restores inheritance without rewriting `defaults`. The Projects page is the
+operator UI for this Home-level Assistant setting.
+
 An inbox event is conceptually `pending | handled`.
 
 Its exact MVP front matter is:
@@ -121,10 +126,10 @@ Goal-targeted HOPI tool call may adopt selected attachments as Goal references.
 Historical Inbox events may contain the removed `routeClaim` field. The compatibility reader keeps
 it as provenance, but new turns never write it and no forward control rule depends on it.
 
-`runtime/assistant/session.json` caches the current Codex thread ID and last completed turn. It is
+`runtime/assistant/session.json` caches the current vendor session ID and last completed turn. It is
 rebuildable and is not conversation authority. Per-turn `events.jsonl` stores normalized live
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
-output for debugging. A missing runtime session starts a new Codex thread from ordered durable Inbox
+output for debugging. A missing runtime session starts a new vendor session from ordered durable Inbox
 history; it does not alter or synthesize canonical turns.
 
 Each `runtime/assistant/reflections/<reflectionId>/reflection.json` records a disposable assessment's
@@ -334,7 +339,7 @@ doc-to-work trigger mapping.
 
 Assistant writes design through the HOPI design tool. That tool changes only the named Markdown
 documents plus any Inbox images explicitly adopted in the same call. If implementation or
-reassessment is needed, Codex separately calls the Planning tool; there is no hidden file-presence
+reassessment is needed, Assistant separately calls the Planning tool; there is no hidden file-presence
 signal, unchanged `goal.md` convention, or automatic doc-to-code trigger.
 
 ### `inputs/<sourceHomeId>/<eventId>.md`
@@ -489,6 +494,12 @@ increments the same counter regardless of the current engineering stage. `attent
 owning-Work outcome and does not increment attempts; speaking Assistant decides whether Planning or
 operator input is needed. The ordered `evidenceRefs` retains consumed Evidence, from which models
 derive repair context.
+
+Operational failures are deliberately not another Work front-matter field. Their consecutive count
+is projected from append-only runtime Attempt manifests whose application is `operational_failure`,
+after the most recent explicitly resolved operational retry Attention. This keeps provider, process,
+authentication, and malformed-protocol failures out of the canonical business recovery counter while
+remaining durable across Coordinator restarts.
 
 Ordinary pass success never clears recovery. The counter clears only when a material contract
 revision invalidates the episode, Planning publishes a materially changed plan, or the operator

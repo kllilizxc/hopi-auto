@@ -85,6 +85,39 @@ describe('CoordinatorReconciler', () => {
     ).toBe(true)
   })
 
+  test('does not let an Attention-blocked public turn suppress Reflection', async () => {
+    const fixture = await workspaceFixture()
+    await fixture.workspace.receiveEvent({ eventId: 'EV-blocked', content: 'Blocked turn.' })
+    await fixture.attentions.ensureEventAttention('EV-blocked', 'Assistant transport failed.')
+    const observations: boolean[] = []
+    const reflection = {
+      async observe(input) {
+        observations.push(input.settled)
+        return 'running' as const
+      },
+      isActive: () => false,
+      listRuns: async () => [],
+      listRunSummaries: async () => [],
+      readRunEvents: async () => null,
+      waitForIdle: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AssistantReflection
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process() {
+          throw new Error('Blocked event must not be processed')
+        },
+      },
+      reflection,
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(observations).toEqual([true])
+  })
+
   test('prioritizes public user turns over older internal Reflection handoffs', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({

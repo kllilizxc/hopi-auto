@@ -1,6 +1,8 @@
 import { appendFile, mkdir, rm } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
+import { parseVendorAssistantOutput } from '../agent/vendorAssistantOutput'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import type { RoleTransportConfig } from '../agent/vendorTransport'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
@@ -51,6 +53,15 @@ export function createConfiguredAssistantModelRunner(options: {
   return {
     async run(input, observer) {
       const config = await options.resolveConfig()
+      if (
+        config.transport !== 'codex' &&
+        config.transport !== 'claude' &&
+        config.transport !== 'opencode'
+      ) {
+        throw new WorkspaceAssistantError(
+          'Workspace Assistant requires a built-in vendor transport',
+        )
+      }
       await mkdir(input.cwd, { recursive: true })
       await rm(input.lastMessageFile, { force: true })
 
@@ -65,31 +76,45 @@ export function createConfiguredAssistantModelRunner(options: {
         ...input,
         toolUrl: options.resolveToolUrl(),
       })
+      const providerEnvironment =
+        config.transport === 'claude' ? await readClaudeProviderEnvironment() : {}
       const child = Bun.spawn(command, {
         cwd: input.cwd,
         stdout: 'pipe',
         stderr: 'pipe',
         stdin: 'pipe',
-        env: process.env,
+        env: { ...process.env, ...providerEnvironment },
       })
       const abort = () => child.kill()
       input.signal?.addEventListener('abort', abort, { once: true })
       if (typeof child.stdin !== 'number' && child.stdin) {
-        child.stdin.write(input.prompt)
+        child.stdin.write(assistantPrompt(config, input))
         child.stdin.end()
       }
 
       let observedThreadId = input.threadId
       const stderr: string[] = []
       let finalReply = ''
+      let finalMessageId: string | undefined
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
-        if (stream === 'stdout' && config.transport === 'codex') {
-          const threadId = codexThreadId(line)
-          if (threadId) {
-            observedThreadId = threadId
-            await observer?.onThreadId?.(threadId)
+        if (stream === 'stdout') {
+          const output = parseVendorAssistantOutput(config.transport, line)
+          if (output.sessionId && output.sessionId !== observedThreadId) {
+            observedThreadId = output.sessionId
+            await observer?.onThreadId?.(output.sessionId)
+          }
+          if (output.finalText) {
+            finalReply = output.finalText
+            finalMessageId = output.messageId
+          } else if (output.assistantText) {
+            if (output.messageId && output.messageId !== finalMessageId) {
+              finalReply = output.assistantText
+              finalMessageId = output.messageId
+            } else {
+              finalReply += (finalReply ? '\n' : '') + output.assistantText
+            }
           }
         } else {
           stderr.push(line)
@@ -108,9 +133,6 @@ export function createConfiguredAssistantModelRunner(options: {
           role: 'assistant',
           line,
         })) {
-          if (event.kind === 'transcript' && event.entryKind === 'assistant') {
-            finalReply += (finalReply ? '\n' : '') + event.summary
-          }
           await observer?.onEvent?.(event)
         }
       }
@@ -138,14 +160,12 @@ export function createConfiguredAssistantModelRunner(options: {
         )
       }
 
-      if (config.transport === 'codex') {
-        if (!observedThreadId) {
-          throw new WorkspaceAssistantError('Codex did not report a conversation thread ID')
-        }
-      } else {
-        if (!observedThreadId) {
-          observedThreadId = `thread-${Date.now()}`
-        }
+      if (!observedThreadId) {
+        throw new WorkspaceAssistantError(
+          `${config.transport} did not report a conversation session ID`,
+        )
+      }
+      if (config.transport !== 'codex') {
         await Bun.write(input.lastMessageFile, finalReply)
       }
 
@@ -279,24 +299,38 @@ async function prepareAssistantWorkspace(
   input: AssistantModelInput & { toolUrl: string },
 ) {
   if (config.transport === 'opencode' || config.transport === 'claude') {
-    const mcpConfig = {
-      mcpServers: {
-        hopi: {
-          command: process.execPath,
-          args: [join(import.meta.dir, 'hopiMcpServer.ts')],
-          env: {
-            HOPI_TOOL_URL: input.toolUrl,
-            HOPI_TOOL_TOKEN: input.toolToken,
-            HOPI_TOOL_MODE: input.toolMode ?? 'main',
-          },
-        },
+    const server = {
+      command: process.execPath,
+      args: [join(import.meta.dir, 'hopiMcpServer.ts')],
+      env: {
+        HOPI_TOOL_URL: input.toolUrl,
+        HOPI_TOOL_TOKEN: input.toolToken,
+        HOPI_TOOL_MODE: input.toolMode ?? 'main',
       },
     }
 
-    if (config.transport === 'opencode') {
+    if (config.transport === 'claude') {
+      await Bun.write(
+        assistantClaudeMcpConfigPath(input.cwd),
+        JSON.stringify({ mcpServers: { hopi: server } }, null, 2),
+      )
+    } else {
+      const mcpConfig = {
+        $schema: 'https://opencode.ai/config.json',
+        mcp: {
+          hopi: {
+            type: 'local',
+            command: [server.command, ...server.args],
+            enabled: true,
+            environment: server.env,
+          },
+        },
+        permission: {
+          '*': 'deny',
+          'hopi_*': 'allow',
+        },
+      }
       await Bun.write(join(input.cwd, 'opencode.json'), JSON.stringify(mcpConfig, null, 2))
-    } else if (config.transport === 'claude') {
-      await Bun.write(join(input.cwd, 'claude.json'), JSON.stringify(mcpConfig, null, 2))
     }
   }
 }
@@ -309,29 +343,69 @@ function buildAssistantCommand(
     return assistantCodexCommand(config, input)
   }
   if (config.transport === 'claude') {
-    return assistantClaudeCommand(config)
+    return assistantClaudeCommand(config, input)
   }
   if (config.transport === 'opencode') {
-    return assistantOpencodeCommand(config)
+    return assistantOpencodeCommand(config, input)
   }
   throw new WorkspaceAssistantError(`Unsupported transport: ${config.transport}`)
 }
 
-function assistantClaudeCommand(config: Extract<RoleTransportConfig, { transport: 'claude' }>) {
+function assistantClaudeCommand(
+  config: Extract<RoleTransportConfig, { transport: 'claude' }>,
+  input: AssistantModelInput,
+) {
   const command = [config.binary ?? 'claude']
-  command.push('--permission-mode', config.permissionMode ?? 'dontAsk')
+  if (config.permissionMode === 'bypassPermissions') {
+    command.push('--dangerously-skip-permissions')
+  } else {
+    command.push('--permission-mode', config.permissionMode ?? 'dontAsk')
+  }
   if (config.model) command.push('--model', config.model)
-  command.push('--print', '--output-format', 'stream-json')
+  command.push(
+    '--mcp-config',
+    assistantClaudeMcpConfigPath(input.cwd),
+    '--strict-mcp-config',
+    '--setting-sources',
+    '',
+    '--allowedTools',
+    'mcp__hopi__*,Read',
+    '--print',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+  )
+  if (input.threadId) command.push('--resume', input.threadId)
+  for (const imageFile of input.imageFiles ?? []) command.push('--add-dir', dirname(imageFile))
   return command
 }
 
-function assistantOpencodeCommand(config: Extract<RoleTransportConfig, { transport: 'opencode' }>) {
-  const command = [config.binary ?? 'opencode', 'run']
+function assistantOpencodeCommand(
+  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  input: AssistantModelInput,
+) {
+  const command = [config.binary ?? 'opencode', '--pure', 'run']
   if (config.model) command.push('--model', config.model)
   if (config.variant) command.push('--variant', config.variant)
   if (config.agent) command.push('--agent', config.agent)
   command.push('--format', 'json')
+  if (input.threadId) command.push('--session', input.threadId)
+  for (const imageFile of input.imageFiles ?? []) command.push('--file', imageFile)
   return command
+}
+
+function assistantClaudeMcpConfigPath(cwd: string) {
+  return join(cwd, 'claude-mcp.json')
+}
+
+function assistantPrompt(config: RoleTransportConfig, input: AssistantModelInput) {
+  if (config.transport !== 'claude' || !input.imageFiles?.length) return input.prompt
+  return [
+    input.prompt,
+    '',
+    '[Current turn local image files; inspect them with the Read tool when relevant.]',
+    ...input.imageFiles.map((path) => `- ${path}`),
+  ].join('\n')
 }
 
 function assistantCodexCommand(
@@ -381,7 +455,7 @@ function renderNewConversation(
   return [
     '# HOPI Workspace Assistant',
     '',
-    'Continue as a normal Codex conversation for the operator.',
+    'Continue as a normal coding-assistant conversation for the operator.',
     'Use HOPI tools only when the operator actually requests a durable Project, Goal, Work, design, Attention, or Preview effect.',
     'Page context is the preferred target for ambiguous references such as "this" or "continue", but explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope.',
     'Page context never implies a mutation. Never turn greetings, discussion, or questions into Planning.',
@@ -496,16 +570,6 @@ function boundedConversationHistory(events: InboxEventDocument[], characterBudge
     used += size
   }
   return selected.toReversed().flat()
-}
-
-function codexThreadId(line: string) {
-  try {
-    const parsed = JSON.parse(line) as Record<string, unknown>
-    if (parsed.type !== 'thread.started') return null
-    return typeof parsed.thread_id === 'string' ? parsed.thread_id : null
-  } catch {
-    return null
-  }
 }
 
 async function consumeLines(

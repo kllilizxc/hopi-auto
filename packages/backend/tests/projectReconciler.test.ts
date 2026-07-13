@@ -137,6 +137,39 @@ describe('ProjectReconciler', () => {
     expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
   })
 
+  test('keeps malformed Generator Attention isolated to a failed Work attempt', async () => {
+    const blocked: string[] = []
+    const fixture = await createFixture({
+      generatorMalformedAttention: true,
+      onProjectBlocked: ({ reason }) => {
+        blocked.push(reason)
+      },
+    })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect(blocked).toEqual([])
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 1,
+    })
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(attempts.at(-1)).toMatchObject({
+      status: 'finished',
+      result: 'fail',
+      application: 'published',
+      summary: expect.stringContaining('Attention document is missing YAML front matter'),
+    })
+  })
+
   test('does not consume a Work attempt when Coordinator checkpoint infrastructure fails', async () => {
     const blocked: string[] = []
     const fixture = await createFixture({
@@ -245,6 +278,39 @@ describe('ProjectReconciler', () => {
     expect(attempts[0]).toMatchObject({ application: 'operational_failure' })
   })
 
+  test('stops after three persisted operational failures without consuming Work attempts', async () => {
+    const fixture = await createFixture({
+      generatorOperationalFailure: true,
+      operationalRetryBaseMs: 0,
+    })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    await fixture.reconciler.reconcileGoal('goal-1')
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const exhausted = await fixture.reconciler.reconcileGoal('goal-1')
+    const afterExhaustion = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const work = goalPackage.works.get('W-1')
+    const attention = [...goalPackage.attentions.values()].find((candidate) =>
+      candidate.attributes.id.startsWith('operational-attempts-W-1-3-'),
+    )
+
+    expect(exhausted).toMatchObject({ kind: 'attention_ensured' })
+    expect(afterExhaustion).toMatchObject({ kind: 'wait' })
+    expect(fixture.runner.responsibilities).toEqual([
+      'planner',
+      'generator',
+      'generator',
+      'generator',
+    ])
+    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
+    expect(
+      await fixture.attempts.countConsecutiveOperationalFailures('project-1', 'goal-1', 'W-1'),
+    ).toBe(3)
+    expect(attention?.body).toContain('automatic retry stopped')
+    expect(attention?.body).toContain("did not consume the Work's 0 published recovery attempts")
+  })
+
   test('cleans Reviewer residue and retries Reviewer without a Generator recovery', async () => {
     const fixture = await createFixture({
       reviewerOperationalWriteOnce: true,
@@ -284,6 +350,7 @@ class DeliveryScriptRunner implements RoleRunner {
     private readonly options: {
       generatorResult: 'success' | 'fail'
       generatorOperationalFailure: boolean
+      generatorMalformedAttention: boolean
       reviewerOperationalWriteOnce: boolean
       generatorCreatesPrepare: boolean
       workRepos: readonly string[]
@@ -317,6 +384,25 @@ class DeliveryScriptRunner implements RoleRunner {
           artifacts: [],
           exitCode: 1,
           failureKind: 'operational',
+        }
+      }
+      if (this.options.generatorMalformedAttention) {
+        const attentionPath = join(
+          input.context.proposalRoot,
+          '.hopi',
+          'docs',
+          'goals',
+          input.goalId,
+          'attention',
+          'A-malformed.md',
+        )
+        await mkdir(dirname(attentionPath), { recursive: true })
+        await Bun.write(attentionPath, '# Missing frontmatter\n')
+        return {
+          result: 'attention',
+          summary: 'Registry access requires operator action.',
+          artifacts: [],
+          exitCode: 0,
         }
       }
     }
@@ -415,6 +501,7 @@ async function createFixture(
     includePrepare?: boolean
     generatorCreatesPrepare?: boolean
     generatorOperationalFailure?: boolean
+    generatorMalformedAttention?: boolean
     reviewerOperationalWriteOnce?: boolean
     includeSecondaryRepo?: boolean
     operationalRetryBaseMs?: number
@@ -474,6 +561,7 @@ async function createFixture(
   const runner = new DeliveryScriptRunner({
     generatorResult: options.generatorResult ?? 'success',
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
+    generatorMalformedAttention: options.generatorMalformedAttention ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
     workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],

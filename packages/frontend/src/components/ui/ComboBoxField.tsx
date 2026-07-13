@@ -12,7 +12,6 @@ export interface ComboBoxOption {
   description?: ReactNode
   isDisabled?: boolean
   label: ReactNode
-  textValue?: string
   value: string
 }
 
@@ -30,6 +29,10 @@ export interface ComboBoxFieldProps {
   inputClassName?: string
   value: string
   placeholder?: string
+}
+
+export function comboBoxOptionTextValue(option: ComboBoxOption) {
+  return option.value
 }
 
 export function ComboBoxField({
@@ -86,10 +89,7 @@ export function ComboBoxField({
                 id={option.value}
                 isDisabled={option.isDisabled}
                 key={option.value}
-                textValue={
-                  option.textValue ??
-                  (typeof option.label === 'string' ? option.label : option.value)
-                }
+                textValue={comboBoxOptionTextValue(option)}
               >
                 <span className="app-select__option-copy">
                   <span>{option.label}</span>

@@ -3,7 +3,7 @@
 Status: forward Assistant authority
 Last updated: 2026-07-12
 
-This document owns the workspace Assistant conversation, its Codex session, HOPI tool boundary,
+This document owns the workspace Assistant conversation, its configured vendor session, HOPI tool boundary,
 turn recovery, and UI behavior. Canonical schemas belong to
 [the document model](./mvp_document_model.md), Goal and Work execution to
 [the execution design](./mvp_execution.md), and lifecycle visualization to
@@ -11,20 +11,20 @@ turn recovery, and UI behavior. Canonical schemas belong to
 
 ## Mental Model
 
-The Assistant is a normal persistent Codex conversation with a small set of HOPI tools. It is not
+The Assistant is one normal persistent configured-vendor conversation with a small set of HOPI tools. It is not
 an intent parser, a staged-diff protocol, or a special workflow responsibility.
 
 ```text
-User message -> durable conversation turn -> Codex thread -> ordinary reply
+User message -> durable conversation turn -> vendor session -> ordinary reply
                                                    \-> optional HOPI tool calls
                                                         -> canonical documents
                                                         -> Reconciler
 
-semantic state change -> disposable Reflection -> optional internal brief -> Codex thread
+semantic state change -> disposable Reflection -> optional internal brief -> vendor session
 ```
 
 A greeting, question, acknowledgement, or discussion receives an ordinary conversational answer.
-No Project or Goal effect occurs unless Codex chooses and successfully calls a HOPI mutation tool.
+No Project or Goal effect occurs unless Assistant chooses and successfully calls a HOPI mutation tool.
 HOPI does not add keyword routing, prose parsing, an `actions[]` result, or a second model call to
 classify the message.
 
@@ -121,10 +121,10 @@ event-target Attention rather than recursively waking itself forever.
 ## Context Is Not Authority
 
 The UI may attach the currently viewed Project and Goal as immutable turn context. Context changes
-what Codex sees first and supplies defaults to read tools. It is not a route, lock, instruction, or
+what Assistant sees first and supplies defaults to read tools. It is not a route, lock, instruction, or
 authorization to mutate that Goal.
 
-Codex may answer from that context without calling a tool. A HOPI mutation tool always names its
+Assistant may answer from that context without calling a tool. A HOPI mutation tool always names its
 actual Project, Goal, or Work target and validates it at call time. Therefore opening a Goal and
 sending `hi` cannot create Goal Input, Planning Work, or any Kanban change.
 
@@ -143,7 +143,7 @@ introducing pagination, a query language, or a second history store.
 Every speaking-thread prompt names the immutable current Inbox event. Because even a bounded state
 result can be much longer than the operator's message, `hopi_read_state` repeats that event ID,
 body, and page context as the final `currentTurn` field of its result. This is attention anchoring,
-not intent parsing or an action schema: Codex still decides the reply and tools, but it must continue
+not intent parsing or an action schema: Assistant still decides the reply and tools, but it must continue
 the current event rather than completing a prior turn suggested by stale conversation context.
 Reflection state reads have no operator `currentTurn` and remain unchanged.
 
@@ -152,8 +152,8 @@ Reflection state reads have no operator `currentTurn` and remain unchanged.
 The UI may attach or paste bounded raster images into a public user turn. HOPI stores every accepted
 image under Assistant home before acknowledging the Inbox event, renders its thumbnail in the
 conversation, lists its canonical attachment reference in the current-turn prompt, and supplies its
-resolved local file to the Codex turn as an image input. This works for both a new conversation and a
-resumed persistent Codex session.
+resolved local file through the configured transport's image mechanism. This works for both a new
+conversation and a resumed persistent vendor session.
 
 Receipt and adoption are deliberately separate:
 
@@ -189,7 +189,7 @@ source content, attachments, optional page context, final Assistant reply, and t
 
 - `pending` means the turn is queued, running, interrupted, or blocked by targeted Attention;
   those distinctions are derived from runtime facts and Attention.
-- `handled` means a final Assistant reply is durable. It does not imply that Codex called a tool.
+- `handled` means a final Assistant reply is durable. It does not imply that Assistant called a tool.
 
 The free-form disposition is diagnostic only: speaking turns use `answered` when no tool event was
 observed and `tools-used` when one was. It never claims that a side effect was applied; durable
@@ -200,9 +200,9 @@ conversation projection. User turns are always public. Reflection turns begin in
 hidden unless the speaking thread explicitly requests operator notification before completing them.
 These fields do not grant mutation authority.
 
-The Codex thread ID and normalized live events are runtime data under
-`.hopi/runtime/assistant/`. HOPI resumes the same Codex thread for the next turn when possible.
-Losing vendor session state does not lose product truth: HOPI starts a new Codex thread from the
+The vendor session ID and normalized live events are runtime data under
+`.hopi/runtime/assistant/`. HOPI resumes the same vendor session for the next turn when possible.
+Losing vendor session state does not lose product truth: HOPI starts a new vendor session from the
 durable Home instructions, a fixed character budget of the newest public user-visible exchanges, and
 the oldest pending turn. Internal Reflection turns are not reconstructed as conversation memory;
 their durable effects are revalidated from current canonical state. Long-lived decisions belong in
@@ -214,20 +214,23 @@ same diagnostics in its own runtime directory. The UI may poll or stream public 
 turn is pending. The final Assistant message is copied into the Inbox turn before it becomes handled.
 Runtime events improve observability but never authorize a Goal or Work transition.
 
-## Codex Execution Boundary
+## Vendor Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. It receives normal Codex conversation behavior and standard read-only shell
-capability within that runtime directory. It does not receive direct write authority over canonical
-project documents or source trees.
+managed project root. It does not receive direct write authority over canonical project documents or
+source trees. Codex uses its read-only sandbox; Claude Code is pre-approved only for Read and the
+injected HOPI MCP tools; OpenCode receives a generated permission policy that denies built-ins and
+allows only the injected HOPI MCP tools. Images are supplied through the transport-specific policy
+defined in `multi_vendor_agent_support.md`.
 
-HOPI exposes its tools to Codex through one local MCP server with a per-turn capability. The server
+HOPI exposes its tools to the configured vendor through one local MCP server with a per-turn capability. The server
 runs inside the Coordinator process and sends every mutation through the same validators,
 controllers, publisher, and global publication queue used by the rest of HOPI. MCP is a transport
 for model tool calls, not a second durable workflow or an Assistant-specific Action document.
 
-The non-interactive Codex invocation pre-approves tools only for this injected `hopi` MCP server;
-it does not grant broader shell, filesystem, or unrelated MCP write authority. The MCP process has
+The non-interactive invocation pre-approves only the minimum vendor-specific read/image behavior and
+this injected `hopi` MCP server; it does not grant broader shell, filesystem, or unrelated MCP write
+authority. The MCP process has
 only a single-turn capability token, and the backend revokes that token when the turn ends. Tool
 approval therefore removes an impossible unattended UI prompt without becoming the authorization
 boundary: server-side capability validation, canonical target validation, controllers, and the
@@ -235,7 +238,7 @@ publisher remain authoritative.
 
 The initial thread instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Subsequent user messages use normal
-Codex session resume. A public turn's final Codex answer is the operator-facing reply; an internal
+vendor session resume. A public turn's final Assistant answer is the operator-facing reply; an internal
 turn's answer remains hidden unless `notify_user` promoted that turn while it was pending.
 
 Before admission, Assistant asks only when the requested outcome, target Project/Goal, or operator
@@ -271,7 +274,7 @@ backend only validates provenance and performs the deterministic copy and Markdo
 `Create Goal` is complete admission of the current user instruction: it creates the Goal Input and
 the initial Planning guard in one publication. `Request planning` is therefore unnecessary for that
 same instruction and is normally used for a later instruction against an existing Goal, including a
-design change that should now be implemented. If Codex repeats the idempotent request anyway, it
+design change that should now be implemented. If Assistant repeats the idempotent request anyway, it
 must not create another Input or Planning Work. HOPI does not add tool-order state just to forbid a
 harmless model retry.
 
@@ -282,20 +285,20 @@ Reflection in the same speaking turn. Later completion, blocking, or decision-wo
 reported through the existing interruptible Reflection path. This keeps one rule for every
 long-running effect and avoids a second progress-watching workflow inside conversation.
 
-`Write design` addresses files relative to the selected Goal's `design/` root. If Codex repeats that
+`Write design` addresses files relative to the selected Goal's `design/` root. If Assistant repeats that
 Goal's exact canonical design prefix, the tool strips it instead of creating a nested `.hopi` tree;
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
 The Assistant never implements source changes itself. When the operator asks to modify design and
-then implement it, Codex first uses the design tool, then requests Planning. Planner reads the
+then implement it, Assistant first uses the design tool, then requests Planning. Planner reads the
 published design and creates or updates Engineering Work. This keeps the conversational model
 simple without bypassing Planner, Reviewer, worktree isolation, or C1 integration.
 
 Read tools return current bounded documents and projections rather than staging every linked Goal
 into every prompt. Their runtime section identifies the latest Run and Attempt and supplies paths to
 `attempt.json`, normalized events, raw transcript, staged context, prompt, and result without
-inlining those potentially large files. Codex decides what else to read. This keeps ordinary
+inlining those potentially large files. Assistant decides what else to read. This keeps ordinary
 conversation responsive and lets the architecture improve automatically with model tool-use
 capability.
 
@@ -323,7 +326,7 @@ Mutation tools follow these rules:
 - validate the target and current canonical state immediately before publication
 - preserve the exact user turn as Goal Input when the effect belongs to a Goal
 - use domain identity and expected current content for idempotency
-- return stable document references and a concise result to Codex
+- return stable document references and a concise result to Assistant
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 - create or reuse targeted Attention when safe automatic recovery is exhausted
 
@@ -332,7 +335,7 @@ single-destination Inbox route claim therefore is not part of the forward Assist
 Historical route claims remain readable only for migration and provenance.
 
 If the process stops after a tool succeeds but before the final reply, the Inbox turn stays pending.
-On resume, Codex sees the durable tool result through current HOPI state. Repeated tool calls are
+On resume, Assistant sees the durable tool result through current HOPI state. Repeated tool calls are
 safe because Goal Input identity, Goal/Work lifecycle guards, content hashes, and existing target
 documents make the operations idempotent. HOPI does not add a generic operation database or parse
 reply prose to reconstruct effects.
@@ -344,7 +347,7 @@ Attention is reserved for a durable condition that blocks unattended progress or
 Assistant/tool failure that cannot be completed safely.
 
 Needs-you and completion Attention appear in the same Assistant thread as system updates. Replying
-to one sends another normal user turn with the Attention reference in context. Codex may answer,
+to one sends another normal user turn with the Attention reference in context. Assistant may answer,
 read current state, and call the appropriate HOPI tool; no separate answer parser exists.
 
 After the configured bounded Assistant retry count, HOPI creates event-target Attention and stops
@@ -357,7 +360,7 @@ The Assistant drawer shows one chronological conversation:
 
 - a submitted user message appears immediately
 - queued and currently running turns are distinguishable
-- normalized Codex messages and tool activity appear while a turn runs
+- normalized vendor messages and tool activity appear while a turn runs
 - tool calls are collapsed diagnostics, not chat commands the user must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
@@ -389,8 +392,8 @@ The MVP does not include:
 - model-produced `actions[]`, `result.json`, or `response.md` for conversation turns
 - staged canonical filesystem diffs as the Assistant command protocol
 - direct Assistant source edits or direct Kanban column mutation
-- parallel turns inside one Codex thread
-- multiple named or operator-visible Assistant threads, or model-provider-neutral conversation resume
+- parallel turns inside one vendor session
+- multiple named or operator-visible Assistant threads
 - a durable Reflection queue, Reflection workflow state, or Reflection-authored canonical mutation
 - a general workflow/tool DSL or user-editable tool schemas
 - treating selected Goal context as permission or proof of a requested side effect

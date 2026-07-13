@@ -350,20 +350,24 @@ describe('Assistant HOPI tools', () => {
         ?.attributes.resolvedAt,
     ).toBeNull()
 
-    await fixture.tools.executeForEvent('EV-1', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      operation: 'retry',
-    })
+    expect(
+      await fixture.tools.executeForEvent('EV-1', 'hopi_control_work', {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'plan-initial',
+        operation: 'retry',
+      }),
+    ).toMatchObject({ changed: true })
     expect(
       await fixture.tools.executeForEvent('EV-1', 'hopi_resolve_attention', resolution),
-    ).toMatchObject({ changed: true })
+    ).toMatchObject({ changed: false })
     const resolvedPackage = await fixture.goalStore.readPackage('G-1')
-    expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      resolutionInput: expect.stringContaining('/EV-1.md'),
-    })
+    expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes.resolvedAt).toEqual(
+      expect.any(String),
+    )
+    expect(resolvedPackage.attentions.get(attention.attributes.id)?.body).toContain(
+      'Resolved by an explicit Work retry.',
+    )
     expect(resolvedPackage.inputs).toHaveLength(1)
     expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
   })

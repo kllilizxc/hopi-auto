@@ -101,6 +101,37 @@ describe('RunAttemptStore', () => {
     })
   })
 
+  test('persists a consecutive operational failure streak independently from Work recovery', async () => {
+    let tick = 0
+    const now = () => new Date(Date.UTC(2026, 6, 11, 0, 0, tick++))
+    const store = createRunAttemptStore(temporaryRoot, { now })
+    for (const runId of ['R-1', 'R-2', 'R-3']) {
+      const recorder = await store.start({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        runId,
+        responsibility: 'planner',
+        runRoot: runRoot('P-1', 'G-1', 'W-1', runId),
+      })
+      await recorder.finish({
+        outcome: { result: 'fail', summary: `Operational failure ${runId}.`, exitCode: 1 },
+        application: 'operational_failure',
+      })
+    }
+
+    const restarted = createRunAttemptStore(temporaryRoot)
+    expect(await restarted.countConsecutiveOperationalFailures('P-1', 'G-1', 'W-1')).toBe(3)
+    expect(
+      await restarted.countConsecutiveOperationalFailures(
+        'P-1',
+        'G-1',
+        'W-1',
+        '2026-07-11T00:00:02.000Z',
+      ),
+    ).toBe(2)
+  })
+
   test('keeps pre-recorder Run directories visible as legacy Attempts', async () => {
     const root = runRoot('P-1', 'G-1', 'W-1', 'R-legacy')
     await mkdir(root, { recursive: true })

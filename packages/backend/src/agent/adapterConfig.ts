@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   DEFAULT_PROJECT_CODING_DEFAULTS,
   type ProjectCodingDefaults,
+  type ProjectCodingDefaultsInput,
   normalizeProjectCodingDefaults,
 } from './projectCodingDefaults'
 import type { RoleTransportConfig } from './vendorTransport'
@@ -126,6 +127,31 @@ export function resolveAssistantTransportConfig(config: AgentAdapterConfig): Rol
   }
 
   return buildDefaultTransportConfig(config.defaults, 'root')
+}
+
+export function readAssistantCodingDefaults(config: AgentAdapterConfig): {
+  codingDefaults: ProjectCodingDefaults
+  inherited: boolean
+} {
+  const resolved = resolveAssistantTransportConfig(config)
+  return {
+    codingDefaults: codingDefaultsFromTransport(resolved),
+    inherited: config.assistant === undefined,
+  }
+}
+
+export function updateAssistantCodingDefaults(
+  config: AgentAdapterConfig,
+  input: ProjectCodingDefaultsInput | null,
+): AgentAdapterConfig {
+  if (input === null) {
+    const { assistant: _assistant, ...withoutAssistant } = config
+    return withoutAssistant
+  }
+  return {
+    ...config,
+    assistant: buildDefaultTransportConfig(normalizeProjectCodingDefaults(input), 'root'),
+  }
 }
 
 export function resolveRoleTransportConfig(
@@ -280,7 +306,7 @@ function buildDefaultTransportConfig(
     return {
       transport: 'claude',
       cwdMode,
-      permissionMode: 'dontAsk',
+      permissionMode: 'acceptEdits',
       ...(defaults.model ? { model: defaults.model } : {}),
     }
   }
@@ -290,4 +316,21 @@ function buildDefaultTransportConfig(
     cwdMode,
     ...(defaults.model ? { model: defaults.model } : {}),
   }
+}
+
+function codingDefaultsFromTransport(config: RoleTransportConfig): ProjectCodingDefaults {
+  if (config.transport === 'codex') {
+    return normalizeProjectCodingDefaults({
+      transport: 'codex',
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+    })
+  }
+  if (config.transport === 'claude' || config.transport === 'opencode') {
+    return normalizeProjectCodingDefaults({
+      transport: config.transport,
+      model: config.model,
+    })
+  }
+  throw new Error('Assistant requires a built-in vendor transport')
 }
