@@ -449,27 +449,39 @@ function ToolActivityEntry({
   }
 
   return (
-    <div className={cn('unified-feed-tool', failed && 'error')}>
-      <header>
-        <span>
-          <strong>{toolHeader}</strong>
-          {pending ? (
-            <em>
-              <WorkingIndicator label="Running" />
-            </em>
-          ) : null}
-        </span>
-        <time>{formatFeedTimestamp(entry.result?.createdAt ?? entry.createdAt)}</time>
-      </header>
-      {callText ? <pre>{callText}</pre> : null}
-      {resultText ? (
-        <pre className="unified-feed-tool__result">{resultText}</pre>
-      ) : pending ? (
-        <p>Waiting for tool result…</p>
-      ) : (
-        <p>No tool result was recorded.</p>
-      )}
-    </div>
+    <AppDisclosure
+      className={cn('unified-feed-command', failed && 'error')}
+      summary={
+        <>
+          <ChevronRight className="unified-feed-command__chevron" />
+          <span className="unified-feed-command__line">
+            {pending ? <WorkingIndicator /> : null}
+            <strong>{toolHeader}</strong>
+            {callText && <code>{callText.split('\n')[0]}</code>}
+          </span>
+          <time>{formatFeedTimestamp(entry.result?.createdAt ?? entry.createdAt)}</time>
+        </>
+      }
+    >
+      <div className="unified-feed-command__body">
+        {callText ? (
+          <div>
+            <span>Call</span>
+            <pre>{callText}</pre>
+          </div>
+        ) : null}
+        <div>
+          <span>Result</span>
+          {resultText ? (
+            <pre className="unified-feed-command__result">{resultText}</pre>
+          ) : pending ? (
+            <p>Waiting for tool result…</p>
+          ) : (
+            <p>No tool result was recorded.</p>
+          )}
+        </div>
+      </div>
+    </AppDisclosure>
   )
 }
 
