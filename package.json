@@ -9,6 +9,7 @@
     "dev:backend:watch": "cd packages/backend && bun dev",
     "dev:frontend": "cd packages/frontend && bun dev",
     "dev": "bun run verify:runtime && bun run dev:backend",
+    "e2e": "cd packages/backend && bun test tests/e2e",
     "build:frontend": "cd packages/frontend && bun run build",
     "verify:runtime": "bun run scripts/verify-runtime.ts",
     "check": "bun run verify:runtime && bun test scripts/verify-runtime.test.ts && bun run check:backend && bun run check:frontend",
