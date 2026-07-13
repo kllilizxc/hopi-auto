@@ -94,12 +94,14 @@ snapshot. Reflection follows one small protocol:
 4. Reflection first decides from the supplied trigger and delta. It may reread bounded scoped HOPI
    state and follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does
    not scan the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
-5. If no response or action is useful, it ends silently. Unnotified Attention is the one exception:
-   it already declares that Assistant management is required, so Coordinator creates one internal
-   fallback brief when the model omitted handoff and attaches exact canonical Attention references from the current
-   snapshot. Otherwise Reflection may prepare one concise internal brief. Coordinator publishes a
-   brief only after confirming the observed digest is still current; it does not accept an
-   `actions[]` plan.
+5. If no response or action is useful, it ends silently. A successful Reflection transport may
+   express that result with an empty final message; empty output is `No action` in Reflection mode,
+   not a failed model Run. Speaking turns still require a non-empty reply. Unnotified Attention is
+   the one exception: it already declares that Assistant management is required, so Coordinator
+   creates one internal fallback brief when the model omitted handoff and attaches exact canonical
+   Attention references from the current snapshot. Otherwise Reflection may prepare one concise
+   internal brief. Coordinator publishes a brief only after confirming the observed digest is still
+   current; it does not accept an `actions[]` plan.
 6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
    persistent speaking thread used for user turns rereads current state and
    decides whether to call normal HOPI tools, remain silent, or explicitly expose a final reply
@@ -375,7 +377,10 @@ The Assistant drawer shows one chronological conversation:
 
 - a submitted user message appears immediately
 - queued and currently running turns are distinguishable
-- normalized model messages and tool activity appear while a turn runs
+- normalized model messages and useful tool activity appear while a turn runs
+- raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
+  compete with a successful final reply; the drawer presents a turn error only when the speaking
+  turn itself fails
 - tool calls are collapsed diagnostics, not chat commands the user must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn

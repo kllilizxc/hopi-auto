@@ -231,7 +231,7 @@ concept can be removed. Model wording and incidental tool order are not assertio
 | Boundary | Representative live scenario | Current evidence |
 | --- | --- | --- |
 | Conversation vs effect | greeting or explanation stays conversational; an explicit instruction uses HOPI tools and returns after asynchronous admission | real Assistant `hi` and contextual tool turns; `EV-f3bd2edf...` changed Goal priority in 29 seconds with no sleep or progress polling |
-| Goal delivery | new Goal clarifies only material ambiguity, records design, builds, reviews, integrates, and completes | CardGame theme and Preview Goals both reached `done` through Planner, Generator, Reviewer, C1, and final Planner assessment |
+| Goal delivery | new Goal clarifies only material ambiguity, records design, builds, reviews, integrates, and completes | retained live Goal `G-82b2beda...` reproduced the failing fixture, updated design, generated one fix, independently reviewed it, integrated through C1, reran `bun test`, reached `done`, and rendered 3/3 in Kanban without touching the user checkout; the deterministic contract repeats Inbox-to-C1 mechanics, and a zero-model browser smoke proves Projects-page Assistant admission |
 | Concurrent instruction | user input queues Planning while an admitted Generator or Reviewer finishes first; Input added during Planner staging stales and reruns that Planner | live `EV-acc8fce8...`: admitted Reviewer published before `plan-0005`; `EV-46dffe5c...` made `R-e9a7b6dd...` stale on the new path and immediately reran `plan-0003` |
 | Recovery | Reviewer rejection retries; exhausted attempts produces Attention; Assistant retry resolves it without direct state edits | live `W-expedition-theme` retry and Attention recovery |
 | Diagnostics | current state and responsibility context are bounded; explicit Attempt application and stale reason remain visible even when unconsumed Evidence exists | live stale Attempt API restored exact reason; state fell from about 93 KB to 25-28 KB; a noisy Engineering manifest fell from 14.3 KB to 4.3 KB and then read its final referenced Evidence |
@@ -261,7 +261,7 @@ machine.
 
 ## Final Gate
 
-- [x] Backend lint, typecheck, and all 267 tests pass; all 42 frontend tests pass.
+- [x] Backend lint, typecheck, and all 269 tests pass; all 42 frontend tests pass.
 - [x] Bun builds the frontend successfully; an isolated production server loaded its deep Goal route
   and returned one Project-level open Attention, zero duplicated Goal Attention, and the derived
   **Needs you** Goal summary. The existing Windows Chrome visual gate remains valid; a fresh optional

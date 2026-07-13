@@ -245,6 +245,54 @@ describe('WorkspaceAssistant conversation', () => {
     await expect(run).rejects.toThrow('interrupted')
   })
 
+  test('accepts an empty configured Codex message only as silent Reflection', async () => {
+    const binary = join(temporaryRoot, 'fake-codex-empty')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'const outputIndex = process.argv.indexOf("-o")',
+        'await Bun.write(process.argv[outputIndex + 1], "")',
+        'console.log(JSON.stringify({type:"thread.started",thread_id:"thread-empty"}))',
+        'console.log(JSON.stringify({type:"item.completed",item:{id:"item-0",type:"agent_message",text:""}}))',
+        'console.log(JSON.stringify({type:"turn.completed"}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        cwdMode: 'root',
+        binary,
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const run = (eventId: string, toolMode?: 'reflection') => {
+      const cwd = join(temporaryRoot, eventId)
+      return runner.run({
+        eventId,
+        prompt: 'Assess the current state.',
+        session: null,
+        cwd,
+        lastMessageFile: join(cwd, 'last-message.txt'),
+        transcriptFile: join(cwd, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: `${eventId}-token`,
+        ...(toolMode ? { toolMode } : {}),
+      })
+    }
+
+    await expect(run('RF-empty', 'reflection')).resolves.toEqual({
+      reply: '',
+      session: codexSession('thread-empty'),
+    })
+    await expect(run('EV-empty')).rejects.toThrow('empty Assistant message')
+  })
+
   test('passes images to a resumed configured Codex conversation', async () => {
     const binary = join(temporaryRoot, 'fake-codex-image')
     const argsFile = join(temporaryRoot, 'codex-args.json')

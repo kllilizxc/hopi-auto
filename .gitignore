@@ -14,6 +14,7 @@ dist
 .hopi/projects/
 packages/backend/.hopi/
 packages/backend/tests/tmp/
+/test-artifacts/
 packages/backend/tests/shadow-project/.git/
 packages/backend/tests/shadow-project/.hopi/runtime/
 packages/backend/tests/shadow-project/.hopi/worktrees/
@@ -60,4 +61,5 @@ docs/*
 !docs/mvp_publish_protocol.md
 !docs/mvp_state_machine.md
 !docs/multi_vendor_agent_support.md
+!docs/e2e_harness.md
 !docs/unified_design.md

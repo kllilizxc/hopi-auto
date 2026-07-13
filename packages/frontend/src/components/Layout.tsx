@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { FileText, FolderOpen, LayoutDashboard } from 'lucide-react'
+import { Bot, FileText, FolderOpen, LayoutDashboard } from 'lucide-react'
 import { createContext, useContext, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { readState, type AttentionView } from '../lib/api'
 import { buildGoalRoute, readGoalRouteState, type GoalSurface } from '../lib/goalScope'
 import { cn } from '../lib/utils'
 import { AssistantPanel } from './AssistantPanel'
-import { AppAlert, AppRouterLink, SelectField } from './ui'
+import { AppAlert, AppRouterLink, IconButton, SelectField } from './ui'
 
 interface ShellContextValue {
   openAssistant: (attention?: AttentionView) => void
@@ -26,6 +26,7 @@ export function Layout() {
   const routeScope = readGoalRouteState(location.pathname)
   const [assistantReply, setAssistantReply] = useState<AttentionView | null>(null)
   const [assistantRequest, setAssistantRequest] = useState(0)
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
     queryFn: readState,
@@ -35,6 +36,7 @@ export function Layout() {
 
   const openAssistant = (attention?: AttentionView) => {
     setAssistantReply(attention ?? null)
+    setAssistantOpen(true)
     setAssistantRequest((value) => value + 1)
   }
 
@@ -51,7 +53,18 @@ export function Layout() {
                 <small>one-person operating system</small>
               </span>
             </AppRouterLink>
-            <span>{pageLabel}</span>
+            <div className="standalone-header-actions">
+              <span>{pageLabel}</span>
+              <IconButton
+                className="global-assistant-button"
+                type="button"
+                aria-label="Open Assistant"
+                title="Open Assistant"
+                onClick={() => openAssistant()}
+              >
+                <Bot />
+              </IconButton>
+            </div>
           </header>
           <main className="standalone-main app-main">
             {snapshotQuery.isError && (
@@ -59,6 +72,14 @@ export function Layout() {
             )}
             <Outlet />
           </main>
+          <AssistantPanel
+            focusRequest={assistantRequest}
+            initialReply={assistantReply}
+            isOpen={assistantOpen}
+            scope={null}
+            snapshot={snapshot}
+            onClose={() => setAssistantOpen(false)}
+          />
         </div>
       </ShellContext.Provider>
     )

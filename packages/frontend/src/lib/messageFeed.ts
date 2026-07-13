@@ -284,7 +284,9 @@ function inboxEventToMessageFeed(
     active: event.runtimeStatus === 'running',
   })
   items.push(
-    ...(options.assistantPresentation ? presentAssistantRuntimeItems(runtimeItems) : runtimeItems),
+    ...(options.assistantPresentation
+      ? presentAssistantRuntimeItems(runtimeItems, event.runtimeStatus)
+      : runtimeItems),
   )
 
   if (event.runtimeError && !items.some((item) => sameText(item.text, event.runtimeError!))) {
@@ -525,9 +527,13 @@ function assistantRuntimeStatus(status: InboxEventView['runtimeStatus']) {
   }
 }
 
-function presentAssistantRuntimeItems(items: MessageFeedItem[]) {
+function presentAssistantRuntimeItems(
+  items: MessageFeedItem[],
+  runtimeStatus: InboxEventView['runtimeStatus'],
+) {
   return items.flatMap((item) => {
     if (isAssistantProtocolNoise(item)) return []
+    if (item.kind === 'error' && runtimeStatus !== 'failed') return []
     if (item.kind === 'assistant_message' || item.kind === 'status') {
       return [{ ...item, details: undefined }]
     }
