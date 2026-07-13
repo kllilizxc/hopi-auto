@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
   normalizeAgentAdapterConfig,
+  readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
+  updateAssistantCodingDefaults,
 } from '../src/agent/adapterConfig'
 
 describe('agent adapter config normalization', () => {
@@ -149,7 +151,7 @@ describe('agent adapter config normalization', () => {
     })
   })
 
-  test('keeps the speaking Assistant on Codex when workflow defaults use another provider', () => {
+  test('inherits non-Codex Home defaults for Assistant and workflow roles', () => {
     const config = normalizeAgentAdapterConfig({
       version: 3,
       defaults: { transport: 'claude', model: 'claude-workflow' },
@@ -157,14 +159,95 @@ describe('agent adapter config normalization', () => {
     })
 
     expect(resolveAssistantTransportConfig(config)).toMatchObject({
-      transport: 'codex',
+      transport: 'claude',
       cwdMode: 'root',
-      model: 'gpt-5.4',
+      model: 'claude-workflow',
+      permissionMode: 'dontAsk',
     })
     expect(resolveRoleTransportConfig(config, 'planner')).toMatchObject({
       transport: 'claude',
       model: 'claude-workflow',
     })
+  })
+
+  test('updates Assistant vendor and model without changing workflow defaults', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      roles: {},
+    })
+    const overridden = updateAssistantCodingDefaults(config, {
+      transport: 'opencode',
+      model: 'anthropic/claude-sonnet-4-5',
+    })
+
+    expect(readAssistantCodingDefaults(overridden)).toEqual({
+      codingDefaults: {
+        transport: 'opencode',
+        model: 'anthropic/claude-sonnet-4-5',
+      },
+      inherited: false,
+    })
+    expect(resolveRoleTransportConfig(overridden, 'planner')).toMatchObject({
+      transport: 'codex',
+      model: 'gpt-5.4',
+    })
+    expect(readAssistantCodingDefaults(updateAssistantCodingDefaults(overridden, null))).toEqual({
+      codingDefaults: {
+        transport: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+      },
+      inherited: true,
+    })
+  })
+
+  test('preserves compatible advanced Assistant fields while changing the model', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      assistant: {
+        transport: 'codex',
+        cwdMode: 'root',
+        binary: '/opt/codex',
+        profile: 'team',
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      },
+      roles: {},
+    })
+
+    expect(
+      updateAssistantCodingDefaults(config, {
+        transport: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+      }).assistant,
+    ).toEqual({
+      transport: 'codex',
+      cwdMode: 'root',
+      binary: '/opt/codex',
+      profile: 'team',
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+    })
+  })
+
+  test('rejects process as an Assistant transport', () => {
+    expect(() =>
+      normalizeAgentAdapterConfig({
+        version: 3,
+        defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+        assistant: {
+          transport: 'process',
+          cwdMode: 'root',
+          cmd: ['bun', 'assistant.ts'],
+        },
+        roles: {},
+      }),
+    ).toThrow('assistant must use a built-in vendor transport')
   })
 
   test('lets explicit codex overrides inherit model and effort unless a profile is set', () => {

@@ -62,6 +62,9 @@ const projectRepoSchema = z.object({
 const projectSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
+const assistantSettingsSchema = z
+  .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
+  .strict()
 const goalSchema = z.object({
   goalId: z
     .string()
@@ -165,6 +168,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
+        }
+        if (request.method === 'PATCH' && url.pathname === '/api/assistant/settings') {
+          const body = await parseBody(request, assistantSettingsSchema)
+          await runtime.updateAssistantCodingDefaults(
+            body.codingDefaults === null
+              ? null
+              : normalizeProjectCodingDefaults(body.codingDefaults),
+          )
+          return json(await presentState(runtime))
         }
         if (
           request.method === 'GET' &&
@@ -563,9 +575,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
 }
 
 async function presentState(runtime: MvpRuntime) {
-  const [home, workspace] = await Promise.all([
+  const [home, workspace, assistantModelSettings] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspace(),
+    runtime.readAssistantCodingDefaults(),
   ])
   const projects = []
   const goalAttentions = []
@@ -645,7 +658,11 @@ async function presentState(runtime: MvpRuntime) {
     })
   }
   return {
-    home,
+    home: {
+      ...home,
+      assistantCodingDefaults: assistantModelSettings.codingDefaults,
+      assistantCodingDefaultsInherited: assistantModelSettings.inherited,
+    },
     projects,
     attentions: [
       ...[...workspace.attentions.values()].map((attention) => ({

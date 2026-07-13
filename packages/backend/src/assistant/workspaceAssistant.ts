@@ -1,36 +1,41 @@
 import { appendFile, mkdir, rm } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
+import { type AssistantTransport, parseVendorAssistantOutput } from '../agent/vendorAssistantOutput'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import type { RoleTransportConfig } from '../agent/vendorTransport'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
+import { terminateProcessGroup } from '../runtime/processGroup'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
-import type { AssistantConversationStore } from './assistantConversationStore'
+import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantTools } from './assistantTools'
 
 export interface AssistantModelInput {
   eventId: string
   prompt: string
-  threadId: string | null
+  rebuildPrompt?: string
+  session: AssistantSession | null
   cwd: string
   lastMessageFile: string
   transcriptFile: string
   toolUrl: string
   toolToken: string
   imageFiles?: string[]
+  readableRoots?: string[]
   toolMode?: 'main' | 'internal' | 'reflection'
   signal?: AbortSignal
 }
 
 export interface AssistantModelResult {
   reply: string
-  threadId: string
+  session: AssistantSession
 }
 
 export interface AssistantModelObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
-  onThreadId?(threadId: string): Promise<void> | void
+  onSession?(session: AssistantSession): Promise<void> | void
 }
 
 export interface AssistantModelRunner {
@@ -53,51 +58,78 @@ export function createConfiguredAssistantModelRunner(options: {
   return {
     async run(input, observer) {
       const config = await options.resolveConfig()
-      if ('cmd' in config || config.transport !== 'codex') {
+      if (
+        config.transport !== 'codex' &&
+        config.transport !== 'claude' &&
+        config.transport !== 'opencode'
+      ) {
         throw new WorkspaceAssistantError(
-          'Workspace Assistant requires Codex transport for persistent conversation and image input',
+          'Workspace Assistant requires a built-in vendor transport',
         )
+      }
+      const transport = config.transport
+      const session = input.session?.transport === transport ? input.session : null
+      const invocation = {
+        ...input,
+        prompt: session ? input.prompt : (input.rebuildPrompt ?? input.prompt),
+        session,
+        toolUrl: options.resolveToolUrl(),
       }
       await mkdir(input.cwd, { recursive: true })
       await rm(input.lastMessageFile, { force: true })
+      await prepareAssistantWorkspace(config, invocation)
 
       if (input.signal?.aborted)
         throw new WorkspaceAssistantError('Assistant model run interrupted')
-      const command = assistantCodexCommand(config, {
-        ...input,
-        toolUrl: options.resolveToolUrl(),
-      })
+      const command = buildAssistantCommand(config, invocation)
+      const providerEnvironment =
+        transport === 'claude' ? await readClaudeProviderEnvironment() : {}
       const child = Bun.spawn(command, {
         cwd: input.cwd,
         stdout: 'pipe',
         stderr: 'pipe',
         stdin: 'pipe',
-        env: process.env,
+        env: { ...process.env, ...providerEnvironment },
+        detached: true,
       })
-      const abort = () => child.kill()
+      const abort = () => void terminateProcessGroup(child.pid)
       input.signal?.addEventListener('abort', abort, { once: true })
       if (typeof child.stdin !== 'number' && child.stdin) {
-        child.stdin.write(input.prompt)
+        child.stdin.write(assistantPrompt(config, invocation))
         child.stdin.end()
       }
 
-      let observedThreadId = input.threadId
+      let observedSessionId = session?.sessionId ?? null
       const stderr: string[] = []
+      let finalReply = ''
+      let finalMessageId: string | undefined
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
         if (stream === 'stdout') {
-          const threadId = codexThreadId(line)
-          if (threadId) {
-            observedThreadId = threadId
-            await observer?.onThreadId?.(threadId)
+          const output = parseVendorAssistantOutput(transport, line)
+          if (output.sessionId && output.sessionId !== observedSessionId) {
+            observedSessionId = output.sessionId
+            await observer?.onSession?.({ transport, sessionId: output.sessionId })
+          }
+          if (output.finalText) {
+            finalReply = output.finalText
+            finalMessageId = output.messageId
+          } else if (output.assistantText) {
+            if (output.messageId && output.messageId !== finalMessageId) {
+              finalReply = output.assistantText
+              finalMessageId = output.messageId
+            } else {
+              finalReply += `${finalReply ? '\n' : ''}${output.assistantText}`
+            }
           }
         } else {
           stderr.push(line)
         }
 
+        const transcriptFormat = assistantTranscriptFormat(transport)
         for (const event of normalizeProcessOutputLine({
-          format: 'codex_jsonl',
+          format: transcriptFormat,
           stream,
           role: 'assistant',
           line,
@@ -109,7 +141,10 @@ export function createConfiguredAssistantModelRunner(options: {
       let exitCode: number
       try {
         const results = await Promise.all([
-          child.exited,
+          child.exited.then(async (exitCode) => {
+            await terminateProcessGroup(child.pid)
+            return exitCode
+          }),
           consumeLines(child.stdout as ReadableStream<Uint8Array>, (line) =>
             consume('stdout', line),
           ),
@@ -125,21 +160,25 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new WorkspaceAssistantError('Assistant model run interrupted')
       if (exitCode !== 0) {
         throw new WorkspaceAssistantError(
-          `Codex conversation exited with code ${exitCode}: ${stderr.at(-1) ?? 'no error detail'}`,
+          `${transport} conversation exited with code ${exitCode}: ${stderr.at(-1) ?? 'no error detail'}`,
         )
       }
 
-      if (!observedThreadId) {
-        throw new WorkspaceAssistantError('Codex did not report a conversation thread ID')
+      if (!observedSessionId) {
+        throw new WorkspaceAssistantError(`${transport} did not report a conversation session ID`)
+      }
+      if (transport !== 'codex') {
+        await Bun.write(input.lastMessageFile, finalReply)
       }
 
       const file = Bun.file(input.lastMessageFile)
       if (!(await file.exists())) {
-        throw new WorkspaceAssistantError('Codex did not produce a final Assistant message')
+        throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
       const reply = (await file.text()).trim()
-      if (!reply) throw new WorkspaceAssistantError('Codex produced an empty Assistant message')
-      return { reply, threadId: observedThreadId }
+      if (!reply)
+        throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
+      return { reply, session: { transport, sessionId: observedSessionId } }
     },
   }
 }
@@ -186,54 +225,57 @@ export function createWorkspaceAssistant(input: {
           }
           await input.conversation.record(eventId, runtimeEvent)
         },
-        onThreadId: (threadId) => input.conversation.writeThreadId(threadId),
+        onSession: (session) => input.conversation.writeSession(session),
       }
 
       try {
         const imageFiles = await resolveEventImages(input.workspace, event)
-        let threadId = await input.conversation.readThreadId()
+        let session = await input.conversation.readSession()
+        const rebuildPrompt = renderNewConversation(workspaceState.events, event)
         let result: AssistantModelResult
         try {
           result = await input.runner.run(
             {
               eventId,
-              prompt: threadId
-                ? renderTurn(event)
-                : renderNewConversation(workspaceState.events, event),
-              threadId,
+              prompt: session ? renderTurn(event) : rebuildPrompt,
+              rebuildPrompt,
+              session,
               cwd: workspaceRoot,
               lastMessageFile: join(turnRoot, 'last-message.txt'),
               transcriptFile: join(turnRoot, 'transcript.log'),
               toolUrl: input.resolveToolUrl(),
               toolToken,
               imageFiles,
+              readableRoots: [resolve(input.homeRoot)],
               toolMode: event.attributes.source === 'reflection' ? 'internal' : 'main',
               signal,
             },
             observer,
           )
         } catch (error) {
-          if (!threadId) throw error
+          if (!session) throw error
           await input.conversation.record(eventId, {
             kind: 'message',
             level: 'info',
             role: 'coordinator',
             content:
-              'The saved Codex thread could not continue; rebuilding it from durable conversation history.',
+              'The saved vendor session could not continue; rebuilding it from durable conversation history.',
           })
-          await input.conversation.clearThreadId()
-          threadId = null
+          await input.conversation.clearSession()
+          session = null
           result = await input.runner.run(
             {
               eventId,
-              prompt: renderNewConversation(workspaceState.events, event),
-              threadId,
+              prompt: rebuildPrompt,
+              rebuildPrompt,
+              session,
               cwd: workspaceRoot,
               lastMessageFile: join(turnRoot, 'last-message.txt'),
               transcriptFile: join(turnRoot, 'transcript.log'),
               toolUrl: input.resolveToolUrl(),
               toolToken,
               imageFiles,
+              readableRoots: [resolve(input.homeRoot)],
               toolMode: event.attributes.source === 'reflection' ? 'internal' : 'main',
               signal,
             },
@@ -241,7 +283,7 @@ export function createWorkspaceAssistant(input: {
           )
         }
 
-        await input.conversation.writeThreadId(result.threadId)
+        await input.conversation.writeSession(result.session)
         const notifyRequested = input.tools.notificationRequested(toolToken)
         await input.workspace.handleEvent(eventId, {
           reply: result.reply,
@@ -292,6 +334,140 @@ export function createWorkspaceAssistant(input: {
   }
 }
 
+async function prepareAssistantWorkspace(
+  config: RoleTransportConfig,
+  input: AssistantModelInput & { toolUrl: string },
+) {
+  if (config.transport !== 'claude' && config.transport !== 'opencode') return
+  const server = {
+    command: process.execPath,
+    args: [join(import.meta.dir, 'hopiMcpServer.ts')],
+    env: {
+      HOPI_TOOL_URL: input.toolUrl,
+      HOPI_TOOL_TOKEN: input.toolToken,
+      HOPI_TOOL_MODE: input.toolMode ?? 'main',
+    },
+  }
+
+  if (config.transport === 'claude') {
+    await Bun.write(
+      assistantClaudeMcpConfigPath(input.cwd),
+      `${JSON.stringify({ mcpServers: { hopi: server } }, null, 2)}\n`,
+    )
+    return
+  }
+
+  await Bun.write(
+    join(input.cwd, 'opencode.json'),
+    `${JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        mcp: {
+          hopi: {
+            type: 'local',
+            command: [server.command, ...server.args],
+            enabled: true,
+            environment: server.env,
+          },
+        },
+        permission: {
+          '*': 'deny',
+          'hopi_*': 'allow',
+          read: 'allow',
+          grep: 'allow',
+          glob: 'allow',
+          list: 'allow',
+          external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+}
+
+function buildAssistantCommand(
+  config: RoleTransportConfig,
+  input: AssistantModelInput & { toolUrl: string },
+) {
+  if (config.transport === 'codex') return assistantCodexCommand(config, input)
+  if (config.transport === 'claude') return assistantClaudeCommand(config, input)
+  if (config.transport === 'opencode') return assistantOpencodeCommand(config, input)
+  throw new WorkspaceAssistantError(`Unsupported transport: ${config.transport}`)
+}
+
+function assistantClaudeCommand(
+  config: Extract<RoleTransportConfig, { transport: 'claude' }>,
+  input: AssistantModelInput,
+) {
+  const command = [config.binary ?? 'claude']
+  if (config.permissionMode === 'bypassPermissions') {
+    command.push('--dangerously-skip-permissions')
+  } else {
+    command.push('--permission-mode', config.permissionMode)
+  }
+  if (config.model) command.push('--model', config.model)
+  command.push(
+    '--mcp-config',
+    assistantClaudeMcpConfigPath(input.cwd),
+    '--strict-mcp-config',
+    '--setting-sources',
+    '',
+    '--allowedTools',
+    'mcp__hopi__*,Read,Glob,Grep',
+    '--print',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+  )
+  if (input.session) command.push('--resume', input.session.sessionId)
+  const readableDirectories = new Set(input.readableRoots ?? [])
+  for (const imageFile of input.imageFiles ?? []) readableDirectories.add(dirname(imageFile))
+  for (const directory of readableDirectories) command.push('--add-dir', directory)
+  return command
+}
+
+function assistantOpencodeCommand(
+  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  input: AssistantModelInput,
+) {
+  const command = [config.binary ?? 'opencode', '--pure', 'run']
+  if (config.model) command.push('--model', config.model)
+  if (config.variant) command.push('--variant', config.variant)
+  if (config.agent) command.push('--agent', config.agent)
+  command.push('--format', 'json')
+  if (input.session) command.push('--session', input.session.sessionId)
+  for (const imageFile of input.imageFiles ?? []) command.push('--file', imageFile)
+  return command
+}
+
+function assistantClaudeMcpConfigPath(cwd: string) {
+  return join(cwd, 'claude-mcp.json')
+}
+
+function externalDirectoryPermissions(roots: readonly string[]) {
+  return {
+    '*': 'deny',
+    ...Object.fromEntries(roots.map((root) => [`${root.replace(/\/$/, '')}/**`, 'allow'])),
+  }
+}
+
+function assistantPrompt(config: RoleTransportConfig, input: AssistantModelInput) {
+  if (config.transport !== 'claude' || !input.imageFiles?.length) return input.prompt
+  return [
+    input.prompt,
+    '',
+    '[Current turn local image files; inspect them with the Read tool when relevant.]',
+    ...input.imageFiles.map((path) => `- ${path}`),
+  ].join('\n')
+}
+
+function assistantTranscriptFormat(transport: AssistantTransport) {
+  if (transport === 'claude') return 'claude_stream_json' as const
+  if (transport === 'opencode') return 'opencode_json' as const
+  return 'codex_jsonl' as const
+}
+
 function assistantCodexCommand(
   config: Extract<RoleTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
@@ -317,11 +493,11 @@ function assistantCodexCommand(
   if (config.model) command.push('-m', config.model)
   if (config.profile) command.push('-p', config.profile)
   command.push('exec')
-  if (input.threadId) command.push('resume')
+  if (input.session) command.push('resume')
   for (const imageFile of input.imageFiles ?? []) command.push('-i', imageFile)
   command.push('--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--json')
   command.push('-o', input.lastMessageFile)
-  if (input.threadId) command.push(input.threadId)
+  if (input.session) command.push(input.session.sessionId)
   command.push('-')
   return command
 }
@@ -339,7 +515,7 @@ function renderNewConversation(
   return [
     '# HOPI Workspace Assistant',
     '',
-    'Continue as a normal Codex conversation for the operator.',
+    'Continue as one normal Assistant conversation for the operator.',
     'Use HOPI tools only when the operator actually requests a durable Project, Goal, Work, design, Attention, or Preview effect.',
     'Page context is the preferred target for ambiguous references such as "this" or "continue", but explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope.',
     'Page context never implies a mutation. Never turn greetings, discussion, or questions into Planning.',
@@ -348,7 +524,7 @@ function renderNewConversation(
     'The injected HOPI MCP tool descriptions and JSON schemas are the sole authority for tool arguments. Call those tools with their advertised fields; never search project files, .hopi/runtime, transcripts, or source code to rediscover a tool schema.',
     'Use exact document or diagnostic paths returned by hopi_read_state only when their body is needed. Never broadly search .hopi/runtime for control facts already returned by the state tool.',
     'Current-turn images are already visible to you. Adopt only task-relevant images through the references field of the Goal tool you already need, with a concise purpose; leave unrelated images conversation-only. Never copy an Assistant-home attachment reference into Goal, design, or Work prose: adopted references return portable Goal-local asset paths for Planning.',
-    'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale thread facts.',
+    'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
     '',
     ...(history.length ? ['## Durable conversation history', '', ...history, ''] : []),
     '## Current turn',
@@ -463,16 +639,6 @@ function boundedConversationHistory(events: InboxEventDocument[], characterBudge
     used += size
   }
   return selected.toReversed().flat()
-}
-
-function codexThreadId(line: string) {
-  try {
-    const parsed = JSON.parse(line) as Record<string, unknown>
-    if (parsed.type !== 'thread.started') return null
-    return typeof parsed.thread_id === 'string' ? parsed.thread_id : null
-  } catch {
-    return null
-  }
 }
 
 async function consumeLines(

@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   DEFAULT_PROJECT_CODING_DEFAULTS,
   type ProjectCodingDefaults,
+  type ProjectCodingDefaultsInput,
   normalizeProjectCodingDefaults,
 } from './projectCodingDefaults'
 import type { RoleTransportConfig } from './vendorTransport'
@@ -18,8 +19,13 @@ type ProjectCodingDefaultSource = Extract<
 >
 
 const assistantTransportConfigSchema = roleTransportConfigSchema.refine(
-  (config) => config.cwdMode === 'root' && !('cmd' in config) && config.transport === 'codex',
-  'assistant must use Codex transport with cwdMode root',
+  (config) =>
+    config.cwdMode === 'root' &&
+    !('cmd' in config) &&
+    (config.transport === 'codex' ||
+      config.transport === 'claude' ||
+      config.transport === 'opencode'),
+  'assistant must use a built-in vendor transport with cwdMode root',
 )
 
 const workflowRoleTransportConfigSchema = roleTransportConfigSchema.refine(
@@ -125,9 +131,35 @@ export function resolveAssistantTransportConfig(config: AgentAdapterConfig): Rol
     return resolveExplicitTransportConfig(config.defaults, config.assistant)
   }
 
-  const defaults =
-    config.defaults.transport === 'codex' ? config.defaults : DEFAULT_PROJECT_CODING_DEFAULTS
-  return buildDefaultTransportConfig(defaults, 'root')
+  return buildDefaultTransportConfig(config.defaults, 'root')
+}
+
+export function readAssistantCodingDefaults(config: AgentAdapterConfig): {
+  codingDefaults: ProjectCodingDefaults
+  inherited: boolean
+} {
+  return {
+    codingDefaults: codingDefaultsFromTransport(resolveAssistantTransportConfig(config)),
+    inherited: config.assistant === undefined,
+  }
+}
+
+export function updateAssistantCodingDefaults(
+  config: AgentAdapterConfig,
+  input: ProjectCodingDefaultsInput | null,
+): AgentAdapterConfig {
+  if (input === null) {
+    const { assistant: _assistant, ...withoutAssistant } = config
+    return withoutAssistant
+  }
+
+  const defaults = normalizeProjectCodingDefaults(input)
+  const current = config.assistant
+  const assistant =
+    current && !('cmd' in current) && current.transport === defaults.transport
+      ? mergeAssistantDefaults(current, defaults)
+      : buildDefaultTransportConfig(defaults, 'root')
+  return { ...config, assistant }
 }
 
 export function resolveRoleTransportConfig(
@@ -153,7 +185,13 @@ function migrateAgentAdapterConfig(input: LegacyAgentAdapterConfig): AgentAdapte
   return {
     version: 3,
     defaults,
-    ...(assistant && !('cmd' in assistant) && assistant.transport === 'codex' ? { assistant } : {}),
+    ...(assistant &&
+    !('cmd' in assistant) &&
+    (assistant.transport === 'codex' ||
+      assistant.transport === 'claude' ||
+      assistant.transport === 'opencode')
+      ? { assistant }
+      : {}),
     roles: Object.fromEntries(
       WORKFLOW_ROLE_KEYS.flatMap((role) => {
         const migrated = migrateLegacyTransportConfig(input.roles[role], 'worktree')
@@ -279,7 +317,7 @@ function buildDefaultTransportConfig(
     return {
       transport: 'claude',
       cwdMode,
-      permissionMode: 'dontAsk',
+      permissionMode: cwdMode === 'root' ? 'dontAsk' : 'acceptEdits',
       ...(defaults.model ? { model: defaults.model } : {}),
     }
   }
@@ -289,4 +327,42 @@ function buildDefaultTransportConfig(
     cwdMode,
     ...(defaults.model ? { model: defaults.model } : {}),
   }
+}
+
+function mergeAssistantDefaults(
+  current: Exclude<RoleTransportConfig, { cmd: string[] }>,
+  defaults: ProjectCodingDefaults,
+): RoleTransportConfig {
+  if (current.transport === 'codex' && defaults.transport === 'codex') {
+    return {
+      ...current,
+      cwdMode: 'root',
+      model: defaults.model,
+      reasoningEffort: defaults.reasoningEffort,
+    }
+  }
+  if (current.transport === 'claude' && defaults.transport === 'claude') {
+    return { ...current, cwdMode: 'root', model: defaults.model }
+  }
+  if (current.transport === 'opencode' && defaults.transport === 'opencode') {
+    return { ...current, cwdMode: 'root', model: defaults.model }
+  }
+  return buildDefaultTransportConfig(defaults, 'root')
+}
+
+function codingDefaultsFromTransport(config: RoleTransportConfig): ProjectCodingDefaults {
+  if (config.transport === 'codex') {
+    return normalizeProjectCodingDefaults({
+      transport: 'codex',
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+    })
+  }
+  if (config.transport === 'claude' || config.transport === 'opencode') {
+    return normalizeProjectCodingDefaults({
+      transport: config.transport,
+      model: config.model,
+    })
+  }
+  throw new Error('Assistant requires a built-in vendor transport')
 }

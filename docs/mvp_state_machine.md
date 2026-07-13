@@ -86,7 +86,7 @@ Two boundaries are stronger:
 
 Model calls, pass Runs, tests, and task-worktree edits happen outside the mutex. Snapshot capture
 and publication are serialized, not execution. A mutating HOPI tool uses ordered idempotent
-project effects and Goal Input, then the final Codex reply handles the Assistant-home turn.
+project effects and Goal Input, then the final Assistant reply handles the Assistant-home turn.
 
 Each pass receives a staged immutable context bundle from the current managed root. The task
 worktree may not contain later uncheckpointed canonical documents; its source checkout is never
@@ -158,8 +158,8 @@ flowchart LR
 
     D --> R[Reconciler]
     R --> E{Oldest eligible Assistant turn?}
-    E -->|yes| A[Resume persistent Codex conversation]
-    A --> CE{Next Codex event}
+    E -->|yes| A[Resume compatible configured Assistant session]
+    A --> CE{Next model event}
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
@@ -187,6 +187,9 @@ flowchart LR
     O -->|Reviewer success| C1[Independent durable C1 integration]
     O -->|attention plus targeted Attention| TA
     O -->|Planner completion proposal| PC[Prepare targetless Attention and Planning Work done gate]
+    O -->|operational failure below limit| OB[Record Attempt and bounded runtime backoff]
+    OB --> D
+    O -->|third consecutive operational failure| TA
     O -->|other accepted result| WG[Prepare Evidence and one Work gate]
     PC --> PUB
     WG --> PUB
@@ -215,7 +218,7 @@ uses qualified Goal Input as the effect receipt. A single turn may call tools fo
 selected page context creates no transition.
 
 A Goal-local answer tool publishes Project effects and Goal Input before resolving Attention, then
-Codex continues the same conversation turn. An answer to event-target Workspace Attention resolves
+Assistant continues the same conversation turn. An answer to event-target Workspace Attention resolves
 that guard and handles only the answer turn; the original turn remains pending and runs again with
 the answer visible in durable conversation history. Project-target Attention resolves only after
 deterministic repair validation. A process stop therefore leaves a guard open or a turn pending
@@ -486,6 +489,9 @@ runnable.
 - A runner or Coordinator stop before the Work gate may leave source or Evidence but does not
   consume the result and may not increment `attempts`. Restart releases the stale lease and starts a
   new Run when readiness allows; it never reattaches the old child process.
+- Consecutive `operational_failure` Attempt records form a derived runtime episode after the latest
+  resolved Work-target Attention. The third failure creates ordinary Work-target Attention; resolving
+  that exact Attention starts a fresh episode. There is no stored operational counter or failure kind.
 - `attention` leaves Work stage and attempts unchanged. Speaking Assistant may request Planning;
   reconciliation uses ordinary readiness plus Planning and Attention guards.
 - Targeted Attention remains the only durable operator block. It stays open until answered or its
@@ -532,7 +538,7 @@ P2 Preview adds no canonical state. Coordinator starts the reviewed primary Proj
 the complete managed `hopi/release` Repo projection and keeps its process, logs, health, and endpoint
 in disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
-Assistant turn. Codex reuses current Preview setup Work when it exists or calls its Planning tool
+Assistant turn. Assistant reuses current Preview setup Work when it exists or calls its Planning tool
 for a repair; it does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
 prerequisites from a clean managed integration worktree and `scripts/hopi/preview` owns startup, so
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
@@ -567,6 +573,8 @@ outcome. Other state and document changes do not participate in this runtime tra
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
   non-null target always blocks; `notifiedAt` derives whether its badge is **Waiting for Assistant**
   or **Needs you**. A null target is Goal completion and never blocks.
+- Operational exhaustion reuses ordinary Work-target Attention and is derived from Attempt history;
+  it adds no Work field, Attention identity convention, Kanban state, or generic Attention-closing retry.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in

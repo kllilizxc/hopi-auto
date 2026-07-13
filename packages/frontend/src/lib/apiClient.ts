@@ -124,6 +124,13 @@ export function updateProjectSettings(
   })
 }
 
+export function updateAssistantSettings(codingDefaults: ProjectCodingDefaults | null) {
+  return apiRequest<AppSnapshot>('/api/assistant/settings', {
+    method: 'PATCH',
+    body: { codingDefaults },
+  })
+}
+
 export function createGoal(
   projectId: string,
   input: { goalId?: string; title: string; objective: string; priority?: number },

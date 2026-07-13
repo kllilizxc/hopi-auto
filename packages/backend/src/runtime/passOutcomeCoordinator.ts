@@ -11,7 +11,8 @@ import {
   renderEvidenceDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
-import type { GoalPackage } from '../domain/goalPackage'
+import { type GoalPackage, GoalPackageValidationError } from '../domain/goalPackage'
+import { MarkdownDocumentError } from '../domain/markdownDocument'
 import { HOPI_RELEASE_REF } from '../domain/project'
 import { PublicationError, hashBytes } from '../publication/publisher'
 import type { PublicationCoordinator } from '../publication/publisher'
@@ -74,9 +75,10 @@ export function createPassOutcomeCoordinator(
       try {
         proposal = await readPassProposal(store, publisher, input)
       } catch (error) {
-        if (!(error instanceof PassProposalError)) throw error
+        const invalidProposal = asPassProposalError(error)
+        if (!invalidProposal) throw error
         proposal = emptyProposal()
-        input = normalizedProposalFailure(input, error)
+        input = normalizedProposalFailure(input, invalidProposal)
         evidence.body = renderEvidenceBody(input)
       }
 
@@ -84,8 +86,9 @@ export function createPassOutcomeCoordinator(
         try {
           return await applyValidatedProposal(store, input, evidence, proposal, current)
         } catch (error) {
-          if (!(error instanceof PassProposalError) || input.outcome.result === 'fail') throw error
-          input = normalizedProposalFailure(input, error)
+          const invalidProposal = asPassProposalError(error)
+          if (!invalidProposal || input.outcome.result === 'fail') throw error
+          input = normalizedProposalFailure(input, invalidProposal)
           evidence.body = renderEvidenceBody(input)
           return await applyValidatedProposal(store, input, evidence, emptyProposal(), current)
         }
@@ -167,6 +170,14 @@ export function createPassOutcomeCoordinator(
       result: input.outcome.result,
     })
   }
+}
+
+function asPassProposalError(error: unknown) {
+  if (error instanceof PassProposalError) return error
+  if (error instanceof MarkdownDocumentError || error instanceof GoalPackageValidationError) {
+    return new PassProposalError(error.message)
+  }
+  return null
 }
 
 function normalizedProposalFailure(

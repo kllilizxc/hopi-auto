@@ -51,13 +51,13 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
-          return { reply: 'No handoff.', threadId: 'reflection-e2e' }
+          return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
         await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
         return {
           reply: 'Choose the release window: today or tomorrow?',
-          threadId: 'assistant-e2e',
+          session: codexSession('assistant-e2e'),
         }
       },
     }
@@ -114,13 +114,13 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
-          return { reply: 'No handoff.', threadId: 'workspace-reflection-e2e' }
+          return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
         await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
         return {
           reply: 'The Project checkout needs to be rebound before work can continue.',
-          threadId: 'workspace-assistant-e2e',
+          session: codexSession('workspace-assistant-e2e'),
         }
       },
     }
@@ -178,4 +178,8 @@ async function git(cwd: string, args: string[]) {
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
   return stdout.trim()
+}
+
+function codexSession(sessionId: string) {
+  return { transport: 'codex' as const, sessionId }
 }

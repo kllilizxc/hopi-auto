@@ -131,11 +131,18 @@ Goal-targeted HOPI tool call may adopt selected attachments as Goal references.
 Historical Inbox events may contain the removed `routeClaim` field. The compatibility reader keeps
 it as provenance, but new turns never write it and no forward control rule depends on it.
 
-`runtime/assistant/session.json` caches the current Codex thread ID and last completed turn. It is
-rebuildable and is not conversation authority. Per-turn `events.jsonl` stores normalized live
+`runtime/assistant/session.json` is a rebuildable vendor-session cache, not conversation authority:
+
+```json
+{ "version": 1, "transport": "codex", "sessionId": "vendor-session-id" }
+```
+
+Only `codex | claude | opencode` is accepted. HOPI resumes the cache only when `transport` matches
+the current Home Assistant configuration. A missing, invalid, or incompatible cache starts a new
+vendor session from ordered durable Inbox history; it does not alter or synthesize canonical turns.
+Legacy thread-only manifests migrate as Codex. Per-turn `events.jsonl` stores normalized live
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
-output for debugging. A missing runtime session starts a new Codex thread from ordered durable Inbox
-history; it does not alter or synthesize canonical turns.
+output for debugging.
 
 Each `runtime/assistant/reflections/<reflectionId>/reflection.json` records a disposable assessment's
 state digest, timing, and terminal runtime outcome. Its prompt, normalized events, and raw transcript
@@ -179,6 +186,13 @@ Assistant home. A Codex override stores `transport`, non-empty `model`, and `rea
 Claude and OpenCode store `transport` plus an optional non-empty `model`. The link owns this fact;
 `project.yml`, Goal documents, and runtime indexes do not duplicate it. Editing it does not change a
 Goal contract revision or any Work document.
+
+`runtime/agent-adapters.json.assistant` separately owns the Home-wide speaking Assistant and
+Reflection adapter. It uses the same Codex, Claude, or OpenCode transport shapes but always runs from
+the Assistant runtime root. It never inherits a Project link. UI updates merge fields compatible
+with the selected transport so advanced binary/profile/permission settings are not silently lost;
+switching transport replaces incompatible fields with that transport's safe defaults. `process` is
+allowed only for responsibility adapters and is not a configurable Assistant transport.
 
 Version 1 `{ projectId, repoPath }` links normalize to one Repo and preserve their existing managed
 primary root. A missing Engineering Work `repos` field likewise means the Project primary Repo.
@@ -257,6 +271,12 @@ child. Older Run directories without these files remain readable as legacy Attem
 message stream or raw transcript. Work front matter `attempts` remains the authoritative count of
 published unsuccessful outcomes in the current recovery episode; it is not the number of runtime
 Attempt records.
+
+Operational recovery uses these existing Attempt records without making them canonical Work
+semantics. For one Work, the current operational episode is the consecutive newest finished Attempts
+with `application: operational_failure` after its latest resolved Work-target Attention. The third
+failure ensures one ordinary open Work-target Attention. No operational counter is stored in Work,
+Attention IDs, or UI projection, and no new Attention field or kind is introduced.
 
 `project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership, and the current
 secondary release commits. Local filesystem paths remain solely in Assistant-home `projects.yml`.
@@ -344,7 +364,7 @@ doc-to-work trigger mapping.
 
 Assistant writes design through the HOPI design tool. That tool changes only the named Markdown
 documents plus any Inbox images explicitly adopted in the same call. If implementation or
-reassessment is needed, Codex separately calls the Planning tool; there is no hidden file-presence
+reassessment is needed, Assistant separately calls the Planning tool; there is no hidden file-presence
 signal, unchanged `goal.md` convention, or automatic doc-to-code trigger.
 
 ### `inputs/<sourceHomeId>/<eventId>.md`

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   type RoleTransportConfig,
   resolveConfiguredTransportCommand,
+  roleTransportConfigSchema,
 } from '../src/agent/vendorTransport'
 
 const bundle = {
@@ -28,6 +29,21 @@ const input = {
 }
 
 describe('resolveConfiguredTransportCommand', () => {
+  test('rejects an OpenCode model without its provider namespace', () => {
+    const parsed = roleTransportConfigSchema.safeParse({
+      transport: 'opencode',
+      cwdMode: 'root',
+      model: 'gemini-3.1-pro-preview',
+    })
+
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues.map((issue) => issue.message)).toContain(
+        'OpenCode model must use provider/model format (for example, openai/gpt-5)',
+      )
+    }
+  })
+
   test('builds a codex exec command that reads the bundled prompt from stdin', async () => {
     await Bun.write(bundle.promptFile, '# prompt for codex\n')
 
@@ -109,20 +125,21 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('fails visibly instead of dropping image inputs on an unsupported transport', async () => {
+  test('makes Claude image directories accessible to the responsibility', async () => {
     await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
 
-    await expect(
-      resolveConfiguredTransportCommand({
-        config: {
-          transport: 'claude',
-          cwdMode: 'worktree',
-          permissionMode: 'dontAsk',
-        } satisfies RoleTransportConfig,
-        bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
-        input,
-      }),
-    ).rejects.toThrow('claude responsibility transport does not support HOPI image inputs')
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      } satisfies RoleTransportConfig,
+      bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
+      input,
+    })
+
+    expect(command.cmd).toContain('--add-dir')
+    expect(command.cmd).toContain('/tmp')
   })
 
   test('passes extra writable roots through codex --add-dir arguments', async () => {
@@ -223,14 +240,28 @@ describe('resolveConfiguredTransportCommand', () => {
       '--print',
       '--output-format',
       'stream-json',
+      '--verbose',
+      '--settings',
+      '/tmp/run/scratch/claude-settings.json',
+      '--setting-sources',
+      '',
       '--permission-mode',
       'dontAsk',
       '--model',
       'sonnet',
     ])
+    expect(await Bun.file('/tmp/run/scratch/claude-settings.json').json()).toEqual({
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { allowWrite: [] },
+      },
+    })
   })
 
-  test('builds an opencode run command that passes prompt content as the final argv message', async () => {
+  test('builds an opencode run command that reads the prompt from stdin', async () => {
     await Bun.write(bundle.promptFile, '# prompt for opencode\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -252,6 +283,7 @@ describe('resolveConfiguredTransportCommand', () => {
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       transcriptFormat: 'opencode_json',
+      stdin: '# prompt for opencode\n',
     })
     expect(command.cmd).toEqual([
       '/usr/local/bin/opencode',
@@ -264,8 +296,30 @@ describe('resolveConfiguredTransportCommand', () => {
       'builder',
       '--variant',
       'high',
-      '# prompt for opencode\n',
     ])
+  })
+
+  test('passes OpenCode image inputs as file attachments', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for opencode with images\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'opencode',
+        cwdMode: 'worktree',
+      } satisfies RoleTransportConfig,
+      bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
+      input,
+    })
+
+    expect(command.cmd).toEqual([
+      'opencode',
+      'run',
+      '--format',
+      'json',
+      '--file',
+      '/tmp/reference.png',
+    ])
+    expect(command.stdin).toBe('# prompt for opencode with images\n')
   })
 
   test('keeps the raw process transport path unchanged', async () => {

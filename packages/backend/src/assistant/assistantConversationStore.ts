@@ -2,6 +2,7 @@ import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
+import type { AssistantTransport } from '../agent/vendorAssistantOutput'
 
 const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'])
 
@@ -19,6 +20,14 @@ const turnManifestSchema = z
   .strict()
 
 const sessionManifestSchema = z
+  .object({
+    version: z.literal(1),
+    transport: z.enum(['codex', 'claude', 'opencode']),
+    sessionId: z.string().min(1),
+  })
+  .strict()
+
+const legacySessionManifestSchema = z
   .object({
     version: z.literal(1),
     threadId: z.string().min(1),
@@ -42,6 +51,11 @@ export interface AssistantTurnRuntime {
   events: AssistantTurnEvent[]
 }
 
+export interface AssistantSession {
+  transport: AssistantTransport
+  sessionId: string
+}
+
 export interface AssistantConversationStore {
   interruptRunning(): Promise<void>
   begin(eventId: string): Promise<AssistantTurnManifest>
@@ -49,9 +63,9 @@ export interface AssistantConversationStore {
   complete(eventId: string): Promise<void>
   fail(eventId: string, error: string): Promise<void>
   readTurn(eventId: string): Promise<AssistantTurnRuntime | null>
-  readThreadId(): Promise<string | null>
-  writeThreadId(threadId: string): Promise<void>
-  clearThreadId(): Promise<void>
+  readSession(): Promise<AssistantSession | null>
+  writeSession(session: AssistantSession): Promise<void>
+  clearSession(): Promise<void>
 }
 
 export function createAssistantConversationStore(
@@ -143,20 +157,47 @@ export function createAssistantConversationStore(
       return { manifest, events: await readEvents(eventsPath(eventId)) }
     },
 
-    async readThreadId() {
-      return (await readJson(sessionPath, sessionManifestSchema))?.threadId ?? null
+    async readSession() {
+      const file = Bun.file(sessionPath)
+      if (!(await file.exists())) return null
+      let source: unknown
+      try {
+        source = await file.json()
+      } catch {
+        await rm(sessionPath, { force: true })
+        return null
+      }
+      const current = sessionManifestSchema.safeParse(source)
+      if (current.success) {
+        return {
+          transport: current.data.transport,
+          sessionId: current.data.sessionId,
+        }
+      }
+      const legacy = legacySessionManifestSchema.safeParse(source)
+      if (!legacy.success) {
+        await rm(sessionPath, { force: true })
+        return null
+      }
+      const migrated: AssistantSession = {
+        transport: 'codex',
+        sessionId: legacy.data.threadId,
+      }
+      await writeJson(sessionPath, { version: 1, ...migrated })
+      return migrated
     },
 
-    async writeThreadId(threadId) {
+    async writeSession(session) {
       await mkdir(root, { recursive: true })
-      await writeJson(sessionPath, {
+      const manifest = sessionManifestSchema.parse({
         version: 1,
-        threadId: threadId.trim(),
-        updatedAt: now().toISOString(),
+        transport: session.transport,
+        sessionId: session.sessionId.trim(),
       })
+      await writeJson(sessionPath, manifest)
     },
 
-    async clearThreadId() {
+    async clearSession() {
       await rm(sessionPath, { force: true })
     },
   }

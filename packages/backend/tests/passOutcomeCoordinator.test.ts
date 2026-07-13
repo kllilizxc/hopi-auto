@@ -247,6 +247,50 @@ describe('PassOutcomeCoordinator', () => {
     })
   })
 
+  test('normalizes malformed Generator Attention to a failed attempt', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const context = await fixture.stage('W-1', 'run-malformed-attention', 'generator')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-malformed')
+    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedAttentionPath), { recursive: true })
+    await Bun.write(stagedAttentionPath, '# Missing frontmatter\n\nRegistry access failed.\n')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-malformed-attention', 'generator', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.attentions.has('A-malformed')).toBe(false)
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 1,
+    })
+    expect(goalPackage.evidence.get('E-run-malformed-attention')?.body).toContain(
+      'Invalid staged proposal: Attention document is missing YAML front matter',
+    )
+  })
+
+  test('normalizes malformed Planner Work to a failed attempt', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-malformed-work', 'planner')
+    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
+    const stagedPlanningPath = join(context.proposalRoot, ...planningPath.split('/'))
+    await mkdir(dirname(stagedPlanningPath), { recursive: true })
+    await Bun.write(stagedPlanningPath, '# Missing frontmatter\n')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-malformed-work', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'plan',
+      attempts: 1,
+    })
+  })
+
   test('preserves stale Evidence without applying an old Work transition', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-stale', 'generator')

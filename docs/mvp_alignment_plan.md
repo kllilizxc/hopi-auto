@@ -20,7 +20,7 @@ Alignment is complete only when:
 - HOPI never uses a user checkout as publication, integration, Preview, or repair state
 - a Project may bind multiple Repos while retaining one Work, one review, and one primary C1
 - the UI is Assistant-first and its Kanban is a read-only Work projection
-- the workspace Assistant is one persistent Codex conversation whose only canonical mutation path
+- the workspace Assistant is one persistent Home-configured vendor conversation whose only canonical mutation path
   is validated HOPI tools
 - responsibility Attempts preserve normalized events and the raw process stream, while state reads
   expose bounded diagnostics and their local paths
@@ -36,7 +36,7 @@ Alignment is complete only when:
 | Project | user `rootDir` and mutable checkout | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, managed `hopi/release` worktrees | migration, dirty checkout, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
 | Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn` plus singleton Planning guard | graph and readiness tests |
-| Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, persistent Codex thread, read-only Reflection, and validated HOPI tools | direct conversation, session resume, Reflection, tool, and recovery tests |
+| Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, vendor-qualified persistent session, read-only Reflection, and validated HOPI tools | direct conversation, per-vendor session resume, Reflection, tool, and recovery tests |
 | Workflow | manual controls and hard-coded task lanes | one code-owned profile through generic `RoleRunner` | profile parity and end-to-end reconcile tests |
 | Publication | direct writes and nested locks | OS instance lock, global mutex, one-gate `publish`, durable receipt and C1 ref | concurrency and fault-injection tests |
 | Isolation | per-Run worktrees merged into user root | stable Work branch/worktree per selected Repo plus managed integration roots | retry, migration rebuild, multi-root, and checkout tests |
@@ -45,6 +45,13 @@ Alignment is complete only when:
 | Notification | deduplication concept only | canonical identity, `notifiedAt`, webhook, bounded runtime backoff | delivery and lost-ack tests |
 
 ## Current Alignment Delta
+
+- [x] Let Home configure Codex, Claude, or OpenCode for both speaking Assistant and Reflection while
+  preserving one conversation, one HOPI tool protocol, and a vendor-qualified disposable session cache.
+- [x] Keep blocked user Inbox events Reflection-eligible, normalize malformed proposal documents to
+  ordinary Work failure, and derive restart-safe operational exhaustion from Attempt plus Attention.
+- [x] Restore the Home Assistant model editor without changing current Attention/Kanban semantics,
+  then prove all three vendor adapters with fake-CLI contracts and full end-to-end regression tests.
 
 - [x] Preserve the raw stdout/stderr stream for every responsibility Attempt.
 - [x] Return bounded Run/Attempt diagnostics and local log paths from HOPI state reads.
@@ -59,7 +66,7 @@ Alignment is complete only when:
 - [x] Normalize semantic-guard invalidation to one stale application even when detected before C1;
   never turn expected concurrency into Project Attention.
 - [x] Anchor every speaking-thread state result to its immutable current Inbox event so a long-lived
-  Codex session cannot substitute the prior turn after reading state.
+  vendor session cannot substitute the prior turn after reading state.
 - [x] Guard complete selected authority membership as well as existing file hashes, so additions
   during a Run cannot publish through an incomplete snapshot.
 - [x] Stage only selected authority into Engineering context instead of exposing the entire Goal
@@ -136,7 +143,7 @@ Alignment is complete only when:
    `RoleRunner`; missing `AGENTS.md` is silent Planner bootstrap and Engineering Work keeps one stable
    branch and checkout in every Repo selected by the Work.
 5. Workspace Assistant preserves lossless Inbox turns without parsing reply prose or an Action
-   object, resumes one persistent Codex thread, exposes validated HOPI tools through a single-turn
+   object, resumes one compatible vendor-qualified session, exposes validated HOPI tools through a single-turn
    MCP capability, and records normalized live messages, tool calls, results, and failures. One
    disposable read-only Reflection assesses immutable coalesced state, can only hand an internal
    turn to that thread, and publishes only while its semantic digest remains current.
@@ -144,10 +151,11 @@ Alignment is complete only when:
    clean selected-Repo target advances, recovers secondary release projections, fails invalid
    projects closed, and completes only from Planner proof. Reflection routes Attention through the
    speaking Assistant; an optional webhook mirrors only its handled public replies.
-7. The restored React UI exposes Assistant, Project, Goal contract/design, Pause/Resume, Waiting for Assistant,
-   completion updates, four-column Kanban, cancelled archive, Project model defaults, Repo add and
-   rebind, Work Repo badges, Work Attempt message streams, an on-demand Reflection debug stream, and
-   managed-target Preview; Bun serves it through one backend process.
+7. The restored React UI exposes Assistant, its separate Home model setting, Project, Goal
+   contract/design, Pause/Resume, Waiting for Assistant, completion updates, four-column Kanban,
+   cancelled archive, Project model defaults, Repo add and rebind, Work Repo badges, Work Attempt
+   message streams, an on-demand Reflection debug stream, and managed-target Preview; Bun serves it
+   through one backend process.
 8. The old server, stores, Assistant Actions, decision/planning-request graph, merger, per-Run
    worktrees, Vite runtime, and writable legacy React screens are deleted. `todo.yml` and v1/v2
    adapter config remain read-only one-way migration inputs only.
@@ -159,6 +167,11 @@ Alignment is complete only when:
 - Assistant direct conversation, session resume, live tool events, design-to-code choice:
   `workspaceAssistant.test.ts`, `assistantTools.test.ts`, `hopiMcpServer.test.ts`, and a real isolated
   Codex read/mutate/read-back smoke
+- Home Assistant vendor/model updates, compatible session retention, cross-vendor rebuild, Claude
+  provider environment isolation, OpenCode model qualification, normalized output, image access,
+  and process-group cleanup: `adapterConfig.test.ts`, `assistantConversationStore.test.ts`,
+  `claudeSettingsEnvironment.test.ts`, `vendorAssistantOutput.test.ts`,
+  `workspaceAssistant.test.ts`, and `mvpServer.test.ts`
 - restart and cross-root tool receipts: `workspaceAssistant.test.ts`, `assistantTools.test.ts`,
   `hopiMcpServer.test.ts`, and `publisher.test.ts`
 - revision, cancellation, retry, pause/resume, reopen: `goalController.test.ts`
@@ -181,6 +194,9 @@ Alignment is complete only when:
   operational retry backoff, and Preview reuse: `projectPreparation.test.ts`,
   `stableWorktreeManager.test.ts`, `projectReconciler.test.ts`, `workProjection.test.ts`, and
   `previewManager.test.ts`
+- blocked-event Reflection eligibility, malformed proposal normalization, and restart-safe
+  operational exhaustion through ordinary Work Attention: `coordinatorReconciler.test.ts`,
+  `passOutcomeCoordinator.test.ts`, `projectReconciler.test.ts`, and `goalController.test.ts`
 - portable image adoption and exact role image input: `assistantTools.test.ts`,
   `roleContextStager.test.ts`, `vendorTransport.test.ts`, and `passOutcomeCoordinator.test.ts`
 - Project model persistence, inheritance, role resolution, and API: `assistantHomeStore.test.ts`,
@@ -245,7 +261,7 @@ machine.
 
 ## Final Gate
 
-- [x] Backend lint, typecheck, and all 246 tests pass; all 42 frontend tests pass.
+- [x] Backend lint, typecheck, and all 267 tests pass; all 42 frontend tests pass.
 - [x] Bun builds the frontend successfully; an isolated production server loaded its deep Goal route
   and returned one Project-level open Attention, zero duplicated Goal Attention, and the derived
   **Needs you** Goal summary. The existing Windows Chrome visual gate remains valid; a fresh optional

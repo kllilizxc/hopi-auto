@@ -47,6 +47,12 @@ export interface GoalController {
     },
   ): Promise<GoalDocument>
   ensureAttemptsAttention(goalId: string, workId: string): Promise<AttentionDocument>
+  ensureOperationalFailureAttention(
+    goalId: string,
+    workId: string,
+    failures: number,
+    latestFailure: string,
+  ): Promise<AttentionDocument>
   completeGoal(goalId: string, attentionId: string): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
@@ -282,6 +288,54 @@ export function createGoalController(
           `Work ${workId} exhausted its ${work.attributes.attempts} published recovery attempts.`,
           '',
           'Inspect the linked Evidence and decide whether to retry, revise the Goal, or cancel Work.',
+          '',
+        ].join('\n'),
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path: store.paths.attentionDocument(goalId, attention.attributes.id),
+          expectedHash: null,
+          content: renderAttentionDocument(attention),
+        },
+      })
+      return attention
+    },
+    async ensureOperationalFailureAttention(goalId, workId, failures, latestFailure) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot create operational Attention for missing or terminal Work: ${workId}`,
+        )
+      }
+      const target = `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+      const existing = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.target === target && attention.attributes.resolvedAt === null,
+      )
+      if (existing) return existing
+
+      const attention: AttentionDocument = {
+        attributes: {
+          id: `A-${crypto.randomUUID()}`,
+          target,
+          createdAt: now().toISOString(),
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: [
+          '## Needs attention',
+          '',
+          `Work ${workId} could not run successfully after ${failures} consecutive operational failures.`,
+          'No published Work recovery attempt was consumed.',
+          '',
+          '## Latest failure',
+          '',
+          boundedAttentionText(latestFailure),
+          '',
+          'Inspect the latest Attempt logs and decide the concrete repair or operator action.',
+          'Resolve this exact Attention only after that intervention so a fresh run may start.',
           '',
         ].join('\n'),
       }
@@ -734,6 +788,11 @@ function appendListEntry(body: string, heading: string, entry: string) {
 
 function instructionHeading(eventId: string) {
   return `## Accepted Inbox Instruction ${eventId}`
+}
+
+function boundedAttentionText(value: string) {
+  const normalized = value.trim() || 'No failure summary was recorded.'
+  return normalized.length <= 4_000 ? normalized : `${normalized.slice(0, 4_000)}\n[truncated]`
 }
 
 function nextPlanningWorkId(goalPackage: GoalPackage) {

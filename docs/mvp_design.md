@@ -6,7 +6,7 @@ Last updated: 2026-07-13
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
 - [The document model](./mvp_document_model.md) owns file layout, schemas, and field invariants.
-- [The Assistant design](./mvp_assistant.md) owns conversation, Codex session continuity, HOPI
+- [The Assistant design](./mvp_assistant.md) owns conversation, vendor-qualified session continuity, HOPI
   tools, and Assistant UI behavior.
 - [The execution design](./mvp_execution.md) owns responsibilities, scheduling, worktrees,
   completion, delivery, and Preview behavior.
@@ -21,7 +21,7 @@ This document defines the target MVP for HOPI. New product and architecture work
 HOPI is the operating system for a one-person company.
 
 The operator talks to one workspace-wide Assistant. The Assistant accepts instructions at any
-time, answers as a normal persistent Codex conversation, and uses HOPI tools when it needs to
+time, answers as one normal persistent Assistant conversation, and uses HOPI tools when it needs to
 create or control Goals. Reconciler schedules work and drives a fixed multi-agent delivery flow.
 Together they interrupt the operator only when:
 
@@ -68,15 +68,15 @@ and diagnostics. Assistant does not duplicate the board or narrate the internal 
 Internally:
 
 ```text
-User -> durable conversation turn -> persistent Codex thread -> ordinary reply
-                                                     \-> optional HOPI tool call
+User -> durable conversation turn -> configured Assistant session -> ordinary reply
+                                                             \-> optional HOPI tool call
                                                           -> publish(bundle)
                                                           -> sparse Work DAG
                                                           -> fixed responsibility pass
                                                           -> semantic guard -> Evidence / Attention
 
 semantic state change -> disposable read-only Reflection -> optional internal Inbox brief
-                                                        -> persistent Codex thread
+                                                        -> configured Assistant session
 ```
 
 ## Design Principles
@@ -199,7 +199,7 @@ timing, retry count, and provenance. Intent, reasoning, findings, acceptance mea
 explanations remain free Markdown interpreted by models.
 
 HOPI does not introduce a criteria-mapping DSL, model-produced Assistant Action result, or
-structured domain ontology for the MVP. Codex uses ordinary tool calls whose small schemas are
+structured domain ontology for the MVP. The configured model uses ordinary tool calls whose small schemas are
 permission and validation boundaries; reply prose is never parsed as control. Responsibility
 passes are replaceable prompts and permission envelopes run through the same generic `RoleRunner`;
 their durable effects are documents and fixed result values.
@@ -220,19 +220,21 @@ The authority is split by concern rather than repeated in one large document:
 
 - [Document model](./mvp_document_model.md): file layout, schemas, field ownership, references,
   dependencies, revision, recovery counters, Attention, and Evidence.
-- [Assistant](./mvp_assistant.md): persistent Codex conversation, read-only Reflection, HOPI tools,
+- [Assistant](./mvp_assistant.md): persistent vendor-qualified conversation, read-only Reflection, HOPI tools,
   turn recovery, and live conversation behavior.
 - [Execution](./mvp_execution.md): Planner responsibilities, fixed profile, semantic
   guards, worktrees, scheduling, completion, notification, and Preview.
 - [Multi-Repo](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution, primary
   C1 release manifests, and projection recovery.
+- [Multi-vendor adapters](./multi_vendor_agent_support.md): vendor command, event, image, MCP, and
+  session implementation boundary beneath the shared Assistant and RoleRunner contracts.
 - [State machine](./mvp_state_machine.md): derived lifecycle, readiness, and Kanban visualization.
 - [Publish protocol](./mvp_publish_protocol.md): single-gate file publication, cross-root receipts,
   C1 durability, and crash boundaries.
 
 ## Core Model Summary
 
-- Assistant receives every instruction as a normal Codex turn; selected Project or Goal is context
+- Assistant receives every instruction as a normal conversation turn; selected Project or Goal is context
   only, and canonical effects occur only through HOPI tool calls.
 - Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as
   a portable Goal asset whose path and purpose live in editable design Markdown.
@@ -251,14 +253,15 @@ The authority is split by concern rather than repeated in one large document:
 
 The MVP UI contains:
 
-1. Global Assistant conversation with live Codex messages and tool activity, queued turns,
+1. Global Assistant conversation with live model messages and tool activity, queued turns,
    Assistant-mediated clarification messages and ordinary completion updates. Internal Reflection
    turns remain hidden unless the speaking thread explicitly promotes its reply. A header debug
    entry may inspect disposable Reflection runtime streams on demand without adding product state.
    The composer supports bounded image selection and paste, and the conversation preserves image
    thumbnails with their source turns.
-2. Project switcher and overview with project guidance, effective responsibility model defaults,
-   and its Goals, but no Project workflow status.
+2. Project switcher and overview with the Home Assistant model, Project guidance, effective
+   responsibility model defaults, and Goals, but no Project workflow status. Assistant and Project
+   model settings remain visibly separate.
 3. Goal list with derived current/next summaries rather than workflow controls.
 4. Goal detail with contract, derived focus, Assistant updates, and explicit Pause or Resume.
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
@@ -324,7 +327,7 @@ The production path is the MVP path:
   entry remains `packages/frontend/src/main.tsx`. The same server must serve every JS, CSS, and asset
   URL emitted into that HTML; an HTML shell without loadable assets is not a working UI.
 - `RoleRunner` is the only responsibility runner; vendor transports are adapters beneath it.
-- Assistant runs one persistent Codex conversation and reaches canonical state only through HOPI
+- Assistant runs one persistent conversation through its Home-configured vendor adapter and reaches canonical state only through HOPI
   tools; it has no staged-diff or model-produced Action protocol.
 - canonical Assistant-home and Project documents, one `PublicationCoordinator`, stable Work
   worktrees, and deterministic C1 own control and integration.
@@ -348,7 +351,7 @@ adapter-config schema migration; neither can write an old authority.
    deterministic Coordinator integration, and the single recovery counter.
 4. Make task branches stable and derive branch and checkpoint facts from qualified Work identity
    and task branch HEAD.
-5. Introduce global two-state Inbox turns, one persistent Codex thread, live events, and HOPI
+5. Introduce global two-state Inbox turns, one persistent vendor-qualified session, live events, and HOPI
    control tools.
 6. Add `contractRevision`, semantic guards, and singleton Planning Work.
 7. Introduce bounded Goal packages, single-target Attention, and per-Work documents.
@@ -382,7 +385,7 @@ and Project migration preserve the same file and Markdown provenance.
 ### Concurrent instructions
 
 Instructions arriving during active Runs or another Assistant turn become durable immediately.
-Assistant turns remain FIFO within one Codex thread; pass Runs continue in parallel while their
+Assistant turns remain FIFO within one speaking conversation; pass Runs continue in parallel while their
 final publications enter one short global queue. A same-Goal material change accepted through a
 HOPI tool
 increments `contractRevision`; stale output cannot advance state. Other Goals schedule
@@ -391,7 +394,7 @@ independently.
 ### Decision and automatic resume
 
 A pass creates targeted Attention with one recommendation. The operator answers in the normal
-conversation; Codex reads current state and uses the appropriate HOPI tool. A Goal-local answer
+conversation; Assistant reads current state and uses the appropriate HOPI tool. A Goal-local answer
 publishes its effects and Input before resolving Attention. An event-target answer resolves that
 guard and lets the original pending turn run again with the answer visible in durable conversation
 history, without parsing prose into an Action.

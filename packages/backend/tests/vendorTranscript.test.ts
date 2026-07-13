@@ -384,6 +384,61 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
+  test('normalizes current OpenCode text and completed tool events', () => {
+    const assistant = normalizeProcessOutputLine({
+      format: 'opencode_json',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'text',
+        sessionID: 'ses_1',
+        part: {
+          id: 'part-1',
+          messageID: 'msg-1',
+          type: 'text',
+          text: 'Implemented the change.',
+        },
+      }),
+    })
+    const tool = normalizeProcessOutputLine({
+      format: 'opencode_json',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'tool_use',
+        sessionID: 'ses_1',
+        part: {
+          id: 'tool-1',
+          messageID: 'msg-1',
+          type: 'tool',
+          tool: 'bash',
+          state: { status: 'completed', output: '3 tests passed' },
+        },
+      }),
+    })
+
+    expect(assistant).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'opencode',
+        entryKind: 'assistant',
+        summary: 'Implemented the change.',
+        vendorEventType: 'text',
+      },
+    ])
+    expect(tool).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'opencode',
+        entryKind: 'tool_result',
+        toolName: 'bash',
+        toolInvocationKey: 'tool-1',
+        summary: '3 tests passed',
+        vendorEventType: 'tool_use',
+      },
+    ])
+  })
+
   test('converts stderr on built-in vendor transports into transcript error entries', () => {
     const entries = normalizeProcessOutputLine({
       format: 'claude_stream_json',

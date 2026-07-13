@@ -128,13 +128,13 @@ this is a disposable projection, not a separate replay ledger or latest-failure 
 
 Assistant home and project Git are not one atomic store. HOPI uses a simple idempotent sequence:
 
-1. The pending Assistant turn is already durable before Codex runs.
+1. The pending Assistant turn is already durable before the configured model runs.
 2. Each mutating HOPI tool names and validates its own target. In that project it uses
    operation-specific single-gate publications for the blocking guard and requested effects, then
    publishes Goal Input for source `(homeId, eventId)` as the durable effect receipt. Goal-local
    Attention resolution is one more publication after Input. Goal creation establishes the Goal
    and initial Planning guard before its Input receipt.
-3. After all optional tool calls and the final Codex reply, publish the Assistant-home reply and
+3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
 The tool target owns destination choice for that call; the qualified Goal Input path and digest are
@@ -142,7 +142,7 @@ the project-effects receipt. One turn may create receipts in multiple Goals. Goa
 resolution may follow as the final unblocking gate. None of these is a generic operation receipt or
 cross-root transaction entity.
 
-After a process crash, a pending turn resumes in the Codex conversation. A tool whose Goal Input is
+After a process crash, a pending turn resumes in the configured Assistant conversation. A tool whose Goal Input is
 missing rereads current canonical state and safely completes or reports the interrupted effect; a
 matching Input proves that Goal already accepted the source instruction. Domain IDs, lifecycle
 guards, expected content hashes, and existing Planning Work make repeats idempotent. A vanished
@@ -155,7 +155,7 @@ invalid, unwritable, or a Coordinator integrity failure leaves no safe Goal-loca
 second project phase and claims no Work recovery update.
 
 An answer to event-target Workspace Attention is handled as its own ordinary conversation turn.
-Codex uses the HOPI Attention/control tool when the answer resolves the condition. Clearing that
+Assistant uses the HOPI Attention/control tool when the answer resolves the condition. Clearing that
 guard makes the original pending turn eligible again with the answer visible in durable conversation
 history; no answer parser or hidden continuation object is required.
 
@@ -216,12 +216,13 @@ Resolution for Planner, Generator, and Reviewer is:
    when the explicit role uses compatible Codex defaults
 3. otherwise Assistant-home `defaults` apply
 
-The workspace Assistant always uses an explicit Home Codex Assistant configuration. Without one, it
-uses compatible Home Codex defaults or the fixed Codex baseline when workflow defaults select
-another provider; its real resumable Codex thread belongs to Home rather than any Project. Saving
-Project settings affects only responsibility Runs dispatched afterward; an already-started Run
-keeps its resolved immutable command. Settings do not alter the workflow profile, capacities, retry
-policy, Work stage, or Goal revision.
+The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
+configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits compatible Home
+defaults. Its resumable session belongs to Home rather than any Project. Saving Assistant settings
+affects the next speaking or Reflection invocation and invalidates an incompatible vendor session.
+Saving Project settings affects only responsibility Runs dispatched afterward; an already-started
+Run keeps its resolved immutable command. Neither setting changes the workflow profile, capacities,
+retry policy, Work stage, or Goal revision.
 
 Pass result values are:
 
@@ -308,8 +309,8 @@ Work and cannot replace Evidence or a canonical gate.
 Goal reference images are passed only through a transport with an explicit image-input contract.
 If a selected responsibility transport cannot accept them, RoleRunner fails visibly before the
 model call instead of silently dropping accepted multimodal input. Speaking Assistant and
-Reflection remain the one persistent/disposable Codex pair in the MVP; provider-neutral session
-resume is not inferred from a synthetic thread ID.
+Reflection use the same Home-configured adapter, while only the speaking session is resumable.
+HOPI never infers cross-vendor resume from a synthetic session ID.
 
 Attempt presentation preserves any explicit recorded result, application, and summary, including a
 stale reason. Canonical Evidence may fill fields missing from a legacy or interrupted presentation,
@@ -603,6 +604,14 @@ checks and Reviewer expose the defect. Process launch, provider quota, interrupt
 protocol failures are operational Run failures: they remain in Attempt diagnostics, receive bounded
 runtime backoff, publish no responsibility Evidence, and do not increment Work `attempts`.
 
+Operational recovery survives restart without another counter or Work field. Reconciler derives the
+current episode from consecutive finished Attempts whose application is `operational_failure`, after
+the latest resolved Work-target Attention. Before the limit it retries with bounded in-memory
+backoff. At the third consecutive failure it creates one ordinary Work-target Attention containing
+the latest exact failure and asks Assistant to diagnose the next action. The Attention ID and body do
+not encode a failure kind. Resolving that exact Attention starts a fresh operational episode and
+ordinary readiness may dispatch again; generic retry never closes unrelated Attention.
+
 Planner reads every linked Repo's current managed source and existing Repo-local `AGENTS.md`, while
 the primary root `AGENTS.md` remains the single automatically bootstrapped Project entrypoint. It
 maintains `.hopi/docs/repos.md` as natural-language topology, responsibility, command, and shared
@@ -660,13 +669,13 @@ publication queue. Tests and conflict analysis run before entering it.
 ## Global Assistant
 
 The Assistant execution contract is defined in [the Assistant design](./mvp_assistant.md). It is one
-persistent Codex conversation with ordinary replies and optional HOPI tool calls, not a
+persistent configured Assistant conversation with ordinary replies and optional HOPI tool calls, not a
 responsibility pass or staged-diff producer.
 
 Conversation is the default control surface. The selected Project or Goal is context only. Common
 buttons may continue to call the same deterministic controllers directly; the MVP explicitly
 provides **Pause** on active Goals and **Resume** on paused Goals. Cancel, reopen, priority, timing,
-design editing, and Planning may be requested in conversation, where Codex chooses whether to call
+design editing, and Planning may be requested in conversation, where Assistant chooses whether to call
 the matching HOPI tool.
 
 Lifecycle control has no separate worker or queue. On each ordinary reconciliation scan, a Goal
@@ -676,7 +685,7 @@ The existing semantic publication guard remains the final protection for a resul
 interrupt.
 
 Assistant never edits source or canonical files directly. Its local MCP server is an adapter over
-existing controllers and the global publisher. Reply prose, tool-result summaries, and raw Codex
+existing controllers and the global publisher. Reply prose, tool-result summaries, and raw vendor
 events are never parsed for control state. Planner still owns delivery decomposition.
 
 The MCP tool descriptions and JSON schemas injected into the Assistant turn are the only authority

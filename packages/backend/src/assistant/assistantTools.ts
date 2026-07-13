@@ -206,7 +206,7 @@ export function createAssistantTools(options: {
         capability.handedOff = true
         capability.onHandoff?.({ brief: args.brief, context: args.context })
         return {
-          summary: `Prepared Reflection ${capability.reflectionId} brief for the speaking thread.`,
+          summary: `Prepared Reflection ${capability.reflectionId} brief for the speaking Assistant.`,
           changed: false,
           value: { prepared: true },
         }

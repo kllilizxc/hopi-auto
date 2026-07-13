@@ -25,6 +25,7 @@ import {
   linkProjectRepo,
   readState,
   rebindProjectRepo,
+  updateAssistantSettings,
   updateProjectSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
@@ -98,56 +99,170 @@ export function ProjectHomePage() {
             </div>
           </AppSurface>
 
-          <AppForm
-            className="link-project-panel panel-card"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!repoPath.trim()) return
-              createMutation.mutate({
-                repoPath: repoPath.trim(),
-                ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
-              })
-            }}
-          >
-            <div className="panel-title">
-              <span>
-                <Link2 /> Link repository
-              </span>
-            </div>
-            <p className="panel-intro">
-              The selected path identifies the Repo. Canonical documents and Preview run from HOPI's
-              managed integration root.
-            </p>
-            <AppTextField
-              className="field"
-              label="Repository path"
-              onValueChange={setRepoPath}
-              placeholder="/home/me/Code/product"
-              value={repoPath}
-            />
-            <AppTextField
-              className="field"
-              label={
-                <>
-                  Project ID <small>optional</small>
-                </>
-              }
-              onValueChange={setProjectId}
-              placeholder="Derived when omitted"
-              value={projectId}
-            />
-            <AppButton
-              className="primary-button"
-              type="submit"
-              disabled={!repoPath.trim() || createMutation.isPending}
+          <div className="projects-side-column">
+            {snapshotQuery.data && (
+              <AssistantSettingsPanel
+                defaults={snapshotQuery.data.home.assistantCodingDefaults}
+                inherited={snapshotQuery.data.home.assistantCodingDefaultsInherited}
+              />
+            )}
+
+            <AppForm
+              className="link-project-panel panel-card"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (!repoPath.trim()) return
+                createMutation.mutate({
+                  repoPath: repoPath.trim(),
+                  ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
+                })
+              }}
             >
-              {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
-              Link Project
-            </AppButton>
-          </AppForm>
+              <div className="panel-title">
+                <span>
+                  <Link2 /> Link repository
+                </span>
+              </div>
+              <p className="panel-intro">
+                The selected path identifies the Repo. Canonical documents and Preview run from
+                HOPI's managed integration root.
+              </p>
+              <AppTextField
+                className="field"
+                label="Repository path"
+                onValueChange={setRepoPath}
+                placeholder="/home/me/Code/product"
+                value={repoPath}
+              />
+              <AppTextField
+                className="field"
+                label={
+                  <>
+                    Project ID <small>optional</small>
+                  </>
+                }
+                onValueChange={setProjectId}
+                placeholder="Derived when omitted"
+                value={projectId}
+              />
+              <AppButton
+                className="primary-button"
+                type="submit"
+                disabled={!repoPath.trim() || createMutation.isPending}
+              >
+                {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
+                Link Project
+              </AppButton>
+            </AppForm>
+          </div>
         </section>
       </div>
     </AppScrollShadow>
+  )
+}
+
+function AssistantSettingsPanel({
+  defaults,
+  inherited,
+}: {
+  defaults: ProjectCodingDefaults
+  inherited: boolean
+}) {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState(() => codingDefaultsToDraft(defaults))
+  const settingsMutation = useMutation({
+    mutationFn: updateAssistantSettings,
+    onSuccess: async (snapshot) => {
+      setDraft(codingDefaultsToDraft(snapshot.home.assistantCodingDefaults))
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+
+  return (
+    <AppSurface className="assistant-settings-panel panel-card">
+      <div className="panel-title">
+        <span>
+          <Cpu /> Assistant
+        </span>
+        <StatusChip size="sm">{inherited ? 'Coding default' : 'Custom'}</StatusChip>
+      </div>
+      <p className="panel-intro">
+        Used for your conversation and background Reflection. Project coding agents stay separate.
+      </p>
+      <div className="assistant-settings-current">
+        <small>Current model</small>
+        <strong>{formatCodingDefaults(defaults)}</strong>
+      </div>
+      <AppForm
+        className="assistant-settings-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          settingsMutation.mutate(modelDraftToCodingDefaults(draft))
+        }}
+      >
+        <SelectField
+          label="Agent"
+          onValueChange={(transport) =>
+            setDraft((current) =>
+              changeDraftTransport(current, transport as CodingAgentTransport),
+            )
+          }
+          options={[
+            { label: 'Codex', value: 'codex' },
+            { label: 'Claude', value: 'claude' },
+            { label: 'OpenCode', value: 'opencode' },
+          ]}
+          value={draft.transport}
+        />
+        <AppTextField
+          label="Model"
+          onValueChange={(model) => setDraft((current) => ({ ...current, model }))}
+          placeholder={assistantModelPlaceholder(draft.transport)}
+          value={draft.model}
+        />
+        {draft.transport === 'codex' && (
+          <SelectField
+            label="Reasoning"
+            onValueChange={(reasoningEffort) =>
+              setDraft((current) => ({
+                ...current,
+                reasoningEffort: reasoningEffort as CodingReasoningEffort,
+              }))
+            }
+            options={[
+              { label: 'Low', value: 'low' },
+              { label: 'Medium', value: 'medium' },
+              { label: 'High', value: 'high' },
+              { label: 'xHigh', value: 'xhigh' },
+            ]}
+            value={draft.reasoningEffort}
+          />
+        )}
+        <div className="assistant-settings-actions">
+          <AppButton
+            variant="ghost"
+            type="button"
+            disabled={settingsMutation.isPending || inherited}
+            onClick={() => settingsMutation.mutate(null)}
+          >
+            Use coding default
+          </AppButton>
+          <AppButton
+            className="secondary-button"
+            type="submit"
+            disabled={
+              settingsMutation.isPending || (draft.transport === 'codex' && !draft.model.trim())
+            }
+          >
+            {settingsMutation.isPending ? <AppSpinner size="sm" /> : <Settings2 />}
+            Save
+          </AppButton>
+        </div>
+      </AppForm>
+      {settingsMutation.error && (
+        <AppAlert className="inline-error">{settingsMutation.error.message}</AppAlert>
+      )}
+    </AppSurface>
   )
 }
 
@@ -338,10 +453,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           <SelectField
             label="Agent"
             onValueChange={(transport) =>
-              setModelDraft((current) => ({
-                ...current,
-                transport: transport as CodingAgentTransport,
-              }))
+              setModelDraft((current) =>
+                changeDraftTransport(current, transport as CodingAgentTransport),
+              )
             }
             options={[
               { label: 'Codex', value: 'codex' },
@@ -491,9 +605,22 @@ function modelDraftToCodingDefaults(draft: CodingDefaultsDraft): ProjectCodingDe
   }
 }
 
+function changeDraftTransport(
+  draft: CodingDefaultsDraft,
+  transport: CodingAgentTransport,
+): CodingDefaultsDraft {
+  return draft.transport === transport ? draft : { ...draft, transport, model: '' }
+}
+
 function formatCodingDefaults(defaults: ProjectCodingDefaults) {
   const model = defaults.model ?? 'provider default'
   return defaults.transport === 'codex'
     ? `${model} · ${defaults.reasoningEffort}`
     : `${defaults.transport} · ${model}`
+}
+
+function assistantModelPlaceholder(transport: CodingAgentTransport) {
+  if (transport === 'codex') return 'gpt-5.4'
+  if (transport === 'opencode') return 'provider/model'
+  return 'Provider default'
 }

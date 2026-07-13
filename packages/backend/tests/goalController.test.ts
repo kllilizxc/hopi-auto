@@ -97,6 +97,30 @@ describe('GoalController', () => {
     expect(laterCycle.attributes.id).toStartWith('attempts-plan-initial-3-')
   })
 
+  test('uses ordinary Work Attention for operational exhaustion', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+
+    const first = await controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      3,
+      'The configured runtime command exited before producing output.',
+    )
+    const reused = await controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      4,
+      'A later failure should not create duplicate Attention.',
+    )
+
+    expect(reused.attributes.id).toBe(first.attributes.id)
+    expect(first.attributes.id).toStartWith('A-')
+    expect(first.attributes.id).not.toContain('operational')
+    expect(first.body).toContain('3 consecutive operational failures')
+    expect(first.body).toContain('configured runtime command exited')
+  })
+
   test('installs Planning before a material revision and invalidates nonterminal Work', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

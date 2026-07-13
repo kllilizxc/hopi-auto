@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
@@ -34,28 +35,174 @@ afterEach(async () => {
 })
 
 describe('WorkspaceAssistant conversation', () => {
-  test('rejects a non-Codex speaking transport instead of fabricating a thread', async () => {
+  test('runs Claude with isolated HOPI tools, native resume, and complete final output', async () => {
+    const binary = join(temporaryRoot, 'fake-claude')
+    const argsFile = join(temporaryRoot, 'claude-args.json')
+    const promptFile = join(temporaryRoot, 'claude-prompt.txt')
+    const finalReply = 'x'.repeat(800)
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
+        `console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:${JSON.stringify(finalReply)}}))`,
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const imagePath = join(temporaryRoot, 'claude-image.png')
+    await Bun.write(imagePath, pngBytes())
+    const cwd = join(temporaryRoot, 'assistant-claude')
+    const readableRoot = join(temporaryRoot, 'canonical')
     const runner = createConfiguredAssistantModelRunner({
       resolveConfig: () => ({
         transport: 'claude',
         cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+        model: 'sonnet',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const result = await runner.run({
+      eventId: 'EV-claude',
+      prompt: 'Inspect the image.',
+      session: vendorSession('claude', 'claude-session'),
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'claude-token',
+      imageFiles: [imagePath],
+      readableRoots: [readableRoot],
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    const mcpConfig = await Bun.file(join(cwd, 'claude-mcp.json')).json()
+    expect(result).toEqual({
+      reply: finalReply,
+      session: vendorSession('claude', 'claude-session'),
+    })
+    for (const expected of ['--mcp-config', '--strict-mcp-config', '--resume', 'claude-session']) {
+      expect(args).toContain(expected)
+    }
+    expect(args).toContain(dirname(imagePath))
+    expect(args).toContain(readableRoot)
+    expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
+    expect(await Bun.file(promptFile).text()).toContain(imagePath)
+    expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
+  })
+
+  test('rebuilds directly instead of resuming an incompatible vendor session', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-switch')
+    const argsFile = join(temporaryRoot, 'claude-switch-args.json')
+    const promptFile = join(temporaryRoot, 'claude-switch-prompt.txt')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-new"}))',
+        'console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-new",result:"Rebuilt."}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-vendor-switch')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
         permissionMode: 'dontAsk',
       }),
       resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     })
 
-    await expect(
-      runner.run({
-        eventId: 'EV-claude',
-        prompt: 'Hello.',
-        threadId: null,
-        cwd: join(temporaryRoot, 'assistant-claude'),
-        lastMessageFile: join(temporaryRoot, 'assistant-claude', 'last-message.txt'),
-        transcriptFile: join(temporaryRoot, 'assistant-claude', 'transcript.log'),
-        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
-        toolToken: 'token',
+    const result = await runner.run({
+      eventId: 'EV-switch',
+      prompt: 'Only the current turn.',
+      rebuildPrompt: 'Durable history plus the current turn.',
+      session: codexSession('old-codex-thread'),
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'switch-token',
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    expect(args).not.toContain('--resume')
+    expect(await Bun.file(promptFile).text()).toBe('Durable history plus the current turn.')
+    expect(result).toEqual({
+      reply: 'Rebuilt.',
+      session: vendorSession('claude', 'claude-new'),
+    })
+  })
+
+  test('runs OpenCode with isolated HOPI tools, native resume, and image files', async () => {
+    const binary = join(temporaryRoot, 'fake-opencode')
+    const argsFile = join(temporaryRoot, 'opencode-args.json')
+    const promptFile = join(temporaryRoot, 'opencode-prompt.txt')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        'console.log(JSON.stringify({type:"text",sessionID:"ses_1",part:{id:"part-1",messageID:"msg-1",type:"text",text:"OpenCode reply."}}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const imagePath = join(temporaryRoot, 'opencode-image.png')
+    await Bun.write(imagePath, pngBytes())
+    const cwd = join(temporaryRoot, 'assistant-opencode')
+    const readableRoot = join(temporaryRoot, 'canonical')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'opencode',
+        cwdMode: 'root',
+        binary,
+        model: 'anthropic/claude-sonnet-4-5',
       }),
-    ).rejects.toThrow('Workspace Assistant requires Codex transport')
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const result = await runner.run({
+      eventId: 'EV-opencode',
+      prompt: 'Continue.',
+      session: vendorSession('opencode', 'ses_1'),
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'opencode-token',
+      imageFiles: [imagePath],
+      readableRoots: [readableRoot],
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    const config = await Bun.file(join(cwd, 'opencode.json')).json()
+    expect(result).toEqual({
+      reply: 'OpenCode reply.',
+      session: vendorSession('opencode', 'ses_1'),
+    })
+    for (const expected of ['--pure', '--session', 'ses_1', '--file', imagePath]) {
+      expect(args).toContain(expected)
+    }
+    expect(config.mcp.hopi.environment.HOPI_TOOL_TOKEN).toBe('opencode-token')
+    expect(config.permission).toMatchObject({ '*': 'deny', 'hopi_*': 'allow', read: 'allow' })
+    expect(config.permission.external_directory).toEqual({
+      '*': 'deny',
+      [`${readableRoot}/**`]: 'allow',
+    })
+    expect(await Bun.file(promptFile).text()).toBe('Continue.')
+    expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"text"')
   })
 
   test('terminates a configured Codex subprocess when its signal is aborted', async () => {
@@ -84,7 +231,7 @@ describe('WorkspaceAssistant conversation', () => {
     const run = runner.run({
       eventId: 'RF-1',
       prompt: 'Reflect.',
-      threadId: null,
+      session: null,
       cwd: join(temporaryRoot, 'reflection'),
       lastMessageFile: join(temporaryRoot, 'reflection', 'last-message.txt'),
       transcriptFile: join(temporaryRoot, 'reflection', 'transcript.log'),
@@ -129,7 +276,7 @@ describe('WorkspaceAssistant conversation', () => {
     await runner.run({
       eventId: 'EV-image',
       prompt: 'Inspect the image.',
-      threadId: 'thread-existing',
+      session: codexSession('thread-existing'),
       cwd: join(temporaryRoot, 'assistant-image'),
       lastMessageFile: join(temporaryRoot, 'assistant-image', 'last-message.txt'),
       transcriptFile: join(temporaryRoot, 'assistant-image', 'transcript.log'),
@@ -149,8 +296,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup(() => ({
       async run(input, observer) {
         seen.push({ prompt: input.prompt, imageFiles: input.imageFiles ?? [] })
-        await observer?.onThreadId?.('thread-image')
-        return { reply: 'I can see the reference.', threadId: 'thread-image' }
+        await observer?.onSession?.(codexSession('thread-image'))
+        return { reply: 'I can see the reference.', session: codexSession('thread-image') }
       },
     }))
     const event = await fixture.workspace.receiveEvent({
@@ -168,18 +315,18 @@ describe('WorkspaceAssistant conversation', () => {
   })
 
   test('answers a contextual greeting without creating Goal effects', async () => {
-    const seen: Array<{ threadId: string | null; prompt: string }> = []
+    const seen: Array<{ sessionId: string | null; prompt: string }> = []
     const fixture = await setup(() => ({
       async run(input, observer) {
-        seen.push({ threadId: input.threadId, prompt: input.prompt })
-        await observer?.onThreadId?.('thread-1')
+        seen.push({ sessionId: input.session?.sessionId ?? null, prompt: input.prompt })
+        await observer?.onSession?.(codexSession('thread-1'))
         await observer?.onEvent?.({
           kind: 'transcript',
           transport: 'codex',
           entryKind: 'assistant',
           summary: '你好。',
         })
-        return { reply: '你好。', threadId: 'thread-1' }
+        return { reply: '你好。', session: codexSession('thread-1') }
       },
     }))
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -205,7 +352,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
     ).toHaveLength(0)
-    expect(seen[0]?.threadId).toBeNull()
+    expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).toContain(
       'explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope',
@@ -221,13 +368,13 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
-  test('resumes one persistent Codex thread for later turns', async () => {
-    const threadIds: Array<string | null> = []
+  test('resumes one persistent vendor session for later turns', async () => {
+    const sessionIds: Array<string | null> = []
     const fixture = await setup(() => ({
       async run(input, observer) {
-        threadIds.push(input.threadId)
-        await observer?.onThreadId?.('thread-1')
-        return { reply: `reply-${threadIds.length}`, threadId: 'thread-1' }
+        sessionIds.push(input.session?.sessionId ?? null)
+        await observer?.onSession?.(codexSession('thread-1'))
+        return { reply: `reply-${sessionIds.length}`, session: codexSession('thread-1') }
       },
     }))
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'First' })
@@ -235,7 +382,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.workspace.receiveEvent({ eventId: 'EV-2', content: 'Second' })
     await fixture.assistant.process('EV-2')
 
-    expect(threadIds).toEqual([null, 'thread-1'])
+    expect(sessionIds).toEqual([null, 'thread-1'])
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
   })
 
@@ -249,7 +396,7 @@ describe('WorkspaceAssistant conversation', () => {
           summary: 'Tool call: hopi_read_state',
           toolName: 'hopi_read_state',
         })
-        return { reply: 'No decision is needed.', threadId: 'thread-1' }
+        return { reply: 'No decision is needed.', session: codexSession('thread-1') }
       },
     }))
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Do I need to decide?' })
@@ -259,14 +406,14 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-1'))?.attributes.disposition).toBe('tools-used')
   })
 
-  test('rebuilds a missing vendor thread from durable conversation history', async () => {
-    const calls: Array<{ threadId: string | null; prompt: string }> = []
+  test('rebuilds a missing vendor session from durable conversation history', async () => {
+    const calls: Array<{ sessionId: string | null; prompt: string }> = []
     const fixture = await setup(() => ({
       async run(input, observer) {
-        calls.push({ threadId: input.threadId, prompt: input.prompt })
-        if (input.threadId) throw new Error('session not found')
-        await observer?.onThreadId?.('thread-rebuilt')
-        return { reply: 'Recovered.', threadId: 'thread-rebuilt' }
+        calls.push({ sessionId: input.session?.sessionId ?? null, prompt: input.prompt })
+        if (input.session) throw new Error('session not found')
+        await observer?.onSession?.(codexSession('thread-rebuilt'))
+        return { reply: 'Recovered.', session: codexSession('thread-rebuilt') }
       },
     }))
     await fixture.workspace.receiveEvent({ eventId: 'EV-old', content: 'Old turn' })
@@ -274,15 +421,15 @@ describe('WorkspaceAssistant conversation', () => {
       reply: 'Old reply',
       disposition: 'answered',
     })
-    await fixture.conversation.writeThreadId('missing-thread')
+    await fixture.conversation.writeSession(codexSession('missing-thread'))
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
     await fixture.assistant.process('EV-1')
 
-    expect(calls.map((call) => call.threadId)).toEqual(['missing-thread', null])
+    expect(calls.map((call) => call.sessionId)).toEqual(['missing-thread', null])
     expect(calls[1]?.prompt).toContain('User: Old turn')
     expect(calls[1]?.prompt).toContain('Assistant: Old reply')
-    expect(await fixture.conversation.readThreadId()).toBe('thread-rebuilt')
+    expect(await fixture.conversation.readSession()).toEqual(codexSession('thread-rebuilt'))
   })
 
   test('rebuilds from bounded public history without internal Reflection briefs', async () => {
@@ -290,8 +437,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup(() => ({
       async run(input, observer) {
         prompt = input.prompt
-        await observer?.onThreadId?.('thread-bounded')
-        return { reply: 'Current reply.', threadId: 'thread-bounded' }
+        await observer?.onSession?.(codexSession('thread-bounded'))
+        return { reply: 'Current reply.', session: codexSession('thread-bounded') }
       },
     }))
     await fixture.workspace.receiveEvent({
@@ -351,8 +498,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup(() => ({
       async run(input, observer) {
         prompts.push(input.prompt)
-        await observer?.onThreadId?.('thread-1')
-        return { reply: 'No operator interruption is needed.', threadId: 'thread-1' }
+        await observer?.onSession?.(codexSession('thread-1'))
+        return { reply: 'No operator interruption is needed.', session: codexSession('thread-1') }
       },
     }))
     await fixture.workspace.receiveReflectionEvent({
@@ -377,7 +524,10 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         await tools.execute(input.toolToken, 'hopi_notify_user', {})
-        return { reply: 'Choose the release window: today or tomorrow?', threadId: 'thread-notify' }
+        return {
+          reply: 'Choose the release window: today or tomorrow?',
+          session: codexSession('thread-notify'),
+        }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
@@ -439,7 +589,10 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         await tools.execute(input.toolToken, 'hopi_notify_user', {})
-        return { reply: 'Choose the release window.', threadId: 'thread-retry-ack' }
+        return {
+          reply: 'Choose the release window.',
+          session: codexSession('thread-retry-ack'),
+        }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-retry-ack')
@@ -623,4 +776,12 @@ async function git(cwd: string, args: string[]) {
 
 function pngBytes() {
   return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])
+}
+
+function vendorSession(transport: AssistantTransport, sessionId: string) {
+  return { transport, sessionId }
+}
+
+function codexSession(sessionId: string) {
+  return vendorSession('codex', sessionId)
 }

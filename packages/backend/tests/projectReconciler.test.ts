@@ -304,6 +304,57 @@ describe('ProjectReconciler', () => {
     expect(attempts[0]).toMatchObject({ application: 'operational_failure' })
   })
 
+  test('reconstructs operational exhaustion from Attempt logs after restart', async () => {
+    const fixture = await createFixture({ operationalRetryBaseMs: 0 })
+    await fixture.reconciler.reconcileGoal('goal-1')
+    for (let index = 1; index <= 3; index += 1) {
+      const runId = `persisted-${index}`
+      const recorder = await fixture.attempts.start({
+        projectId: 'project-1',
+        goalId: 'goal-1',
+        workId: 'W-1',
+        runId,
+        responsibility: 'generator',
+        runRoot: join(
+          fixture.homeRoot,
+          '.hopi',
+          'runtime',
+          'runs',
+          'project-1',
+          'goal-1',
+          'W-1',
+          runId,
+        ),
+      })
+      await recorder.finish({
+        outcome: {
+          result: 'fail',
+          summary: `Runtime launch failed ${index}.`,
+          exitCode: 1,
+        },
+        application: 'operational_failure',
+      })
+    }
+
+    const restarted = fixture.createReconciler()
+    const exhausted = await restarted.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const attention = [...goalPackage.attentions.values()].find(
+      (candidate) => candidate.attributes.target === 'project:project-1/goal:goal-1/work:W-1',
+    )
+
+    expect(exhausted).toMatchObject({ kind: 'attention_ensured' })
+    expect(attention?.attributes.id).toStartWith('A-')
+    expect(attention?.attributes.id).not.toContain('operational')
+    expect(attention?.body).toContain('3 consecutive operational failures')
+    expect(attention?.body).toContain('Runtime launch failed 3.')
+    expect(goalPackage.works.get('W-1')?.attributes.attempts).toBe(0)
+    expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['attention']) },
+    })
+  })
+
   test('cleans Reviewer residue and retries Reviewer without a Generator recovery', async () => {
     const fixture = await createFixture({
       reviewerOperationalWriteOnce: true,
@@ -552,23 +603,25 @@ async function createFixture(
   let runSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')
   const attempts = createRunAttemptStore(homeRoot, { now })
-  const reconciler = createProjectReconciler({
-    homeRoot,
-    projectId: 'project-1',
-    projectRoot: linked.integrationRoot,
-    primaryRepoId: linked.primaryRepoId,
-    projectRepos: linked.repos,
-    store,
-    publisher,
-    roleRunner: runner,
-    attempts,
-    checkpointTask: options.checkpointTask,
-    operationalRetryBaseMs: options.operationalRetryBaseMs,
-    onProjectBlocked: options.onProjectBlocked,
-    onReleaseUpdated: options.onReleaseUpdated,
-    now,
-    createRunId: () => `run-${++runSequence}`,
-  })
+  const createReconciler = () =>
+    createProjectReconciler({
+      homeRoot,
+      projectId: 'project-1',
+      projectRoot: linked.integrationRoot,
+      primaryRepoId: linked.primaryRepoId,
+      projectRepos: linked.repos,
+      store,
+      publisher,
+      roleRunner: runner,
+      attempts,
+      checkpointTask: options.checkpointTask,
+      operationalRetryBaseMs: options.operationalRetryBaseMs,
+      onProjectBlocked: options.onProjectBlocked,
+      onReleaseUpdated: options.onReleaseUpdated,
+      now,
+      createRunId: () => `run-${++runSequence}`,
+    })
+  const reconciler = createReconciler()
   return {
     homeRoot,
     repoRoot,
@@ -578,6 +631,7 @@ async function createFixture(
     store,
     runner,
     reconciler,
+    createReconciler,
     attempts,
   }
 }

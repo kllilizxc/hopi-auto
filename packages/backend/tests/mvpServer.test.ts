@@ -154,6 +154,58 @@ describe('MVP server', () => {
         body: { projectId: 'P-1', repoPath: repoRoot },
       }),
     ).toMatchObject({ projects: [{ projectId: 'P-1' }] })
+    const assistantSessionPath = join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')
+    await mkdir(join(assistantSessionPath, '..'), { recursive: true })
+    await Bun.write(
+      assistantSessionPath,
+      JSON.stringify({ version: 1, transport: 'codex', sessionId: 'old-codex-session' }),
+    )
+    expect(
+      await request(base, '/api/assistant/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'opencode',
+            model: 'anthropic/claude-sonnet-4-5',
+          },
+        },
+      }),
+    ).toMatchObject({
+      home: {
+        assistantCodingDefaults: {
+          transport: 'opencode',
+          model: 'anthropic/claude-sonnet-4-5',
+        },
+        assistantCodingDefaultsInherited: false,
+      },
+    })
+    expect(await Bun.file(assistantSessionPath).exists()).toBe(false)
+    await Bun.write(
+      assistantSessionPath,
+      JSON.stringify({ version: 1, transport: 'opencode', sessionId: 'opencode-session' }),
+    )
+    expect(
+      await request(base, '/api/assistant/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'opencode',
+            model: 'openai/gpt-5.4',
+          },
+        },
+      }),
+    ).toMatchObject({
+      home: {
+        assistantCodingDefaults: {
+          transport: 'opencode',
+          model: 'openai/gpt-5.4',
+        },
+      },
+    })
+    expect(await Bun.file(assistantSessionPath).json()).toMatchObject({
+      transport: 'opencode',
+      sessionId: 'opencode-session',
+    })
     expect(
       await request(base, '/api/projects/P-1/settings', {
         method: 'PATCH',

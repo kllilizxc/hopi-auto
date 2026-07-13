@@ -4395,6 +4395,17 @@ samp {
   gap: 24px;
 }
 
+.projects-side-column {
+  position: sticky;
+  top: 28px;
+  display: grid;
+  gap: 16px;
+}
+
+.projects-side-column .link-project-panel {
+  position: static;
+}
+
 .project-list-panel,
 .link-project-panel {
   padding: 24px;
@@ -4598,6 +4609,79 @@ samp {
   padding: 13px;
   background: color-mix(in srgb, var(--color-accent-500) 8%, transparent);
   box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 3.5%, transparent), var(--shadow-xs);
+}
+
+.assistant-settings-panel {
+  padding: 24px;
+}
+
+.assistant-settings-current {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  margin: 16px 0 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-neutral-775);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.assistant-settings-current small,
+.assistant-settings-form .app-select__label,
+.assistant-settings-form .app-field-label {
+  color: var(--color-neutral-450);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.assistant-settings-current strong {
+  overflow: hidden;
+  color: var(--color-neutral-150);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-settings-form {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+}
+
+.assistant-settings-form > .app-select,
+.assistant-settings-form > .app-text-field {
+  display: grid;
+  gap: 5px;
+}
+
+.assistant-settings-form input,
+.assistant-settings-form .app-select__trigger {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid var(--color-neutral-700);
+  border-radius: 8px;
+  background: var(--color-neutral-900);
+  color: var(--color-neutral-150);
+  font-size: 10px;
+}
+
+.assistant-settings-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  padding-top: 3px;
+}
+
+.assistant-settings-actions button {
+  min-height: 31px;
+  font-size: 10px;
 }
 
 .project-goal-list {
@@ -5319,6 +5403,7 @@ samp {
     grid-template-columns: 1fr;
   }
 
+  .projects-side-column,
   .link-project-panel {
     position: static;
   }
@@ -5524,7 +5609,8 @@ samp {
   }
 
   .project-model-form,
-  .project-repo-link-form {
+  .project-repo-link-form,
+  .assistant-settings-form {
     grid-template-columns: 1fr;
   }
 

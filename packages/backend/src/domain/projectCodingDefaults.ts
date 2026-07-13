@@ -25,6 +25,13 @@ export type ProjectCodingDefaults =
 
 const codingAgentTransportSchema = z.enum(CODING_AGENT_TRANSPORTS)
 export const codingReasoningEffortSchema = z.enum(CODING_REASONING_EFFORTS)
+export const providerQualifiedModelSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[^/\s]+\/[^/\s]+$/,
+    'OpenCode model must use provider/model format (for example, openai/gpt-5)',
+  )
 
 export const projectCodingDefaultsInputSchema = z
   .object({
@@ -33,6 +40,16 @@ export const projectCodingDefaultsInputSchema = z
     reasoningEffort: codingReasoningEffortSchema.optional(),
   })
   .strict()
+  .superRefine((input, context) => {
+    if (input.transport !== 'opencode' || !input.model?.trim()) return
+    const parsed = providerQualifiedModelSchema.safeParse(input.model)
+    if (parsed.success) return
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['model'],
+      message: parsed.error.issues[0]?.message ?? 'Invalid OpenCode model',
+    })
+  })
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.4'
 const DEFAULT_CODEX_REASONING_EFFORT: ProjectCodingReasoningEffort = 'xhigh'

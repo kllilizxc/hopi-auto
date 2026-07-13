@@ -110,7 +110,7 @@ if (mode !== 'reflection') {
     'hopi_handoff_to_main',
     {
       description:
-        'Submit one concise internal brief to the persistent speaking thread only when current state warrants a reply or HOPI action. End silently when no action is useful.',
+        'Submit one concise internal brief to the speaking Assistant only when current state warrants a reply or HOPI action. End silently when no action is useful.',
       inputSchema: assistantToolSchemas.hopi_handoff_to_main,
     },
     (args) => callTool('hopi_handoff_to_main', args),

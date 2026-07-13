@@ -24,12 +24,12 @@ afterEach(async () => {
 describe('Assistant Reflection', () => {
   test('establishes a baseline and hands useful state changes to the speaking thread', async () => {
     let digest = 'a'.repeat(64)
-    const seen: Array<{ mode: string | undefined; threadId: string | null }> = []
+    const seen: Array<{ mode: string | undefined; sessionId: string | null }> = []
     const fixture = await setup(
       () => ({ digest }),
       (tools) => ({
         async run(input, observer) {
-          seen.push({ mode: input.toolMode, threadId: input.threadId })
+          seen.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
           await observer?.onEvent?.({
             kind: 'transcript',
             transport: 'codex',
@@ -39,7 +39,7 @@ describe('Assistant Reflection', () => {
           await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
             brief: 'Work W-1 finished with a failure that needs main-thread assessment.',
           })
-          return { reply: 'Reflection complete.', threadId: 'disposable-thread' }
+          return { reply: 'Reflection complete.', session: codexSession('disposable-thread') }
         },
       }),
     )
@@ -57,7 +57,7 @@ describe('Assistant Reflection', () => {
       visibility: 'internal',
       status: 'pending',
     })
-    expect(seen).toEqual([{ mode: 'reflection', threadId: null }])
+    expect(seen).toEqual([{ mode: 'reflection', sessionId: null }])
     expect(await fixture.reflection.listRuns()).toMatchObject([
       {
         manifest: { status: 'completed', stateDigest: 'b'.repeat(64) },
@@ -75,7 +75,7 @@ describe('Assistant Reflection', () => {
       () => ({
         async run(input) {
           prompt = input.prompt
-          return { reply: 'No handoff.', threadId: 'reflection-delta' }
+          return { reply: 'No handoff.', session: codexSession('reflection-delta') }
         },
       }),
     )
@@ -145,7 +145,7 @@ describe('Assistant Reflection', () => {
               releaseFirst = resolve
             })
           }
-          return { reply: 'Handoff prepared.', threadId: `reflection-${calls}` }
+          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${calls}`) }
         },
       }),
     )
@@ -175,7 +175,7 @@ describe('Assistant Reflection', () => {
       () => ({
         async run() {
           calls += 1
-          return { reply: 'No handoff.', threadId: `reflection-${calls}` }
+          return { reply: 'No handoff.', session: codexSession(`reflection-${calls}`) }
         },
       }),
     )
@@ -204,7 +204,7 @@ describe('Assistant Reflection', () => {
         async run() {
           calls += 1
           if (calls <= 3) throw new Error('temporary model failure')
-          return { reply: 'Recovered.', threadId: `reflection-${calls}` }
+          return { reply: 'Recovered.', session: codexSession(`reflection-${calls}`) }
         },
       }),
       {
@@ -260,7 +260,7 @@ describe('Assistant Reflection', () => {
       }),
       () => ({
         async run() {
-          return { reply: 'No handoff.', threadId: 'reflection-no-handoff' }
+          return { reply: 'No handoff.', session: codexSession('reflection-no-handoff') }
         },
       }),
       { linkProject: true },
@@ -288,7 +288,7 @@ describe('Assistant Reflection', () => {
       () => ({
         async run() {
           calls += 1
-          return { reply: 'Assessed.', threadId: `reflection-${calls}` }
+          return { reply: 'Assessed.', session: codexSession(`reflection-${calls}`) }
         },
       }),
     )
@@ -423,4 +423,8 @@ async function git(cwd: string, args: string[]) {
   const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
   if (exitCode !== 0) throw new Error(stderr)
+}
+
+function codexSession(sessionId: string) {
+  return { transport: 'codex' as const, sessionId }
 }
