@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import { renderAttentionDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
@@ -9,6 +10,7 @@ import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-attention-e2e')
+const assistantTransports = ['codex', 'claude', 'opencode'] as const
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -20,7 +22,16 @@ afterEach(async () => {
 })
 
 describe('Reflection to operator Attention E2E', () => {
-  test('recovers an omitted handoff and projects Needs you only after the reply is durable', async () => {
+  test.each(assistantTransports)(
+    'recovers an omitted handoff through %s and projects Needs you only after the reply is durable',
+    goalAttentionScenario,
+  )
+  test.each(assistantTransports)(
+    'uses the same %s fallback and acknowledgement path for Workspace Attention',
+    workspaceAttentionScenario,
+  )
+
+  async function goalAttentionScenario(transport: AssistantTransport) {
     const repoRoot = join(temporaryRoot, 'repo')
     await initializeGitRepo(repoRoot)
     const homeRoot = join(temporaryRoot, 'home')
@@ -51,13 +62,13 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
-          return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
+          return { reply: 'No handoff.', session: vendorSession(transport, 'reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
         await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
         return {
           reply: 'Choose the release window: today or tomorrow?',
-          session: codexSession('assistant-e2e'),
+          session: vendorSession(transport, 'assistant-e2e'),
         }
       },
     }
@@ -98,9 +109,9 @@ describe('Reflection to operator Attention E2E', () => {
     }
     expect(project.goals[0]?.works[0]?.projection.primaryBadge).toBe('Needs you')
     expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
-  })
+  }
 
-  test('uses the same fallback and acknowledgement path for Workspace Attention', async () => {
+  async function workspaceAttentionScenario(transport: AssistantTransport) {
     const repoRoot = join(temporaryRoot, 'workspace-repo')
     await initializeGitRepo(repoRoot)
     const homeRoot = join(temporaryRoot, 'workspace-home')
@@ -114,13 +125,16 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
-          return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
+          return {
+            reply: 'No handoff.',
+            session: vendorSession(transport, 'workspace-reflection-e2e'),
+          }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
         await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
         return {
           reply: 'The Project checkout needs to be rebound before work can continue.',
-          session: codexSession('workspace-assistant-e2e'),
+          session: vendorSession(transport, 'workspace-assistant-e2e'),
         }
       },
     }
@@ -156,7 +170,7 @@ describe('Reflection to operator Attention E2E', () => {
     }
     expect(project.goals[0]?.works[0]?.projection.primaryBadge).toBe('Needs you')
     expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
-  })
+  }
 })
 
 async function initializeGitRepo(repoRoot: string) {
@@ -180,6 +194,6 @@ async function git(cwd: string, args: string[]) {
   return stdout.trim()
 }
 
-function codexSession(sessionId: string) {
-  return { transport: 'codex' as const, sessionId }
+function vendorSession(transport: AssistantTransport, sessionId: string) {
+  return { transport, sessionId }
 }
