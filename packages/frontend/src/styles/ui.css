@@ -19,6 +19,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
   background-clip: padding-box;
@@ -100,6 +101,7 @@
   min-width: var(--trigger-width);
   max-height: min(320px, var(--available-height));
   overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--overlay);
   box-shadow: var(--overlay-shadow);
@@ -147,7 +149,7 @@
 
 .app-select__option-copy small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: max(10px, 0.75em);
 }
 
 .app-disclosure__heading {
