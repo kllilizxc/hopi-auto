@@ -1,23 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../src/domain/canonicalDocuments'
-import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { PublicationCoordinator } from '../src/publication/publisher'
 import {
   type AttentionDeliveryMessage,
   createAssistantReplyDeliveryWorker,
-  createAttentionDeliveryWorker,
   createWebhookAttentionTransport,
 } from '../src/runtime/attentionDelivery'
-import { createGoalController } from '../src/runtime/goalController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
-import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
-import { createGoalPackageStore } from '../src/storage/goalPackageStore'
-import type { GoalPackageStore } from '../src/storage/goalPackageStore'
+import {
+  type AssistantWorkspaceStore,
+  createAssistantWorkspaceStore,
+} from '../src/storage/assistantWorkspaceStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'attention-delivery')
 
@@ -30,160 +24,90 @@ afterEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
 })
 
-describe('AttentionDeliveryWorker', () => {
+describe('Assistant reply delivery', () => {
   test('mirrors only a handled public speaking reply instead of raw Attention', async () => {
     const fixture = await setup()
     const event = await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-speaking',
       content: 'Internal board assessment.',
     })
-    await fixture.workspace.exposeEvent(event.attributes.id)
-    await fixture.workspace.handleEvent(event.attributes.id, {
-      reply: 'Please choose the release window.',
-      disposition: 'answered',
-    })
-    const worker = createAssistantReplyDeliveryWorker(fixture.workspace, {
-      send(message) {
-        fixture.messages.push(message)
-        return Promise.resolve()
-      },
-    })
-
-    expect(await worker.deliverOnce([])).toBe(1)
-    expect(fixture.messages).toEqual([
-      expect.objectContaining({
-        eventId: 'EV-speaking',
-        body: 'Please choose the release window.',
-      }),
-    ])
-    expect(
-      (await fixture.workspace.readEvent('EV-speaking'))?.attributes.webhookDeliveredAt,
-    ).not.toBeNull()
-    expect(await worker.deliverOnce([])).toBe(0)
-  })
-
-  test('notifies targeted Attention without resolving it', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous.' })
     await fixture.workspace.createAttention({
       attributes: {
         id: 'A-event',
-        target: `home:${fixture.homeId}/event:EV-1`,
+        target: `home:${fixture.homeId}/event:EV-speaking`,
         createdAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
         notifiedAt: null,
       },
-      body: '## Needs you\n\nChoose a Project.\n',
+      body: 'Internal Attention body.\n',
     })
-
-    expect(await fixture.worker.deliverOnce([])).toBe(1)
-    const attention = (await fixture.workspace.readWorkspace()).attentions.get('A-event')
-
-    expect(fixture.messages).toHaveLength(1)
-    expect(attention?.attributes.notifiedAt).toBe('2026-07-11T00:01:00.000Z')
-    expect(attention?.attributes.resolvedAt).toBeNull()
-  })
-
-  test('delivers completion only after Goal done and resolves it in the acknowledgement gate', async () => {
-    const fixture = await setup()
-    const store = fixture.goalStore
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Finish.' })
-    const workPath = store.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(store.paths.absolute(workPath)).text()
-    const work = parseWorkDocument(source)
-    work.attributes.stage = 'done'
-    const attention = {
-      attributes: {
-        id: 'A-complete',
-        target: null,
-        createdAt: '2026-07-11T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Complete\n\nEverything is delivered.\n',
-    }
-    await store.publishGoal('G-1', {
-      supportingWrites: [
-        {
-          path: store.paths.attentionDocument('G-1', 'A-complete'),
-          expectedHash: null,
-          content: renderAttentionDocument(attention),
-        },
-      ],
-      gateWrite: {
-        path: workPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(work),
-      },
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'Please choose the release window.',
+      disposition: 'answered',
+      expose: true,
     })
+    const worker = createAssistantReplyDeliveryWorker(fixture.workspace, fixture.transport)
 
-    expect(await fixture.worker.deliverOnce([{ projectId: 'P-1', store }])).toBe(0)
-    await createGoalController(store, { verifyCompletion: () => true }).completeGoal(
-      'G-1',
-      'A-complete',
-    )
-    expect(await fixture.worker.deliverOnce([{ projectId: 'P-1', store }])).toBe(1)
-    const delivered = (await store.readPackage('G-1')).attentions.get('A-complete')
-
-    expect(delivered?.attributes.notifiedAt).toBe('2026-07-11T00:01:00.000Z')
-    expect(delivered?.attributes.resolvedAt).toBe('2026-07-11T00:01:00.000Z')
-  })
-
-  test('retries with the same canonical delivery key after acknowledgement publication is lost', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous.' })
-    await fixture.workspace.createAttention({
-      attributes: {
-        id: 'A-retry',
-        target: `home:${fixture.homeId}/event:EV-1`,
-        createdAt: '2026-07-11T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Needs you\n\nChoose.\n',
-    })
-    let fail = true
-    const worker = createAttentionDeliveryWorker(
-      fixture.workspace,
-      { send: async (message) => void fixture.messages.push(message) },
+    expect(await worker.deliverOnce()).toBe(1)
+    expect(fixture.messages).toEqual([
       {
-        now: () => new Date('2026-07-11T00:01:00Z'),
-        beforeAcknowledgement() {
-          if (!fail) return
-          fail = false
-          throw new Error('stopped after transport acknowledgement')
-        },
+        key: `${fixture.homeId}/EV-speaking`,
+        eventId: 'EV-speaking',
+        body: 'Please choose the release window.',
       },
-    )
+    ])
+    const state = await fixture.workspace.readWorkspace()
+    expect(state.events.get('EV-speaking')?.attributes.webhookDeliveredAt).not.toBeNull()
+    expect(state.attentions.get('A-event')?.attributes.notifiedAt).toBeNull()
+    expect(await worker.deliverOnce()).toBe(0)
+  })
 
-    await expect(worker.deliverOnce([])).rejects.toThrow('stopped')
-    expect(await worker.deliverOnce([])).toBe(1)
+  test('does not mirror ordinary public user replies', async () => {
+    const fixture = await setup()
+    const event = await fixture.workspace.receiveEvent({ eventId: 'EV-user', content: 'Hi.' })
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'Hello.',
+      disposition: 'answered',
+    })
 
+    const worker = createAssistantReplyDeliveryWorker(fixture.workspace, fixture.transport)
+
+    expect(await worker.deliverOnce()).toBe(0)
+    expect(fixture.messages).toEqual([])
+  })
+
+  test('retries the same Home/event key when webhook acknowledgement publication is lost', async () => {
+    const fixture = await setupHandledReflection()
+    let loseAcknowledgement = true
+    const workspace: AssistantWorkspaceStore = {
+      ...fixture.workspace,
+      async markEventWebhookDelivered(eventId, deliveredAt) {
+        if (loseAcknowledgement) {
+          loseAcknowledgement = false
+          throw new Error('stopped after transport acknowledgement')
+        }
+        return fixture.workspace.markEventWebhookDelivered(eventId, deliveredAt)
+      },
+    }
+    const worker = createAssistantReplyDeliveryWorker(workspace, fixture.transport)
+
+    await expect(worker.deliverOnce()).rejects.toThrow('stopped after transport acknowledgement')
+    expect(await worker.deliverOnce()).toBe(1)
     expect(fixture.messages.map((message) => message.key)).toEqual([
-      `${fixture.homeId}/A-retry`,
-      `${fixture.homeId}/A-retry`,
+      `${fixture.homeId}/EV-speaking`,
+      `${fixture.homeId}/EV-speaking`,
     ])
   })
 
-  test('backs off transport failures without blocking later reconciliation ticks', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous.' })
-    await fixture.workspace.createAttention({
-      attributes: {
-        id: 'A-backoff',
-        target: `home:${fixture.homeId}/event:EV-1`,
-        createdAt: '2026-07-11T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Needs you\n\nChoose.\n',
-    })
+  test('backs off transport failures without blocking reconciliation ticks', async () => {
+    const fixture = await setupHandledReflection()
     let currentTime = Date.parse('2026-07-11T00:00:00Z')
     let sends = 0
-    const worker = createAttentionDeliveryWorker(
+    const worker = createAssistantReplyDeliveryWorker(
       fixture.workspace,
       {
-        async send() {
+        async send(message) {
+          fixture.messages.push(message)
           sends += 1
           if (sends === 1) throw new Error('offline')
         },
@@ -191,15 +115,15 @@ describe('AttentionDeliveryWorker', () => {
       { now: () => new Date(currentTime), retryBaseMs: 1_000, retryMaxMs: 2_000 },
     )
 
-    expect(await worker.deliverOnce([])).toBe(0)
-    expect(await worker.deliverOnce([])).toBe(0)
+    expect(await worker.deliverOnce()).toBe(0)
+    expect(await worker.deliverOnce()).toBe(0)
     expect(sends).toBe(1)
     currentTime += 1_000
-    expect(await worker.deliverOnce([])).toBe(1)
+    expect(await worker.deliverOnce()).toBe(1)
     expect(sends).toBe(2)
   })
 
-  test('posts one provider-neutral webhook payload with the canonical idempotency key', async () => {
+  test('posts one provider-neutral webhook payload with the Inbox idempotency key', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const transport = createWebhookAttentionTransport(
       'https://notify.example.test/hopi',
@@ -209,10 +133,9 @@ describe('AttentionDeliveryWorker', () => {
       },
     )
     const message: AttentionDeliveryMessage = {
-      key: 'H-1/A-1',
-      target: 'project:P-1',
-      body: '## Needs you\n\nRepair the Repo.\n',
-      attentionId: 'A-1',
+      key: 'H-1/EV-1',
+      eventId: 'EV-1',
+      body: 'Please repair the Repo.',
     }
 
     await transport.send(message)
@@ -222,67 +145,32 @@ describe('AttentionDeliveryWorker', () => {
     expect(new Headers(requests[0]?.init?.headers).get('idempotency-key')).toBe(message.key)
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual(message)
   })
-
-  test('keeps workspace notification delivery independent from an unreadable Project', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous.' })
-    await fixture.workspace.createAttention({
-      attributes: {
-        id: 'A-event',
-        target: `home:${fixture.homeId}/event:EV-1`,
-        createdAt: '2026-07-11T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Needs you\n\nChoose.\n',
-    })
-    const unreadable = {
-      listGoalIds: async () => {
-        throw new Error('invalid Project root')
-      },
-    } as unknown as GoalPackageStore
-
-    expect(await fixture.worker.deliverOnce([{ projectId: 'P-broken', store: unreadable }])).toBe(1)
-    expect(fixture.messages).toHaveLength(1)
-  })
 })
 
+async function setupHandledReflection() {
+  const fixture = await setup()
+  const event = await fixture.workspace.receiveReflectionEvent({
+    eventId: 'EV-speaking',
+    content: 'Internal assessment.',
+  })
+  await fixture.workspace.handleEvent(event.attributes.id, {
+    reply: 'The operator-facing result.',
+    disposition: 'answered',
+    expose: true,
+  })
+  return fixture
+}
+
 async function setup() {
-  const homeRoot = join(temporaryRoot, 'home')
-  const repoRoot = join(temporaryRoot, 'repo')
-  await mkdir(repoRoot, { recursive: true })
-  await git(repoRoot, ['init', '-b', 'main'])
-  await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
-  await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
-  await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
-  await git(repoRoot, ['add', '.'])
-  await git(repoRoot, ['commit', '-m', 'initial'])
+  const homeRoot = join(temporaryRoot, crypto.randomUUID())
   const home = createAssistantHomeStore(homeRoot)
   const homeDocument = await home.initialize()
-  const project = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
-  const publisher = new PublicationCoordinator()
-  const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-  const goalStore = createGoalPackageStore(project.integrationRoot, 'P-1', publisher)
+  const workspace = createAssistantWorkspaceStore(homeRoot, new PublicationCoordinator())
   const messages: AttentionDeliveryMessage[] = []
   return {
     homeId: homeDocument.homeId,
     workspace,
-    goalStore,
     messages,
-    worker: createAttentionDeliveryWorker(
-      workspace,
-      { send: async (message) => void messages.push(message) },
-      { now: () => new Date('2026-07-11T00:01:00Z') },
-    ),
+    transport: { send: async (message: AttentionDeliveryMessage) => void messages.push(message) },
   }
-}
-
-async function git(cwd: string, args: string[]) {
-  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ])
-  if (exitCode !== 0) throw new Error(stderr || stdout)
 }

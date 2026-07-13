@@ -32,6 +32,12 @@ import {
   WorkingIndicator,
 } from '../components/ui'
 import {
+  type GoalControl,
+  type KanbanColumn,
+  type RunAttemptDetail,
+  type RunAttemptEvent,
+  type RunAttemptSummary,
+  type WorkView,
   controlGoal,
   readGoal,
   readState,
@@ -41,12 +47,6 @@ import {
   requestPreviewRepair,
   startPreview,
   stopPreview,
-  type GoalControl,
-  type KanbanColumn,
-  type RunAttemptDetail,
-  type RunAttemptEvent,
-  type RunAttemptSummary,
-  type WorkView,
 } from '../lib/api'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
@@ -158,10 +158,17 @@ export function BoardView() {
     )
   }
 
-  const assistantAttention = goal.attentions.find(
+  const openAssistantAttentions = goal.attentions.filter(
     (attention) => attention.target !== null && attention.resolvedAt === null,
   )
+  const assistantAttention =
+    openAssistantAttentions.find((attention) => attention.notifiedAt !== null) ??
+    openAssistantAttentions[0]
+  const assistantAttentionLabel = assistantAttention?.notifiedAt
+    ? 'Needs you'
+    : 'Waiting for Assistant'
   const focus =
+    goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
     goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
     goal.works.find((work) => work.projection.primaryBadge === 'working') ??
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
@@ -264,7 +271,9 @@ export function BoardView() {
         </div>
       </header>
 
-      {error && <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>}
+      {error && (
+        <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>
+      )}
 
       <section className="goal-focus-strip">
         <div>
@@ -274,11 +283,13 @@ export function BoardView() {
         <div>
           <small>Current focus</small>
           <strong>
-            {assistantAttention ? 'Waiting for Assistant' : (focus?.title ?? goal.goal.lifecycle)}
+            {assistantAttention ? assistantAttentionLabel : (focus?.title ?? goal.goal.lifecycle)}
           </strong>
           <p>
             {assistantAttention
-              ? 'Assistant is consolidating the blocked work and will ask only if your input is required.'
+              ? assistantAttention.notifiedAt
+                ? 'Your decision is needed. Open Assistant to reply.'
+                : 'Assistant is diagnosing the blocker and will contact you only if needed.'
               : (focus?.projection.primaryBadge ?? 'No pending Work')}
           </p>
         </div>
@@ -297,8 +308,12 @@ export function BoardView() {
             <AlertCircle />
           </span>
           <span>
-            <strong>Waiting for Assistant</strong>
-            <small>Assistant is reviewing the internal Attention before deciding whether to act or ask you.</small>
+            <strong>{assistantAttentionLabel}</strong>
+            <small>
+              {assistantAttention.notifiedAt
+                ? 'Reply in Assistant so work can continue.'
+                : 'Assistant is reviewing the issue before deciding whether you need to act.'}
+            </small>
           </span>
         </div>
       )}
@@ -376,15 +391,12 @@ export function BoardView() {
           </IconButton>
         </aside>
       )}
-      {mutationError && <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>}
+      {mutationError && (
+        <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>
+      )}
 
       {selectedWork && (
-        <WorkDetail
-          projectId={projectId}
-          goalId={goalId}
-          work={selectedWork}
-          onClose={closeWork}
-        />
+        <WorkDetail projectId={projectId} goalId={goalId} work={selectedWork} onClose={closeWork} />
       )}
     </div>
   )
@@ -405,7 +417,10 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
       <div className="work-card-top">
         <span>{work.id}</span>
         {badge && (
-          <StatusChip className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`} size="sm">
+          <StatusChip
+            className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`}
+            size="sm"
+          >
             {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
           </StatusChip>
         )}
@@ -414,7 +429,9 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
       <p>{excerpt(work.body)}</p>
       {work.repos && work.repos.length > 0 && (
         <div className="work-repos" aria-label="Repositories">
-          {work.repos.map((repoId) => <span key={repoId}>{repoId}</span>)}
+          {work.repos.map((repoId) => (
+            <span key={repoId}>{repoId}</span>
+          ))}
         </div>
       )}
       <div className="work-card-foot">
@@ -495,10 +512,7 @@ function WorkDetail({
                       </AppTabs.Tab>
                     </AppTabs.List>
                   </AppTabs.ListContainer>
-                  <AppModal.CloseTrigger
-                    className="icon-button"
-                    aria-label="Close Work detail"
-                  >
+                  <AppModal.CloseTrigger className="icon-button" aria-label="Close Work detail">
                     <X />
                   </AppModal.CloseTrigger>
                 </div>
@@ -592,7 +606,9 @@ function WorkContract({
           <h2>Depends on</h2>
           <div className="chip-list">
             {work.dependsOn.map((item) => (
-              <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>
+              <StatusChip key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
             ))}
           </div>
         </section>
@@ -602,7 +618,9 @@ function WorkContract({
           <h2>Waiting predicates</h2>
           <div className="chip-list warning">
             {work.projection.failedPredicates.map((item) => (
-              <StatusChip color="warning" key={item} size="sm" variant="soft">{item}</StatusChip>
+              <StatusChip color="warning" key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
             ))}
           </div>
         </section>
@@ -611,7 +629,11 @@ function WorkContract({
         <h2>Evidence</h2>
         <div className="chip-list">
           {work.evidenceRefs.length ? (
-            work.evidenceRefs.map((item) => <StatusChip key={item} size="sm" variant="soft">{item}</StatusChip>)
+            work.evidenceRefs.map((item) => (
+              <StatusChip key={item} size="sm" variant="soft">
+                {item}
+              </StatusChip>
+            ))
           ) : (
             <small>No Evidence yet</small>
           )}
@@ -727,21 +749,9 @@ function AttemptHistory({
 }) {
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: selectedAttempt?.runId ?? 'no-attempt',
-    queryKey: [
-      'work-attempt-events',
-      projectId,
-      goalId,
-      workId,
-      selectedAttempt?.runId ?? null,
-    ],
+    queryKey: ['work-attempt-events', projectId, goalId, workId, selectedAttempt?.runId ?? null],
     readPage: (input) =>
-      readWorkAttemptEvents(
-        projectId,
-        goalId,
-        workId,
-        selectedAttempt?.runId ?? '',
-        input,
-      ),
+      readWorkAttemptEvents(projectId, goalId, workId, selectedAttempt?.runId ?? '', input),
     getItemId: runEventId,
     compareItems: compareRunEvents,
     enabled: Boolean(selectedAttempt),

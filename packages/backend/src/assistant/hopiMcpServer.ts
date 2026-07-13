@@ -99,7 +99,7 @@ if (mode !== 'reflection') {
       'hopi_notify_user',
       {
         description:
-          'Expose the final reply for the current internal Reflection turn only when the operator should learn a useful outcome or take action. Keep that reply focused on the outcome and action; omit internal IDs and process unless needed. Do not call when HOPI can continue silently.',
+          'Request that the final reply for this internal Reflection turn be shown after the turn completes. Call only when the operator should learn a useful outcome or take action. Keep the reply focused on the outcome and action; omit internal IDs and process unless needed. Do not call when HOPI can continue silently.',
         inputSchema: assistantToolSchemas.hopi_notify_user,
       },
       (args) => callTool('hopi_notify_user', args),

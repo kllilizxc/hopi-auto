@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This document owns the workspace Assistant conversation, its Codex session, HOPI tool boundary,
 turn recovery, and UI behavior. Canonical schemas belong to
@@ -87,13 +87,18 @@ snapshot. Reflection follows one small protocol:
    immediate rule also applies to the first snapshot after process startup; only a non-urgent first
    snapshot establishes the silent baseline.
 3. At most one Reflection runs per Home. Changes coalesce through the current digest instead of
-   forming an event queue. A failed Run never marks its digest assessed and retries with backoff.
+   forming an event queue. A failed Run never marks its digest assessed and retries with
+   per-digest exponential backoff up to one fixed attempt ceiling. An exhausted digest waits for a
+   semantic change rather than consuming calls forever.
 4. Reflection first decides from the supplied trigger and delta. It may reread bounded scoped HOPI
    state and follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does
    not scan the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
-5. If no response or action is useful, it ends silently. Otherwise it may prepare one concise
-   internal brief. Coordinator publishes that brief only after confirming the observed digest is
-   still current; it does not accept an `actions[]` plan.
+5. If no response or action is useful, it ends silently. Unnotified Attention is the one exception:
+   it already declares that Assistant management is required, so Coordinator creates one internal
+   fallback brief when the model omitted handoff and attaches exact canonical Attention references from the current
+   snapshot. Otherwise Reflection may prepare one concise internal brief. Coordinator publishes a
+   brief only after confirming the observed digest is still current; it does not accept an
+   `actions[]` plan.
 6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
    persistent speaking thread used for user turns rereads current state and
    decides whether to call normal HOPI tools, remain silent, or explicitly expose a final reply
@@ -112,8 +117,8 @@ turn, which remains pending and is revalidated later, but it never interrupts th
 Reflection Run. A user effect that changes canonical state invalidates the Reflection snapshot; the
 finished stale result is discarded before any internal Inbox publication.
 
-One eligible state digest is assessed at most once unless a user interruption invalidates that
-assessment. A digest deferred while automatic work is progressing is not assessed and may become
+One eligible state digest is assessed at most once after a successful model Run. A digest deferred
+while automatic work is progressing is not assessed and may become
 eligible unchanged when the system reaches a settled boundary.
 Internal handoffs are bounded; if repeated handoff-and-action cycles do not converge, HOPI creates
 event-target Attention rather than recursively waking itself forever.
@@ -236,7 +241,8 @@ publisher remain authoritative.
 The initial thread instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Subsequent user messages use normal
 Codex session resume. A public turn's final Codex answer is the operator-facing reply; an internal
-turn's answer remains hidden unless `notify_user` promoted that turn while it was pending.
+turn's answer remains hidden unless that Run requested delivery with `notify_user` and Coordinator
+published the complete handled reply.
 
 Before admission, Assistant asks only when the requested outcome, target Project/Goal, or operator
 intent is materially unclear. Once an instruction is clear enough to admit, Assistant calls the
@@ -258,7 +264,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Control Work | Retry, cancel, or change `notBefore` | Validated Work documents |
 | Resolve Attention | Record an operator answer after any required Goal/Work effects | Goal Input and Attention resolution |
 | Control Preview | Start, stop, or request repair of Preview | Runtime process, or ordinary Planning request for repair |
-| Notify operator | Expose the current internal Reflection turn's final speaking-thread reply | Inbox visibility only |
+| Notify operator | Request exposure of the current internal Reflection turn after its final reply exists | Handled public Inbox reply, then Attention `notifiedAt` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
@@ -279,7 +285,7 @@ Goal delivery and other HOPI effects are asynchronous after admission. Once a mu
 that the requested effect is accepted, the Assistant replies to the current user immediately from
 that result. It does not sleep, poll state, or wait for Planner, Generator, Reviewer, C1, Preview, or
 Reflection in the same speaking turn. Later completion, blocking, or decision-worthy state is
-reported through the existing interruptible Reflection path. This keeps one rule for every
+reported through the existing read-only Reflection path. This keeps one rule for every
 long-running effect and avoids a second progress-watching workflow inside conversation.
 
 `Write design` addresses files relative to the selected Goal's `design/` root. If Codex repeats that
@@ -301,16 +307,20 @@ capability.
 
 Reflection receives a narrower MCP capability containing only state read and `handoff_to_main`.
 `handoff_to_main` may create one internal Inbox turn and has no Project or Goal effect. The speaking
-thread receives the ordinary tool surface plus `notify_user`, which may only promote its current
-Reflection-sourced turn from internal to public. Capability mode is server-owned and cannot be
-selected by the model.
+thread receives the ordinary tool surface plus `notify_user`, which may only request final exposure
+of its current Reflection-sourced turn. Capability mode is server-owned and cannot be selected by
+the model.
 
-When a Reflection brief exists specifically to deliver one Goal-local Attention, its ordinary Inbox
-context includes that `attentionId`. `notify_user` first exposes the durable pending turn, then uses
-the existing canonical Attention delivery key to acknowledge that same notification. Targeted
-Attention remains open; completion Attention is notified and resolved. A brief without this exact
-link may still be exposed but cannot claim an Attention delivery. This reuses Inbox context and
-`notifiedAt` instead of adding a notification-deduplication record or parsing the brief text.
+When a Reflection brief exists specifically to deliver Attention, Coordinator augments its ordinary
+Inbox context with every exact unnotified canonical reference selected from the immutable snapshot.
+Goal-local and workspace Attention use the same mechanism; the model does not own identity copying.
+`notify_user` records only Run-local intent. After the speaking model returns, Coordinator exposes
+and handles the complete reply before publishing `notifiedAt` for each still-current reference.
+Recovery of an already handled public Reflection turn finishes any missing acknowledgement.
+Targeted Attention remains open; completion Attention is notified and resolved. The optional webhook
+then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It
+does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
+documents instead of adding a notification ledger or parsing brief text.
 
 ## Tool Safety And Recovery
 

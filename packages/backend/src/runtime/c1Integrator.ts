@@ -852,11 +852,10 @@ async function materializeCommit(projectRoot: string, oldTarget: string, commit:
 }
 
 async function validateMaterializedCommit(projectRoot: string, commit: string) {
-  const [head, indexTree, status] = await Promise.all([
-    git(projectRoot, ['rev-parse', 'HEAD']),
-    git(projectRoot, ['write-tree']),
-    git(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
-  ])
+  // Both write-tree and status may refresh and lock this worktree's index.
+  const head = await git(projectRoot, ['rev-parse', 'HEAD'])
+  const indexTree = await git(projectRoot, ['write-tree'])
+  const status = await git(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all'])
   const commitTree = await git(projectRoot, ['show', '-s', '--format=%T', commit])
   if (head !== commit || indexTree !== commitTree || status) {
     throw new C1IntegrationError(

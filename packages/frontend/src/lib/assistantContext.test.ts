@@ -21,7 +21,11 @@ describe('Assistant automatic context', () => {
           id: 'A-1',
         }),
       ),
-    ).toEqual({ projectId: 'P-2', goalId: 'G-attention', attentionId: 'A-1' })
+    ).toEqual({
+      projectId: 'P-2',
+      goalId: 'G-attention',
+      attentionRefs: ['project:P-2/goal:G-attention/attention:A-1'],
+    })
   })
 
   test('keeps a Workspace Attention at Workspace scope', () => {
@@ -29,8 +33,10 @@ describe('Assistant automatic context', () => {
       resolveAssistantInboxContext(
         { projectId: 'P-1', goalId: 'G-current' },
         attention({ scope: 'workspace', id: 'A-workspace' }),
+        [],
+        'H-1',
       ),
-    ).toBeUndefined()
+    ).toEqual({ attentionRefs: ['home:H-1/attention:A-workspace'] })
   })
 
   test('uses Workspace scope when no Goal page is selected', () => {
@@ -46,7 +52,10 @@ describe('Assistant automatic context', () => {
     ).toEqual({
       projectId: 'P-1',
       goalId: 'G-current',
-      attentionRefs: ['A-1', 'A-2'],
+      attentionRefs: [
+        'project:P-1/goal:G-current/attention:A-1',
+        'project:P-1/goal:G-current/attention:A-2',
+      ],
     })
   })
 })

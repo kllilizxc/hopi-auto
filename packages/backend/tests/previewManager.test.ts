@@ -118,6 +118,60 @@ describe('PreviewManager', () => {
     expect(await Bun.file(launchLog).exists()).toBe(false)
   })
 
+  test('serializes a new Start behind preparation that was already stopped', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const launchLog = await writeCountingFailureAdapter(projectRoot)
+    const controlled = createControlledPreparer()
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      preparer: controlled.preparer,
+    })
+
+    const first = manager.start({ projectId: 'P-1', projectRoot })
+    await controlled.entered
+    await manager.stop('P-1', 'release_updated')
+    const second = manager.start({ projectId: 'P-1', projectRoot })
+
+    expect(controlled.calls).toBe(1)
+    controlled.release()
+    const [firstResult, secondResult] = await Promise.all([first, second])
+
+    expect(firstResult).toMatchObject({ kind: 'started', session: { status: 'stopped' } })
+    expect(secondResult).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(controlled.calls).toBe(2)
+    expect(await Bun.file(launchLog).text()).toBe('started\n')
+  })
+
+  test('closes an unexpected preparation error and allows a later Start', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    await writeCountingFailureAdapter(projectRoot)
+    let calls = 0
+    const preparer: ProjectPreparer = {
+      async prepare(input) {
+        calls += 1
+        if (calls === 1) throw new Error('package manager crashed')
+        return {
+          kind: 'ready',
+          adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
+          exitCode: 0,
+          logs: '',
+          logPath: join(input.runtimeDir, 'prepare.log'),
+        }
+      },
+    }
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), { preparer })
+
+    const failed = await manager.start({ projectId: 'P-1', projectRoot })
+    expect(failed).toMatchObject({ kind: 'repair_required', reason: 'preparation_failed' })
+    expect(manager.inspect('P-1')).toMatchObject({
+      status: 'failed',
+      error: 'Unexpected Preview preparation failure: package manager crashed',
+    })
+
+    const retried = await manager.start({ projectId: 'P-1', projectRoot })
+    expect(retried).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(calls).toBe(2)
+  })
+
   test('stopAll waits for blocked Project preparation to settle', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)

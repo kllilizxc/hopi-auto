@@ -4,6 +4,7 @@ import type { GoalPackage } from './goalPackage'
 
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
 export type WorkPrimaryBadge =
+  | 'Needs you'
   | 'Waiting for Assistant'
   | 'working'
   | 'scheduled'
@@ -30,6 +31,7 @@ export interface WorkRuntimeFacts {
   liveRunWorkIds: ReadonlySet<string>
   passCapacity: Partial<Record<'planner' | 'generator' | 'reviewer', boolean>>
   projectAttentionOpen?: boolean
+  projectAttentionNotified?: boolean
   operationallyDeferredWorkIds?: ReadonlySet<string>
   now?: Date
   maxAttempts?: number
@@ -106,9 +108,11 @@ export function deriveWorkProjection(
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
   if (work.attempts >= maxAttempts) failedPredicates.push('attempts_exhausted')
-  const needsAttention =
-    runtime.projectAttentionOpen === true ||
-    hasCoveringAttention(projectId, goalId, work.id, goalPackage)
+  const coveringAttention = findCoveringAttention(projectId, goalId, work.id, goalPackage)
+  const needsAttention = runtime.projectAttentionOpen === true || Boolean(coveringAttention)
+  const attentionNotified = runtime.projectAttentionOpen
+    ? runtime.projectAttentionNotified === true
+    : Boolean(coveringAttention?.attributes.notifiedAt)
   if (needsAttention) failedPredicates.push('attention')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
@@ -130,7 +134,9 @@ export function deriveWorkProjection(
     primaryBadge: terminal
       ? null
       : needsAttention
-        ? 'Waiting for Assistant'
+        ? attentionNotified
+          ? 'Needs you'
+          : 'Waiting for Assistant'
         : working
           ? 'working'
           : scheduled
@@ -142,7 +148,7 @@ export function deriveWorkProjection(
   }
 }
 
-function hasCoveringAttention(
+function findCoveringAttention(
   projectId: string,
   goalId: string,
   workId: string,
@@ -150,11 +156,12 @@ function hasCoveringAttention(
 ) {
   const goalTarget = `project:${projectId}/goal:${goalId}`
   const workTarget = `${goalTarget}/work:${workId}`
-  return [...goalPackage.attentions.values()].some(
+  const covering = [...goalPackage.attentions.values()].filter(
     (attention) =>
       attention.attributes.resolvedAt === null &&
       (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
   )
+  return covering.find((attention) => attention.attributes.notifiedAt !== null) ?? covering[0]
 }
 
 function kanbanColumn(work: WorkAttributes): KanbanColumn | null {

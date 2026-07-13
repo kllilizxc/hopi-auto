@@ -35,12 +35,16 @@ describe('derived Work projection', () => {
     const goalPackage = packageWith(
       [
         work('W-attention', 'engineering', 'generate', { notBefore: scheduledAt }),
+        work('W-needs-you', 'engineering', 'generate', { notBefore: scheduledAt }),
         work('W-working', 'engineering', 'generate', { notBefore: scheduledAt }),
         work('W-scheduled', 'engineering', 'generate', { notBefore: scheduledAt }),
         work('W-queued', 'engineering', 'generate'),
         work('W-waiting', 'engineering', 'generate', { dependsOn: ['W-scheduled'] }),
       ],
-      [attention('A-1', 'project:Project-1/goal:G-1/work:W-attention')],
+      [
+        attention('A-1', 'project:Project-1/goal:G-1/work:W-attention'),
+        attention('A-2', 'project:Project-1/goal:G-1/work:W-needs-you', '2026-07-11T01:00:00Z'),
+      ],
     )
 
     const projections = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
@@ -52,6 +56,7 @@ describe('derived Work projection', () => {
     expect(Object.fromEntries(projections.map((item) => [item.workId, item.primaryBadge]))).toEqual(
       {
         'W-attention': 'Waiting for Assistant',
+        'W-needs-you': 'Needs you',
         'W-working': 'working',
         'W-scheduled': 'scheduled',
         'W-queued': 'queued',
@@ -89,6 +94,18 @@ describe('derived Work projection', () => {
         'capacity',
       ]),
     })
+  })
+
+  test('prioritizes a notified covering Attention over file order', () => {
+    const target = 'project:Project-1/goal:G-1/work:W-1'
+    const goalPackage = packageWith(
+      [work('W-1', 'engineering', 'generate')],
+      [attention('A-waiting', target), attention('A-needs', target, '2026-07-11T01:00:00Z')],
+    )
+
+    expect(
+      deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]?.primaryBadge,
+    ).toBe('Needs you')
   })
 
   test('queues Planning behind already admitted same-Goal Engineering', () => {
@@ -208,14 +225,18 @@ function work(
       }
 }
 
-function attention(id: string, target: string): AttentionDocument {
+function attention(
+  id: string,
+  target: string,
+  notifiedAt: string | null = null,
+): AttentionDocument {
   return {
     attributes: {
       id,
       target,
       createdAt: '2026-07-11T00:00:00Z',
       resolvedAt: null,
-      notifiedAt: null,
+      notifiedAt,
     },
     body: 'Needs you.\n',
   }

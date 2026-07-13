@@ -100,6 +100,14 @@ export async function resolveConfiguredTransportCommand(options: {
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
 }): Promise<TransportCommand> {
+  if ((options.bundle.imageFiles?.length ?? 0) > 0) {
+    const transport = 'cmd' in options.config ? 'process' : options.config.transport
+    if (transport !== 'codex') {
+      throw new Error(
+        `${transport} responsibility transport does not support HOPI image inputs; use Codex or remove the image references`,
+      )
+    }
+  }
   const env = buildTransportEnv(options.bundle, options.input)
 
   if ('cmd' in options.config) {

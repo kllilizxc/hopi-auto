@@ -4,6 +4,7 @@ import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import type { RoleTransportConfig } from '../agent/vendorTransport'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
+import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { AssistantConversationStore } from './assistantConversationStore'
 import type { AssistantTools } from './assistantTools'
@@ -38,6 +39,7 @@ export interface AssistantModelRunner {
 
 export interface WorkspaceAssistant {
   process(eventId: string, signal?: AbortSignal): Promise<WorkspaceAssistantResult>
+  finalizeNotifications?(): Promise<number>
 }
 
 export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
@@ -51,17 +53,17 @@ export function createConfiguredAssistantModelRunner(options: {
   return {
     async run(input, observer) {
       const config = await options.resolveConfig()
+      if ('cmd' in config || config.transport !== 'codex') {
+        throw new WorkspaceAssistantError(
+          'Workspace Assistant requires Codex transport for persistent conversation and image input',
+        )
+      }
       await mkdir(input.cwd, { recursive: true })
       await rm(input.lastMessageFile, { force: true })
 
-      await prepareAssistantWorkspace(config, {
-        ...input,
-        toolUrl: options.resolveToolUrl(),
-      })
-
       if (input.signal?.aborted)
         throw new WorkspaceAssistantError('Assistant model run interrupted')
-      const command = buildAssistantCommand(config, {
+      const command = assistantCodexCommand(config, {
         ...input,
         toolUrl: options.resolveToolUrl(),
       })
@@ -81,11 +83,10 @@ export function createConfiguredAssistantModelRunner(options: {
 
       let observedThreadId = input.threadId
       const stderr: string[] = []
-      let finalReply = ''
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
-        if (stream === 'stdout' && config.transport === 'codex') {
+        if (stream === 'stdout') {
           const threadId = codexThreadId(line)
           if (threadId) {
             observedThreadId = threadId
@@ -95,22 +96,12 @@ export function createConfiguredAssistantModelRunner(options: {
           stderr.push(line)
         }
 
-        const transcriptFormat =
-          config.transport === 'claude'
-            ? 'claude_stream_json'
-            : config.transport === 'opencode'
-              ? 'opencode_json'
-              : 'codex_jsonl'
-
         for (const event of normalizeProcessOutputLine({
-          format: transcriptFormat,
+          format: 'codex_jsonl',
           stream,
           role: 'assistant',
           line,
         })) {
-          if (event.kind === 'transcript' && event.entryKind === 'assistant') {
-            finalReply += (finalReply ? '\n' : '') + event.summary
-          }
           await observer?.onEvent?.(event)
         }
       }
@@ -134,30 +125,20 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new WorkspaceAssistantError('Assistant model run interrupted')
       if (exitCode !== 0) {
         throw new WorkspaceAssistantError(
-          `${config.transport} conversation exited with code ${exitCode}: ${stderr.at(-1) ?? 'no error detail'}`,
+          `Codex conversation exited with code ${exitCode}: ${stderr.at(-1) ?? 'no error detail'}`,
         )
       }
 
-      if (config.transport === 'codex') {
-        if (!observedThreadId) {
-          throw new WorkspaceAssistantError('Codex did not report a conversation thread ID')
-        }
-      } else {
-        if (!observedThreadId) {
-          observedThreadId = `thread-${Date.now()}`
-        }
-        await Bun.write(input.lastMessageFile, finalReply)
+      if (!observedThreadId) {
+        throw new WorkspaceAssistantError('Codex did not report a conversation thread ID')
       }
 
       const file = Bun.file(input.lastMessageFile)
       if (!(await file.exists())) {
-        throw new WorkspaceAssistantError(
-          `${config.transport} did not produce a final Assistant message`,
-        )
+        throw new WorkspaceAssistantError('Codex did not produce a final Assistant message')
       }
       const reply = (await file.text()).trim()
-      if (!reply)
-        throw new WorkspaceAssistantError(`${config.transport} produced an empty Assistant message`)
+      if (!reply) throw new WorkspaceAssistantError('Codex produced an empty Assistant message')
       return { reply, threadId: observedThreadId }
     },
   }
@@ -174,13 +155,17 @@ export function createWorkspaceAssistant(input: {
 }): WorkspaceAssistant {
   const now = input.now ?? (() => new Date())
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
+  let notificationRecoveryComplete = false
 
   return {
     async process(eventId, signal) {
       const workspaceState = await input.workspace.readWorkspace()
       const event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
-      if (event.attributes.status === 'handled') return { kind: 'answered', eventId }
+      if (event.attributes.status === 'handled') {
+        await input.tools.acknowledgeEventAttentions(eventId, now())
+        return { kind: 'answered', eventId }
+      }
 
       await input.conversation.begin(eventId)
       const turnRoot = join(
@@ -257,12 +242,21 @@ export function createWorkspaceAssistant(input: {
         }
 
         await input.conversation.writeThreadId(result.threadId)
+        const notifyRequested = input.tools.notificationRequested(toolToken)
         await input.workspace.handleEvent(eventId, {
           reply: result.reply,
           disposition: usedTool ? 'tools-used' : 'answered',
           handledAt: now(),
+          expose: notifyRequested,
         })
         await input.conversation.complete(eventId)
+        if (notifyRequested) {
+          try {
+            await input.tools.acknowledgeEventAttentions(eventId, now())
+          } catch {
+            notificationRecoveryComplete = false
+          }
+        }
         return { kind: 'answered', eventId }
       } catch (error) {
         await input.conversation.fail(eventId, errorMessage(error))
@@ -271,67 +265,31 @@ export function createWorkspaceAssistant(input: {
         input.tools.revoke(toolToken)
       }
     },
-  }
-}
 
-async function prepareAssistantWorkspace(
-  config: RoleTransportConfig,
-  input: AssistantModelInput & { toolUrl: string },
-) {
-  if (config.transport === 'opencode' || config.transport === 'claude') {
-    const mcpConfig = {
-      mcpServers: {
-        hopi: {
-          command: process.execPath,
-          args: [join(import.meta.dir, 'hopiMcpServer.ts')],
-          env: {
-            HOPI_TOOL_URL: input.toolUrl,
-            HOPI_TOOL_TOKEN: input.toolToken,
-            HOPI_TOOL_MODE: input.toolMode ?? 'main',
-          },
-        },
-      },
-    }
-
-    if (config.transport === 'opencode') {
-      await Bun.write(join(input.cwd, 'opencode.json'), JSON.stringify(mcpConfig, null, 2))
-    } else if (config.transport === 'claude') {
-      await Bun.write(join(input.cwd, 'claude.json'), JSON.stringify(mcpConfig, null, 2))
-    }
+    async finalizeNotifications() {
+      if (notificationRecoveryComplete) return 0
+      const workspace = await input.workspace.readWorkspace()
+      let acknowledged = 0
+      for (const event of workspace.events.values()) {
+        if (
+          event.attributes.source !== 'reflection' ||
+          event.attributes.visibility !== 'public' ||
+          event.attributes.status !== 'handled'
+        ) {
+          continue
+        }
+        try {
+          acknowledged += (await input.tools.acknowledgeEventAttentions(event.attributes.id, now()))
+            .length
+        } catch {
+          notificationRecoveryComplete = false
+          return acknowledged
+        }
+      }
+      notificationRecoveryComplete = true
+      return acknowledged
+    },
   }
-}
-
-function buildAssistantCommand(
-  config: RoleTransportConfig,
-  input: AssistantModelInput & { toolUrl: string },
-) {
-  if (config.transport === 'codex') {
-    return assistantCodexCommand(config, input)
-  }
-  if (config.transport === 'claude') {
-    return assistantClaudeCommand(config)
-  }
-  if (config.transport === 'opencode') {
-    return assistantOpencodeCommand(config)
-  }
-  throw new WorkspaceAssistantError(`Unsupported transport: ${config.transport}`)
-}
-
-function assistantClaudeCommand(config: Extract<RoleTransportConfig, { transport: 'claude' }>) {
-  const command = [config.binary ?? 'claude']
-  command.push('--permission-mode', config.permissionMode ?? 'dontAsk')
-  if (config.model) command.push('--model', config.model)
-  command.push('--print', '--output-format', 'stream-json')
-  return command
-}
-
-function assistantOpencodeCommand(config: Extract<RoleTransportConfig, { transport: 'opencode' }>) {
-  const command = [config.binary ?? 'opencode', 'run']
-  if (config.model) command.push('--model', config.model)
-  if (config.variant) command.push('--variant', config.variant)
-  if (config.agent) command.push('--agent', config.agent)
-  command.push('--format', 'json')
-  return command
 }
 
 function assistantCodexCommand(
@@ -411,9 +369,7 @@ function renderTurn(event: InboxEventDocument) {
       'Call hopi_notify_user only when the operator should see your final reply; otherwise finish silently and the turn stays hidden.',
       renderOperatorReplyContract(),
       '[Rewrite the internal brief for the operator. Do not copy its internal IDs, role names, stages, or diagnostic process unless the operator needs that detail.]',
-      context
-        ? `[Suggested context: ${context.projectId} / ${context.goalId}${renderAttentionContext(context)}]`
-        : '[Workspace context]',
+      context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Workspace context]',
       event.body,
     ].join('\n\n')
   }
@@ -421,9 +377,7 @@ function renderTurn(event: InboxEventDocument) {
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
     '[HOPI effects are asynchronous: after a mutating tool accepts the request, reply without sleeping or polling; Reflection reports later completion, blockers, or decisions.]',
     renderOperatorReplyContract(),
-    context
-      ? `[Preferred page context: ${context.projectId} / ${context.goalId}${renderAttentionContext(context)}]`
-      : '[Workspace context]',
+    context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Workspace context]',
     renderAttachmentReferences(event),
     event.body,
   ]
@@ -432,18 +386,29 @@ function renderTurn(event: InboxEventDocument) {
 }
 
 function renderAttentionContext(context: {
+  projectId?: string
+  goalId?: string
   attentionId?: string
   attentionRefs?: string[]
   observedDigest?: string
 }) {
-  const ids = [
-    ...(context.attentionId ? [context.attentionId] : []),
-    ...(context.attentionRefs ?? []),
-  ]
+  const references = normalizeInboxAttentionReferences(context)
   return [
-    ...(ids.length ? [` / Attention ${[...new Set(ids)].join(', ')}`] : []),
+    ...(references.length ? [` / Attention ${references.join(', ')}`] : []),
     ...(context.observedDigest ? [` / observed digest ${context.observedDigest}`] : []),
   ].join('')
+}
+
+function renderInboxContext(context: {
+  projectId?: string
+  goalId?: string
+  attentionId?: string
+  attentionRefs?: string[]
+  observedDigest?: string
+}) {
+  const location =
+    context.projectId && context.goalId ? `${context.projectId} / ${context.goalId}` : 'Workspace'
+  return `${location}${renderAttentionContext(context)}`
 }
 
 function renderOperatorReplyContract() {

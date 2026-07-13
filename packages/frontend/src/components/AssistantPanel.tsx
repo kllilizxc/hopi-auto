@@ -1,32 +1,24 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  Activity,
-  ArrowLeft,
-  Bot,
-  ImagePlus,
-  RefreshCw,
-  Send,
-  X,
-} from 'lucide-react'
+import { Activity, ArrowLeft, Bot, ImagePlus, RefreshCw, Send, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import {
+  type AppSnapshot,
+  type AssistantFeedEntry,
+  type AttentionView,
+  type ReflectionRunSummary,
+  type RunAttemptEvent,
   readAssistantFeed,
   readReflectionRunEvents,
   readReflectionRuns,
   sendInboxMessage,
-  type AssistantFeedEntry,
-  type AppSnapshot,
-  type AttentionView,
-  type ReflectionRunSummary,
-  type RunAttemptEvent,
 } from '../lib/api'
-import type { GoalScope } from '../lib/goalScope'
 import { resolveAssistantInboxContext } from '../lib/assistantContext'
+import type { GoalScope } from '../lib/goalScope'
 import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
 import { cn, formatTime } from '../lib/utils'
+import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import {
   AppAlert,
   AppButton,
@@ -125,14 +117,15 @@ export function AssistantPanel({
     mutationFn: async () => {
       const draft = input.trim()
       if (!draft && draftImages.length === 0) throw new Error('Message is empty')
-      const content =
-        replyAttention?.scope === 'workspace'
-          ? `Regarding workspace Attention ${replyAttention.id}:\n\n${draft}`
-          : draft
       return sendInboxMessage({
-        content,
+        content: draft,
         images: draftImages.map(({ file }) => file),
-        context: resolveAssistantInboxContext(scope, replyAttention, snapshot?.attentions),
+        context: resolveAssistantInboxContext(
+          scope,
+          replyAttention,
+          snapshot?.attentions,
+          snapshot?.home.homeId,
+        ),
       })
     },
     onSuccess: async () => {
@@ -209,7 +202,9 @@ export function AssistantPanel({
             className={cn('reflection-debug-button', showReflectionDebug && 'active')}
             type="button"
             onClick={() => setShowReflectionDebug((value) => !value)}
-            aria-label={showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'}
+            aria-label={
+              showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'
+            }
             aria-pressed={showReflectionDebug}
             title={showReflectionDebug ? 'Back to conversation' : 'Reflection debug'}
           >
@@ -247,7 +242,7 @@ export function AssistantPanel({
           isLoadingOlder={assistantStream.isLoadingOlder}
           onLoadOlder={assistantStream.loadOlder}
           onScrollingChange={setAssistantScrolling}
-          emptyState={(
+              emptyState={
             <div className="conversation-empty">
               {assistantStream.error ? (
                 <>
@@ -263,13 +258,15 @@ export function AssistantPanel({
                 </>
               )}
             </div>
-          )}
+              }
         />
       </div>
 
       <footer className="assistant-composer">
         {(sendMutation.error || imageError) && (
-          <AppAlert className="inline-error">{sendMutation.error?.message ?? imageError}</AppAlert>
+              <AppAlert className="inline-error">
+                {sendMutation.error?.message ?? imageError}
+              </AppAlert>
         )}
         {replyAttention && (
           <div className="composer-context">
@@ -407,14 +404,18 @@ function ReflectionDebugPanel({
       </div>
 
       {loading ? (
-        <div className="reflection-debug-empty"><AppSpinner size="sm" /> Loading runtime stream</div>
+        <div className="reflection-debug-empty">
+          <AppSpinner size="sm" /> Loading runtime stream
+        </div>
       ) : error ? (
         <div className="reflection-debug-empty error">{error.message}</div>
       ) : runs.length === 0 ? (
         <div className="reflection-debug-empty">
           <Activity />
           <strong>No Reflection Runs yet</strong>
-          <p>The startup snapshot is only a baseline. A semantic state change creates the first Run.</p>
+          <p>
+            The startup snapshot is only a baseline. A semantic state change creates the first Run.
+          </p>
         </div>
       ) : (
         <div className="reflection-run-list">
@@ -436,7 +437,9 @@ function ReflectionDebugPanel({
                 hasMoreBefore || loadingOlder ? (
                   <div className="reflection-history-status">
                     {loadingOlder ? (
-                      <><AppSpinner size="sm" /> Loading older Runs…</>
+                      <>
+                        <AppSpinner size="sm" /> Loading older Runs…
+                      </>
                     ) : (
                       'Scroll up for older Runs'
                     )}
@@ -505,8 +508,14 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
       }
     >
         <dl>
-          <div><dt>Digest</dt><dd>{manifest.stateDigest.slice(0, 16)}</dd></div>
-          <div><dt>Handoff</dt><dd>{manifest.handoffEventId ?? 'none'}</dd></div>
+        <div>
+          <dt>Digest</dt>
+          <dd>{manifest.stateDigest.slice(0, 16)}</dd>
+        </div>
+        <div>
+          <dt>Handoff</dt>
+          <dd>{manifest.handoffEventId ?? 'none'}</dd>
+        </div>
         </dl>
         {manifest.error && <p className="reflection-run-error">{manifest.error}</p>}
         <UnifiedMessageFeed

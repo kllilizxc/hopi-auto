@@ -137,12 +137,6 @@ export const assistantToolSchemas = {
         .object({
           projectId: stableId,
           goalId: stableId,
-          attentionId: stableId.optional(),
-          attentionRefs: z.array(stableId).default([]),
-          observedDigest: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/)
-            .optional(),
         })
         .strict()
         .optional(),

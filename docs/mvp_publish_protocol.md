@@ -1,7 +1,7 @@
 # MVP Publish Protocol
 
 Status: accepted implementation ADR
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This ADR defines the small publication kernel beneath [the MVP design](./mvp_design.md). Document
 invariants belong to [the document model](./mvp_document_model.md), and semantic behavior belongs
@@ -130,9 +130,8 @@ adds both as part of the same validated publication.
 | Assistant control tool      | operation-specific support                                    | Goal or Work control transition               |
 | Assistant tool receipt      | none                                                          | immutable Goal Input                          |
 | Reflection handoff          | none                                                          | new internal pending Inbox turn               |
-| Reflection notification     | none                                                          | Inbox `visibility: public`                    |
-| Assistant Attention acknowledgement | public pending Inbox turn                               | Attention `notifiedAt` or completion resolution |
-| Assistant final reply       | none                                                          | Inbox turn `handled`                          |
+| Assistant final reply       | none                                                          | handled Inbox turn; Reflection visibility in the same gate |
+| Assistant Attention acknowledgement | handled public Inbox turn                              | Attention `notifiedAt` or completion resolution |
 | Planner question            | `AGENTS.md` bootstrap, design, Coordinator Evidence           | targeted Attention                            |
 | Planner plan success        | `AGENTS.md` bootstrap, design, Work DAG, Coordinator Evidence | Planning Work `done`                          |
 | Planner completion proposal | targetless completion Attention, Coordinator Evidence         | Planning Work `done`                          |
@@ -193,13 +192,15 @@ Project-target Attention resolves only after deterministic repair validation.
 
 A read-only Reflection may only prepare one handoff brief. Coordinator confirms the observed digest
 is still current before creating one new internal pending speaking Inbox item as its single gate.
-Reflection cannot publish Project state. If the speaking
-thread decides the operator should see the eventual reply, `notify_user` promotes that same pending
-turn from internal to public in a separate Assistant-home publication before the ordinary handled
-gate. When the turn context names one Goal Attention, `notify_user` then acknowledges that Attention
-in a separate project-root publication using the existing delivery rule. A crash leaves it internal
-or public and pending; normal Inbox recovery resumes it without inferring visibility or Attention
-identity from reply prose.
+Reflection cannot publish Project state. If the speaking thread decides the operator should see the
+eventual reply, `notify_user` records only capability-local intent. After the model returns,
+Coordinator first exposes and handles that same turn with its complete reply, then acknowledges each
+exact canonical Goal-local or workspace Attention reference from Inbox context in its owning-root
+publication. A crash before the handled gate leaves the turn internal and pending; a crash after it
+leaves a handled public turn whose normal recovery finishes any missing acknowledgement. Recovery
+never infers visibility or Attention identity from reply prose. An optional webhook mirrors only the
+handled public Inbox reply and records its independent `webhookDeliveredAt`; it never acknowledges
+raw Attention.
 
 ## Process-Crash Reconciliation
 
@@ -252,8 +253,10 @@ The body carries the question, blocker explanation, or completion message. Model
 Markdown; the kernel does not parse it into an action. A materially different operator-visible
 message uses a new Attention identity.
 
-Delivery is at least once. A crash after transport acknowledgement but before `notifiedAt` may
-repeat the same Attention identity.
+Assistant delivery is durable before `notifiedAt`: the complete handled public Inbox reply is its
+receipt, and exact canonical Inbox references correlate it to Attention across roots. The optional
+webhook is an at-least-once mirror of that reply; a crash after transport acknowledgement but before
+Inbox `webhookDeliveredAt` may repeat the same event identity without repeating domain effects.
 
 ## Cross-Root Handoff
 
@@ -315,6 +318,11 @@ specified in the multi-Repo design. Coordinator:
    outcome
 6. materializes the complete C1 tree in the managed integration worktree before releasing the
    publication mutex
+
+Git commands that inspect or refresh the same managed worktree index run sequentially. In
+particular, `write-tree` and `status` may both take the index lock even though they are validation
+reads from HOPI's perspective. Parallelism remains across model Runs and distinct Work checkouts;
+the C1 verifier does not add another lock or retry policy to race its own commands.
 
 A successful guarded ref command is the irreversible integration boundary. A clean target advance
 observed after Reviewer staging but before construction causes Coordinator to rebuild against the

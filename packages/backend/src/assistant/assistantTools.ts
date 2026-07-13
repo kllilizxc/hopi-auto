@@ -1,5 +1,9 @@
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import {
+  normalizeInboxAttentionReferences,
+  parseAttentionReference,
+} from '../domain/attentionReference'
+import {
   isWorkTerminal,
   parseAttentionDocument,
   parseInputDocument,
@@ -49,6 +53,8 @@ export interface AssistantTools {
     onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void,
   ): string
   revoke(token: string): void
+  notificationRequested(token: string): boolean
+  acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   execute(token: string, name: AssistantToolName, input: unknown): Promise<AssistantToolResult>
   executeForEvent(
     eventId: string,
@@ -66,7 +72,7 @@ export function createAssistantTools(options: {
   now?: () => Date
 }): AssistantTools {
   type Capability =
-    | { mode: 'main'; eventId: string; expiresAt: number }
+    | { mode: 'main'; eventId: string; expiresAt: number; notifyRequested: boolean }
     | {
         mode: 'reflection'
         reflectionId: string
@@ -80,7 +86,12 @@ export function createAssistantTools(options: {
   return {
     issue(eventId) {
       const token = crypto.randomUUID()
-      capabilities.set(token, { mode: 'main', eventId, expiresAt: Date.now() + 60 * 60 * 1_000 })
+      capabilities.set(token, {
+        mode: 'main',
+        eventId,
+        expiresAt: Date.now() + 60 * 60 * 1_000,
+        notifyRequested: false,
+      })
       return token
     },
 
@@ -98,6 +109,73 @@ export function createAssistantTools(options: {
 
     revoke(token) {
       capabilities.delete(token)
+    },
+
+    notificationRequested(token) {
+      const capability = capabilities.get(token)
+      return capability?.mode === 'main' && capability.notifyRequested
+    },
+
+    async acknowledgeEventAttentions(eventId, acknowledgedAt = now()) {
+      const event = await options.workspace.readEvent(eventId)
+      if (
+        !event ||
+        event.attributes.source !== 'reflection' ||
+        event.attributes.visibility !== 'public' ||
+        event.attributes.status !== 'handled'
+      ) {
+        return []
+      }
+      const context = event.attributes.context
+      if (!context) return []
+      const workspace = await options.workspace.readWorkspace()
+      const acknowledged: string[] = []
+      for (const reference of normalizeInboxAttentionReferences(context)) {
+        const parsed = parseAttentionReference(reference)
+        if (!parsed) continue
+        if (parsed.scope === 'workspace') {
+          if (parsed.homeId !== workspace.homeId) {
+            throw new Error(`Workspace Attention reference belongs to another Home: ${reference}`)
+          }
+          const attention = workspace.attentions.get(parsed.attentionId)
+          if (!attention) throw new Error(`Workspace Attention not found: ${reference}`)
+          if (
+            attention.attributes.resolvedAt !== null ||
+            attention.attributes.notifiedAt !== null
+          ) {
+            continue
+          }
+          await options.workspace.markAttentionNotified(parsed.attentionId, acknowledgedAt)
+          acknowledged.push(reference)
+          continue
+        }
+        const project = options.projects.get(parsed.projectId)
+        if (!project) throw new Error(`Attention Project is unavailable: ${parsed.projectId}`)
+        const goalPackage = await project.store.readPackage(parsed.goalId)
+        const attention = goalPackage.attentions.get(parsed.attentionId)
+        if (!attention) throw new Error(`Goal Attention not found: ${reference}`)
+        if (attention.attributes.resolvedAt !== null || attention.attributes.notifiedAt !== null) {
+          continue
+        }
+        if (
+          await acknowledgeGoalAttention(
+            project.store,
+            parsed.goalId,
+            parsed.attentionId,
+            acknowledgedAt,
+          )
+        ) {
+          acknowledged.push(reference)
+          continue
+        }
+        const current = (await project.store.readPackage(parsed.goalId)).attentions.get(
+          parsed.attentionId,
+        )
+        if (current?.attributes.resolvedAt === null && current.attributes.notifiedAt === null) {
+          throw new Error(`Goal Attention could not be acknowledged: ${reference}`)
+        }
+      }
+      return acknowledged
     },
 
     async execute(token, name, input) {
@@ -123,15 +201,7 @@ export function createAssistantTools(options: {
         const args = parseAssistantToolArguments(name, input)
         if (args.context) {
           const project = requireProject(options.projects, args.context.projectId)
-          const goalPackage = await project.store.readPackage(args.context.goalId)
-          for (const attentionId of [
-            ...(args.context.attentionId ? [args.context.attentionId] : []),
-            ...args.context.attentionRefs,
-          ]) {
-            if (!goalPackage.attentions.has(attentionId)) {
-              throw new Error(`Goal Attention not found: ${attentionId}`)
-            }
-          }
+          await project.store.readPackage(args.context.goalId)
         }
         capability.handedOff = true
         capability.onHandoff?.({ brief: args.brief, context: args.context })
@@ -144,7 +214,13 @@ export function createAssistantTools(options: {
       if (!mainAssistantToolNames.includes(name as never)) {
         throw new Error(`Speaking thread cannot call ${name}`)
       }
-      return this.executeForEvent(capability.eventId, name as MainAssistantToolName, input)
+      const result = await this.executeForEvent(
+        capability.eventId,
+        name as MainAssistantToolName,
+        input,
+      )
+      if (name === 'hopi_notify_user') capability.notifyRequested = true
+      return result
     },
 
     async executeForEvent(eventId, name, input) {
@@ -549,39 +625,15 @@ export function createAssistantTools(options: {
           ) {
             throw new Error('hopi_notify_user is available only for an internal Reflection turn')
           }
-          const changed = event.attributes.visibility === 'internal'
-          const exposed = await options.workspace.exposeEvent(eventId)
-          const context = event.attributes.context
-          const attentionIds = context
-            ? [
-                ...new Set([
-                  ...(context.attentionId ? [context.attentionId] : []),
-                  ...(context.attentionRefs ?? []),
-                ]),
-              ]
-            : []
-          const acknowledgedAttentionIds: string[] = []
-          if (context) {
-            const store = requireProject(options.projects, context.projectId).store
-            for (const attentionId of attentionIds) {
-              if (await acknowledgeGoalAttention(store, context.goalId, attentionId, now())) {
-                acknowledgedAttentionIds.push(attentionId)
-              }
-            }
-          }
-          const attentionAcknowledged = acknowledgedAttentionIds.length > 0
           return {
-            summary: attentionAcknowledged
-              ? `The current reply is public and acknowledges ${acknowledgedAttentionIds.length} Goal Attention item(s).`
-              : 'The current Reflection-driven reply will be shown to the operator.',
-            changed: changed || attentionAcknowledged,
+            summary: 'The complete reply will be shown to the operator after this turn finishes.',
+            changed: false,
             value: {
               eventId,
-              visibility: exposed.attributes.visibility,
-              attentionId: context?.attentionId ?? null,
-              attentionIds,
-              acknowledgedAttentionIds,
-              attentionAcknowledged,
+              requested: true,
+              attentionRefs: event.attributes.context
+                ? normalizeInboxAttentionReferences(event.attributes.context)
+                : [],
             },
           }
         }

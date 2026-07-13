@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -67,7 +67,8 @@ attachments: []
 context:
   projectId: P-1
   goalId: G-1
-  attentionId: A-1 # optional when replying to Attention
+  attentionRefs:
+    - project:P-1/goal:G-1/attention:A-1
 handledAt: null
 reply: null
 disposition: null
@@ -78,9 +79,18 @@ disposition: null
 `source: reflection, visibility: internal`. Older events without these fields default to
 `user/public`.
 
-`context` is optional and, when present, is exactly `{ projectId, goalId, attentionId? }` for the UI
-location in which the operator submitted the turn. It is conversational context only and grants no
-mutation authority.
+`context` is optional. `projectId` and `goalId` appear together when the turn has a UI location.
+`attentionRefs` contains zero or more complete canonical delivery identities:
+
+- Goal-local: `project:<projectId>/goal:<goalId>/attention:<attentionId>`
+- workspace: `home:<homeId>/attention:<attentionId>`
+
+A Reflection handoff may contain only `attentionRefs`; a normal Goal-page turn may contain only the
+Project/Goal pair; and one turn may contain both. New writes never use a bare Attention ID. Older
+Inbox events with singular `attentionId` or local IDs in `attentionRefs` remain readable and are
+interpreted in their stored Project/Goal context, but they are migration input rather than a second
+reference form. Context is conversational and delivery correlation only; it grants no mutation
+authority.
 `handledAt`, `reply`, and the free non-control `disposition` string are all null while pending and
 all present while handled. The Markdown body is the lossless received content or internal Reflection
 brief. Identity, `source`, `receivedAt`, digest, attachments, context, and body are immutable. The
@@ -88,9 +98,9 @@ source digest covers the deterministically newline-normalized body and ordered a
 For speaking turns, `answered` means no tool event was observed and `tools-used` means at least one
 was observed. Neither value is proof of a side effect; canonical documents and tool results own that
 truth.
-Visibility is also immutable except for one transition: while a Reflection-sourced turn is pending,
-the speaking thread may promote `internal -> public` through `notify_user`. It never moves back and a
-user-sourced turn can never become internal.
+Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
+finishes, Coordinator may publish `internal -> public` atomically with its handled reply when that
+Run called `notify_user`. It never moves back and a user-sourced turn can never become internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also
   becomes eligible only after its event document is durable.
@@ -517,8 +527,9 @@ notifiedAt: null
 ---
 ```
 
-`target` is exactly one canonical event, project, Goal, or Work reference for **Waiting for Assistant**, or
-null for completion.
+`target` is exactly one canonical event, project, Goal, or Work reference, or null for completion.
+An open targeted Attention projects as **Waiting for Assistant** while `notifiedAt` is null and
+**Needs you** after notification while it remains unresolved.
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
 
@@ -557,11 +568,12 @@ schema or parser contract:
 - resolution: references to the answering Input, blocker-clearing Evidence, completion delivery,
   or supersede reason
 
-The canonical delivery key is `(projectId, goalId, attentionId)` for Goal-local Attention and
-`(homeId, attentionId)` for workspace Attention. The operator-visible notification payload is
-immutable from creation. Resolution may append its answering Input or clearing Evidence in the
-Markdown resolution section without changing the delivered notification. A materially different
-operator message resolves the old Attention as superseded and creates a new ID.
+The canonical identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
+`(homeId, attentionId)` for workspace Attention. Inbox correlation always stores the complete
+reference because local IDs may repeat across Goals or homes. The operator-visible notification
+payload is immutable from creation. Resolution may append its answering Input or clearing Evidence
+in the Markdown resolution section without changing the delivered notification. A materially
+different operator message resolves the old Attention as superseded and creates a new ID.
 
 Resolving targeted Attention and applying its effects uses one publication when `resolvedAt` is its
 only gate; it installs supporting effects first and the resolution last. Any additional gate is a
@@ -571,20 +583,19 @@ phase, effects precede Goal Input, and Goal-local Attention resolution is the fi
 after that receipt. A behavior-changing answer increments `contractRevision` and ensures Planning
 Work. Condition-based Attention resolves only when its condition is cleared.
 
-`notifiedAt` is null until either the configured webhook acknowledges delivery or an
-Attention-linked Reflection turn is durably exposed in the Assistant conversation. Targeted
-Attention remains open after notification. Completion is marked notified and resolved in the same
-project publication. The Assistant path exposes its home-root turn first, so a crash cannot resolve
-the Attention without leaving a durable public turn to resume. Resolution facts do not change the
-immutable notification payload or request delivery again.
+`notifiedAt` is null until an Attention-linked Reflection turn is durably exposed with its complete
+handled reply in the speaking Assistant conversation. Targeted Attention remains open after
+notification. Completion is marked notified and resolved in the same project publication. The
+Assistant-home reply gate is always first, so a crash cannot acknowledge delivery without leaving a
+durable public turn whose recovery can finish the exact linked Attention publications. Resolution
+facts do not change the immutable notification payload or request delivery again.
 
-Delivery is at-least-once. A crash after the transport accepts a message but before publication
-may cause a duplicate with the same Attention ID; the MVP accepts this rather than building an
-exactly-once outbox state machine.
-
-The production channel is one provider-neutral webhook configured by
-`HOPI_ATTENTION_WEBHOOK_URL`. Retry timing is disposable runtime state; `notifiedAt` remains the sole
-durable acknowledgement authority.
+The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` mirrors that
+handled public Assistant reply; it never delivers raw Attention and never owns `notifiedAt`.
+`webhookDeliveredAt` on the Inbox event is its separate durable acknowledgement. Webhook delivery is
+at least once: a crash after the transport accepts the reply but before `webhookDeliveredAt` may
+repeat the same event identity. Retry timing remains disposable runtime state, so no notification
+ledger or exactly-once outbox is added.
 
 ### `evidence/**`
 

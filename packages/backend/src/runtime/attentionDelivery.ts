@@ -5,25 +5,16 @@ import type { GoalPackageStore } from '../storage/goalPackageStore'
 
 export interface AttentionDeliveryMessage {
   key: string
-  target: string | null
   body: string
-  projectId?: string
-  goalId?: string
-  attentionId?: string
-  eventId?: string
+  eventId: string
 }
 
 export interface AttentionTransport {
   send(message: AttentionDeliveryMessage): Promise<void>
 }
 
-export interface AttentionDeliveryProject {
-  projectId: string
-  store: GoalPackageStore
-}
-
 export interface AttentionDeliveryWorker {
-  deliverOnce(projects: readonly AttentionDeliveryProject[]): Promise<number>
+  deliverOnce(): Promise<number>
 }
 
 export function createAssistantReplyDeliveryWorker(
@@ -59,7 +50,6 @@ export function createAssistantReplyDeliveryWorker(
       try {
         await transport.send({
           key,
-          target: null,
           body: candidate.attributes.reply,
           eventId: candidate.attributes.id,
         })
@@ -82,122 +72,8 @@ export function createAssistantReplyDeliveryWorker(
 
 export interface AttentionDeliveryOptions {
   now?: () => Date
-  beforeAcknowledgement?(message: AttentionDeliveryMessage): Promise<void> | void
   retryBaseMs?: number
   retryMaxMs?: number
-}
-
-export function createAttentionDeliveryWorker(
-  workspace: AssistantWorkspaceStore,
-  transport: AttentionTransport,
-  options: AttentionDeliveryOptions = {},
-): AttentionDeliveryWorker {
-  const now = options.now ?? (() => new Date())
-  const retryBaseMs = options.retryBaseMs ?? 1_000
-  const retryMaxMs = options.retryMaxMs ?? 60_000
-  const retries = new Map<string, { failures: number; nextAt: number }>()
-
-  async function send(
-    message: AttentionDeliveryMessage,
-    acknowledge: (acknowledgedAt: Date) => Promise<void>,
-  ) {
-    const currentTime = now()
-    const retry = retries.get(message.key)
-    if (retry && retry.nextAt > currentTime.getTime()) return false
-    try {
-      await transport.send(message)
-    } catch {
-      const failures = (retry?.failures ?? 0) + 1
-      const delay = Math.min(retryBaseMs * 2 ** Math.min(failures - 1, 20), retryMaxMs)
-      retries.set(message.key, { failures, nextAt: currentTime.getTime() + delay })
-      return false
-    }
-    retries.delete(message.key)
-    await options.beforeAcknowledgement?.(message)
-    await acknowledge(now())
-    return true
-  }
-
-  return {
-    async deliverOnce(projects) {
-      let delivered = 0
-      const workspaceState = await workspace.readWorkspace()
-      for (const attention of workspaceState.attentions.values()) {
-        if (attention.attributes.resolvedAt !== null || attention.attributes.notifiedAt !== null) {
-          continue
-        }
-        const message: AttentionDeliveryMessage = {
-          key: `${workspaceState.homeId}/${attention.attributes.id}`,
-          target: attention.attributes.target,
-          body: attention.body,
-          attentionId: attention.attributes.id,
-        }
-        if (
-          await send(message, (acknowledgedAt) =>
-            workspace
-              .markAttentionNotified(attention.attributes.id, acknowledgedAt)
-              .then(() => undefined),
-          )
-        ) {
-          delivered += 1
-        }
-      }
-
-      for (const project of projects) {
-        let goalIds: string[]
-        try {
-          goalIds = await project.store.listGoalIds()
-        } catch {
-          continue
-        }
-        for (const goalId of goalIds) {
-          let goalPackage: Awaited<ReturnType<GoalPackageStore['readPackage']>>
-          try {
-            goalPackage = await project.store.readPackage(goalId)
-          } catch {
-            continue
-          }
-          for (const attention of goalPackage.attentions.values()) {
-            if (
-              attention.attributes.resolvedAt !== null ||
-              attention.attributes.notifiedAt !== null
-            ) {
-              continue
-            }
-            const completion = attention.attributes.target === null
-            if (
-              completion &&
-              (goalPackage.goal.attributes.lifecycle !== 'done' ||
-                goalPackage.goal.attributes.completionAttentionId !== attention.attributes.id)
-            ) {
-              continue
-            }
-            const message: AttentionDeliveryMessage = {
-              key: `${project.projectId}/${goalId}/${attention.attributes.id}`,
-              target: attention.attributes.target,
-              body: attention.body,
-              projectId: project.projectId,
-              goalId,
-              attentionId: attention.attributes.id,
-            }
-            if (
-              await send(message, (acknowledgedAt) =>
-                acknowledgeGoalAttention(
-                  project.store,
-                  goalId,
-                  attention.attributes.id,
-                  acknowledgedAt,
-                ).then(() => undefined),
-              )
-            ) {
-              delivered += 1
-            }
-          }
-        }
-      }
-      return delivered
-    },
-  }
 }
 
 export function createWebhookAttentionTransport(

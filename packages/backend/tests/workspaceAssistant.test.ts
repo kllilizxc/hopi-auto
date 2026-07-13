@@ -9,7 +9,11 @@ import {
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
 } from '../src/assistant/workspaceAssistant'
-import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
+import {
+  parseWorkDocument,
+  renderAttentionDocument,
+  renderWorkDocument,
+} from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
@@ -30,6 +34,30 @@ afterEach(async () => {
 })
 
 describe('WorkspaceAssistant conversation', () => {
+  test('rejects a non-Codex speaking transport instead of fabricating a thread', async () => {
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await expect(
+      runner.run({
+        eventId: 'EV-claude',
+        prompt: 'Hello.',
+        threadId: null,
+        cwd: join(temporaryRoot, 'assistant-claude'),
+        lastMessageFile: join(temporaryRoot, 'assistant-claude', 'last-message.txt'),
+        transcriptFile: join(temporaryRoot, 'assistant-claude', 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'token',
+      }),
+    ).rejects.toThrow('Workspace Assistant requires Codex transport')
+  })
+
   test('terminates a configured Codex subprocess when its signal is aborted', async () => {
     const binary = join(temporaryRoot, 'fake-codex')
     await Bun.write(
@@ -344,9 +372,145 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).toContain('Rewrite the internal brief for the operator')
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
+
+  test('publishes the complete Reflection reply before acknowledging linked Attention', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        return { reply: 'Choose the release window: today or tomorrow?', threadId: 'thread-notify' }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-notify',
+      content: 'The operator must choose a release window.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+      },
+    })
+
+    await fixture.assistant.process('EV-notify')
+
+    expect((await fixture.workspace.readEvent('EV-notify'))?.attributes).toMatchObject({
+      source: 'reflection',
+      visibility: 'public',
+      status: 'handled',
+      reply: 'Choose the release window: today or tomorrow?',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes,
+    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+  })
+
+  test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        throw new Error('reply generation failed')
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-failed')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-failed-notify',
+      content: 'Prepare an operator question.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-failed'],
+      },
+    })
+
+    await expect(fixture.assistant.process('EV-failed-notify')).rejects.toThrow(
+      'reply generation failed',
+    )
+
+    expect((await fixture.workspace.readEvent('EV-failed-notify'))?.attributes).toMatchObject({
+      visibility: 'internal',
+      status: 'pending',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-failed')?.attributes,
+    ).toMatchObject({ notifiedAt: null, resolvedAt: null })
+  })
+
+  test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        return { reply: 'Choose the release window.', threadId: 'thread-retry-ack' }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-retry-ack')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-retry-ack',
+      content: 'Prepare a decision request.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-retry-ack'],
+      },
+    })
+    const acknowledge = fixture.tools.acknowledgeEventAttentions.bind(fixture.tools)
+    let failOnce = true
+    fixture.tools.acknowledgeEventAttentions = async (...args) => {
+      if (failOnce) {
+        failOnce = false
+        throw new Error('Project root temporarily unavailable')
+      }
+      return acknowledge(...args)
+    }
+
+    await expect(fixture.assistant.process('EV-retry-ack')).resolves.toMatchObject({
+      kind: 'answered',
+    })
+    expect((await fixture.workspace.readEvent('EV-retry-ack'))?.attributes).toMatchObject({
+      visibility: 'public',
+      status: 'handled',
+      reply: 'Choose the release window.',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-retry-ack')?.attributes
+        .notifiedAt,
+    ).toBeNull()
+
+    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-retry-ack')?.attributes
+        .notifiedAt,
+    ).not.toBeNull()
+  })
+
+  test('recovers legacy local-ID Attention context from an already handled public reply', async () => {
+    const fixture = await setup(() => ({
+      async run() {
+        throw new Error('the handled event must not rerun')
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-recover')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-recover',
+      content: 'Deliver a decision request.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: ['A-recover'] },
+    })
+    await fixture.workspace.handleEvent('EV-recover', {
+      reply: 'Choose the deployment target.',
+      disposition: 'tools-used',
+      expose: true,
+    })
+
+    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
+    expect(await fixture.assistant.finalizeNotifications?.()).toBe(0)
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-recover')?.attributes,
+    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+  })
 })
 
-async function setup(buildRunner: () => AssistantModelRunner) {
+async function setup(
+  buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
+) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
   await git(repoRoot, ['init', '-b', 'main'])
@@ -397,11 +561,36 @@ async function setup(buildRunner: () => AssistantModelRunner) {
     workspace,
     conversation,
     tools,
-    runner: buildRunner(),
+    runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   return { homeRoot, workspace, conversation, goalStore, tools, assistant }
+}
+
+async function createGoalAttention(
+  store: ReturnType<typeof createGoalPackageStore>,
+  goalId: string,
+  attentionId: string,
+) {
+  await store.createGoal({ goalId, title: 'Goal', objective: 'Ship it.' })
+  await store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path: store.paths.attentionDocument(goalId, attentionId),
+      expectedHash: null,
+      content: renderAttentionDocument({
+        attributes: {
+          id: attentionId,
+          target: `project:P-1/goal:${goalId}`,
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Needs you\n\nChoose one option.\n',
+      }),
+    },
+  })
 }
 
 async function finishInitialPlanning(

@@ -4,6 +4,12 @@ import type { RoleRunner } from './agent/RoleRunner'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
 import {
+  goalAttentionReference,
+  normalizeInboxAttentionReferences,
+  parseAttentionReference,
+  workspaceAttentionReference,
+} from './domain/attentionReference'
+import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './domain/projectCodingDefaults'
@@ -15,6 +21,7 @@ import {
   type AttentionTransport,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
+import { assertSupportedPlatform } from './runtime/hostPlatform'
 import {
   type MvpProjectRuntime,
   type MvpRuntime,
@@ -69,15 +76,33 @@ const inboxSchema = z
     content: z.string(),
     context: z
       .object({
-        projectId: z.string().min(1),
-        goalId: z.string().min(1),
+        projectId: z.string().min(1).optional(),
+        goalId: z.string().min(1).optional(),
         attentionId: z.string().min(1).optional(),
+        attentionRefs: z
+          .array(z.string().refine((value) => Boolean(parseAttentionReference(value))))
+          .optional(),
+      })
+      .superRefine((context, refinement) => {
+        if (Boolean(context.projectId) !== Boolean(context.goalId)) {
+          refinement.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'projectId and goalId must appear together',
+          })
+        }
+        if (!context.projectId && !context.attentionRefs?.length) {
+          refinement.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'context requires a Goal location or Attention reference',
+          })
+        }
       })
       .optional(),
   })
   .strict()
 
 export function createServer(options: ServerOptions = {}): MvpServer {
+  assertSupportedPlatform(process.platform)
   const homeRoot = options.rootDir ?? process.cwd()
   const serverRef: { current: Bun.Server<undefined> | null } = { current: null }
   const runtimeOptions = {
@@ -298,16 +323,39 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (request.method === 'POST' && url.pathname === '/api/inbox') {
           const body = await parseInboxRequest(request)
-          if (body.context) {
+          const context = canonicalInboxContext(body.context)
+          if (body.context?.projectId && body.context.goalId) {
             const project = requireProject(runtime.projects, body.context.projectId)
             if (!(await project.store.readGoal(body.context.goalId))) {
               throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
             }
           }
+          for (const reference of body.context
+            ? normalizeInboxAttentionReferences(body.context)
+            : []) {
+            const parsed = parseAttentionReference(reference)
+            if (parsed?.scope === 'workspace') {
+              const workspace = await runtime.workspace.readWorkspace()
+              if (
+                parsed.homeId !== workspace.homeId ||
+                !workspace.attentions.has(parsed.attentionId)
+              ) {
+                throw new ApiError(404, 'Workspace Attention not found')
+              }
+              continue
+            }
+            if (parsed?.scope === 'goal') {
+              const project = requireProject(runtime.projects, parsed.projectId)
+              const goalPackage = await project.store.readPackage(parsed.goalId)
+              if (!goalPackage.attentions.has(parsed.attentionId)) {
+                throw new ApiError(404, 'Goal Attention not found')
+              }
+            }
+          }
           const event = await receiveUserEvent(runtime, {
             content: body.content,
             images: body.images,
-            context: body.context,
+            context,
           })
           runtime.coordinator.wake()
           return json(
@@ -523,14 +571,16 @@ async function presentState(runtime: MvpRuntime) {
   const goalAttentions = []
   for (const project of runtime.projects.values()) {
     const modelSettings = await runtime.readProjectCodingDefaults(project.projectId)
+    const projectAttention = [...workspace.attentions.values()].find(
+      (attention) =>
+        attention.attributes.target === `project:${project.projectId}` &&
+        attention.attributes.resolvedAt === null,
+    )
     const goals = []
+    let goalOpenAttentionCount = 0
     for (const goalId of await project.store.listGoalIds()) {
       const goalPackage = await project.store.readPackage(goalId)
-      const projectAttentionOpen = [...workspace.attentions.values()].some(
-        (attention) =>
-          attention.attributes.target === `project:${project.projectId}` &&
-          attention.attributes.resolvedAt === null,
-      )
+      const projectAttentionOpen = Boolean(projectAttention)
       const liveWorkIds = new Set(
         [...runtime.coordinator.activeRuns().keys()]
           .filter((key) => key.startsWith(`${project.projectId}/${goalId}/`))
@@ -539,6 +589,7 @@ async function presentState(runtime: MvpRuntime) {
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: !projectAttentionOpen,
         projectAttentionOpen,
+        projectAttentionNotified: Boolean(projectAttention?.attributes.notifiedAt),
         liveRunWorkIds: liveWorkIds,
         operationallyDeferredWorkIds:
           project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
@@ -546,16 +597,18 @@ async function presentState(runtime: MvpRuntime) {
         maxAttempts: 3,
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
+      const openAttentionCount = [...goalPackage.attentions.values()].filter(
+        (attention) =>
+          attention.attributes.target !== null && attention.attributes.resolvedAt === null,
+      ).length
+      goalOpenAttentionCount += openAttentionCount
       goals.push({
         id: goalId,
         title: goalPackage.goal.attributes.title,
         lifecycle: goalPackage.goal.attributes.lifecycle,
         priority: goalPackage.goal.attributes.priority,
         ...summaries,
-        openAttentionCount: [...goalPackage.attentions.values()].filter(
-          (attention) =>
-            attention.attributes.target !== null && attention.attributes.resolvedAt === null,
-        ).length,
+        openAttentionCount,
       })
       for (const attention of goalPackage.attentions.values()) {
         if (
@@ -587,6 +640,7 @@ async function presentState(runtime: MvpRuntime) {
       codingDefaults: modelSettings.codingDefaults,
       codingDefaultsInherited: modelSettings.inherited,
       preview: runtime.preview.inspect(project.projectId),
+      openAttentionCount: goalOpenAttentionCount + (projectAttention ? 1 : 0),
       goals,
     })
   }
@@ -621,30 +675,58 @@ async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequ
       })),
     ...goalCompletions,
   ]
-  const completionById = new Map(completions.map((attention) => [attention.id, attention]))
+  const completionByReference = new Map(
+    completions.map((attention) => [
+      attention.scope === 'goal'
+        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
+        : workspaceAttentionReference(workspace.homeId, attention.id),
+      attention,
+    ]),
+  )
   const publicEvents = [...workspace.events.values()].filter(
     (event) => event.attributes.visibility === 'public',
   )
-  const linkedCompletionIds = new Set(
-    publicEvents
-      .map((event) => event.attributes.context?.attentionId)
-      .filter((id): id is string => Boolean(id && completionById.has(id))),
-  )
+  const linkedCompletionReferences = new Set<string>()
+  const eventCompletionReferences = new Map<string, string>()
+  for (const event of publicEvents.toSorted(
+    (left, right) =>
+      left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
+      left.attributes.id.localeCompare(right.attributes.id),
+  )) {
+    if (event.attributes.source !== 'reflection' || event.attributes.status !== 'handled') continue
+    const reference = event.attributes.context
+      ? normalizeInboxAttentionReferences(event.attributes.context).find(
+          (candidate) =>
+            completionByReference.has(candidate) && !linkedCompletionReferences.has(candidate),
+        )
+      : undefined
+    if (!reference) continue
+    linkedCompletionReferences.add(reference)
+    eventCompletionReferences.set(event.attributes.id, reference)
+  }
   const entries = [
     ...publicEvents.map((event) => ({
       kind: 'event' as const,
       id: `event:${event.attributes.id}`,
       occurredAt: event.attributes.receivedAt,
       event,
-      completion: event.attributes.context?.attentionId
-        ? (completionById.get(event.attributes.context.attentionId) ?? null)
-        : null,
+      completion:
+        completionByReference.get(eventCompletionReferences.get(event.attributes.id) ?? '') ?? null,
     })),
     ...completions
-      .filter((attention) => !linkedCompletionIds.has(attention.id))
+      .filter((attention) => {
+        const reference =
+          attention.scope === 'goal'
+            ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
+            : workspaceAttentionReference(workspace.homeId, attention.id)
+        return !linkedCompletionReferences.has(reference)
+      })
       .map((attention) => ({
         kind: 'completion' as const,
-        id: `completion:${attention.scope}:${attention.id}`,
+        id:
+          attention.scope === 'goal'
+            ? `completion:${goalAttentionReference(attention.projectId, attention.goalId, attention.id)}`
+            : `completion:${workspaceAttentionReference(workspace.homeId, attention.id)}`,
         occurredAt: attention.notifiedAt ?? attention.resolvedAt ?? attention.createdAt,
         attention,
       })),
@@ -727,7 +809,9 @@ function deriveGoalSummaries(
       return columns.indexOf(left.column ?? 'Done') - columns.indexOf(right.column ?? 'Done')
     })
   const focus =
-    ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ?? ordered[0]
+    ordered.find((projection) => projection.primaryBadge === 'Needs you') ??
+    ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ??
+    ordered[0]
   if (lifecycle === 'paused') {
     return {
       currentSummary: focus
@@ -803,14 +887,16 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
       .map((key) => key.slice(activePrefix.length)),
   )
   const workspace = await runtime.workspace.readWorkspace()
-  const projectAttentionOpen = [...workspace.attentions.values()].some(
+  const projectAttention = [...workspace.attentions.values()].find(
     (attention) =>
       attention.attributes.target === `project:${projectId}` &&
       attention.attributes.resolvedAt === null,
   )
+  const projectAttentionOpen = Boolean(projectAttention)
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: !projectAttentionOpen,
     projectAttentionOpen,
+    projectAttentionNotified: Boolean(projectAttention?.attributes.notifiedAt),
     liveRunWorkIds: liveWorkIds,
     operationallyDeferredWorkIds:
       project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
@@ -956,6 +1042,17 @@ async function parseInboxRequest(request: Request) {
     throw new ApiError(400, 'Inbox message is empty')
   }
   return { ...parsed, images }
+}
+
+function canonicalInboxContext(context: z.infer<typeof inboxSchema>['context']) {
+  if (!context) return undefined
+  const attentionRefs = normalizeInboxAttentionReferences(context)
+  return {
+    ...(context.projectId && context.goalId
+      ? { projectId: context.projectId, goalId: context.goalId }
+      : {}),
+    ...(attentionRefs.length ? { attentionRefs } : {}),
+  }
 }
 
 async function presentInboxAttachments(runtime: MvpRuntime, references: readonly string[]) {

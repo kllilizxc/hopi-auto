@@ -109,22 +109,20 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('does not drop image inputs on an unsupported transport but rather ignores them gracefully or fails differently', async () => {
+  test('fails visibly instead of dropping image inputs on an unsupported transport', async () => {
     await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
 
-    // Since we removed the hard error in resolveConfiguredTransportCommand,
-    // this will now resolve successfully.
-    const result = await resolveConfiguredTransportCommand({
-      config: {
-        transport: 'claude',
-        cwdMode: 'worktree',
-        permissionMode: 'dontAsk',
-      } satisfies RoleTransportConfig,
-      bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
-      input,
-    })
-
-    expect(result.cmd[0]).toBe('claude')
+    await expect(
+      resolveConfiguredTransportCommand({
+        config: {
+          transport: 'claude',
+          cwdMode: 'worktree',
+          permissionMode: 'dontAsk',
+        } satisfies RoleTransportConfig,
+        bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
+        input,
+      }),
+    ).rejects.toThrow('claude responsibility transport does not support HOPI image inputs')
   })
 
   test('passes extra writable roots through codex --add-dir arguments', async () => {

@@ -1,9 +1,5 @@
-import type {
-  AssistantFeedEntry,
-  AttentionView,
-  InboxEventView,
-  RunAttemptEvent,
-} from './apiTypes'
+import type { AssistantFeedEntry, AttentionView, InboxEventView, RunAttemptEvent } from './apiTypes'
+import { goalAttentionReference, normalizeAttentionReferences } from './attentionReference'
 
 export interface MessageFeedAttachment {
   reference: string
@@ -119,8 +115,8 @@ export function runEventsToMessageFeed(
       }
     }
 
-    const details = [event.transport, event.vendorEventType].filter(
-      (detail): detail is string => Boolean(detail),
+    const details = [event.transport, event.vendorEventType].filter((detail): detail is string =>
+      Boolean(detail),
     )
 
     if (event.entryKind === 'assistant') {
@@ -180,20 +176,29 @@ export function assistantEventsToMessageFeed(
   const completions = attentions
     .filter((attention) => attention.target === null)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-  const completionById = new Map(completions.map((attention) => [attention.id, attention]))
-  const linkedCompletionIds = new Set<string>()
+  const completionByReference = new Map(
+    completions.flatMap((attention) => {
+      const reference = completionReference(attention)
+      return reference ? [[reference, attention] as const] : []
+    }),
+  )
+  const linkedCompletionReferences = new Set<string>()
   const items = [...events]
     .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt))
     .flatMap((event) => {
       const eventItems = inboxEventToMessageFeed(event, { assistantPresentation: true })
-      const attentionId = event.context?.attentionId
-      const completion = attentionId ? completionById.get(attentionId) : undefined
+      if (event.source !== 'reflection' || event.status !== 'handled') return eventItems
+      const reference = event.context
+        ? normalizeAttentionReferences(event.context).find((candidate) =>
+            completionByReference.has(candidate) && !linkedCompletionReferences.has(candidate),
+          )
+        : undefined
+      if (!reference) return eventItems
+      const completion = completionByReference.get(reference)
       if (!completion) return eventItems
 
-      linkedCompletionIds.add(completion.id)
-      const assistantIndex = eventItems.findLastIndex(
-        (item) => item.kind === 'assistant_message',
-      )
+      linkedCompletionReferences.add(reference)
+      const assistantIndex = eventItems.findLastIndex((item) => item.kind === 'assistant_message')
       if (assistantIndex >= 0) {
         const assistant = eventItems[assistantIndex]
         if (assistant) {
@@ -211,7 +216,10 @@ export function assistantEventsToMessageFeed(
     })
 
   for (const completion of completions) {
-    if (!linkedCompletionIds.has(completion.id)) items.push(completionAttentionItem(completion))
+    const reference = completionReference(completion)
+    if (!reference || !linkedCompletionReferences.has(reference)) {
+      items.push(completionAttentionItem(completion))
+    }
   }
 
   return items
@@ -221,6 +229,12 @@ export function assistantEventsToMessageFeed(
       return timestamp === 0 ? left.index - right.index : timestamp
     })
     .map(({ item }) => item)
+}
+
+function completionReference(attention: AttentionView) {
+  return attention.scope === 'goal' && attention.projectId && attention.goalId
+    ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
+    : null
 }
 
 export function assistantFeedEntriesToMessageFeed(
@@ -270,9 +284,7 @@ function inboxEventToMessageFeed(
     active: event.runtimeStatus === 'running',
   })
   items.push(
-    ...(options.assistantPresentation
-      ? presentAssistantRuntimeItems(runtimeItems)
-      : runtimeItems),
+    ...(options.assistantPresentation ? presentAssistantRuntimeItems(runtimeItems) : runtimeItems),
   )
 
   if (event.runtimeError && !items.some((item) => sameText(item.text, event.runtimeError!))) {
@@ -533,15 +545,15 @@ function isAssistantProtocolNoise(item: MessageFeedItem) {
   }
 
   if (item.kind !== 'status') return false
-  const eventType = item.vendorEventType
-    ?.trim()
-    .toLowerCase()
-    .replaceAll('/', '.')
+  const eventType = item.vendorEventType?.trim().toLowerCase().replaceAll('/', '.')
   if (eventType && /^(thread|turn|item)\.(started|completed)$/.test(eventType)) {
     return true
   }
 
-  const summary = item.text.trim().toLowerCase().replaceAll(/[./_]+/g, ' ')
+  const summary = item.text
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[./_]+/g, ' ')
   return /^(thread|turn|item) (started|completed)$/.test(summary)
 }
 

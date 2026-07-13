@@ -12,7 +12,6 @@ import {
   AppSpinner,
   AppSurface,
   AppTextField,
-  ComboBoxField,
   CountBadge,
   SelectField,
   StatusChip,
@@ -30,31 +29,6 @@ import {
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
 import { excerpt } from '../lib/utils'
-
-const MODEL_OPTIONS: Record<string, { label: string; value: string }[]> = {
-  codex: [
-    { label: 'GPT-5.4', value: 'gpt-5.4' },
-    { label: 'GPT-4o', value: 'gpt-4o' },
-    { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
-    { label: 'o1-preview', value: 'o1-preview' },
-    { label: 'o1-mini', value: 'o1-mini' },
-  ],
-  claude: [
-    { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-20241022' },
-    { label: 'Claude 3.5 Haiku', value: 'claude-3-5-haiku-20241022' },
-    { label: 'Claude 3 Opus', value: 'claude-3-opus-20240229' },
-  ],
-  opencode: [
-    { label: 'Gemini 3.1 Pro Preview', value: 'gemini-proxy/gemini-3.1-pro-preview' },
-    { label: 'Gemini 3.5 Flash', value: 'gemini-proxy/gemini-3.5-flash' },
-    { label: 'Gemini 2.5 Flash', value: 'genai-gemini/gemini-2.5-flash' },
-    { label: 'Gemini 2.5 Pro', value: 'genai-gemini/gemini-2.5-pro' },
-    {
-      label: 'AWS Claude 3.5 Sonnet',
-      value: 'genai-claude/aws:anthropic.claude-sonnet-4-5-20250929-v1:0',
-    },
-  ],
-}
 
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
@@ -243,8 +217,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           Active
         </span>
         <span>
-          <strong>{project.goals.reduce((sum, goal) => sum + goal.openAttentionCount, 0)}</strong>{' '}
-          Waiting for Assistant
+          <strong>{project.openAttentionCount}</strong> Open attention
         </span>
       </div>
 
@@ -377,10 +350,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             ]}
             value={modelDraft.transport}
           />
-          <ComboBoxField
+          <AppTextField
             label="Model"
-            onInputChange={(model) => setModelDraft((current) => ({ ...current, model }))}
-            options={MODEL_OPTIONS[modelDraft.transport] ?? []}
+            onValueChange={(model) => setModelDraft((current) => ({ ...current, model }))}
             placeholder={modelDraft.transport === 'codex' ? 'gpt-5.4' : 'Provider default'}
             value={modelDraft.model}
           />

@@ -62,12 +62,15 @@ async function releaseProjectionMatches(store: GoalPackageStore, layout: C1Proje
     if (repo.primary) continue
     const expected = repoRelease(document, repo.repoId)
     if (!expected) return false
-    const [target, head, indexTree, expectedTree, status] = await Promise.all([
-      git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF]),
-      git(repo.integrationRoot, ['rev-parse', 'HEAD']),
-      git(repo.integrationRoot, ['write-tree']),
-      git(repo.integrationRoot, ['show', '-s', '--format=%T', expected]),
-      git(repo.integrationRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
+    // Both write-tree and status may refresh and lock this worktree's index.
+    const target = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+    const head = await git(repo.integrationRoot, ['rev-parse', 'HEAD'])
+    const indexTree = await git(repo.integrationRoot, ['write-tree'])
+    const expectedTree = await git(repo.integrationRoot, ['show', '-s', '--format=%T', expected])
+    const status = await git(repo.integrationRoot, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
     ])
     if (
       target.trim() !== expected ||

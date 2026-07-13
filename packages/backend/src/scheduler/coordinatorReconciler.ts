@@ -2,10 +2,7 @@ import type { AssistantReflection } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
-import type {
-  AttentionDeliveryProject,
-  AttentionDeliveryWorker,
-} from '../runtime/attentionDelivery'
+import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import type { Responsibility } from '../runtime/roleContextStager'
 import type { WorkspaceAttentionController } from '../runtime/workspaceAttentionController'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -162,6 +159,10 @@ export function createCoordinatorReconciler(
   }
 
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
+    const finalizedNotifications = (await options.assistant.finalizeNotifications?.()) ?? 0
+    if (finalizedNotifications > 0) {
+      return { kind: 'deterministic_action', count: finalizedNotifications }
+    }
     const workspace = await options.workspace.readWorkspace()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const event =
@@ -328,11 +329,7 @@ export function createCoordinatorReconciler(
     if (started > 0) return { kind: 'passes_started', count: started }
 
     if (options.delivery) {
-      const deliveryProjects: AttentionDeliveryProject[] = options.projects.map((project) => ({
-        projectId: project.projectId,
-        store: project.store,
-      }))
-      const delivered = await options.delivery.deliverOnce(deliveryProjects)
+      const delivered = await options.delivery.deliverOnce()
       if (delivered > 0) return { kind: 'delivery', count: delivered }
     }
     return { kind: 'idle' }

@@ -1,5 +1,4 @@
-import { FFIType, dlopen, suffix } from 'bun:ffi'
-import { closeSync, openSync } from 'node:fs'
+import { Database } from 'bun:sqlite'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -10,46 +9,25 @@ export interface CoordinatorInstanceLock {
 
 export class CoordinatorInstanceLockError extends Error {}
 
-// biome-ignore lint/suspicious/noExplicitAny: Required for FFI return type
-let libc: any = null
-try {
-  const libcPath = process.platform === 'darwin' ? 'libSystem.B.dylib' : `libc.${suffix}`
-  libc = dlopen(libcPath, {
-    flock: {
-      args: [FFIType.i32, FFIType.i32],
-      returns: FFIType.i32,
-    },
-  })
-} catch (e) {
-  // Ignore
-}
-
-const LOCK_EX = 2
-const LOCK_NB = 4
-const LOCK_UN = 8
-
 export async function acquireCoordinatorInstanceLock(
   lockPath: string,
 ): Promise<CoordinatorInstanceLock> {
   await mkdir(dirname(lockPath), { recursive: true })
 
-  if (!libc) {
-    throw new CoordinatorInstanceLockError('Failed to load libc for flock')
-  }
-
-  let fd: number
+  let database: Database | null = null
   try {
-    fd = openSync(lockPath, 'w')
+    database = new Database(lockPath, { create: true })
+    database.exec('PRAGMA busy_timeout = 0')
+    database.exec('BEGIN EXCLUSIVE')
   } catch (err: unknown) {
+    database?.close()
     const message = err instanceof Error ? err.message : String(err)
-    throw new CoordinatorInstanceLockError(`Cannot open lock file ${lockPath}: ${message}`)
-  }
-
-  const res = libc.symbols.flock(fd, LOCK_EX | LOCK_NB)
-
-  if (res !== 0) {
-    closeSync(fd)
-    throw new CoordinatorInstanceLockError(`Another Coordinator owns ${lockPath}`)
+    if (/locked|busy/i.test(message)) {
+      throw new CoordinatorInstanceLockError(`Another Coordinator owns ${lockPath}`)
+    }
+    throw new CoordinatorInstanceLockError(
+      `Cannot acquire Coordinator lock ${lockPath}: ${message}`,
+    )
   }
 
   let released = false
@@ -61,9 +39,9 @@ export async function acquireCoordinatorInstanceLock(
       }
       released = true
       try {
-        libc.symbols.flock(fd, LOCK_UN)
+        database.exec('ROLLBACK')
       } finally {
-        closeSync(fd)
+        database.close()
       }
     },
   }

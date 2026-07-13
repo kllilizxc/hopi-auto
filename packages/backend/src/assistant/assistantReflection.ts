@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
+import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import type { AssistantTools } from './assistantTools'
@@ -59,12 +60,18 @@ export function createAssistantReflection(options: {
   now?: () => Date
   maxConsecutiveHandoffs?: number
   minObserveIntervalMs?: number
+  failureRetryBaseMs?: number
+  failureRetryMaxMs?: number
+  maxFailuresPerDigest?: number
   onWake?(): void
   onLoopExhausted?(eventId: string, message: string): Promise<void> | void
 }): AssistantReflection {
   const now = options.now ?? (() => new Date())
   const maxConsecutiveHandoffs = options.maxConsecutiveHandoffs ?? 3
   const minObserveIntervalMs = options.minObserveIntervalMs ?? 5_000
+  const failureRetryBaseMs = options.failureRetryBaseMs ?? 5_000
+  const failureRetryMaxMs = options.failureRetryMaxMs ?? 5 * 60_000
+  const maxFailuresPerDigest = options.maxFailuresPerDigest ?? 3
   const reflectionsRoot = join(
     resolve(options.homeRoot),
     '.hopi',
@@ -79,8 +86,10 @@ export function createAssistantReflection(options: {
         digest: string
         controller: AbortController
         promise: Promise<void>
-        interruptedForUser: boolean
       }
+    | undefined
+  let failureState:
+    | { digest: string; failures: number; retryNotBefore: number; exhausted: boolean }
     | undefined
   let consecutiveHandoffs = 0
   let nextObserveAt = 0
@@ -92,6 +101,9 @@ export function createAssistantReflection(options: {
       if (currentTime < nextObserveAt) return 'unchanged'
       nextObserveAt = currentTime + minObserveIntervalMs
       const snapshot = await options.state.read()
+      if (failureState && failureState.digest !== snapshot.stateDigest) failureState = undefined
+      if (failureState?.exhausted) return 'unchanged'
+      if (failureState && currentTime < failureState.retryNotBefore) return 'unchanged'
       const immediate = hasImmediateReflectionSignal(snapshot)
       if (lastAssessedDigest === null && !immediate) {
         lastAssessedDigest = snapshot.stateDigest
@@ -105,13 +117,13 @@ export function createAssistantReflection(options: {
         digest: snapshot.stateDigest,
         controller,
         promise: Promise.resolve(),
-        interruptedForUser: false,
       }
       const previousSnapshot = lastAssessedSnapshot
       const trigger = reflectionTrigger(snapshot, input.settled)
       entry.promise = runReflection(snapshot, previousSnapshot, trigger, controller.signal)
         .then(async ({ handoffEventId }) => {
-          if (entry.interruptedForUser || controller.signal.aborted) return
+          if (controller.signal.aborted) return
+          failureState = undefined
           lastAssessedDigest = entry.digest
           lastAssessedSnapshot = snapshot
           if (!handoffEventId) {
@@ -127,7 +139,19 @@ export function createAssistantReflection(options: {
             consecutiveHandoffs = 0
           }
         })
-        .catch(() => undefined)
+        .catch(() => {
+          const failures = failureState?.digest === entry.digest ? failureState.failures + 1 : 1
+          const exhausted = failures >= maxFailuresPerDigest
+          const delay = exhausted
+            ? 0
+            : Math.min(failureRetryBaseMs * 2 ** Math.min(failures - 1, 20), failureRetryMaxMs)
+          failureState = {
+            digest: entry.digest,
+            failures,
+            retryNotBefore: now().getTime() + delay,
+            exhausted,
+          }
+        })
         .finally(() => {
           if (active === entry) active = undefined
           options.onWake?.()
@@ -225,18 +249,20 @@ export function createAssistantReflection(options: {
           ...manifest,
           status: 'interrupted',
           endedAt,
-          error: 'Interrupted by newer operator input or shutdown.',
+          error: 'Interrupted by Coordinator shutdown.',
           handoffEventId,
         })
         return { handoffEventId: null }
       }
       const latest = await options.state.read()
-      if (latest.stateDigest === snapshot.stateDigest && preparedHandoff.current) {
+      const workspace = await options.workspace.readWorkspace()
+      const handoff = prepareReflectionHandoff(snapshot, workspace.homeId, preparedHandoff.current)
+      if (latest.stateDigest === snapshot.stateDigest && handoff) {
         const event = await options.workspace.receiveReflectionEvent({
-          content: preparedHandoff.current.brief,
-          context: preparedHandoff.current.context
+          content: handoff.brief,
+          context: handoff.context
             ? {
-                ...preparedHandoff.current.context,
+                ...handoff.context,
                 observedDigest: snapshot.stateDigest,
               }
             : undefined,
@@ -256,9 +282,7 @@ export function createAssistantReflection(options: {
         ...manifest,
         status: interrupted ? 'interrupted' : 'failed',
         endedAt: now().toISOString(),
-        error: interrupted
-          ? 'Interrupted by newer operator input or shutdown.'
-          : errorMessage(error),
+        error: interrupted ? 'Interrupted by Coordinator shutdown.' : errorMessage(error),
         handoffEventId,
       })
       if (interrupted) return { handoffEventId: null }
@@ -270,6 +294,83 @@ export function createAssistantReflection(options: {
   }
 
   return reflection
+}
+
+interface PreparedReflectionHandoff {
+  brief: string
+  context?: InboxContext
+}
+
+function prepareReflectionHandoff(
+  snapshot: AssistantStateSnapshot,
+  homeId: string,
+  prepared: PreparedReflectionHandoff | null,
+): PreparedReflectionHandoff | null {
+  const scopes = unnotifiedGoalAttentionScopes(snapshot)
+  const preferred = prepared?.context
+    ? scopes.find(
+        (scope) =>
+          scope.projectId === prepared.context?.projectId &&
+          scope.goalId === prepared.context?.goalId,
+      )
+    : undefined
+  const scope = preferred ?? scopes[0]
+  if (scope) {
+    const fallbackBrief = [
+      `Unnotified Attention remains open for ${scope.projectId}/${scope.goalId}.`,
+      'Re-read current state, resolve it with ordinary HOPI tools when safe, and notify the operator only when a decision or concise result is required.',
+      `Canonical Attention references: ${scope.attentionRefs.join(', ')}.`,
+    ].join(' ')
+    return {
+      brief: preferred ? (prepared?.brief ?? fallbackBrief) : fallbackBrief,
+      context: {
+        projectId: scope.projectId,
+        goalId: scope.goalId,
+        attentionRefs: scope.attentionRefs,
+      },
+    }
+  }
+
+  const workspaceAttentionRefs = snapshot.workspaceAttentions
+    .filter(isUnnotifiedAttention)
+    .map(recordId)
+    .filter((id) => id !== 'unknown-attention')
+    .map((attentionId) => workspaceAttentionReference(homeId, attentionId))
+  if (workspaceAttentionRefs.length === 0) return prepared
+  return {
+    brief:
+      prepared?.brief ??
+      [
+        'Unnotified Workspace Attention remains open.',
+        'Re-read current state, diagnose the exact blocker, and tell the operator only the outcome or decision needed.',
+        `Canonical Attention references: ${workspaceAttentionRefs.join(', ')}.`,
+      ].join(' '),
+    context: {
+      attentionRefs: workspaceAttentionRefs,
+    },
+  }
+}
+
+function unnotifiedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
+  const scopes: Array<{ projectId: string; goalId: string; attentionRefs: string[] }> = []
+  for (const project of snapshot.projects) {
+    if (!isRecord(project) || typeof project.projectId !== 'string') continue
+    const projectId = project.projectId
+    if (!Array.isArray(project.goals)) continue
+    for (const goal of project.goals) {
+      if (!isRecord(goal)) continue
+      const goalId = nestedId(goal.goal, '')
+      if (!goalId || !Array.isArray(goal.attentions)) continue
+      const attentionRefs = goal.attentions
+        .filter(isUnnotifiedAttention)
+        .map(recordId)
+        .filter((id) => id !== 'unknown-attention')
+        .map((attentionId) => goalAttentionReference(projectId, goalId, attentionId))
+      if (attentionRefs.length === 0) continue
+      scopes.push({ projectId, goalId, attentionRefs })
+    }
+  }
+  return scopes
 }
 
 async function reflectionPrompt(
@@ -308,7 +409,7 @@ async function reflectionPrompt(
     'Call hopi_handoff_to_main at most once to prepare a concise internal brief only when the speaking thread should revalidate a useful action or user decision. The Coordinator publishes it only if this snapshot remains current. Otherwise finish silently.',
     'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
     'Do not draft polished operator-facing prose or narrate the whole workflow. The speaking thread will revalidate the brief and translate only the useful outcome and required action for the operator.',
-    'When one Goal has unresolved Attention that speaking should manage, include its exact projectId, goalId, and every related local ID in context.attentionRefs. Keep one handoff Goal-scoped; the next Reflection can handle another Goal. Never rely on brief text for identity.',
+    'When one Goal has unresolved Attention that speaking should manage, select its exact projectId and goalId. Do not copy Attention IDs: Coordinator owns the final canonical attentionRefs and augments them from this current snapshot. Keep one handoff Goal-scoped; the next Reflection can handle another Goal. Never rely on brief text for identity.',
     'Do not assume this snapshot is still current; the speaking thread will revalidate before acting.',
     '',
     `State digest: ${snapshot.stateDigest}`,

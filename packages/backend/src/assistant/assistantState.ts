@@ -98,10 +98,11 @@ export function createAssistantStateReader(options: {
 
       const projects = await Promise.all(
         selected.map(async (project) => {
-          const projectAttentionOpen = workspaceAttentions.some(
+          const projectAttention = workspaceAttentions.find(
             (attention) =>
               attention.target === `project:${project.projectId}` && attention.resolvedAt === null,
           )
+          const projectAttentionOpen = Boolean(projectAttention)
           const goalIds = input.goalId ? [input.goalId] : await project.store.listGoalIds()
           const goals = await Promise.all(
             goalIds.toSorted().map(async (goalId) => {
@@ -119,6 +120,7 @@ export function createAssistantStateReader(options: {
                 {
                   projectEligible: !projectAttentionOpen,
                   projectAttentionOpen,
+                  projectAttentionNotified: Boolean(projectAttention?.notifiedAt),
                   liveRunWorkIds: liveWorkIds,
                   operationallyDeferredWorkIds:
                     project.reconciler?.operationallyDeferredWorkIds?.(goalId, observedAt) ??

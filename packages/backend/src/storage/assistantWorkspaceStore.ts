@@ -52,7 +52,7 @@ export interface AssistantWorkspaceStore {
   exposeEvent(eventId: string): Promise<InboxEventDocument>
   handleEvent(
     eventId: string,
-    input: { reply: string; disposition: string; handledAt?: Date },
+    input: { reply: string; disposition: string; handledAt?: Date; expose?: boolean },
   ): Promise<InboxEventDocument>
   markEventWebhookDelivered(eventId: string, deliveredAt?: Date): Promise<InboxEventDocument>
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
@@ -127,6 +127,12 @@ export function createAssistantWorkspaceStore(
     async handleEvent(eventId, input) {
       const { source, event } = await requireEvent(this, homeRoot, eventId)
       if (event.attributes.status === 'handled') return event
+      if (input.expose) {
+        if (event.attributes.source !== 'reflection') {
+          throw new AssistantWorkspaceStoreError('Only Reflection turns can be exposed')
+        }
+        event.attributes.visibility = 'public'
+      }
       event.attributes.status = 'handled'
       event.attributes.handledAt = (input.handledAt ?? new Date()).toISOString()
       event.attributes.reply = input.reply.trim()

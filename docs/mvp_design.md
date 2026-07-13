@@ -1,7 +1,7 @@
 # HOPI MVP Design
 
 Status: forward product and architecture authority
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
@@ -47,9 +47,16 @@ The operator needs only three durable concepts:
    operator.
 
 Attention remains an internal durable control document, not a separate product concept. Open
-Attention with a target is routed internally through Reflection and appears on the board as **Waiting for Assistant**; only the speaking Assistant decides whether the user must be asked, and
-relevant Goal. Targetless completion Attention appears as a normal Assistant and Goal update.
-There is no separate Attention page.
+Attention with a target is routed internally through Reflection. It appears as **Waiting for
+Assistant** before a speaking reply is delivered and **Needs you** afterward when it remains
+unresolved. Only the speaking Assistant decides whether the operator must be asked. Targetless
+completion Attention appears as a normal Assistant and Goal update. There is no separate Attention
+page.
+
+The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
+reply to complete canonical Goal-local or workspace Attention references, then `notifiedAt` records
+that durable in-app delivery. A configured webhook mirrors the already handled public reply and has
+its own Inbox acknowledgement; raw Attention is never another user channel.
 
 Each Goal has a Kanban view for progress and troubleshooting. Its columns and cards are projections
 of Work, readiness, Runs, and Attention rather than another workflow authority.
@@ -203,9 +210,9 @@ The Assistant may assess meaningful state changes in one disposable background R
 failure does not depend on the operator noticing a card. Reflection is read-only and has no product
 lifecycle. It either ends silently or submits one internal brief to the persistent Assistant
 conversation. That speaking thread rereads current truth and remains the only model authority that
-may use mutating HOPI tools or notify the operator. User input interrupts Reflection and takes
-priority. This adds proactive diagnosis without another agent role, workflow, action format, or
-operator-visible thread.
+may use mutating HOPI tools or notify the operator. User input has speaking priority; an independent
+Reflection may finish but its handoff is discarded when its immutable digest is stale. This adds
+proactive diagnosis without another agent role, workflow, action format, or operator-visible thread.
 
 ## Architecture Map
 
@@ -257,8 +264,9 @@ The MVP UI contains:
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
    Work hidden by default behind an archive filter.
 
-Each nonterminal card shows one primary badge derived in priority order: **Waiting for Assistant**, `working`,
-`scheduled`, `queued`, then `waiting`. Terminal and cancelled cards receive no readiness badge.
+Each nonterminal card shows one primary badge derived in priority order: **Needs you**, **Waiting
+for Assistant**, `working`, `scheduled`, `queued`, then `waiting`. Terminal and cancelled cards
+receive no readiness badge.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
 canonical Work, Evidence, dependency, timing, and error facts. A `working` badge contains one small
 spinner. Opening a card also lists each runtime Attempt and its normalized live message/tool stream;
@@ -409,8 +417,8 @@ ownership does not authorize destructive reconstruction of newer canonical docum
 Invalid Assistant-home state requires supervisor intervention. Inbox turn state, qualified Goal
 Input path and digest, qualified Work integration trailers, Work references to
 immutable Evidence, Attention identity and `notifiedAt`, and current semantic state prevent
-duplicate domain effects. At-least-once notification may repeat after a crash but keeps the same
-canonical Attention identity.
+duplicate domain effects. At-least-once webhook mirroring may repeat after a crash but keeps the
+same canonical Inbox event identity and cannot repeat domain effects.
 
 ### Project migration
 
@@ -464,3 +472,12 @@ After the fixed flow is reliable, HOPI may add:
 
 Extensions must preserve the document authorities and invariants in this design rather than
 create a parallel workflow truth.
+
+## Supported Host Boundary
+
+The MVP Coordinator and executable adapter contract support macOS, Linux, and WSL. WSL is the
+supported Windows deployment because it preserves POSIX executables, signals, process groups, Git
+worktrees, and shell adapters. A Windows browser may connect to a Coordinator running in WSL.
+Native `win32` hosting is rejected at startup with an actionable message and remains deferred; HOPI
+does not add a second PowerShell adapter, executable-mode emulation, or process-control protocol
+until that deployment is required.

@@ -1,7 +1,7 @@
 # HOPI MVP Execution
 
 Status: forward execution authority
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
 recovery, completion assessment, notification, and Preview behavior for
@@ -16,7 +16,7 @@ recovery, completion assessment, notification, and Preview behavior for
 Canonical documents are not shared model scratch space.
 
 - Coordinator is the sole publisher of canonical control state.
-- The deployment permits one active Coordinator through an OS-level instance lock.
+- The deployment permits one active Coordinator through one cross-platform OS-backed instance lock.
 - Every canonical mutation enters one global publication queue and mutex.
 - Every canonical snapshot used for control decisions or model staging is copied while briefly
   holding the same mutex; consumers release it before model calls, tests, or other long work.
@@ -55,7 +55,7 @@ Domain idempotency comes from the authority that owns each effect:
 - a qualified Goal Input path and digest prove that one HOPI tool accepted an Inbox turn for that
   Goal
 - a qualified Work identity in the Git integration trailer proves integration
-- Attention identity and `notifiedAt` govern notification delivery
+- canonical Inbox Attention references and `notifiedAt` govern speaking-Assistant acknowledgement
 - Work references to Evidence and its qualified `producerRun` mark a responsibility-pass
   result as consumed
 - current lifecycle, stage, contract revision, dependencies, and semantic guards reject obsolete
@@ -77,6 +77,21 @@ or unwritable project root; it is one Assistant-home publication and claims no p
 update.
 
 Implementation mechanics belong to [the publish protocol ADR](./mvp_publish_protocol.md).
+
+The runtime baseline is Bun `>=1.3.11 <2`. `packageManager` records the reproducible baseline, but
+HOPI does not reject a compatible patch or minor release merely because it is newer. Startup checks
+the supported range and the test suite proves the capabilities HOPI actually uses. The Coordinator
+instance lock is one long-lived exclusive transaction in a Bun SQLite file under runtime storage.
+SQLite is used only as a cross-platform OS locking primitive: it stores no product or workflow fact,
+is never read as authority, and is disposable after the process exits. The transaction and its OS
+lock are released automatically on crash without libc-specific FFI or an external `flock`
+executable.
+
+The supported Coordinator hosts are macOS, Linux, and WSL. WSL is the Windows deployment boundary;
+a native `win32` process is rejected at startup because the Project contracts rely on POSIX
+executable bits, signals, shell adapters, and Git worktree behavior. The UI may still run in a
+Windows browser against a WSL Coordinator. Native Windows support is deferred instead of adding a
+second adapter and process-control protocol to the MVP.
 
 Before reconciliation, dispatch, integration, or notification delivery, Coordinator validates the
 Assistant home and linked projects. An invalid project creates or reuses workspace project
@@ -201,10 +216,12 @@ Resolution for Planner, Generator, and Reviewer is:
    when the explicit role uses compatible Codex defaults
 3. otherwise Assistant-home `defaults` apply
 
-The workspace Assistant always uses the Home Assistant/default configuration because its Codex
-thread belongs to Home rather than any Project. Saving Project settings affects only responsibility
-Runs dispatched afterward; an already-started Run keeps its resolved immutable command. Settings do
-not alter the workflow profile, capacities, retry policy, Work stage, or Goal revision.
+The workspace Assistant always uses an explicit Home Codex Assistant configuration. Without one, it
+uses compatible Home Codex defaults or the fixed Codex baseline when workflow defaults select
+another provider; its real resumable Codex thread belongs to Home rather than any Project. Saving
+Project settings affects only responsibility Runs dispatched afterward; an already-started Run
+keeps its resolved immutable command. Settings do not alter the workflow profile, capacities, retry
+policy, Work stage, or Goal revision.
 
 Pass result values are:
 
@@ -287,6 +304,12 @@ and lets the operator inspect older Attempts. Before normalization, RoleRunner a
 stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bounded for display but
 the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
 Work and cannot replace Evidence or a canonical gate.
+
+Goal reference images are passed only through a transport with an explicit image-input contract.
+If a selected responsibility transport cannot accept them, RoleRunner fails visibly before the
+model call instead of silently dropping accepted multimodal input. Speaking Assistant and
+Reflection remain the one persistent/disposable Codex pair in the MVP; provider-neutral session
+resume is not inferred from a synthetic thread ID.
 
 Attempt presentation preserves any explicit recorded result, application, and summary, including a
 stale reason. Canonical Evidence may fill fields missing from a legacy or interrupted presentation,
@@ -406,9 +429,9 @@ plans additional Work, requests required authority, or proposes the targetless c
 described under [Goal Completion](#goal-completion). This reuses the same Planner responsibility and
 adds no completion role or pass.
 
-Planner may return only `success` or `fail`. Success means its complete sparse proposal and Run
-result are ready for Coordinator validation. Fail means the Run could not produce a valid proposal;
-a targeted Attention accompanies fail only when retry cannot supply required operator authority.
+Planner may return `success`, `attention`, or `fail`. Success means its complete sparse proposal and
+Run result are ready for Coordinator validation. Attention means one exact Assistant-management
+request is staged. Fail means the Run could not produce a valid proposal without such a request.
 
 ### Generator
 
@@ -509,6 +532,10 @@ managed root, or touches `repoPath` or another user checkout automatically. Sinc
 canonical publications may be newer than the last Git checkpoint, ownership alone does not make
 the managed root disposable. There is no metadata follow-up commit, integration-pending state, or
 merge stage. Mechanical guarantees belong to the publish ADR.
+
+Within one managed worktree, Coordinator runs index-inspecting Git commands sequentially: commands
+such as `write-tree` and `status` may both refresh and lock the same index. This is part of the one
+C1 critical section, not a new resource lock, retry state, or reduction in parallel model Runs.
 
 ## Worktrees and Parallelism
 
@@ -720,18 +747,22 @@ code-derived trigger reason, semantic delta from the last assessed snapshot, a c
 slice, and bounded public conversation history. It excludes old Reflection briefs and full unrelated
 document bodies. Reflection decides from those facts first and may inspect only exact diagnostic paths
 for a concrete candidate. It has only read plus one `handoff_to_main` capability. A no-op result is
-silent. A handoff durably creates one
+silent unless the same current snapshot still contains unnotified Attention. Attention already means
+Assistant management is required, so Coordinator deterministically prepares one scoped internal
+fallback brief and attaches the exact canonical Goal-local or workspace Attention references rather
+than allowing a model omission to strand the target. A handoff durably creates one
 internal Inbox turn, after which the speaking thread revalidates current state and owns every action
 and optional operator notification.
 
-Receiving a public user turn aborts an active Reflection process and any active Reflection-sourced
-Assistant turn before waking the speaking thread. The internal Inbox turn stays pending; source
-priority selects public input next, and the internal turn may rerun only after that input. An
-interrupted digest remains unassessed and may be retried from a fresh snapshot after the user turn.
-Ordinary state changes during Reflection do not need to abort it because its brief has no authority
-and the speaking thread must reread state. One digest is otherwise assessed once. Consecutive
-internal handoffs are bounded; failure to converge becomes targeted Attention rather than an
-unbounded feedback loop.
+Receiving a public user turn aborts an active Reflection-sourced speaking turn but not the independent
+read-only Reflection process. Source priority selects public input next. Reflection may finish its
+immutable snapshot, but Coordinator publishes its prepared brief only when the semantic digest is
+still current; otherwise the result is discarded and the newest eligible digest is assessed later.
+This avoids cancellation churn without letting stale thought act or delay speech. One digest is
+otherwise assessed once. Reflection model failures retry with per-digest exponential backoff and a
+fixed attempt ceiling; an exhausted digest remains visible in runtime diagnostics and is not retried
+until semantic state changes. Consecutive internal handoffs are also bounded so a feedback loop cannot
+consume unbounded calls.
 
 ## Reconciler and Scheduling
 
@@ -752,7 +783,7 @@ Each cycle:
 5. evaluates `ready(work)` and dispatches responsibility passes within capacity
 6. after Reviewer success, performs deterministic integration while Work remains at `review`
 7. publishes validated outcomes and wakes dependents after upstream `done`
-8. evaluates completion and delivers unnotified Attention
+8. evaluates completion and routes unnotified Attention through Reflection
 9. observes the latest semantic digest and starts or coalesces non-blocking Reflection
 
 `ready(work)` is one conjunction:
@@ -792,27 +823,24 @@ inconsistency after its durable ref. Neither adds another Goal or Work lifecycle
 
 ### Notification
 
-Open targeted Attention appears as **Waiting for Assistant** on the board and is handled through Reflection and the speaking Assistant rather than exposed raw inside
+Open targeted Attention appears as **Waiting for Assistant** until the speaking Assistant has
+delivered a user-facing question. An unresolved Attention with `notifiedAt` set appears as **Needs
+you**. Both are projections of the same Attention document, not additional state. Raw Attention is
+handled through Reflection and the speaking Assistant rather than exposed directly inside
 conversation and Goal views. Targetless completion Attention appears in the normal update feed.
-Both can use the provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL`. The built-in
-Assistant path may also deliver an Attention when Reflection decides a speaking-thread update is
-useful: the handoff binds the exact Goal Attention in ordinary Inbox context, and `notify_user`
-exposes that pending turn before acknowledging the Attention. Both paths claim the same canonical
-delivery key and `notifiedAt`; neither owns separate provider state or a deduplication table.
+An eligible Reflection handoff binds exact canonical Goal-local or workspace Attention references
+in ordinary Inbox context, and `notify_user` records Run-local intent only. After the model returns,
+Coordinator first publishes the complete public Inbox reply and only then acknowledges every
+still-current linked Attention. Targeted Attention remains open. Completion resolves in its
+acknowledgement publication. A crash between roots leaves a complete public reply and an
+unacknowledged Attention; ordinary Inbox recovery finishes the acknowledgement. HOPI never records
+delivery before the message exists.
 
-The delivery worker scans open Attention with `notifiedAt: null`. Targeted Attention is immediately
-eligible; targetless Attention is eligible only while its Goal is `done` and references it through
-`completionAttentionId`. Delivery uses canonical Attention identity as the idempotency key and
-publishes `notifiedAt` after acknowledgement. Targeted Attention remains open. Completion resolves
-in the same publication. Resolved Attention is never newly delivered. The acknowledgement
-publication rereads Attention and, for completion, its Goal reference; it applies only if both are
-still current. An Attention-linked Assistant exposure follows the same project acknowledgement
-after its home-root visibility gate. A crash between roots leaves a public pending turn and an
-unacknowledged Attention, so ordinary Inbox recovery and at-least-once delivery remain sufficient.
-
-Persistent transport failure leaves `notifiedAt` null and keeps retrying with bounded in-memory
-backoff. It does not block delivery to other readable roots and does not create recursive Attention
-about Attention.
+The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` has one job: mirror
+handled public Reflection replies. It scans those Inbox events, uses the canonical Home/event
+identity as its idempotency key, and records `webhookDeliveredAt` after acknowledgement. Persistent
+transport failure retries with bounded in-memory backoff. It never scans or delivers raw Attention,
+never controls `notifiedAt`, and cannot create recursive Attention about delivery.
 
 An external process supervisor is required to restart or alert on Coordinator death or an
 unwritable Assistant-home publication root, because HOPI cannot persist Attention in that root.
@@ -908,6 +936,19 @@ bounded startup timeout. Only the ready line produces `running`; exit or timeout
 `startup_failed` with the captured logs and no extra health state. These are adapter I/O
 conventions, not generic responsibility-Run environment, canonical Project configuration, or
 workflow state.
+
+One Project has one serialized Preview operation. Concurrent Start calls share the same launch;
+Stop during preparation prevents the adapter from launching, and a later Start waits for that
+preparation to settle before beginning a new operation. Every unexpected preparation, filesystem,
+spawn, stream, or cleanup exception closes `starting` as `failed`, preserves available diagnostics,
+and permits a fresh Start instead of retaining a rejected promise.
+
+Graceful Coordinator shutdown stops every owned Preview child. A hard kill cannot be made portable
+by storing a PID: PID reuse, detached descendants, and cross-platform process semantics would create
+another unreliable state machine. Production deployment therefore runs Coordinator in a supervisor
+or container whose process group or cgroup is terminated with the parent. A hard-kill orphan
+observed on the next Start is treated as an ordinary startup conflict and routed through Preview
+repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
 
 On Start, Coordinator first checks for the reviewed adapter. If it is missing or startup fails, the
 current UI shows the condition and asks whether Assistant should establish or repair Preview. A

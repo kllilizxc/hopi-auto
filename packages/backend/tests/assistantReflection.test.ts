@@ -191,28 +191,93 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
   })
 
-  test('does not mark a failed digest assessed and retries the same canonical state', async () => {
+  test('backs off failed digests, stops at the ceiling, and retries after semantic change', async () => {
+    let clock = 0
+    let digest = 'f'.repeat(64)
     let calls = 0
     const fixture = await setup(
       () => ({
-        digest: 'f'.repeat(64),
-        workspaceAttentions: [{ resolvedAt: null, notifiedAt: null }],
+        digest,
+        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
       }),
       () => ({
         async run() {
           calls += 1
-          if (calls === 1) throw new Error('temporary model failure')
+          if (calls <= 3) throw new Error('temporary model failure')
           return { reply: 'Recovered.', threadId: `reflection-${calls}` }
         },
       }),
+      {
+        now: () => new Date(clock),
+        failureRetryBaseMs: 100,
+        failureRetryMaxMs: 1_000,
+        maxFailuresPerDigest: 3,
+      },
     )
 
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
+    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
+    clock = 100
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
-    expect(calls).toBe(2)
+    clock = 299
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
+    clock = 300
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    clock = 10_000
+    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
+    expect(calls).toBe(3)
+
+    digest = 'e'.repeat(64)
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(calls).toBe(4)
+    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
+  })
+
+  test('creates a Goal-scoped fallback with exact Attention references when the model omits handoff', async () => {
+    const fixture = await setup(
+      () => ({
+        digest: 'a'.repeat(64),
+        projects: [
+          {
+            projectId: 'P-1',
+            available: true,
+            goals: [
+              {
+                goal: { attributes: { id: 'G-1' } },
+                attentions: [
+                  { attributes: { id: 'A-1', resolvedAt: null, notifiedAt: null } },
+                  { attributes: { id: 'A-2', resolvedAt: null, notifiedAt: null } },
+                ],
+                works: [],
+              },
+            ],
+          },
+        ],
+      }),
+      () => ({
+        async run() {
+          return { reply: 'No handoff.', threadId: 'reflection-no-handoff' }
+        },
+      }),
+      { linkProject: true },
+    )
+
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+
+    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
+    expect(events).toHaveLength(1)
+    expect(events[0]?.attributes.context).toMatchObject({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      attentionRefs: ['project:P-1/goal:G-1/attention:A-1', 'project:P-1/goal:G-1/attention:A-2'],
+      observedDigest: 'a'.repeat(64),
+    })
+    expect(events[0]?.body).toContain('Unnotified Attention remains open')
   })
 
   test('starts unsettled snapshots only for immediate signals, including after startup', async () => {
@@ -290,10 +355,28 @@ interface TestState {
 async function setup(
   readState: () => TestState,
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
+  reflectionOptions: {
+    now?: () => Date
+    failureRetryBaseMs?: number
+    failureRetryMaxMs?: number
+    maxFailuresPerDigest?: number
+    linkProject?: boolean
+  } = {},
 ) {
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(temporaryRoot, publisher)
   await home.initialize()
+  if (reflectionOptions.linkProject) {
+    const repoRoot = join(temporaryRoot, 'repo')
+    await mkdir(repoRoot, { recursive: true })
+    await git(repoRoot, ['init', '-b', 'main'])
+    await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
+    await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
+    await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
+    await git(repoRoot, ['add', '.'])
+    await git(repoRoot, ['commit', '-m', 'initial'])
+    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+  }
   const workspace = createAssistantWorkspaceStore(temporaryRoot, publisher)
   const state: AssistantStateReader = {
     async read() {
@@ -322,6 +405,22 @@ async function setup(
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     minObserveIntervalMs: 0,
+    ...(reflectionOptions.now ? { now: reflectionOptions.now } : {}),
+    ...(reflectionOptions.failureRetryBaseMs !== undefined
+      ? { failureRetryBaseMs: reflectionOptions.failureRetryBaseMs }
+      : {}),
+    ...(reflectionOptions.failureRetryMaxMs !== undefined
+      ? { failureRetryMaxMs: reflectionOptions.failureRetryMaxMs }
+      : {}),
+    ...(reflectionOptions.maxFailuresPerDigest !== undefined
+      ? { maxFailuresPerDigest: reflectionOptions.maxFailuresPerDigest }
+      : {}),
   })
   return { workspace, tools, reflection }
+}
+
+async function git(cwd: string, args: string[]) {
+  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
+  if (exitCode !== 0) throw new Error(stderr)
 }

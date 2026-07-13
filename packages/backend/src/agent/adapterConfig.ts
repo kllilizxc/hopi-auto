@@ -18,8 +18,8 @@ type ProjectCodingDefaultSource = Extract<
 >
 
 const assistantTransportConfigSchema = roleTransportConfigSchema.refine(
-  (config) => config.cwdMode === 'root',
-  'assistant cwdMode must be root',
+  (config) => config.cwdMode === 'root' && !('cmd' in config) && config.transport === 'codex',
+  'assistant must use Codex transport with cwdMode root',
 )
 
 const workflowRoleTransportConfigSchema = roleTransportConfigSchema.refine(
@@ -125,7 +125,9 @@ export function resolveAssistantTransportConfig(config: AgentAdapterConfig): Rol
     return resolveExplicitTransportConfig(config.defaults, config.assistant)
   }
 
-  return buildDefaultTransportConfig(config.defaults, 'root')
+  const defaults =
+    config.defaults.transport === 'codex' ? config.defaults : DEFAULT_PROJECT_CODING_DEFAULTS
+  return buildDefaultTransportConfig(defaults, 'root')
 }
 
 export function resolveRoleTransportConfig(
@@ -146,15 +148,12 @@ export function resolveRoleTransportConfig(
 
 function migrateAgentAdapterConfig(input: LegacyAgentAdapterConfig): AgentAdapterConfig {
   const defaults = deriveProjectCodingDefaultsFromLegacyConfig(input)
+  const assistant = migrateLegacyTransportConfig(input.assistant, 'root')
 
   return {
     version: 3,
     defaults,
-    ...(migrateLegacyTransportConfig(input.assistant, 'root')
-      ? {
-          assistant: migrateLegacyTransportConfig(input.assistant, 'root'),
-        }
-      : {}),
+    ...(assistant && !('cmd' in assistant) && assistant.transport === 'codex' ? { assistant } : {}),
     roles: Object.fromEntries(
       WORKFLOW_ROLE_KEYS.flatMap((role) => {
         const migrated = migrateLegacyTransportConfig(input.roles[role], 'worktree')

@@ -51,6 +51,8 @@ interface PreviewOperation {
   streams: Promise<void>[]
   logWriteTail: Promise<void>
   startPromise: Promise<PreviewStartResult>
+  phase: 'preparation' | 'startup'
+  settled: boolean
 }
 
 export interface PreviewManagerOptions {
@@ -111,6 +113,7 @@ export function createPreviewManager(
       return repairRequired('preparation_failed', preparation.adapterPath, preparation.logs)
     }
 
+    operation.phase = 'startup'
     await Bun.write(paths.logPath, '')
     if (isStopped(operation)) return stoppedResult(operation.session, now)
     const child = Bun.spawn([paths.adapter], {
@@ -192,7 +195,33 @@ export function createPreviewManager(
     return operation.session
   }
 
-  return {
+  async function failUnexpectedStart(
+    operation: PreviewOperation,
+    paths: { adapter: string; sessionRoot: string; logPath: string },
+    error: unknown,
+  ): Promise<PreviewStartResult> {
+    if (operation.process) {
+      await terminatePreview(operation.process, stopGraceMs).catch(() => undefined)
+    }
+    await settlePreviewLogs(operation).catch(() => undefined)
+    if (isStopped(operation)) return stoppedResult(operation.session, now)
+
+    const message = `Unexpected Preview ${operation.phase} failure: ${errorMessage(error)}`
+    operation.logs.push(message)
+    await mkdir(paths.sessionRoot, { recursive: true }).catch(() => undefined)
+    await appendFile(paths.logPath, `${message}\n`).catch(() => undefined)
+    operation.session.status = 'failed'
+    operation.session.endpoint = null
+    operation.session.endedAt = now().toISOString()
+    operation.session.error = message
+    return repairRequired(
+      operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
+      paths.adapter,
+      operation.logs.join('\n'),
+    )
+  }
+
+  const manager: PreviewManager = {
     inspect(projectId) {
       return operations.get(projectId)?.session ?? null
     },
@@ -200,6 +229,9 @@ export function createPreviewManager(
       const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
         return current.startPromise
+      }
+      if (current && !current.settled) {
+        return current.startPromise.then(() => manager.start(input))
       }
       const projectRoot = resolve(input.projectRoot)
       const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
@@ -232,16 +264,23 @@ export function createPreviewManager(
         streams: [],
         logWriteTail: Promise.resolve(),
         startPromise: Promise.resolve({ kind: 'started', session }),
+        phase: 'preparation',
+        settled: false,
       }
       operations.set(input.projectId, operation)
-      operation.startPromise = runStart(operation, input, {
+      const paths = {
         projectRoot,
         adapter,
         sessionRoot,
         logPath,
         preparationRoot,
         reposFile,
-      })
+      }
+      operation.startPromise = runStart(operation, input, paths)
+        .catch((error) => failUnexpectedStart(operation, paths, error))
+        .finally(() => {
+          operation.settled = true
+        })
       return operation.startPromise
     },
     async stop(projectId, reason) {
@@ -254,6 +293,7 @@ export function createPreviewManager(
       await Promise.allSettled(active.map((operation) => operation.startPromise))
     },
   }
+  return manager
 }
 
 async function consumePreviewStream(
@@ -342,6 +382,10 @@ function repairRequired(
       details,
     ].join(' '),
   }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export async function makePreviewAdapterExecutable(path: string) {

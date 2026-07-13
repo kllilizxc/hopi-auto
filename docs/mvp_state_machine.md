@@ -1,7 +1,7 @@
 # HOPI MVP State Machine
 
 Status: accepted derived reference
-Last updated: 2026-07-11
+Last updated: 2026-07-13
 
 This document visualizes the lifecycle rules accepted in [the MVP design](./mvp_design.md). It is
 not a second source of truth. Schemas belong to [the document model](./mvp_document_model.md),
@@ -12,9 +12,10 @@ Assistant behavior to [the Assistant design](./mvp_assistant.md), execution beha
 ## Product and Durable State
 
 The operator-facing product has **Assistant**, **Project**, and **Goal**. Project is stable context
-without a workflow lifecycle. Attention is an internal control document. Targeted Attention appears
-as internal **Waiting for Assistant** state and blocks its target; targetless Attention appears as a normal
-Goal completion update. It is not another product concept.
+without a workflow lifecycle. Attention is an internal control document. Targeted Attention blocks
+its target and projects as **Waiting for Assistant** or **Needs you** from the existing delivery
+fact; targetless Attention appears as a normal Goal completion update. It is not another product
+concept.
 
 Five internal document types have these minimal durable control fields:
 
@@ -110,16 +111,18 @@ Attention has no `kind`, `status`, or stored scope:
 | --- | --- |
 | `target` | One canonical reference, or `null` for Goal completion |
 | `resolvedAt` | `null` while open; resolution time otherwise |
-| `notifiedAt` | Webhook or Attention-linked public Assistant delivery acknowledgement, otherwise `null` |
+| `notifiedAt` | Attention-linked complete public Assistant reply acknowledgement, otherwise `null` |
 
 Storage path derives scope. Goal-local Attention may target only its owning Goal or Work, or use
 `target: null` for that Goal's completion. Workspace Attention may target an Inbox event or linked
 project. Delivery identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
-`(homeId, attentionId)` for workspace Attention.
+`(homeId, attentionId)` for workspace Attention. Inbox context stores the complete canonical
+reference; a bare local ID is never written because it can repeat in another Goal or home.
 
 Every open Attention with a non-null target has exactly the same kernel behavior:
 
-- it appears as **Waiting for Assistant**
+- it appears as **Waiting for Assistant** while `notifiedAt` is null and **Needs you** after a
+  speaking reply is delivered while the Attention remains unresolved
 - it blocks its target and deterministic descendants
 - it remains open after notification
 - it resolves only after an answer or verified condition change
@@ -134,10 +137,10 @@ deliverable completion update only when its Goal is `done` and points to it, and
 delivery is acknowledged. A Goal has at most one open targetless Attention not yet claimed by
 `completionAttentionId`.
 
-`notifiedAt` records delivery, not resolution. The operator-visible message is immutable after its
-first delivery attempt; a materially different message uses a new Attention ID. Delivery remains
-at-least-once, so a process stop after transport acknowledgement but before the document update may
-repeat the same Attention ID.
+`notifiedAt` records speaking-Assistant delivery, not resolution. The complete public reply is
+durable before acknowledgement, and recovery uses only its exact Inbox references. A materially
+different message uses a new Attention ID. An optional webhook is an at-least-once mirror of the
+already handled reply and has its own Inbox acknowledgement; it never delivers raw Attention.
 
 ## Complete Control Loop
 
@@ -149,8 +152,7 @@ flowchart LR
     EN --> D[(Canonical documents)]
     EN --> U([User message])
 
-    U --> X[Interrupt active Reflection]
-    X --> I[Durably write public pending Inbox turn]
+    U --> I[Durably write public pending Inbox turn]
     I --> ACK[Acknowledge input]
     ACK --> D
 
@@ -161,8 +163,11 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|final reply| HR[Publish reply and mark turn handled; render only if public]
-    HR --> D
+    CE -->|final reply| HR[Publish complete reply and mark turn handled; expose only when requested]
+    HR --> AL{Linked Attention?}
+    AL -->|yes| NA[Publish Attention notifiedAt after reply]
+    AL -->|no| D
+    NA --> D
     CE -->|bounded unsafe failure| TA[Prepare targeted Attention]
     TA --> PUB[Publish supporting writes then optional one gate]
     PUB --> D
@@ -180,8 +185,7 @@ flowchart LR
     W -->|yes| RUN[Dispatch pass Run; stage unchanged]
     RUN --> O{Validated pass output}
     O -->|Reviewer success| C1[Independent durable C1 integration]
-    O -->|attention| A[Assistant-managed Attention]
-    O -->|targeted Attention proposed| TA
+    O -->|attention plus targeted Attention| TA
     O -->|Planner completion proposal| PC[Prepare targetless Attention and Planning Work done gate]
     O -->|other accepted result| WG[Prepare Evidence and one Work gate]
     PC --> PUB
@@ -191,10 +195,6 @@ flowchart LR
     PX -->|no| PA[Publish project-target Attention at Assistant home]
     PA --> D
 
-    D --> N[Deliver open Attention with notifiedAt null]
-    N --> NA[Publish delivery acknowledgement]
-    NA --> PUB
-
     D -. derived view .-> K[Assistant and read-only Goal Kanban]
     RUN -. live Run .-> K
 
@@ -202,7 +202,9 @@ flowchart LR
     SD -->|no| RA[Already assessed]
     SD -->|yes; one at a time| RF[Run disposable read-only Reflection]
     RF --> HB{Useful handoff?}
-    HB -->|no| RA
+    HB -->|no| UA{Unnotified Attention remains?}
+    UA -->|no| RA
+    UA -->|yes; deterministic fallback| II
     HB -->|yes| II[Durably write internal pending Inbox turn]
     II --> D
 ```
@@ -240,26 +242,29 @@ stateDiagram-v2
     Baseline --> Running : urgent signal or settled changed snapshot
     Deferred --> Deferred : newer automatic progress coalesces
     Deferred --> Running : urgent signal or quiescent idle tick
-    Running --> Assessed : no handoff
+    Running --> Assessed : no handoff and no unnotified Attention
     Running --> HandedOff : one internal brief
-    Running --> Interrupted : public user input
+    Running --> HandedOff : fallback for unnotified Attention
+    Running --> Backoff : model failure below ceiling
+    Running --> Exhausted : model failure reaches ceiling
     Assessed --> Deferred : later digest; automatic progress remains
     Assessed --> Running : later eligible digest
     HandedOff --> Deferred : later automatic progress
     HandedOff --> Running : later eligible digest after speaking-thread effects
-    Interrupted --> Deferred : fresh post-user automatic progress
-    Interrupted --> Running : fresh post-user eligible snapshot
+    Backoff --> Running : retry delay elapsed
+    Exhausted --> Running : semantic digest changed
     Running --> Running : newer state coalesces
 ```
 
-`Baseline`, `Deferred`, `Running`, `Assessed`, `HandedOff`, and `Interrupted` are explanatory runtime labels only.
+`Baseline`, `Deferred`, `Running`, `Assessed`, `HandedOff`, `Backoff`, and `Exhausted` are explanatory runtime labels only.
 They are not stored workflow states, Kanban columns, or scheduling guards. At most one Reflection is
 running; a newer snapshot replaces queued older snapshots. A quiescent idle tick begins and ends
 without an active responsibility Run, so a Run completion racing an older scan cannot prematurely
 settle Reflection. Deferred means only that HOPI can still make deterministic progress; it creates no
-timer, queue record, or canonical field. A user
-interruption does not mark the digest assessed. All other completed assessments suppress repetition
-for that digest, and bounded internal handoffs prevent self-triggering loops.
+timer, queue record, or canonical field. User input has speaking priority but does not cancel the
+read-only snapshot; a stale prepared handoff is discarded by digest comparison. Successful
+assessments suppress repetition for that digest, failure retries are bounded, and bounded internal
+handoffs prevent self-triggering loops.
 
 ## Goal Lifecycle
 
@@ -510,7 +515,8 @@ Each nonterminal card shows exactly one primary badge, chosen by this priority:
 
 | Badge | Derivation |
 | --- | --- |
-| `Waiting for Assistant` | Open targeted Attention covers the Work or Goal |
+| `Needs you` | Open targeted Attention covers the Work or Goal and `notifiedAt` is set |
+| `Waiting for Assistant` | Open unnotified targeted Attention covers the Work or Goal |
 | `working` | A live Run owns the Work lease |
 | `scheduled` | Nonterminal Work has a future `notBefore` |
 | `queued` | `ready(work)` and no live Run |
@@ -559,8 +565,8 @@ outcome. Other state and document changes do not participate in this runtime tra
   may dispatch, publish a returning result, or enter `C1`. Planning Work never appears in
   Engineering `dependsOn`.
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
-  non-null target always blocks and appears as **Waiting for Assistant**; a null target is Goal completion and
-  never blocks.
+  non-null target always blocks; `notifiedAt` derives whether its badge is **Waiting for Assistant**
+  or **Needs you**. A null target is Goal completion and never blocks.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in

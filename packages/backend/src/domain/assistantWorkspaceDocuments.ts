@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { parseAttentionReference } from './attentionReference'
 import {
   type MarkdownDocument,
   parseMarkdownDocument,
@@ -11,6 +12,11 @@ export const INBOX_VISIBILITIES = ['public', 'internal'] as const
 export const ROUTE_MODES = ['existing', 'create'] as const
 
 const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+const attentionReferenceSchema = z
+  .string()
+  .regex(
+    /^(?:project:[A-Za-z0-9][A-Za-z0-9._-]*\/goal:[A-Za-z0-9][A-Za-z0-9._-]*\/attention:[A-Za-z0-9][A-Za-z0-9._-]*|home:[A-Za-z0-9][A-Za-z0-9._-]*\/attention:[A-Za-z0-9][A-Za-z0-9._-]*)$/,
+  )
 const timestampSchema = z.string().datetime({ offset: true })
 
 export const inboxRouteClaimSchema = z
@@ -23,16 +29,39 @@ export const inboxRouteClaimSchema = z
 
 export const inboxContextSchema = z
   .object({
-    projectId: stableIdSchema,
-    goalId: stableIdSchema,
+    projectId: stableIdSchema.optional(),
+    goalId: stableIdSchema.optional(),
     attentionId: stableIdSchema.optional(),
-    attentionRefs: z.array(stableIdSchema).optional(),
+    attentionRefs: z.array(z.union([stableIdSchema, attentionReferenceSchema])).optional(),
     observedDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   })
   .strict()
+  .superRefine((context, refinement) => {
+    if (Boolean(context.projectId) !== Boolean(context.goalId)) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Inbox context projectId and goalId must appear together',
+      })
+    }
+    if (!context.projectId && !context.attentionRefs?.length) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Inbox context requires a Goal location or canonical Attention reference',
+      })
+    }
+    if (
+      !context.projectId &&
+      context.attentionRefs?.some((reference) => !parseAttentionReference(reference))
+    ) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Workspace Inbox context requires canonical Attention references',
+      })
+    }
+  })
 
 export const inboxEventAttributesSchema = z
   .object({

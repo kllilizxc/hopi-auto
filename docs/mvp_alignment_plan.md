@@ -1,7 +1,7 @@
 # HOPI MVP Implementation Alignment
 
 Status: MVP implementation aligned; live end-to-end audit complete
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This ledger records implementation evidence for [the MVP design](./mvp_design.md). It is not a
 second product or architecture authority. The design, document model, execution design, state
@@ -24,8 +24,8 @@ Alignment is complete only when:
   is validated HOPI tools
 - responsibility Attempts preserve normalized events and the raw process stream, while state reads
   expose bounded diagnostics and their local paths
-- meaningful state changes can run one interruptible read-only Reflection whose only possible effect
-  is an internal handoff to the persistent Assistant conversation
+- meaningful state changes can run one immutable-snapshot read-only Reflection whose only possible
+  effect is a digest-guarded internal handoff to the persistent Assistant conversation
 - the one-way legacy import preserves supported history without retaining an old writable authority
 - all repository checks and MVP acceptance suites pass
 
@@ -48,8 +48,8 @@ Alignment is complete only when:
 
 - [x] Preserve the raw stdout/stderr stream for every responsibility Attempt.
 - [x] Return bounded Run/Attempt diagnostics and local log paths from HOPI state reads.
-- [x] Add one coalesced, interruptible, read-only Reflection loop with an internal Inbox handoff.
-- [x] Keep Reflection turns hidden unless the speaking thread explicitly promotes its reply.
+- [x] Add one coalesced, immutable-snapshot, read-only Reflection loop with an internal Inbox handoff.
+- [x] Keep Reflection turns hidden unless the speaking thread explicitly requests reply exposure.
 - [x] Treat a newly queued same-Goal Planning Work as admission control instead of retroactively
   staling an already admitted Engineering result.
 - [x] Treat non-active Goal lifecycle as both admission control and a Goal-scoped live-Run lease
@@ -76,8 +76,8 @@ Alignment is complete only when:
   idempotent request adds no canonical state and requires no tool-order state machine.
 - [x] End the speaking turn after an asynchronous effect is admitted; never sleep or poll for later
   workflow state that Reflection already owns reporting.
-- [x] Bind a Reflection completion handoff to its exact Goal Attention and acknowledge that canonical
-  delivery only when the speaking thread exposes its reply.
+- [x] Attach exact Goal Attention identities in Coordinator, fall back when Reflection omits a
+  required handoff, and acknowledge delivery only after the speaking reply is handled.
 - [x] Defer ordinary semantic changes while deterministic or responsibility progress remains; keep
   unnotified Attention, unavailable Project, and stale Run immediately Reflection-eligible.
 - [x] Require the single Project Preview adapter to start from a clean managed integration worktree
@@ -102,9 +102,25 @@ Alignment is complete only when:
 - [x] Split Preview proof at the existing C1 boundary: Engineering directly proves its candidate
   script; final Planner uses exact public start/status/stop routes only when accepted design
   explicitly requires integrated-release proof.
+- [x] Accept compatible Bun `>=1.3.11 <2` runtimes and replace platform-specific instance-lock FFI
+  with one cross-platform crash-released runtime lock.
+- [x] Bound Reflection failure retries per digest, derive **Needs you** from existing `notifiedAt`,
+  and serialize all Preview operations including exceptional startup paths.
 - [x] Require the backend product route smoke to load every emitted frontend asset, not merely return
   an HTML shell.
 - [x] Rerun backend, frontend, build, and production smoke checks.
+- [x] Replace local Inbox Attention IDs with complete canonical Goal-local or workspace references;
+  keep singular/local forms as read-only migration input.
+- [x] Make the speaking Assistant the only Attention delivery authority, preserve its handled public
+  reply before `notifiedAt`, and reduce webhook to an independently acknowledged Inbox reply mirror.
+- [x] Remove the unused raw-Attention delivery worker and cover Goal, workspace, completion, retry,
+  restart, and repeated-local-ID boundaries end to end.
+- [x] Enforce the documented host boundary at startup: macOS, Linux, and WSL are supported; native
+  Windows remains deferred rather than gaining a second adapter protocol.
+- [x] Keep Preview runtime-only: graceful shutdown owns children, while hard-kill process-tree cleanup
+  belongs to the deployment supervisor instead of a durable PID/lease model.
+- [x] Serialize Git commands that share one managed worktree index; do not add a second lock or retry
+  state to race `write-tree` against `status` during C1 or completion verification.
 
 ## Implemented Slices
 
@@ -122,12 +138,12 @@ Alignment is complete only when:
 5. Workspace Assistant preserves lossless Inbox turns without parsing reply prose or an Action
    object, resumes one persistent Codex thread, exposes validated HOPI tools through a single-turn
    MCP capability, and records normalized live messages, tool calls, results, and failures. One
-   disposable read-only Reflection assesses coalesced state changes, can only hand an internal turn
-   to that thread, and is interrupted by newer user input.
+   disposable read-only Reflection assesses immutable coalesced state, can only hand an internal
+   turn to that thread, and publishes only while its semantic digest remains current.
 6. Reconciler derives readiness, runs passes within fixed capacity, rebuilds one primary C1 over
    clean selected-Repo target advances, recovers secondary release projections, fails invalid
-   projects closed, completes only from Planner proof, and delivers Attention through one optional
-   webhook channel.
+   projects closed, and completes only from Planner proof. Reflection routes Attention through the
+   speaking Assistant; an optional webhook mirrors only its handled public replies.
 7. The restored React UI exposes Assistant, Project, Goal contract/design, Pause/Resume, Waiting for Assistant,
    completion updates, four-column Kanban, cancelled archive, Project model defaults, Repo add and
    rebind, Work Repo badges, Work Attempt message streams, an on-demand Reflection debug stream, and
@@ -152,8 +168,11 @@ Alignment is complete only when:
   conflicts, partial projection recovery, and unexpected-ref blocking: `assistantHomeStore.test.ts`,
   `mvpServer.test.ts`, `projectReconciler.test.ts`, and `multiRepoC1.test.ts`
 - deterministic integration and completion: `c1Integrator.test.ts`, `completionVerifier` coverage in
-  Goal and Project reconciliation tests
-- notification identity, acknowledgement loss, webhook, backoff: `attentionDelivery.test.ts`
+  Goal and Project reconciliation tests, plus 30 repeated multi-Repo primary/secondary C1 passes
+- canonical Goal-local/workspace identity, legacy read compatibility, reply-before-acknowledgement,
+  acknowledgement recovery, completion collision, webhook, and backoff: `attentionReference.test.ts`,
+  `assistantAttentionE2E.test.ts`, `workspaceAssistant.test.ts`, `mvpServer.test.ts`, and
+  `attentionDelivery.test.ts`
 - Preview adapter and repair prompt: `previewManager.test.ts`
 - Preview candidate/integrated ownership, Planner API context, material interruption, and partial
   Generator checkpoint: `roleContextStager.test.ts`, `vendorTransport.test.ts`,
@@ -206,7 +225,8 @@ concept can be removed. Model wording and incidental tool order are not assertio
 | Multi-Repo delivery | one Assistant instruction plans, changes, reviews, and integrates a Work spanning a primary `web` Repo and secondary `api` Repo without touching either user checkout | isolated Project `P-dogfood`, Goal `G-68391b3e...`: API contract and dashboard crossed two Repos through one Work/C1 model; an omitted runtime Repo caused `replan` rather than checkout discovery; revision 3 repaired the exact ready protocol, primary release reached `db090e4`, secondary release stayed at its documented `c78867e`, and both user `main` checkouts remained at their original clean commits |
 | Post-C1 proof | public Preview validates only the integrated release, while Generator and Reviewer prove the candidate directly from their Run manifest | final `plan-0005` used `POST /preview/start`, `GET /preview`, live dashboard and readiness HTTP 200 checks, then `POST /preview/stop`; Goal completed only after the public session reached `running`, and no validation process remained |
 | Capacity and isolation | independent Goals use fixed capacity; same Work keeps one branch; C1 target movement does not stale semantic output | live concurrent CardGame Goals plus scheduler/C1 coverage |
-| Reflection priority and delivery | a new user turn interrupts in-flight background thought; a later completion handoff is public exactly once and acknowledges its Attention | `RF-70944253...` became `interrupted` within one poll after `EV-a8aea957...`, whose reply was `pong`; `RF-a8c56860...` handed off exact Attention `completion-bun-guidance-ready-fa64079e...`, `hopi_notify_user` returned `attentionAcknowledged: true`, and follow-up `RF-fc713cdd...` ended with no handoff |
+| Reflection priority and delivery | public speech has priority without cancelling read-only thought; only a current digest may hand off, and a complete public reply precedes exact Attention acknowledgement | `assistantAttentionE2E.test.ts` drives both Goal-local and workspace Attention through real Git-backed fallback, public reply, exact canonical acknowledgement, and **Needs you** projection while the user checkout remains clean; `mvpServer.test.ts` proves two Goals may reuse one local completion ID without feed collision |
+| Cross-platform runtime and Preview recovery | compatible Bun 1 releases start on macOS, Linux, and WSL without platform FFI; native Windows fails early rather than partially running POSIX adapters; exceptional or stopped Preview preparation cannot overlap or strand `starting` | Debian Bun 1.3.13 passed the `>=1.3.11 <2` gate; SQLite rejected a second live Coordinator and allowed replacement after release; Preview tests proved thrown preparation recovery and serialized Start after Stop; platform-gate coverage rejects `win32` with the WSL instruction |
 | Documentation-only delivery | existing project guidance is assessed before code; a real gap becomes the smallest design-backed Work, while sufficient current fact completes without Engineering | `G-41b9a706...` corrected the initial assumption, updated design first, changed only root `AGENTS.md`, passed Review and C1, and delivered completion; follow-up `G-bc11aea0...` used only `plan-initial`, made no project change, performed no foreign-Goal/runtime template lookup, and completed with one acknowledged Attention |
 
 The next scenario is selected from the oldest unverified boundary, unless a real run exposes a more
@@ -220,14 +240,16 @@ machine.
 - Duplicate model tool calls remain harmless through existing idempotent publications. HOPI does
   not track tool order or add a conversation workflow state machine to forbid them.
 - Speaking turns never become progress watchers. The same Reflection handoff and Attention identity
-  cover completion, blockers, and decisions, including interruption and exactly-once
+  cover completion, blockers, and decisions, including stale-result rejection and idempotent
   acknowledgement, so no second queue or notification ledger is needed.
 
 ## Final Gate
 
-- [x] Backend lint, typecheck, and all 228 tests pass; all 39 frontend tests pass.
-- [x] Bun builds the frontend successfully and the backend serves loadable deep routes with all
-  emitted assets.
+- [x] Backend lint, typecheck, and all 246 tests pass; all 42 frontend tests pass.
+- [x] Bun builds the frontend successfully; an isolated production server loaded its deep Goal route
+  and returned one Project-level open Attention, zero duplicated Goal Attention, and the derived
+  **Needs you** Goal summary. The existing Windows Chrome visual gate remains valid; a fresh optional
+  rerun requires the browser's remote-debugging authorization rather than a product change.
 - [x] `git diff --check` reports no patch errors.
 - [x] Legacy production-authority search reports only explicit one-way migration and presentation
   compatibility; responsibility `result.json` remains the fixed role adapter boundary.

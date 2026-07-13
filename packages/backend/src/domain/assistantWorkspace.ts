@@ -8,6 +8,7 @@ import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from './assistantWorkspaceDocuments'
+import { parseAttentionReference } from './attentionReference'
 import { DEFAULT_PRIMARY_REPO_ID, type ProjectLink } from './project'
 import {
   normalizeProjectCodingDefaults,
@@ -307,8 +308,18 @@ function validateReferences(
       throw invalid(`Inbox event ${event.attributes.id} claims an unlinked Project`)
     }
     const context = event.attributes.context
-    if (context && !projectIds.has(context.projectId)) {
+    if (context?.projectId && !projectIds.has(context.projectId)) {
       throw invalid(`Inbox event ${event.attributes.id} has context for an unlinked Project`)
+    }
+    for (const reference of context?.attentionRefs ?? []) {
+      const parsed = parseAttentionReference(reference)
+      if (!parsed) continue
+      if (parsed.scope === 'workspace' && parsed.homeId !== homeId) {
+        throw invalid(`Inbox event ${event.attributes.id} references another Assistant home`)
+      }
+      if (parsed.scope === 'goal' && !projectIds.has(parsed.projectId)) {
+        throw invalid(`Inbox event ${event.attributes.id} references an unlinked Project`)
+      }
     }
   }
   const openProjectTargets = new Set<string>()

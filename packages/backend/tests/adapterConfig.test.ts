@@ -149,6 +149,24 @@ describe('agent adapter config normalization', () => {
     })
   })
 
+  test('keeps the speaking Assistant on Codex when workflow defaults use another provider', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: { transport: 'claude', model: 'claude-workflow' },
+      roles: {},
+    })
+
+    expect(resolveAssistantTransportConfig(config)).toMatchObject({
+      transport: 'codex',
+      cwdMode: 'root',
+      model: 'gpt-5.4',
+    })
+    expect(resolveRoleTransportConfig(config, 'planner')).toMatchObject({
+      transport: 'claude',
+      model: 'claude-workflow',
+    })
+  })
+
   test('lets explicit codex overrides inherit model and effort unless a profile is set', () => {
     const inheritedConfig = normalizeAgentAdapterConfig({
       version: 3,

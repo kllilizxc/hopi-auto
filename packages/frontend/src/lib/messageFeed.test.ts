@@ -1,13 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import type {
-  AssistantFeedEntry,
-  AttentionView,
-  InboxEventView,
-  RunAttemptEvent,
-} from './apiTypes'
+import type { AssistantFeedEntry, AttentionView, InboxEventView, RunAttemptEvent } from './apiTypes'
 import {
-  assistantFeedEntriesToMessageFeed,
   assistantEventsToMessageFeed,
+  assistantFeedEntriesToMessageFeed,
   buildMessageFeedRows,
   commandTextFromToolSummary,
   inboxEventsToMessageFeed,
@@ -22,6 +17,7 @@ describe('unified message feed adapters', () => {
       [
         inboxEvent({
           source: 'reflection',
+          status: 'handled',
           body: 'Internal completion handoff.',
           context: { projectId: 'P-1', goalId: 'G-1', attentionId: completion.id },
           reply: 'Goal G-1 is complete.',
@@ -48,6 +44,79 @@ describe('unified message feed adapters', () => {
       kind: 'system_update',
       text: 'Completion\n\nGoal proof is sufficient.\n\n• Work W-1 is done.',
     })
+  })
+
+  test('does not collide when two Goals reuse the same local completion ID', () => {
+    const first = completionAttention()
+    const second = completionAttention({
+      projectId: 'P-1',
+      goalId: 'G-2',
+      body: '## Completion\n\nSecond Goal is complete.',
+    })
+    const items = assistantEventsToMessageFeed(
+      [
+        inboxEvent({
+          id: 'EV-1',
+          source: 'reflection',
+          status: 'handled',
+          context: {
+            projectId: 'P-1',
+            goalId: 'G-1',
+            attentionRefs: ['project:P-1/goal:G-1/attention:completion-G-1'],
+          },
+          reply: 'First Goal is complete.',
+        }),
+        inboxEvent({
+          id: 'EV-2',
+          source: 'reflection',
+          status: 'handled',
+          context: {
+            projectId: 'P-1',
+            goalId: 'G-2',
+            attentionRefs: ['project:P-1/goal:G-2/attention:completion-G-1'],
+          },
+          reply: 'Second Goal is complete.',
+        }),
+      ],
+      [first, second],
+    )
+
+    expect(items.filter((item) => item.kind === 'system_update')).toMatchObject([
+      { text: 'First Goal is complete.' },
+      { text: 'Second Goal is complete.' },
+    ])
+  })
+
+  test('links one completion only to its handled Reflection reply, not a later user turn', () => {
+    const completion = completionAttention()
+    const reference = 'project:P-1/goal:G-1/attention:completion-G-1'
+    const items = assistantEventsToMessageFeed(
+      [
+        inboxEvent({
+          id: 'EV-reflection',
+          source: 'reflection',
+          status: 'handled',
+          context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+          reply: 'The Goal is complete.',
+        }),
+        inboxEvent({
+          id: 'EV-user',
+          status: 'handled',
+          context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+          body: 'Thanks.',
+          reply: 'You are welcome.',
+        }),
+      ],
+      [completion],
+    )
+
+    expect(items.filter((item) => item.kind === 'system_update')).toMatchObject([
+      { text: 'The Goal is complete.' },
+    ])
+    expect(items).toContainEqual(expect.objectContaining({ kind: 'user_message', text: 'Thanks.' }))
+    expect(items).toContainEqual(
+      expect.objectContaining({ kind: 'assistant_message', text: 'You are welcome.' }),
+    )
   })
 
   test('renders independently paged Assistant entries without cross-page completion lookup', () => {
@@ -139,8 +208,9 @@ describe('unified message feed adapters', () => {
   })
 
   test('extracts the command from the Codex tool-call wrapper for the collapsed row', () => {
-    expect(commandTextFromToolSummary('Tool call: command (bun test src/lib/messageFeed.test.ts)'))
-      .toBe('bun test src/lib/messageFeed.test.ts')
+    expect(
+      commandTextFromToolSummary('Tool call: command (bun test src/lib/messageFeed.test.ts)'),
+    ).toBe('bun test src/lib/messageFeed.test.ts')
     expect(commandTextFromToolSummary('bun run check')).toBe('bun run check')
   })
 
@@ -313,7 +383,7 @@ function inboxEvent(overrides: Partial<InboxEventView> = {}): InboxEventView {
   }
 }
 
-function completionAttention(): AttentionView {
+function completionAttention(overrides: Partial<AttentionView> = {}): AttentionView {
   return {
     scope: 'goal',
     id: 'completion-G-1',
@@ -324,6 +394,7 @@ function completionAttention(): AttentionView {
     body: '## Completion\n\nGoal proof is sufficient.\n\n- Work W-1 is done.',
     projectId: 'P-1',
     goalId: 'G-1',
+    ...overrides,
   }
 }
 
