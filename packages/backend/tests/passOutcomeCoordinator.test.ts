@@ -247,6 +247,42 @@ describe('PassOutcomeCoordinator', () => {
     })
   })
 
+  test('normalizes Engineering Attention targeting outside its owning Work to failure', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const context = await fixture.stage('W-1', 'run-wrong-attention-target', 'generator')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-wrong-target')
+    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedAttentionPath), { recursive: true })
+    await Bun.write(
+      stagedAttentionPath,
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-wrong-target',
+          target: 'project:project-1/goal:goal-1',
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Needs you\n\nChoose the durable storage format.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-wrong-attention-target', 'generator', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.attentions.has('A-wrong-target')).toBe(false)
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 1,
+    })
+    expect(goalPackage.evidence.get('E-run-wrong-attention-target')?.body).toContain(
+      'Engineering Attention must target its owning Work: project:project-1/goal:goal-1/work:W-1',
+    )
+  })
+
   test('normalizes malformed Generator Attention to a failed attempt', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-malformed-attention', 'generator')

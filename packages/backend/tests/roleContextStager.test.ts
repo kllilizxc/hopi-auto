@@ -236,6 +236,16 @@ describe('RoleContextStager', () => {
       `${fixture.store.paths.evidenceDocument('goal-1', 'E-latest')} (latest)`,
     )
     expect(generatorPrompt).toContain('If you stage targeted Attention, result must be attention')
+    for (const prompt of [generatorPrompt, reviewerPrompt]) {
+      expect(prompt).toContain('the filename stem must equal the frontmatter id')
+      expect(prompt).toContain('Use this exact frontmatter')
+      expect(prompt).toContain('id: <stable-id>')
+      expect(prompt).toContain('target: project:project-1/goal:goal-1/work:W-1')
+      expect(prompt).toContain('createdAt: <ISO-8601-timestamp>')
+      expect(prompt).toContain('resolvedAt: null')
+      expect(prompt).toContain('notifiedAt: null')
+      expect(prompt).toContain('evidence that retry cannot help')
+    }
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
     expect(generatorPrompt).toContain('Use only Repo roots listed in $HOPI_REPOS_FILE')
     expect(generatorPrompt).toContain("never discover or use another Work's checkout")

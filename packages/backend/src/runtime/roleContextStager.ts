@@ -694,6 +694,7 @@ function renderResponsibilityPrompt(
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
+    ...(input.responsibility === 'planner' ? [] : engineeringAttentionContract(input, paths)),
     '',
   ]
   const responsibility =
@@ -710,6 +711,27 @@ function renderResponsibilityPrompt(
     ...responsibility,
     resultInstruction(paths.resultFile, input.responsibility),
   ].join('\n')
+}
+
+function engineeringAttentionContract(
+  input: PrepareRoleContextInput,
+  paths: { proposalRoot: string; attentionRoot: string },
+) {
+  const target = `project:${input.projectId}/goal:${input.goalId}/work:${input.workId}`
+  return [
+    `Write targeted Attention as exactly one ${join(paths.proposalRoot, paths.attentionRoot, '<id>.md')}; the filename stem must equal the frontmatter id.`,
+    'Use this exact frontmatter:',
+    '```yaml',
+    '---',
+    'id: <stable-id>',
+    `target: ${target}`,
+    'createdAt: <ISO-8601-timestamp>',
+    'resolvedAt: null',
+    'notifiedAt: null',
+    '---',
+    '```',
+    'In the Markdown body, preserve the evidence that retry cannot help and state the exact operator decision, permission, credential, or external action required.',
+  ]
 }
 
 function renderCurrentAssignment(assignment: RunAssignment) {

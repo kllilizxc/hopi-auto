@@ -842,8 +842,13 @@ function validateNewAttention(
   if (document.attributes.resolvedAt !== null || document.attributes.notifiedAt !== null) {
     throw new PassProposalError('New Attention must be open and unnotified')
   }
-  if (document.attributes.target === null && input.responsibility !== 'planner') {
-    throw new PassProposalError('Only final Planner may propose completion Attention')
+  if (input.responsibility !== 'planner') {
+    const expectedTarget = workRef(store, input.goalId, input.workId)
+    if (document.attributes.target !== expectedTarget) {
+      throw new PassProposalError(
+        `Engineering Attention must target its owning Work: ${expectedTarget}`,
+      )
+    }
   }
 }
 
