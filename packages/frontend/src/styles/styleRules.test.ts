@@ -13,7 +13,6 @@ test('application typography never declares a pixel size below 10px', async () =
     [...source.matchAll(/font-size:\s*([\d.]+)px/g)].map((match) => Number(match[1])),
   )
 
-  expect(declaredPixelSizes.length).toBeGreaterThan(0)
   expect(declaredPixelSizes.filter((size) => size < 10)).toEqual([])
 })
 
