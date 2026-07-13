@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+@keyframes running-glow {
+  0%, 100% { box-shadow: 0 0 0 1px var(--color-state-working), 0 0 8px color-mix(in srgb, var(--color-state-working) 30%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--color-state-working), 0 0 16px color-mix(in srgb, var(--color-state-working) 60%, transparent); }
+}
+
 html,
 body,
 #root {
@@ -966,6 +971,7 @@ button:disabled,
   border-color: color-mix(in srgb, var(--color-state-live) 30%, transparent);
   background: color-mix(in srgb, var(--color-state-live) 9%, transparent);
   color: var(--color-state-live);
+  animation: running-glow 2.5s ease-in-out infinite;
 }
 
 .lifecycle-pill.active {
@@ -1342,9 +1348,9 @@ button:disabled,
   gap: 24px;
   align-items: end;
   padding: 19px 24px 17px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--color-neutral-925) 88%, transparent);
-  backdrop-filter: blur(16px);
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--color-neutral-950) 40%, transparent);
+  backdrop-filter: blur(32px) saturate(160%);
 }
 
 .goal-title-block {
@@ -1667,6 +1673,7 @@ button:disabled,
 
 .work-card.engineering {
   border-left-color: color-mix(in srgb, var(--color-accent-500) 55%, transparent);
+  animation: running-glow 2.5s ease-in-out infinite;
 }
 
 .work-card-top,
@@ -1707,6 +1714,7 @@ button:disabled,
 .badge-working {
   background: var(--lane-tint-strong, color-mix(in srgb, var(--color-accent-400) 12.5%, transparent));
   color: var(--lane-accent, var(--color-state-working));
+  animation: running-glow 2.5s ease-in-out infinite;
 }
 
 .badge-queued {
@@ -4110,9 +4118,9 @@ samp {
 .workspace-topbar,
 .assistant-header {
   min-height: 72px;
-  background: color-mix(in srgb, var(--color-neutral-940) 96%, transparent);
+  background: color-mix(in srgb, var(--color-neutral-950) 40%, transparent);
   box-shadow: 0 12px 30px color-mix(in srgb, var(--color-black) 24%, transparent);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(32px) saturate(160%);
 }
 
 .standalone-header {
