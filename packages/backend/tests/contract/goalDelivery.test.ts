@@ -30,7 +30,7 @@ interface StateView {
   activeRuns: Array<{ key: string; responsibility: string }>
 }
 
-test('delivers one ordinary Assistant instruction through Planner, Generator, Reviewer, and C1', async () => {
+test('contracts one ordinary Assistant instruction through Planner, Generator, Reviewer, and C1', async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-deterministic-e2e-'))
   const repoRoot = join(temporaryRoot, 'repo')
   let server: MvpServer | null = null

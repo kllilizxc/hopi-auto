@@ -13,8 +13,8 @@
   the primary C1 release manifest, and projection recovery.
 - [`multi_vendor_agent_support.md`](./multi_vendor_agent_support.md): adapter-only command, event,
   permission, image, MCP, and session contracts for supported model vendors.
-- [`e2e_harness.md`](./e2e_harness.md): zero-token deterministic system E2E boundary and the
-  optional Project adapter seam.
+- [`e2e_harness.md`](./e2e_harness.md): real-Agent E2E boundary, deterministic Harness, Project
+  adapter, state invariants, evidence, and token-cost rules.
 - [`mvp_publish_protocol.md`](./mvp_publish_protocol.md): single-Coordinator publication ADR and
   process-crash recovery rules.
 - [`mvp_state_machine.md`](./mvp_state_machine.md): derived state charts, readiness, and Kanban

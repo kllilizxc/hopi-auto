@@ -161,6 +161,7 @@ describe('unified message feed adapters', () => {
         transcript('turn-complete', 'status', 'turn completed', {
           vendorEventType: 'turn.completed',
         }),
+        transcript('provider-warning', 'error', 'Provider refresh timed out.'),
         transcript('tool-start', 'tool_call', 'Tool call: command (bun test)', {
           toolName: 'command',
           toolInvocationKey: 'call-1',
@@ -197,7 +198,29 @@ describe('unified message feed adapters', () => {
     expect(items.map((item) => item.text)).not.toContain('Starting Assistant turn.')
     expect(items.map((item) => item.text)).not.toContain('thread started')
     expect(items.map((item) => item.text)).not.toContain('turn completed')
+    expect(items.map((item) => item.text)).not.toContain('Provider refresh timed out.')
     expect(items.find((item) => item.kind === 'assistant_message')?.details).toBeUndefined()
+  })
+
+  test('keeps a terminal speaking-turn error visible', () => {
+    const event = inboxEvent({
+      runtimeStatus: 'failed',
+      runtimeEvents: [transcript('provider-error', 'error', 'Provider is unavailable.')],
+    })
+
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'event',
+        id: `event:${event.id}`,
+        occurredAt: event.receivedAt,
+        event,
+        completion: null,
+      },
+    ])
+
+    expect(items).toContainEqual(
+      expect.objectContaining({ kind: 'error', text: 'Provider is unavailable.' }),
+    )
   })
 
   test('keeps internal page context out of the visible user message', () => {

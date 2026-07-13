@@ -176,7 +176,7 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
       const reply = (await file.text()).trim()
-      if (!reply)
+      if (!reply && input.toolMode !== 'reflection')
         throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
       return { reply, session: { transport, sessionId: observedSessionId } }
     },

@@ -76,7 +76,7 @@ textarea:focus-visible {
   background: var(--color-neutral-925);
 }
 
-.standalone-header > span {
+.standalone-header-actions > span {
   color: var(--color-neutral-500);
   font-size: 10px;
   font-weight: 720;
@@ -4119,7 +4119,7 @@ samp {
   padding-inline: 28px;
 }
 
-.standalone-header > span,
+.standalone-header-actions > span,
 .standalone-brand small {
   color: var(--color-neutral-450);
 }
@@ -4635,6 +4635,24 @@ samp {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.standalone-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.global-assistant-button {
+  border-color: color-mix(in srgb, var(--color-accent-500) 28%, transparent);
+  background: color-mix(in srgb, var(--color-accent-500) 12%, var(--surface-raised));
+  color: var(--color-accent-350);
+}
+
+.global-assistant-button:hover {
+  border-color: color-mix(in srgb, var(--color-accent-500) 52%, transparent);
+  background: color-mix(in srgb, var(--color-accent-500) 20%, var(--surface-hover));
+  color: var(--color-neutral-50);
 }
 
 .assistant-settings-current strong {
