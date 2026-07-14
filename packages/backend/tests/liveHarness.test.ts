@@ -9,8 +9,20 @@ import {
   readGitSemanticState,
   readModelUsage,
   readPendingInboxEvents,
+  resolveBrowserAuditMode,
   semanticDirectoryDigest,
 } from './live/liveHarness'
+
+test('browser audit degradation is explicit and never fabricates verification', () => {
+  expect(resolveBrowserAuditMode({ valid: true }, false)).toBe('verified')
+  expect(resolveBrowserAuditMode({ available: false }, true)).toBe('unavailable-allowed')
+  expect(() => resolveBrowserAuditMode({ available: false }, false)).toThrow(
+    'Browser Harness audit verification failed',
+  )
+  expect(() => resolveBrowserAuditMode({ valid: false }, true)).toThrow(
+    'Browser Harness audit verification failed',
+  )
+})
 
 test('reads hidden runtime usage and pending canonical Inbox events', async () => {
   const homeRoot = await mkdtemp(join(tmpdir(), 'hopi-live-harness-'))

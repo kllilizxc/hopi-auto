@@ -67,6 +67,18 @@ HOPI_BROWSER_HARNESS_COMMAND=/absolute/path/to/browser-harness bun run test:brow
 Do not replace a missing browser with HTTP requests and still claim browser coverage. On WSL, use an
 isolated automation Chrome rather than the operator's everyday Chrome profile.
 
+If the real browser is available but the installed Browser Harness lacks HOPI's audit API, this
+explicit diagnostic mode may be used:
+
+```sh
+HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1 bun run test:browser
+```
+
+It keeps browser interaction, DOM assertions, screenshots, public APIs, and Live Agents real, but
+records the missing audit capability instead of fabricating `verify.valid: true`. A pass in this mode
+is an unaudited smoke result and must not be reported as Browser preflight, full E2E, or completed
+Browser coverage. Strict audit verification remains the default.
+
 Live scenarios also require an authenticated, non-interactive model CLI. Codex is the default.
 Supported test overrides are:
 

@@ -123,6 +123,19 @@ Operator text and screenshot paths cross Bun, WSL, PowerShell, Python, and brows
 UTF-8 Base64 rather than interpolated source text. The Harness must preserve arbitrary natural
 language byte-for-byte; an ASCII-only browser smoke is not sufficient evidence for Assistant input.
 
+### Explicit Unaudited Browser Degradation
+
+Browser audit verification remains required by default. When a host can drive the real browser but
+its Browser Harness does not expose `audit_note`, `audit_status`, and `audit_verify`, an operator may
+set `HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1` to exercise the remaining browser and Live path. The Harness
+must record `auditMode: unavailable-allowed` and `verify.available: false`; it must never synthesize a
+successful audit result.
+
+Such an execution may report an unaudited Browser or Live smoke result. It is not a Browser preflight,
+full E2E success, immutable Browser audit, or evidence that closes a catalogued Browser layer. The
+default strict mode remains the release gate, and HTTP ingress may not replace the real browser in
+either mode.
+
 The default root is repository-level `test-artifacts/`, outside every package test-discovery root.
 This keeps intentionally broken fixture tests available as evidence without letting Bun execute them
 as part of the product suite. `HOPI_E2E_ARTIFACT_ROOT` may select another external location.

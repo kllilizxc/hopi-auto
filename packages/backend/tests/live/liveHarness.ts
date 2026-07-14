@@ -91,6 +91,14 @@ interface ScreenshotTarget {
   relativePath: string
 }
 
+export interface BrowserAuditVerification {
+  available?: boolean
+  valid?: boolean
+  reason?: string
+}
+
+export type BrowserAuditMode = 'verified' | 'unavailable-allowed'
+
 export interface StateRecorder {
   readonly violations: readonly string[]
   readonly observations: number
@@ -322,6 +330,7 @@ export async function sendAssistantMessage(
   const visibleExpression = `document.body.innerText.includes(${contentExpression})`
   const script = [
     'import base64, json, time',
+    ...browserAuditPrelude(),
     `new_tab(${JSON.stringify(url)})`,
     'wait_for_load()',
     captureScreenshotLine(screenshots.pageLoaded),
@@ -331,7 +340,7 @@ export async function sendAssistantMessage(
     `filled = js(${JSON.stringify(fillExpression)})`,
     'time.sleep(0.25)',
     captureScreenshotLine(screenshots.composerFilled),
-    `audit_note("about to submit HOPI live E2E Assistant message", scenario=${JSON.stringify(harness.scenario)})`,
+    `hopi_audit_note("about to submit HOPI live E2E Assistant message", scenario=${JSON.stringify(harness.scenario)})`,
     `sent = js(${JSON.stringify(sendExpression)})`,
     'visible = False',
     'for _ in range(80):',
@@ -339,7 +348,7 @@ export async function sendAssistantMessage(
     '    if visible: break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.messageSubmitted),
-    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "filled": filled, "sent": sent, "visible": visible, "audit": audit_status(), "verify": audit_verify()}, sort_keys=True))',
+    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "filled": filled, "sent": sent, "visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -352,25 +361,24 @@ export async function sendAssistantMessage(
     sent?: { sent?: boolean; reason?: string }
     visible?: boolean
     audit?: { head_hash?: string }
-    verify?: { valid?: boolean }
+    verify?: BrowserAuditVerification
   }
   if (!evidence.opened?.opened || !evidence.filled?.filled || !evidence.sent?.sent) {
     throw new Error(`Assistant composer submission failed: ${safeJson(evidence)}`)
   }
   if (!evidence.visible) throw new Error('Submitted Assistant message did not render in the feed')
-  if (evidence.verify?.valid !== true) {
-    throw new Error(`Browser Harness audit verification failed: ${safeJson(evidence.verify)}`)
-  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
   await assertScreenshots(Object.values(screenshots))
   const retainedScreenshots = screenshotEvidence(screenshots)
   await Bun.write(
     join(harness.artifactRoot, `${prefix}browser-send-evidence.json`),
-    `${JSON.stringify({ url, ...evidence, screenshots: retainedScreenshots }, null, 2)}\n`,
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
   )
   await recordAction(harness, 'assistant_message_submitted', {
     auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
   })
-  return { ...evidence, screenshots: retainedScreenshots }
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
 }
 
 export async function captureAssistantReply(
@@ -438,6 +446,7 @@ async function captureAssistantFeedCheckpoint(
   ].join('\n')
   const script = [
     'import base64, json, time',
+    ...browserAuditPrelude(),
     `new_tab(${JSON.stringify(url)})`,
     'wait_for_load()',
     `opened = js(${JSON.stringify(openExpression)})`,
@@ -448,15 +457,15 @@ async function captureAssistantFeedCheckpoint(
     '    time.sleep(0.25)',
     'visible_error_activity = bool(js("Boolean(document.querySelector(\'.unified-feed-activity.error\'))"))',
     captureScreenshotLine(screenshot),
-    `audit_note(${JSON.stringify(options.auditLabel)}, scenario=${JSON.stringify(harness.scenario)})`,
-    `print(${JSON.stringify(options.marker)} + json.dumps({"opened": opened, "visible": visible, "visibleErrorActivity": visible_error_activity, "audit": audit_status(), "verify": audit_verify()}, sort_keys=True))`,
+    `hopi_audit_note(${JSON.stringify(options.auditLabel)}, scenario=${JSON.stringify(harness.scenario)})`,
+    `print(${JSON.stringify(options.marker)} + json.dumps({"opened": opened, "visible": visible, "visibleErrorActivity": visible_error_activity, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))`,
   ].join('\n')
   const evidence = (await runBrowserHarness(harness, options.logName, options.marker, script)) as {
     opened?: { opened?: boolean; reason?: string }
     visible?: boolean
     visibleErrorActivity?: boolean
     audit?: { head_hash?: string }
-    verify?: { valid?: boolean }
+    verify?: BrowserAuditVerification
   }
   if (!evidence.opened?.opened) {
     throw new Error(`${options.subject} inspection failed: ${safeJson(evidence.opened)}`)
@@ -465,20 +474,19 @@ async function captureAssistantFeedCheckpoint(
   if (options.rejectVisibleErrorActivity && evidence.visibleErrorActivity) {
     throw new Error(`${options.subject} rendered beside a misleading Assistant error activity`)
   }
-  if (evidence.verify?.valid !== true) {
-    throw new Error(`Browser Harness audit verification failed: ${safeJson(evidence.verify)}`)
-  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
   await assertScreenshots([screenshot])
   const retainedScreenshot = screenshot.relativePath
   await Bun.write(
     join(harness.artifactRoot, options.evidenceName),
-    `${JSON.stringify({ url, ...evidence, screenshot: retainedScreenshot }, null, 2)}\n`,
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshot: retainedScreenshot }, null, 2)}\n`,
   )
   await recordAction(harness, options.action, {
     screenshot: retainedScreenshot,
     auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
   })
-  return { ...evidence, screenshot: retainedScreenshot }
+  return { ...evidence, auditMode, screenshot: retainedScreenshot }
 }
 
 export async function inspectKanban(
@@ -495,6 +503,7 @@ export async function inspectKanban(
   }
   const script = [
     'import base64, json, time',
+    ...browserAuditPrelude(),
     `new_tab(${JSON.stringify(url)})`,
     'wait_for_load()',
     'view = None',
@@ -503,12 +512,12 @@ export async function inspectKanban(
     '    if view and view.get("kanban"): break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.start),
-    `audit_note("scroll terminal HOPI Kanban to its real end", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
+    `hopi_audit_note("scroll terminal HOPI Kanban to its real end", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
     'scroll = js("""(() => { const element = document.querySelector(\'.kanban-scroll\'); if (!element) return {scrolled: false}; element.scrollLeft = element.scrollWidth; return {scrolled: true, left: element.scrollLeft, max: element.scrollWidth - element.clientWidth}; })()""")',
     'time.sleep(0.25)',
     captureScreenshotLine(screenshots.end),
-    `audit_note("HOPI live E2E terminal Kanban captured", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
-    'print("HOPI_E2E_BROWSER=" + json.dumps({"view": view, "scroll": scroll, "audit": audit_status(), "verify": audit_verify()}, sort_keys=True))',
+    `hopi_audit_note("HOPI live E2E terminal Kanban captured", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
+    'print("HOPI_E2E_BROWSER=" + json.dumps({"view": view, "scroll": scroll, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -525,27 +534,26 @@ export async function inspectKanban(
     }
     scroll?: { scrolled?: boolean; left?: number; max?: number }
     audit?: { head_hash?: string }
-    verify?: { valid?: boolean }
+    verify?: BrowserAuditVerification
   }
   if (!evidence.view?.kanban) throw new Error(`Kanban did not render: ${safeJson(evidence.view)}`)
   if (!evidence.scroll?.scrolled || (evidence.scroll.max ?? 0) > (evidence.scroll.left ?? -1) + 1) {
     throw new Error(`Kanban did not scroll to its terminal edge: ${safeJson(evidence.scroll)}`)
   }
-  if (evidence.verify?.valid !== true) {
-    throw new Error(`Browser Harness audit verification failed: ${safeJson(evidence.verify)}`)
-  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
   await assertScreenshots(Object.values(screenshots))
   const retainedScreenshots = screenshotEvidence(screenshots)
   await Bun.write(
     join(harness.artifactRoot, `${prefix}browser-evidence.json`),
-    `${JSON.stringify({ url, ...evidence, screenshots: retainedScreenshots }, null, 2)}\n`,
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
   )
   await recordAction(harness, 'kanban_inspected', {
     projectId,
     goalId,
     auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
   })
-  return { ...evidence, screenshots: retainedScreenshots }
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
 }
 
 export async function clickGoalControl(
@@ -559,6 +567,7 @@ export async function clickGoalControl(
   const controlExpression = browserUtf8Expression(control)
   const script = [
     'import base64, json, time',
+    ...browserAuditPrelude(),
     `new_tab(${JSON.stringify(url)})`,
     'wait_for_load()',
     'clicked = None',
@@ -568,8 +577,8 @@ export async function clickGoalControl(
     '    time.sleep(0.25)',
     'time.sleep(0.5)',
     captureScreenshotLine(screenshot),
-    `audit_note(${JSON.stringify(`HOPI ${control} Goal control clicked`)}, scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
-    'print("HOPI_E2E_GOAL_CONTROL=" + json.dumps({"clicked": clicked, "audit": audit_status(), "verify": audit_verify()}, sort_keys=True))',
+    `hopi_audit_note(${JSON.stringify(`HOPI ${control} Goal control clicked`)}, scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
+    'print("HOPI_E2E_GOAL_CONTROL=" + json.dumps({"clicked": clicked, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -579,25 +588,53 @@ export async function clickGoalControl(
   )) as {
     clicked?: { found?: boolean; disabled?: boolean }
     audit?: { head_hash?: string }
-    verify?: { valid?: boolean }
+    verify?: BrowserAuditVerification
   }
   if (!evidence.clicked?.found || evidence.clicked.disabled) {
     throw new Error(`${control} control could not be clicked: ${safeJson(evidence.clicked)}`)
   }
-  if (evidence.verify?.valid !== true) {
-    throw new Error(`Browser Harness audit verification failed: ${safeJson(evidence.verify)}`)
-  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
   await assertScreenshots([screenshot])
   await Bun.write(
     join(harness.artifactRoot, `goal-${control.toLowerCase()}-evidence.json`),
-    `${JSON.stringify({ url, ...evidence, screenshot: screenshot.relativePath }, null, 2)}\n`,
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshot: screenshot.relativePath }, null, 2)}\n`,
   )
   await recordAction(harness, `goal_${control.toLowerCase()}_clicked`, {
     projectId,
     goalId,
     auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
   })
-  return { ...evidence, screenshot: screenshot.relativePath }
+  return { ...evidence, auditMode, screenshot: screenshot.relativePath }
+}
+
+function browserAuditPrelude() {
+  return [
+    '_hopi_audit_available = all(name in globals() for name in ("audit_note", "audit_status", "audit_verify"))',
+    '_hopi_audit_notes = []',
+    'def hopi_audit_note(message, **metadata):',
+    '    if _hopi_audit_available:',
+    '        return audit_note(message, **metadata)',
+    '    _hopi_audit_notes.append({"message": message, **metadata})',
+    '    return None',
+    'def hopi_audit_status():',
+    '    if _hopi_audit_available:',
+    '        return audit_status()',
+    '    return {"available": False, "notes": _hopi_audit_notes}',
+    'def hopi_audit_verify():',
+    '    if _hopi_audit_available:',
+    '        return audit_verify()',
+    '    return {"available": False, "reason": "Browser Harness audit API unavailable"}',
+  ]
+}
+
+export function resolveBrowserAuditMode(
+  verification: BrowserAuditVerification | undefined,
+  allowUnaudited = process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1',
+): BrowserAuditMode {
+  if (verification?.valid === true) return 'verified'
+  if (allowUnaudited && verification?.available === false) return 'unavailable-allowed'
+  throw new Error(`Browser Harness audit verification failed: ${safeJson(verification)}`)
 }
 
 async function screenshotTarget(
@@ -1019,6 +1056,8 @@ async function writeRunReport(
         startedAt: harness.startedAt,
         endedAt: status === 'running' ? null : new Date().toISOString(),
         codingDefaults: harness.codingDefaults,
+        browserAuditPolicy:
+          process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
         code: harness.code,
         lastCheckpoint: harness.lastCheckpoint,
         failedAt: status === 'failed' ? harness.currentPhase : null,
