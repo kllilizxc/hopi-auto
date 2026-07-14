@@ -779,16 +779,14 @@ function renderCurrentAssignment(assignment: RunAssignment) {
   ]
 }
 
-function plannerPrompt(
-  paths: {
-    runRoot: string
-    proposalRoot: string
-    bootstrapSourceRoot?: string
-    prepareMissing: boolean
-    attentionRoot: string
-    apiOrigin?: string
-  },
-) {
+function plannerPrompt(paths: {
+  runRoot: string
+  proposalRoot: string
+  bootstrapSourceRoot?: string
+  prepareMissing: boolean
+  attentionRoot: string
+  apiOrigin?: string
+}) {
   return [
     '## Planner',
     '',
