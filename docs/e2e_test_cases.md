@@ -329,7 +329,7 @@ different risk.
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Implemented                                       |
 | `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Implemented                                       |
 | `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Planned; contract regression available            |
-| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Browser passed; Live runner blocked by provider quota |
+| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Implemented; Browser and Codex Live passed          |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Browser passed                                       |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
@@ -1023,7 +1023,8 @@ Git worktrees, tool execution, and checkpoint failure. The configured-provider c
 `packages/backend/tests/live/projectAttentionRecovery.live.ts` (`bun run e2e:live:028`); it verifies
 that a real Assistant inspects already-applied external repair evidence, receives a successful
 resolve tool result, and wakes a real Planner. It does not claim the read-only Assistant performed
-the external repair itself or that the Goal completed.
+the external repair itself or that the Goal completed. Both layers passed in the final integrated
+2026-07-14 regression; the earlier provider-quota failure remains only as historical issue evidence.
 
 ### HOPI-E2E-029: Terminal Assistant Provider Error
 

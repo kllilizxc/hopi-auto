@@ -7,9 +7,9 @@ the E2E gates. It does not own scenario status: `docs/e2e_test_cases.md` is the 
 catalog, and a retained `run.json` is the authority for one invocation. A passing deterministic or
 browser preflight is not recorded as a Live Agent success.
 
-Latest verification: `bun run check` passed after the canonical Attention and recovery changes:
-backend **277 passing tests / 1,088 assertions**, frontend **43 passing tests / 145 assertions**, with
-type checks, static checks, and frontend build all passing.
+Latest verification: `bun run check` passed on integrated `main` at `590d283`: backend **289 passing
+tests / 1,156 assertions**, frontend **45 passing tests / 154 assertions**, with type checks, static
+checks, and frontend build all passing. `bun run e2e:contract` passed **164 tests / 816 assertions**.
 
 Latest remaining-scenario run: `bun test tests/projectReconciler.test.ts tests/multiRepoC1.test.ts
 tests/mvpServer.test.ts tests/assistantReflection.test.ts tests/coordinatorReconciler.test.ts
@@ -513,3 +513,44 @@ is `/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-reco
 Codex evidence is `/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T13-03-04-579Z-51102843`.
 OpenCode was not Live-tested because its executable is absent on this host; deterministic adapter
 coverage remains green.
+
+## 2026-07-14: Integrated Main Regression 590d283
+
+The final regression integrated upstream `94a38fe..4774800` before retesting. That upstream line adds
+Project Attention recovery, terminal Assistant provider-error handling, and a simpler Planning gate:
+Planner never copies or edits its Planning Work; Coordinator validates the proposal and derives the
+terminal gate. This supersedes the intermediate prompt-only requirement recorded above without
+removing its retained evidence.
+
+The first post-integration `bun run check` found one Biome-only formatting defect in the merged
+Planner prompt. Commit `590d283` normalized that formatting. The final gates then passed:
+
+| Gate                   | Result | Evidence                                                                  |
+| ---------------------- | ------ | ------------------------------------------------------------------------- |
+| `bun run check`        | Passed | Backend 289 tests / 1,156 assertions; frontend 45 tests / 154 assertions. |
+| `bun run e2e:contract` | Passed | 164 tests / 816 assertions across 18 files; zero provider calls.          |
+
+All 16 scenarios with an independent executable runner passed at the layer actually executed:
+`001`, `002`, `003`, `010`, `011`, `012`, `013`, `014`, `015`, `016`, `020`, `023`, `025`, `026`,
+`028`, and `029`. Retained command logs are under
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/final-integrated-regression-2026-07-14T13-45Z/logs`.
+Rows still marked Planned or Partial in `docs/e2e_test_cases.md` retain their unimplemented layers;
+the global Contract suite is not used to infer those passes.
+
+The final clean `HOPI-E2E-002` run is
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/goal-delivery-2026-07-14T14-19-50-381Z-129b3baf`.
+It recorded `590d283`, `dirty: false`, eight logical model Runs, and first-attempt success for both
+Planner Runs, Generator, and Reviewer. Usage was 862,773 input tokens (679,040 cached; 183,733
+uncached) and 14,668 output tokens.
+
+The final Codex `HOPI-E2E-028` Live canary passed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/project-attention-agent-recovery-2026-07-14T13-43-21-110Z-fa02c0ba`.
+Assistant inspected the external repair marker, resolved the canonical Project Attention through its
+tool, and woke Planner. This replaces the earlier quota-blocked provider attempt as coverage status;
+the blocked artifact remains valid environment history.
+
+The strengthened `HOPI-E2E-026` history proof passed again with Codex at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T14-13-17-516Z-cd3efc41`
+and Claude at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T14-14-33-926Z-44810d87`.
+OpenCode still lacks a host executable, so only its deterministic adapter contract was exercised.
