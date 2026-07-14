@@ -2,11 +2,19 @@ import type { AgentTranscriptTransport } from './runtimeEvents'
 
 export type AssistantTransport = Exclude<AgentTranscriptTransport, 'process'>
 
+export interface VendorAssistantTerminalError {
+  message: string
+  status?: number
+  terminalReason?: string
+  sessionInvalid: boolean
+}
+
 export interface VendorAssistantOutput {
   sessionId?: string
   messageId?: string
   assistantText?: string
   finalText?: string
+  terminalError?: VendorAssistantTerminalError
 }
 
 export function parseVendorAssistantOutput(
@@ -27,9 +35,25 @@ export function parseVendorAssistantOutput(
     const message = objectValue(parsed.message)
     const sessionId = stringValue(parsed.session_id) ?? stringValue(parsed.sessionId)
     if (eventType === 'result') {
+      const terminalReason = stringValue(parsed.terminal_reason)
+      const result = stringValue(parsed.result)
+      const error = errorText(parsed.error)
+      const status = numberValue(parsed.api_error_status)
+      if (parsed.is_error === true) {
+        const failure = result ?? error ?? claudeFailureSummary(status, terminalReason)
+        return {
+          sessionId,
+          terminalError: {
+            message: failure,
+            status,
+            terminalReason,
+            sessionInvalid: isExplicitSessionFailure(terminalReason, error, failure),
+          },
+        }
+      }
       return {
         sessionId,
-        finalText: stringValue(parsed.result),
+        finalText: result,
       }
     }
     if (eventType !== 'assistant') return { sessionId }
@@ -49,6 +73,23 @@ export function parseVendorAssistantOutput(
     messageId: stringValue(part?.messageID) ?? stringValue(part?.messageId),
     assistantText: stringValue(part?.text),
   }
+}
+
+export function isExplicitSessionFailure(...details: Array<string | undefined>) {
+  const normalized = details
+    .filter((detail): detail is string => Boolean(detail))
+    .join(' ')
+    .toLowerCase()
+    .replaceAll(/[._-]+/g, ' ')
+  if (!normalized) return false
+  return (
+    /\b(session|conversation|thread)\b.{0,80}\b(not found|missing|invalid|expired|incompatible)\b/.test(
+      normalized,
+    ) ||
+    /\b(no|unknown|missing|invalid|expired|incompatible)\b.{0,80}\b(session|conversation|thread)\b/.test(
+      normalized,
+    )
+  )
 }
 
 function contentText(value: unknown) {
@@ -72,6 +113,22 @@ function objectValue(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+}
+
+function errorText(value: unknown) {
+  if (typeof value === 'string') return stringValue(value)
+  return stringValue(objectValue(value)?.message)
+}
+
+function numberValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function claudeFailureSummary(status: number | undefined, terminalReason: string | undefined) {
+  const details = [status ? String(status) : undefined, terminalReason]
+    .filter((detail): detail is string => Boolean(detail))
+    .join(' · ')
+  return details ? `Claude invocation failed: ${details}` : 'Claude invocation failed'
 }
 
 function stringValue(value: unknown) {

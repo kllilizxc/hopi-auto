@@ -193,8 +193,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
       }),
     )
   }
-  planning.attributes.stage = 'done'
-  await Bun.write(join(workRoot, `${input.workId}.md`), renderWorkDocument(planning))
   return success('Planner published the current contract plan.')
 }
 

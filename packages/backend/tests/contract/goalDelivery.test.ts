@@ -222,8 +222,6 @@ async function planDelivery(input: RoleRunInput): Promise<RoleRunResult> {
     )
   }
 
-  planning.attributes.stage = 'done'
-  await Bun.write(join(workRoot, `${input.workId}.md`), renderWorkDocument(planning))
   return successfulResult('Planner staged the deterministic delivery proposal.')
 }
 

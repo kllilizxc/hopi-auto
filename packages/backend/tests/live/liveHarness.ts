@@ -30,6 +30,11 @@ export interface LiveState {
 
 export interface LiveGoalDetail {
   goal: { id: string; title: string; lifecycle: string }
+  projectAttention: {
+    id: string
+    target: string
+    resolvedAt: string | null
+  } | null
   works: Array<{
     id: string
     kind: 'planning' | 'engineering'

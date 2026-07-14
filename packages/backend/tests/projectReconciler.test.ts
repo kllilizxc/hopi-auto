@@ -466,7 +466,6 @@ class DeliveryScriptRunner implements RoleRunner {
   private async plan(input: RoleRunInput) {
     const goalRoot = join(input.context.proposalRoot, '.hopi', 'docs', 'goals', input.goalId)
     const workRoot = join(goalRoot, 'work')
-    const planningPath = join(workRoot, `${input.workId}.md`)
     const authorityWorkRoot = join(
       input.context.contextRoot,
       'authority',
@@ -524,8 +523,6 @@ class DeliveryScriptRunner implements RoleRunner {
         }),
       )
     }
-    planning.attributes.stage = 'done'
-    await Bun.write(planningPath, renderWorkDocument(planning))
   }
 }
 

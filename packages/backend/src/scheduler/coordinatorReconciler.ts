@@ -25,7 +25,6 @@ export interface CoordinatorReconcilerOptions {
   delivery?: AttentionDeliveryWorker
   now?: () => Date
   intervalMs?: number
-  assistantMaxAttempts?: number
 }
 
 export interface CoordinatorReconcileTick {
@@ -62,11 +61,9 @@ export function createCoordinatorReconciler(
 ): CoordinatorReconciler {
   const now = options.now ?? (() => new Date())
   const intervalMs = options.intervalMs ?? 1_000
-  const assistantMaxAttempts = options.assistantMaxAttempts ?? 3
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const active = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
-  const assistantAttempts = new Map<string, number>()
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopped = true
   let reconcileEpoch = 0
@@ -170,19 +167,13 @@ export function createCoordinatorReconciler(
       const controller = new AbortController()
       const promise = options.assistant
         .process(event.attributes.id, controller.signal)
-        .then(() => {
-          assistantAttempts.delete(event.attributes.id)
-        })
+        .then(() => undefined)
         .catch(async (error) => {
           if (controller.signal.aborted) return
-          const attempts = (assistantAttempts.get(event.attributes.id) ?? 0) + 1
-          assistantAttempts.set(event.attributes.id, attempts)
-          if (attempts >= assistantMaxAttempts) {
-            await options.attentions.ensureEventAttention(
-              event.attributes.id,
-              `Assistant could not safely process this message after ${attempts} attempts: ${errorMessage(error)}`,
-            )
-          }
+          await options.attentions.ensureEventAttention(
+            event.attributes.id,
+            `Assistant could not safely process this message: ${errorMessage(error)}`,
+          )
         })
         .finally(() => {
           assistantActive.delete(event.attributes.id)

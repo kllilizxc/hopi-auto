@@ -389,8 +389,9 @@ It does not add an attachment field to Work and does not propagate unrelated Goa
 because they exist.
 
 Every newly proposed Engineering Work starts at `stage: generate`; only Generator, Reviewer, and C1
-advance it. Planning Work remains `plan` while clarification is required and becomes `done` with the
-complete proposal. These are fixed profile facts, not details Planner must rediscover from history.
+advance it. Planning Work remains `plan` while clarification is required. After a complete Planner
+proposal validates, Coordinator derives the Planning Work `done` gate from the current canonical
+document. These are fixed profile facts, not details Planner must rediscover from history.
 
 The Run prompt includes the compact frontmatter field shape for the new Engineering Work and
 Attention documents Planner is allowed to create. These are the existing canonical document
@@ -404,15 +405,16 @@ decisions in `design/**` and Work acceptance criteria, never edits the Goal cont
 uses exactly its current `contractRevision`. Only an operator instruction accepted through an
 Assistant HOPI tool may propose a Goal contract change and its revision guard.
 
-Planner never creates a second nonterminal Planning Work. Success means the entire proposal was
-published before Planning Work becomes `done`. A clarification question uses the ordinary
-Attention-producing path, targets the owning Planning Work, leaves it at `plan`, and consumes no
-failed attempt.
+Planner never creates or rewrites Planning Work. Success means the entire semantic proposal was
+published before Coordinator changes the owning Planning Work to `done`. A clarification question
+uses the ordinary Attention-producing path, targets the owning Planning Work, leaves it at `plan`,
+and consumes no failed attempt.
 
-Planner proposes only `design/**`, Work, targeted or completion Attention, and a missing root
-`AGENTS.md`. It never creates or rewrites `evidence/**` and never appends `evidenceRefs`. Every
-responsibility writes only its Run-local `result.json`; Coordinator alone derives immutable Evidence
-from that result and appends its reference while publishing the owning gate. Evidence from an
+Planner proposes only `design/**`, Engineering Work, targeted or completion Attention, project
+repository context, and a missing root `AGENTS.md`. It never creates or rewrites Planning Work or
+`evidence/**`, and never appends `evidenceRefs`. Every responsibility writes only its Run-local
+`result.json`; Coordinator alone derives immutable Evidence from that result, preserves the current
+Planning Work, appends the Evidence reference, and publishes the owning gate. Evidence from an
 earlier failed Planner Run is retry input, not a template for new Planner output.
 
 Planner reads existing documents only from the immutable authority root and copies into the sparse
@@ -440,7 +442,10 @@ adds no completion role or pass.
 
 Planner may return `success`, `attention`, or `fail`. Success means its complete sparse proposal and
 Run result are ready for Coordinator validation. Attention means one exact Assistant-management
-request is staged. Fail means the Run could not produce a valid proposal without such a request.
+request is staged. Fail means the Run could not produce a valid proposal without such a request. A
+successful proposal either leaves nonterminal Engineering Work to execute or leaves one open
+targetless completion Attention; this prevents an empty final assessment from repeatedly recreating
+Planning without replacing Agent judgment with a completion heuristic.
 
 ### Generator
 
@@ -713,8 +718,10 @@ runtime search is neither discovery nor evidence.
 An Inbox turn is eligible when it is pending, not already active in the one Home conversation, and
 not covered by open event-target Attention. Public user turns have priority over internal Reflection
 turns; each source class runs in receipt order. Project Attention blocks a tool targeting that
-Project, not unrelated conversation or direct answers. Bounded Assistant or tool failure leaves the
-turn pending under targeted Attention.
+Project, not unrelated conversation or direct answers. A terminal Assistant or tool failure leaves
+the turn pending under targeted Attention immediately. Vendor-local transient retry belongs to the
+single configured invocation; Coordinator does not repeat that invocation. Only an explicit cached
+session incompatibility may rebuild once from durable conversation history.
 
 Messages remain writable while passes run. A material instruction first ensures Planning Work as
 the Goal-wide guard, then increments `contractRevision` and publishes its effects. Once that
@@ -880,13 +887,13 @@ When a Goal has no nonterminal Engineering Work and no current completion propos
 ensures Planning Work. Planner reads the Goal criteria, current design, Work Evidence, Git facts,
 and project documentation:
 
-- if more delivery is required, it creates the smallest additional Engineering Work and then marks
-  Planning Work `done`
+- if more delivery is required, it creates the smallest additional Engineering Work; after the
+  proposal validates, Coordinator marks Planning Work `done`
 - if operator authority or missing external information is required, it publishes targeted
   Attention and leaves Planning Work at `plan`
 - if proof is sufficient, it proposes the Goal's one unclaimed targetless Attention as supporting
   content, containing the completion summary and Markdown links to existing Work Evidence and Git
-  facts, then marks Planning Work `done` as the gate
+  facts; after validation, Coordinator marks Planning Work `done` as the gate
 
 Creation of an unclaimed targetless Attention is valid only in that final Planner-success
 publication, at the current `contractRevision`, with no nonterminal Engineering Work. Its presence

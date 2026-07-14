@@ -206,6 +206,7 @@ function normalizeCodexCommandExecutionEvent(
 function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   const value = objectValue(parsed)
   const eventType = stringValue(value?.type)
+  const eventSubtype = stringValue(value?.subtype)
   const message = objectValue(value?.message)
   const blocks = arrayValue(message?.content) ?? arrayValue(value?.content) ?? []
 
@@ -218,14 +219,22 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   if (eventType === 'result') {
-    const summary =
-      stringValue(value?.subtype) ??
-      stringValue(value?.stop_reason) ??
-      extractText(value) ??
-      'result received'
+    const terminalReason = stringValue(value?.terminal_reason)
+    const isError = value?.is_error === true || terminalReason?.includes('error') === true
+    const summary = isError
+      ? (extractText(value) ?? claudeResultSummary(value))
+      : (eventSubtype ?? stringValue(value?.stop_reason) ?? extractText(value) ?? 'result received')
     return [
-      transcriptEvent('claude', summary.includes('error') ? 'error' : 'status', summary, {
-        vendorEventType: eventType,
+      transcriptEvent('claude', isError ? 'error' : 'status', summary, {
+        vendorEventType: `result.${terminalReason ?? eventSubtype ?? 'completed'}`,
+      }),
+    ]
+  }
+
+  if (eventType === 'system') {
+    return [
+      transcriptEvent('claude', 'status', claudeSystemSummary(value, eventSubtype), {
+        vendorEventType: `system.${eventSubtype ?? 'status'}`,
       }),
     ]
   }
@@ -239,6 +248,38 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   return [transcriptEvent('claude', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function claudeSystemSummary(
+  value: Record<string, unknown> | undefined,
+  subtype: string | undefined,
+) {
+  if (subtype === 'init') return 'Claude initialized'
+  if (subtype !== 'api_retry') return extractText(value) ?? humanizeEventType(subtype ?? 'system')
+
+  const attempt = numberValue(value?.attempt)
+  const maxRetries = numberValue(value?.max_retries)
+  const status = numberValue(value?.error_status)
+  const error = stringValue(value?.error)
+  const progress =
+    attempt !== undefined && maxRetries !== undefined
+      ? `${attempt}/${maxRetries}`
+      : attempt !== undefined
+        ? String(attempt)
+        : undefined
+  const reason = [status !== undefined ? String(status) : undefined, error]
+    .filter((detail): detail is string => Boolean(detail))
+    .join(' ')
+  return ['Provider retry', progress, reason].filter(Boolean).join(' · ')
+}
+
+function claudeResultSummary(value: Record<string, unknown> | undefined) {
+  const status = numberValue(value?.api_error_status)
+  const reason = stringValue(value?.terminal_reason)
+  const details = [status !== undefined ? String(status) : undefined, reason]
+    .filter((detail): detail is string => Boolean(detail))
+    .join(' · ')
+  return details ? `Claude invocation failed: ${details}` : 'Claude invocation failed'
 }
 
 function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
@@ -688,6 +729,10 @@ function arrayValue(value: unknown) {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+function numberValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function joinStringArray(value: unknown) {

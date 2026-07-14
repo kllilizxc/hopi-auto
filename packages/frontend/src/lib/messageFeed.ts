@@ -283,10 +283,13 @@ function inboxEventToMessageFeed(
     groupId,
     active: event.runtimeStatus === 'running',
   })
+  const presentedRuntimeItems = options.assistantPresentation
+    ? presentAssistantRuntimeItems(runtimeItems, event.runtimeStatus)
+    : runtimeItems
   items.push(
-    ...(options.assistantPresentation
-      ? presentAssistantRuntimeItems(runtimeItems, event.runtimeStatus)
-      : runtimeItems),
+    ...(options.assistantPresentation && event.runtimeStatus === 'failed' && event.runtimeError
+      ? presentedRuntimeItems.filter((item) => item.kind !== 'error')
+      : presentedRuntimeItems),
   )
 
   if (event.runtimeError && !items.some((item) => sameText(item.text, event.runtimeError!))) {
@@ -319,6 +322,8 @@ function inboxEventToMessageFeed(
     }
     return items
   }
+
+  if (event.runtimeStatus === 'failed' && event.runtimeError) return items
 
   const pending = event.runtimeStatus === 'queued' || event.runtimeStatus === 'running'
   const statusText = assistantRuntimeStatus(event.runtimeStatus)
@@ -521,7 +526,7 @@ function assistantRuntimeStatus(status: InboxEventView['runtimeStatus']) {
     case 'interrupted':
       return 'Waiting to resume'
     case 'failed':
-      return 'Something went wrong. Retrying automatically.'
+      return 'Assistant stopped'
     case 'completed':
       return 'No reply was produced'
   }
@@ -531,9 +536,28 @@ function presentAssistantRuntimeItems(
   items: MessageFeedItem[],
   runtimeStatus: InboxEventView['runtimeStatus'],
 ) {
-  return items.flatMap((item) => {
+  const latestRetryIndex = runtimeStatus === 'running' ? items.findLastIndex(isProviderRetry) : -1
+  const terminalErrorTexts = new Set(
+    runtimeStatus === 'failed'
+      ? items.filter((item) => item.kind === 'error').map((item) => normalizedMessageText(item.text))
+      : [],
+  )
+  const seenErrors = new Set<string>()
+  return items.flatMap((item, index) => {
+    if (isProviderRetry(item) && index !== latestRetryIndex) return []
     if (isAssistantProtocolNoise(item)) return []
     if (item.kind === 'error' && runtimeStatus !== 'failed') return []
+    if (
+      item.kind === 'assistant_message' &&
+      terminalErrorTexts.has(normalizedMessageText(item.text))
+    ) {
+      return []
+    }
+    if (item.kind === 'error') {
+      const errorKey = normalizedMessageText(item.text)
+      if (seenErrors.has(errorKey)) return []
+      seenErrors.add(errorKey)
+    }
     if (item.kind === 'assistant_message' || item.kind === 'status') {
       return [{ ...item, details: undefined }]
     }
@@ -551,8 +575,17 @@ function isAssistantProtocolNoise(item: MessageFeedItem) {
   }
 
   if (item.kind !== 'status') return false
-  const eventType = item.vendorEventType?.trim().toLowerCase().replaceAll('/', '.')
+  const eventType = normalizedVendorEventType(item)
   if (eventType && /^(thread|turn|item)\.(started|completed)$/.test(eventType)) {
+    return true
+  }
+
+  if (eventType === 'system.init') return true
+  if (eventType === 'system' && item.text.trim().toLowerCase() === 'system') return true
+  if (
+    (eventType === 'result' || eventType === 'result.success') &&
+    item.text.trim().toLowerCase() === 'success'
+  ) {
     return true
   }
 
@@ -561,6 +594,14 @@ function isAssistantProtocolNoise(item: MessageFeedItem) {
     .toLowerCase()
     .replaceAll(/[./_]+/g, ' ')
   return /^(thread|turn|item) (started|completed)$/.test(summary)
+}
+
+function isProviderRetry(item: MessageFeedItem) {
+  return item.kind === 'status' && normalizedVendorEventType(item) === 'system.api.retry'
+}
+
+function normalizedVendorEventType(item: MessageFeedItem) {
+  return item.vendorEventType?.trim().toLowerCase().replaceAll(/[\/_]+/g, '.')
 }
 
 function completionAttentionItem(attention: AttentionView): MessageFeedItem {
@@ -599,7 +640,11 @@ function readableCompletionBody(body: string) {
 }
 
 function sameText(left: string, right: string) {
-  return left.trim().replace(/\s+/g, ' ') === right.trim().replace(/\s+/g, ' ')
+  return normalizedMessageText(left) === normalizedMessageText(right)
+}
+
+function normalizedMessageText(value: string) {
+  return value.trim().replace(/\s+/g, ' ')
 }
 
 function lastTimestamp(items: MessageFeedItem[], fallback: string) {

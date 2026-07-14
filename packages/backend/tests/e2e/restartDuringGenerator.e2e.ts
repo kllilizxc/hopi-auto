@@ -260,8 +260,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
       }),
     )
   }
-  planning.attributes.stage = 'done'
-  await Bun.write(join(proposalWorkRoot, `${input.workId}.md`), renderWorkDocument(planning))
   return successful('Planner published the recovered delivery plan.')
 }
 

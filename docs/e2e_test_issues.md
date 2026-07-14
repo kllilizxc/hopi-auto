@@ -360,6 +360,40 @@ It was stopped after the first model turn had completed because the harness comp
 without normalizing its terminal newline. This was corrected to compare trimmed durable text; the
 final run is terminal and passed. No product failure occurred.
 
+## 2026-07-14: HOPI-E2E-028 Project Attention Recovery
+
+Browser artifact:
+`/Users/realizer/Code/hopi-auto/test-artifacts/project-attention-recovery-browser-2026-07-14T12-17-25-848Z-878c2a9b`
+
+`HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1 bun run e2e:browser:028` passed with the production Server,
+Coordinator, Assistant tool boundary, real Browser Harness, managed Git worktree, and task checkpoint.
+The Board first showed one `Project blocked` banner while Planning remained ordinary `waiting` with
+only `project_ineligible`. A successful `hopi_resolve_attention` removed the banner and woke Planner.
+The deterministic Generator then damaged its disposable task checkout so the next real checkpoint
+failed closed; Coordinator created a new Project Attention with a different identity and current
+reason, while the Engineering card remained `waiting` instead of becoming `Needs you`. Visual
+inspection of blocked, resumed, and reblocked screenshots found the expected banner and card states.
+
+The first retained Browser iteration is a Harness assertion failure:
+`/Users/realizer/Code/hopi-auto/test-artifacts/project-attention-recovery-browser-2026-07-14T11-58-15-634Z-2b4ada94`.
+The product completed the intended resolve, dispatch, and reblock sequence, but the assertion always
+selected historical `plan-initial` after it had become `done`. The final scenario selects the current
+nonterminal Work without fixing Work count or kind.
+
+Claude Live artifact:
+`/Users/realizer/Code/hopi-auto/test-artifacts/project-attention-agent-recovery-2026-07-14T12-05-47-082Z-cacceffa`
+
+`HOPI_E2E_TRANSPORT=claude HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1 bun run e2e:live:028` was blocked at
+`assistant_recovery`. Claude Code 2.1.209 initialized, connected the HOPI MCP server, and then received
+ten consecutive provider `429 rate_limit` responses because the daily allocation was already
+exceeded (`$302.40` current spend against a `$300.00` budget). It exited before inference or any HOPI
+tool call, with zero input, cached-input, and output tokens. This is an environment/provider blocker,
+not product or Harness evidence. The Live runner remains implemented but has not passed.
+
+The stronger `HOPI-E2E-002` and `HOPI-E2E-013` Claude reruns were not started after this zero-token
+quota failure because they use the same exhausted provider allocation and could not produce new
+product evidence.
+
 ## 2026-07-14: Contract and Browser Preflight
 
 | Gate                   | Result | Evidence                                                                                                   |
@@ -368,6 +402,39 @@ final run is terminal and passed. No product failure occurred.
 | `bun run test:browser` | Passed | `/home/kllilizxc/Code/hopi-auto/test-artifacts/global-assistant-browser-2026-07-13T16-45-22-030Z-0671c3cc` |
 
 No product or Harness failure occurred in these gates.
+
+## 2026-07-14: Planner Sparse-Proposal Regression Gates
+
+| Gate                   | Result | Evidence                                                              |
+| ---------------------- | ------ | --------------------------------------------------------------------- |
+| `bun run check`        | Passed | Backend 284 tests, frontend 43 tests, typecheck, lint, and build passed. |
+| `bun run e2e:contract` | Passed | 162 tests across 18 files; 801 assertions; zero provider calls.         |
+
+The regression reproduces both retained Claude Planner failures without a provider call: Planner no
+longer writes its owning Planning Work, Coordinator preserves the current body, attempts, and prior
+Evidence while deriving the `done` gate, and a retry after an invalid proposal cannot erase append-only
+Evidence. Premature completion alongside nonterminal Engineering Work remains fail-closed.
+
+## 2026-07-14: HOPI-E2E-029 Terminal Assistant Provider Error
+
+Browser artifact:
+`/Users/realizer/Code/hopi-auto/test-artifacts/assistant-provider-error-2026-07-14T12-58-21-785Z-b86d912f`
+
+`HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1 bun run e2e:browser:029` passed with the production Server,
+Coordinator, durable Assistant runtime, message projection, and Browser Harness. One deterministic
+speaking turn emitted representative Claude init, retry, synthetic Assistant error, terminal error,
+and contradictory success telemetry. Coordinator invoked it once, immediately created event-target
+Attention, and did not rebuild the cached session or retry the Inbox event. The final screenshot
+shows one provider-error activity and no `Working`, generic `system`, or false `success` row.
+
+Parser, runner, Coordinator, and message-feed regressions also cover the same boundary without a
+provider call. Raw runtime events remain durable even though the ordinary conversation coalesces or
+hides transport telemetry.
+
+| Gate                   | Result | Evidence                                                               |
+| ---------------------- | ------ | ---------------------------------------------------------------------- |
+| `bun run check`        | Passed | Backend 288 tests, frontend 48 tests, typecheck, lint, and build passed. |
+| `bun run e2e:contract` | Passed | 164 tests across 18 files; 809 assertions; zero provider calls.         |
 
 ## Open Coverage Gaps
 

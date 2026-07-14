@@ -55,27 +55,28 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.status).toBe('handled')
   })
 
-  test('turns bounded Assistant turn failure into event-target Attention', async () => {
+  test('turns one terminal Assistant failure into event-target Attention without retrying', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Unsafe ambiguity.' })
+    let calls = 0
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
         async process() {
+          calls += 1
           throw new Error('conversation process failed')
         },
       },
       attentions: fixture.attentions,
       projects: [],
-      assistantMaxAttempts: 3,
     })
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await coordinator.reconcileOnce()
-      await coordinator.waitForIdle()
-    }
+    await coordinator.reconcileOnce()
+    await coordinator.waitForIdle()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     const workspace = await fixture.workspace.readWorkspace()
 
+    expect(calls).toBe(1)
     expect(
       [...workspace.attentions.values()].some(
         (attention) =>

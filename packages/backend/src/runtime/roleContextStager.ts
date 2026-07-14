@@ -799,9 +799,9 @@ function plannerPrompt(paths: {
     'Every Engineering Work acceptance criterion must be provable against its task worktree before C1. Do not put public Project Preview API validation in Engineering Work: that API starts the already integrated release, so it cannot prove a candidate.',
     'Give every Engineering Work the smallest non-empty repos list containing every Repo its Generator or Reviewer must inspect, execute, or modify to prove the Work. There is no separate read-only Repo scope; unchanged listed Repos are C1 no-ops. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
     'Independent testability alone does not justify a separate Work. Keep prerequisite scaffolding with its only consumer when they share primary files and the prerequisite has no independently useful operator outcome.',
-    'Every newly proposed Engineering Work must use kind engineering and stage generate. Mark the owning Planning Work done only with a complete proposal.',
+    'Every newly proposed Engineering Work must use kind engineering and stage generate. Never copy, create, or edit Planning Work in the proposal; a successful complete proposal lets Coordinator advance the owning Planning Work.',
     'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
-    'Your proposal may contain only design/**, Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing root AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator derives it from result.json during publication.',
+    'Your proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing root AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator preserves the current Planning Work and derives its Evidence reference from result.json during publication.',
     'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
     'The fixed control fields are listed below. Use them directly; never inspect another Goal or historical Run to infer document format. Markdown bodies remain free-form.',
     'New Engineering Work frontmatter:',
@@ -829,7 +829,7 @@ function plannerPrompt(paths: {
     'notifiedAt: null',
     '---',
     '```',
-    'Keep exactly one nonterminal Planning Work. Never reopen terminal Work.',
+    'The staged owning Planning Work is read-only context. Never copy it into proposal. Never reopen terminal Work.',
     ...(paths.apiOrigin
       ? [
           `Only when accepted design explicitly requires public Preview proof and all relevant Engineering Work is terminal, validate the integrated release with POST ${paths.apiOrigin}/api/projects/<projectId>/preview/start, GET ${paths.apiOrigin}/api/projects/<projectId>/preview, and POST ${paths.apiOrigin}/api/projects/<projectId>/preview/stop. Do not probe alternate routes or start Preview by default. Propose completion only after the session is running and its endpoint is reachable; if proof fails, plan the smallest repair.`,
@@ -851,7 +851,7 @@ function plannerPrompt(paths: {
           'scripts/hopi/prepare already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.',
         ]),
     `When Assistant management or operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}, return attention, and leave Planning Work at plan.`,
-    'When final proof is sufficient, create the one target-null completion Attention and mark Planning Work done. Otherwise mark Planning Work done only after its complete design and Work proposal is staged.',
+    'When final proof is sufficient, create the one target-null completion Attention. If this proposal creates or keeps any nonterminal Engineering Work, do not create completion Attention. Return success only after the complete semantic proposal is staged; Coordinator will advance the owning Planning Work after validation.',
     '',
   ]
 }

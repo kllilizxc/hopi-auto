@@ -329,6 +329,8 @@ different risk.
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Implemented                                       |
 | `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Implemented                                       |
 | `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Planned; contract regression available            |
+| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Browser passed; Live runner blocked by provider quota |
+| `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Browser passed                                       |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
@@ -356,6 +358,8 @@ requires its own executable scenario before it can be reported as covered.
 | `HOPI-E2E-025` | `tests/attentionDelivery.test.ts`                                          |
 | `HOPI-E2E-026` | `tests/workspaceAssistant.test.ts`                                         |
 | `HOPI-E2E-027` | `tests/roleContextStager.test.ts`, `tests/projectReconciler.test.ts`       |
+| `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts` |
+| `HOPI-E2E-029` | `tests/browser/assistantProviderError.browser.ts`, `tests/workspaceAssistant.test.ts`, `tests/coordinatorReconciler.test.ts` |
 
 ## Detailed Cases
 
@@ -976,6 +980,75 @@ Pass conditions:
 - Later responsibilities reuse current `AGENTS.md` and `prepare` rather than rediscovering setup from scratch.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-11`, `INV-14`.
+
+### HOPI-E2E-028: Agent-Led Project Attention Recovery And Reblocking
+
+| Field   | Value                                                                                                      |
+| ------- | ---------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant claims recovery but Project remains ineligible, or a wrong judgment leaves Kanban silently stuck. |
+| Reality | Production Server, Coordinator, Assistant tool boundary, real Browser Harness, Git worktree, and task checkpoint. |
+| Fixture | One active Goal covered by Project Attention; the post-resolve Generator reaches a failing checkpoint boundary. |
+| Cost    | Zero provider calls for Browser coverage; low for the separate real-Assistant canary.                       |
+
+Actions:
+
+1. Open the Goal Board with one Project Attention.
+2. Verify the Project banner and ordinary waiting Work projection.
+3. Ask Assistant to resolve the Project Attention through its normal tool boundary.
+4. Hold the resumed Planner long enough to observe the unblocked working state.
+5. Let Planning publish an Engineering Work whose next real task checkpoint fails closed.
+6. Observe the replacement Project Attention and blocked Board state.
+
+Pass conditions:
+
+- Project Attention reason and creation time appear in the banner and Current Focus.
+- Covered Work has `project_ineligible` and `waiting`, never an invented `Needs you` badge.
+- Only a successful `hopi_resolve_attention` closes the original Attention, restores eligibility,
+  and wakes a Planner Attempt.
+- While Planner runs, the Project banner is absent and the Planning card is visibly working.
+- A later execution-boundary failure creates a new Project Attention with a different identity and
+  current reason; the original remains resolved as history.
+- Reblocking does not create Goal- or Work-target Attention and does not mutate the user checkout.
+
+Primary invariants: `INV-01`, `INV-04`, `INV-05`, `INV-10`, `INV-14`.
+
+Current Browser implementation: `packages/backend/tests/browser/projectAttentionRecovery.browser.ts`
+(`bun run e2e:browser:028`). It uses deterministic model seams but production orchestration, UI,
+Git worktrees, tool execution, and checkpoint failure. The configured-provider canary is
+`packages/backend/tests/live/projectAttentionRecovery.live.ts` (`bun run e2e:live:028`); it verifies
+that a real Assistant inspects already-applied external repair evidence, receives a successful
+resolve tool result, and wakes a real Planner. It does not claim the read-only Assistant performed
+the external repair itself or that the Goal completed.
+
+### HOPI-E2E-029: Terminal Assistant Provider Error
+
+| Field   | Value                                                                                         |
+| ------- | --------------------------------------------------------------------------------------------- |
+| Risk    | A terminal provider failure appears as repeated generic status, false success, or endless work. |
+| Reality | Production Server, Coordinator, durable Assistant runtime, Browser Harness, and conversation UI. |
+| Fixture | One deterministic speaking turn emits Claude init, retry, synthetic reply, and terminal error events. |
+| Cost    | Zero provider calls.                                                                          |
+
+Actions:
+
+1. Submit one public Assistant message through the Browser.
+2. Emit representative Claude retry telemetry followed by terminal provider failure.
+3. Wait for the failed runtime manifest and event-target Attention.
+4. Reopen the Assistant conversation and inspect the terminal error presentation.
+
+Pass conditions:
+
+- Terminal `is_error` wins over a contradictory `success` subtype.
+- Coordinator invokes the speaking turn exactly once and creates one event-target Attention.
+- Cached session recovery is not attempted for provider failure.
+- The conversation displays the provider error once, stops showing `Working`, and exposes neither
+  repeated generic `system` rows nor false `success`.
+- Raw retry and terminal events remain durable for diagnostics.
+
+Primary invariants: `INV-01`, `INV-05`, `INV-10`.
+
+Current Browser implementation: `packages/backend/tests/browser/assistantProviderError.browser.ts`
+(`bun run e2e:browser:029`).
 
 ## Implementation Order
 

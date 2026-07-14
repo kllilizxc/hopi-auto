@@ -27,14 +27,6 @@ describe('PassOutcomeCoordinator', () => {
   test('publishes a complete Planner proposal before its Planning Work gate', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-plan', 'planner')
-    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
-    const stagedPlanningPath = join(context.proposalRoot, ...planningPath.split('/'))
-    const planning = parseWorkDocument(
-      await Bun.file(fixture.store.paths.absolute(planningPath)).text(),
-    )
-    planning.attributes.stage = 'done'
-    await mkdir(dirname(stagedPlanningPath), { recursive: true })
-    await Bun.write(stagedPlanningPath, renderWorkDocument(planning))
     await Bun.write(
       join(context.proposalRoot, ...fixture.store.paths.workDocument('goal-1', 'W-1').split('/')),
       renderWorkDocument(engineeringWork('W-1', 'generate')),
@@ -63,14 +55,6 @@ describe('PassOutcomeCoordinator', () => {
   test('stales a Planner result when a new Goal Input arrives after staging', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-new-input', 'planner')
-    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
-    const stagedPlanningPath = join(context.proposalRoot, ...planningPath.split('/'))
-    const planning = parseWorkDocument(
-      await Bun.file(fixture.store.paths.absolute(planningPath)).text(),
-    )
-    planning.attributes.stage = 'done'
-    await mkdir(dirname(stagedPlanningPath), { recursive: true })
-    await Bun.write(stagedPlanningPath, renderWorkDocument(planning))
 
     const inputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-new')
     await fixture.store.publishGoal('goal-1', {
@@ -407,38 +391,157 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-review-paused')).toBe(true)
   })
 
-  test('normalizes an invalid Planner success proposal to a failed attempt', async () => {
+  test('allows empty sparse recovery when completion support already exists', async () => {
     const fixture = await createFixture()
-    const context = await fixture.stage('plan-initial', 'run-invalid', 'planner')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-existing-completion')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: attentionPath,
+          expectedHash: null,
+          content: renderAttentionDocument({
+            attributes: {
+              id: 'A-existing-completion',
+              target: null,
+              createdAt: '2026-07-11T00:00:00Z',
+              resolvedAt: null,
+              notifiedAt: null,
+            },
+            body: '## Completion\n\nThe prior Planner publication left valid completion support.\n',
+          }),
+        },
+      ],
+    })
+    const context = await fixture.stage('plan-initial', 'run-empty', 'planner')
 
     const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-invalid', 'planner', context, 'success'),
+      fixture.input('plan-initial', 'run-empty', 'planner', context, 'success'),
     )
     const work = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
 
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(work?.attributes.attempts).toBe(0)
+    expect(work?.attributes.stage).toBe('done')
+    expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
+  })
+
+  test('rejects Planner success with neither Engineering Work nor completion Attention', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-empty-incomplete', 'planner')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-empty-incomplete', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
     expect(result).toMatchObject({ kind: 'published', result: 'fail' })
-    expect(work?.attributes.attempts).toBe(1)
-    expect(work?.attributes.stage).toBe('plan')
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      attempts: 1,
+      stage: 'plan',
+    })
+    expect(goalPackage.evidence.get('E-run-empty-incomplete')?.body).toContain(
+      'Planner success without nonterminal Engineering Work requires completion Attention',
+    )
+  })
+
+  test('rejects Planner writes to Planning Work and preserves failure Evidence on retry', async () => {
+    const fixture = await createFixture()
+    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
+    const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
+    const planningBody = parseWorkDocument(planningSource).body
+    const invalidContext = await fixture.stage('plan-initial', 'run-owning-work', 'planner')
+    const invalidPlanning = parseWorkDocument(planningSource)
+    invalidPlanning.attributes.stage = 'done'
+    await mkdir(dirname(join(invalidContext.proposalRoot, ...planningPath.split('/'))), {
+      recursive: true,
+    })
+    await Bun.write(
+      join(invalidContext.proposalRoot, ...planningPath.split('/')),
+      renderWorkDocument(invalidPlanning),
+    )
+
+    const invalidResult = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-owning-work', 'planner', invalidContext, 'success'),
+    )
+    const failedPlanning = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
+
+    expect(invalidResult).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan', attempts: 1 })
+    expect(failedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work'])
+
+    const retryContext = await fixture.stage('plan-initial', 'run-retry', 'planner')
+    await Bun.write(
+      join(
+        retryContext.proposalRoot,
+        ...fixture.store.paths.workDocument('goal-1', 'W-retry').split('/'),
+      ),
+      renderWorkDocument(engineeringWork('W-retry', 'generate')),
+    )
+    const retryResult = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-retry', 'planner', retryContext, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const completedPlanning = goalPackage.works.get('plan-initial')
+
+    expect(retryResult).toMatchObject({ kind: 'published', result: 'success' })
+    expect(completedPlanning?.attributes).toMatchObject({ stage: 'done', attempts: 1 })
+    expect(completedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work', 'E-run-retry'])
+    expect(completedPlanning?.body).toBe(planningBody)
+    expect(goalPackage.works.get('W-retry')?.attributes.stage).toBe('generate')
+    expect(goalPackage.evidence.get('E-run-owning-work')?.body).toContain(
+      'Planner may propose Engineering Work but may not write Planning Work',
+    )
+  })
+
+  test('rejects completion Attention while nonterminal Engineering Work remains', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-premature-completion', 'planner')
+    const engineeringPath = fixture.store.paths.workDocument('goal-1', 'W-pending')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-premature')
+    await Bun.write(
+      join(context.proposalRoot, ...engineeringPath.split('/')),
+      renderWorkDocument(engineeringWork('W-pending', 'generate')),
+    )
+    await mkdir(dirname(join(context.proposalRoot, ...attentionPath.split('/'))), {
+      recursive: true,
+    })
+    await Bun.write(
+      join(context.proposalRoot, ...attentionPath.split('/')),
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-premature',
+          target: null,
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Completion\n\nEverything is complete.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-premature-completion', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.works.has('W-pending')).toBe(false)
+    expect(goalPackage.attentions.has('A-premature')).toBe(false)
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'plan',
+      attempts: 1,
+    })
+    expect(goalPackage.evidence.get('E-run-premature-completion')?.body).toContain(
+      'Completion proposal requires no nonterminal Engineering Work',
+    )
   })
 
   test('rejects Planner output that leaks an Assistant-home attachment into Work', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-home-image', 'planner')
-    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
-    const planning = parseWorkDocument(
-      await Bun.file(fixture.store.paths.absolute(planningPath)).text(),
-    )
-    planning.attributes.stage = 'done'
     const proposedWork = engineeringWork('W-image', 'generate')
     proposedWork.body =
       'Use `.hopi/docs/assistant/attachments/hash/reference.png` as the visual source.\n'
-    await mkdir(dirname(join(context.proposalRoot, ...planningPath.split('/'))), {
-      recursive: true,
-    })
-    await Bun.write(
-      join(context.proposalRoot, ...planningPath.split('/')),
-      renderWorkDocument(planning),
-    )
     await Bun.write(
       join(
         context.proposalRoot,

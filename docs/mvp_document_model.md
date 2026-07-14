@@ -140,6 +140,9 @@ it as provenance, but new turns never write it and no forward control rule depen
 Only `codex | claude | opencode` is accepted. HOPI resumes the cache only when `transport` matches
 the current Home Assistant configuration. A missing, invalid, or incompatible cache starts a new
 vendor session from ordered durable Inbox history; it does not alter or synthesize canonical turns.
+An adapter may discard an already selected cache during a turn only when the vendor explicitly
+reports that session missing or incompatible. Provider, quota, authentication, model, and process
+failures do not imply session incompatibility and therefore do not rebuild conversation history.
 Legacy thread-only manifests migrate as Codex. Per-turn `events.jsonl` stores normalized live
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
 output for debugging.
@@ -448,8 +451,8 @@ Work nor a current completion proposal.
 Clarification and final assessment remain model judgment inside the same Planning Work. The
 document model adds no `clarify` or completion stage, approval flag, structured question, or
 criteria-mapping field. A targeted question leaves Planning Work at `plan`; only final Planner
-success may create an unclaimed targetless completion proposal as support before changing Planning
-Work to `done`. Detailed Planner behavior belongs to
+success may create an unclaimed targetless completion proposal as support before Coordinator changes
+Planning Work to `done`. Detailed Planner behavior belongs to
 [the execution design](./mvp_execution.md#planner).
 
 Any nonterminal Planning Work is a Goal-wide planning guard: no Engineering Work in that Goal may

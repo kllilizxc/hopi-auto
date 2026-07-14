@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import {
   type AssistantModelRunner,
+  AssistantSessionUnavailableError,
+  WorkspaceAssistantError,
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
 } from '../src/assistant/workspaceAssistant'
@@ -94,6 +97,62 @@ describe('WorkspaceAssistant conversation', () => {
     expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
     expect(await Bun.file(promptFile).text()).toContain(imagePath)
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
+  })
+
+  test('throws a Claude terminal provider error instead of accepting its synthetic reply', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-provider-error')
+    const error = 'Daily provider allocation exceeded.'
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"system",subtype:"api_retry",attempt:10,max_retries:10,error_status:429,error:"rate_limit",session_id:"claude-session"}))',
+        `console.log(JSON.stringify({type:"assistant",message:{id:"synthetic",content:[{type:"text",text:${JSON.stringify(error)}}]},session_id:"claude-session"}))`,
+        `console.log(JSON.stringify({type:"result",subtype:"success",is_error:true,api_error_status:429,terminal_reason:"api_error",session_id:"claude-session",result:${JSON.stringify(error)}}))`,
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-provider-error')
+    const events: AgentRuntimeEvent[] = []
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await expect(
+      runner.run(
+        {
+          eventId: 'EV-provider-error',
+          prompt: 'Continue.',
+          session: vendorSession('claude', 'claude-session'),
+          cwd,
+          lastMessageFile: join(cwd, 'last-message.txt'),
+          transcriptFile: join(cwd, 'transcript.log'),
+          toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+          toolToken: 'provider-error-token',
+        },
+        {
+          onEvent: (event) => {
+            events.push(event)
+          },
+        },
+      ),
+    ).rejects.toThrow(error)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        entryKind: 'error',
+        summary: error,
+        vendorEventType: 'result.api_error',
+      }),
+    )
   })
 
   test('rebuilds directly instead of resuming an incompatible vendor session', async () => {
@@ -464,7 +523,7 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup(() => ({
       async run(input, observer) {
         calls.push({ sessionId: input.session?.sessionId ?? null, prompt: input.prompt })
-        if (input.session) throw new Error('session not found')
+        if (input.session) throw new AssistantSessionUnavailableError('session not found')
         await observer?.onSession?.(codexSession('thread-rebuilt'))
         return { reply: 'Recovered.', session: codexSession('thread-rebuilt') }
       },
@@ -483,6 +542,30 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls[1]?.prompt).toContain('User: Old turn')
     expect(calls[1]?.prompt).toContain('Assistant: Old reply')
     expect(await fixture.conversation.readSession()).toEqual(codexSession('thread-rebuilt'))
+  })
+
+  test('does not rebuild a cached session after a terminal provider failure', async () => {
+    const calls: Array<string | null> = []
+    const fixture = await setup(() => ({
+      async run(input) {
+        calls.push(input.session?.sessionId ?? null)
+        throw new WorkspaceAssistantError('Daily provider allocation exceeded.')
+      },
+    }))
+    await fixture.conversation.writeSession(codexSession('thread-existing'))
+    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
+
+    await expect(fixture.assistant.process('EV-1')).rejects.toThrow(
+      'Daily provider allocation exceeded.',
+    )
+
+    expect(calls).toEqual(['thread-existing'])
+    expect(await fixture.conversation.readSession()).toEqual(codexSession('thread-existing'))
+    expect((await fixture.conversation.readTurn('EV-1'))?.manifest).toMatchObject({
+      status: 'failed',
+      attempt: 1,
+      error: 'Daily provider allocation exceeded.',
+    })
   })
 
   test('rebuilds from bounded public history without internal Reflection briefs', async () => {

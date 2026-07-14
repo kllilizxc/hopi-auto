@@ -228,6 +228,15 @@ same diagnostics in its own runtime directory. The UI may poll or stream public 
 turn is pending. The final Assistant message is copied into the Inbox turn before it becomes handled.
 Runtime events improve observability but never authorize a Goal or Work transition.
 
+The configured vendor owns transient retry inside one invocation. HOPI treats the vendor's
+structured terminal result as authoritative: a terminal error is recorded as the turn failure and
+shown to the operator rather than accepted as Assistant speech, retried by Coordinator, or treated
+as evidence that a cached session is incompatible. `system` is only a transport envelope;
+initialization and retry telemetry remain nonterminal. HOPI rebuilds durable conversation history
+exactly once only when the adapter explicitly reports that the cached session itself is missing or
+incompatible. Raw vendor output remains diagnostic truth in `transcript.log`, while the conversation
+shows a bounded, safe error summary and at most the latest retry status.
+
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
@@ -253,6 +262,11 @@ They do not require a fixed response shape or output file. Subsequent user messa
 compatible vendor session resume. A public turn's final model answer is the operator-facing reply; an internal
 turn's answer remains hidden unless that Run requested delivery with `notify_user` and Coordinator
 published the complete handled reply.
+
+Once one speaking invocation reaches terminal failure, the Inbox turn stays pending under one
+event-target Attention. Coordinator does not rerun the same failed invocation: a later operator or
+Assistant decision may explicitly retry after the condition changes. This keeps transport failure at
+the execution boundary instead of turning it into a hidden workflow retry policy.
 
 Before admission, Assistant asks only when the requested outcome, target Project/Goal, or operator
 intent is materially unclear. Once an instruction is clear enough to admit, Assistant calls the
@@ -389,7 +403,9 @@ The Assistant drawer shows one chronological conversation:
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking
   turn itself fails
-- tool calls are collapsed diagnostics, not chat commands the user must understand
+- a tool activity aggregate is expanded by default only while it is the final conversation row;
+  historical and non-tool aggregates are collapsed, and individual tool calls remain collapsed
+  diagnostics, not chat commands the user must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
 - internal Reflection turns and their diagnostics are hidden

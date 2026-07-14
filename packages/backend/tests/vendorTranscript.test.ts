@@ -317,6 +317,54 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
+  test('keeps Claude retry detail and honors terminal is_error over a success subtype', () => {
+    const retry = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'system',
+        subtype: 'api_retry',
+        attempt: 3,
+        max_retries: 10,
+        error_status: 429,
+        error: 'rate_limit',
+      }),
+    })
+    const result = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        api_error_status: 429,
+        terminal_reason: 'api_error',
+        result: 'Daily provider allocation exceeded.',
+      }),
+    })
+
+    expect(retry).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'claude',
+        entryKind: 'status',
+        summary: 'Provider retry · 3/10 · 429 rate_limit',
+        vendorEventType: 'system.api_retry',
+      },
+    ])
+    expect(result).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'claude',
+        entryKind: 'error',
+        summary: 'Daily provider allocation exceeded.',
+        vendorEventType: 'result.api_error',
+      },
+    ])
+  })
+
   test('normalizes OpenCode JSON events with conservative assistant and tool heuristics', () => {
     const assistant = normalizeProcessOutputLine({
       format: 'opencode_json',

@@ -21,6 +21,31 @@ describe('parseVendorAssistantOutput', () => {
     ).toEqual({ sessionId: 'session-1', finalText: text })
   })
 
+  test('treats a Claude error result as terminal even when its subtype says success', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          api_error_status: 429,
+          terminal_reason: 'api_error',
+          session_id: 'session-1',
+          result: 'Daily provider allocation exceeded.',
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'session-1',
+      terminalError: {
+        message: 'Daily provider allocation exceeded.',
+        status: 429,
+        terminalReason: 'api_error',
+        sessionInvalid: false,
+      },
+    })
+  })
+
   test('extracts current OpenCode text and session identity', () => {
     expect(
       parseVendorAssistantOutput(

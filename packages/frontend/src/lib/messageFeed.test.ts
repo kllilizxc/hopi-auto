@@ -223,6 +223,98 @@ describe('unified message feed adapters', () => {
     )
   })
 
+  test('shows only the latest provider retry while a speaking turn is running', () => {
+    const event = inboxEvent({
+      runtimeStatus: 'running',
+      runtimeEvents: [
+        transcript('init', 'status', 'Claude initialized', {
+          transport: 'claude',
+          vendorEventType: 'system.init',
+        }),
+        transcript('retry-1', 'status', 'Provider retry · 1/10 · 429 rate_limit', {
+          transport: 'claude',
+          vendorEventType: 'system.api_retry',
+        }),
+        transcript('retry-2', 'status', 'Provider retry · 2/10 · 429 rate_limit', {
+          transport: 'claude',
+          vendorEventType: 'system.api_retry',
+        }),
+      ],
+    })
+
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'event',
+        id: `event:${event.id}`,
+        occurredAt: event.receivedAt,
+        event,
+        completion: null,
+      },
+    ])
+
+    expect(items.map((item) => item.text)).toContain('Provider retry · 2/10 · 429 rate_limit')
+    expect(items.map((item) => item.text)).not.toContain('Provider retry · 1/10 · 429 rate_limit')
+    expect(items.map((item) => item.text)).not.toContain('Claude initialized')
+  })
+
+  test('replaces retry and synthetic Assistant noise with one terminal provider error', () => {
+    const error = 'Daily provider allocation exceeded.'
+    const event = inboxEvent({
+      runtimeStatus: 'failed',
+      runtimeError: error,
+      runtimeEvents: [
+        transcript('legacy-system', 'status', 'system', {
+          transport: 'claude',
+          vendorEventType: 'system',
+        }),
+        transcript('retry', 'status', 'Provider retry · 10/10 · 429 rate_limit', {
+          transport: 'claude',
+          vendorEventType: 'system.api_retry',
+        }),
+        transcript('synthetic-error', 'assistant', error, {
+          transport: 'claude',
+          vendorEventType: 'assistant',
+        }),
+        transcript('provider-error', 'error', error, {
+          transport: 'claude',
+          vendorEventType: 'result.api_error',
+        }),
+        transcript('legacy-success', 'status', 'success', {
+          transport: 'claude',
+          vendorEventType: 'result',
+        }),
+        {
+          eventId: 'stored-failure',
+          createdAt: '2026-07-11T08:00:09.000Z',
+          kind: 'message',
+          level: 'error',
+          role: 'assistant',
+          content: error,
+        },
+      ],
+    })
+
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'event',
+        id: `event:${event.id}`,
+        occurredAt: event.receivedAt,
+        event,
+        completion: null,
+      },
+    ])
+
+    expect(items.filter((item) => item.kind === 'error')).toEqual([
+      expect.objectContaining({ text: error }),
+    ])
+    expect(items.map((item) => item.text)).not.toContain('system')
+    expect(items.map((item) => item.text)).not.toContain('success')
+    expect(items.map((item) => item.text)).not.toContain('Working')
+    expect(items.map((item) => item.text)).not.toContain(
+      'Provider retry · 10/10 · 429 rate_limit',
+    )
+  })
+
   test('keeps internal page context out of the visible user message', () => {
     const [message] = inboxEventsToMessageFeed([inboxEvent()])
 

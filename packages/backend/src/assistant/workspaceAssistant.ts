@@ -2,7 +2,12 @@ import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
-import { type AssistantTransport, parseVendorAssistantOutput } from '../agent/vendorAssistantOutput'
+import {
+  type AssistantTransport,
+  type VendorAssistantTerminalError,
+  isExplicitSessionFailure,
+  parseVendorAssistantOutput,
+} from '../agent/vendorAssistantOutput'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import type { RoleTransportConfig } from '../agent/vendorTransport'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
@@ -50,6 +55,8 @@ export interface WorkspaceAssistant {
 export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
 
 export class WorkspaceAssistantError extends Error {}
+
+export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
 
 export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
@@ -103,6 +110,7 @@ export function createConfiguredAssistantModelRunner(options: {
       const stderr: string[] = []
       let finalReply = ''
       let finalMessageId: string | undefined
+      let terminalError: VendorAssistantTerminalError | undefined
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
@@ -112,7 +120,9 @@ export function createConfiguredAssistantModelRunner(options: {
             observedSessionId = output.sessionId
             await observer?.onSession?.({ transport, sessionId: output.sessionId })
           }
-          if (output.finalText) {
+          if (output.terminalError) {
+            terminalError = output.terminalError
+          } else if (output.finalText) {
             finalReply = output.finalText
             finalMessageId = output.messageId
           } else if (output.assistantText) {
@@ -158,10 +168,19 @@ export function createConfiguredAssistantModelRunner(options: {
       }
       if (input.signal?.aborted)
         throw new WorkspaceAssistantError('Assistant model run interrupted')
+      if (terminalError) {
+        const ErrorType = terminalError.sessionInvalid
+          ? AssistantSessionUnavailableError
+          : WorkspaceAssistantError
+        throw new ErrorType(terminalError.message)
+      }
       if (exitCode !== 0) {
-        throw new WorkspaceAssistantError(
-          `${transport} conversation exited with code ${exitCode}: ${stderr.at(-1) ?? 'no error detail'}`,
-        )
+        const detail = stderr.at(-1) ?? 'no error detail'
+        const message = `${transport} conversation exited with code ${exitCode}: ${detail}`
+        if (session && isExplicitSessionFailure(detail)) {
+          throw new AssistantSessionUnavailableError(message)
+        }
+        throw new WorkspaceAssistantError(message)
       }
 
       if (!observedSessionId) {
@@ -253,7 +272,7 @@ export function createWorkspaceAssistant(input: {
             observer,
           )
         } catch (error) {
-          if (!session) throw error
+          if (!session || !(error instanceof AssistantSessionUnavailableError)) throw error
           await input.conversation.record(eventId, {
             kind: 'message',
             level: 'info',

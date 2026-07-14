@@ -17,11 +17,7 @@ import { MarkdownDocumentError } from '../domain/markdownDocument'
 import { HOPI_RELEASE_REF } from '../domain/project'
 import { PublicationError, hashBytes } from '../publication/publisher'
 import type { PublicationCoordinator } from '../publication/publisher'
-import type {
-  PublicationCandidate,
-  PublicationSnapshotFile,
-  PublicationWrite,
-} from '../publication/types'
+import type { PublicationCandidate, PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { Responsibility, RoleContextBundle } from './roleContextStager'
 
@@ -207,7 +203,6 @@ interface PassProposal {
   bootstrapAgentsWrite?: PublicationWrite
   projectContextWrites: PublicationWrite[]
   newAttentions: NewAttentionProposal[]
-  proposedFiles: ReadonlyMap<string, PublicationSnapshotFile>
 }
 
 interface PassPublication {
@@ -230,7 +225,6 @@ async function readPassProposal(
     { id: `runtime:${input.runId}`, path: input.context.proposalRoot },
     '',
   )
-  const proposedFiles = new Map(snapshot.files.map((file) => [file.path, file]))
   const baseline = new Map(input.context.authorityFiles.map((file) => [file.path, file.hash]))
   const goalRoot = store.paths.goalRoot(input.goalId)
   const changedWrites: PublicationWrite[] = []
@@ -282,7 +276,7 @@ async function readPassProposal(
         )
       }
     } else {
-      assertPlannerProposalPath(store, input.goalId, file.path, expectedHash)
+      assertPlannerProposalPath(store, input.goalId, file.path, expectedHash, source)
     }
 
     const write = { path: file.path, expectedHash, content: file.content }
@@ -299,7 +293,6 @@ async function readPassProposal(
     bootstrapAgentsWrite,
     projectContextWrites,
     newAttentions,
-    proposedFiles,
   }
 }
 
@@ -342,8 +335,6 @@ function buildPlannerApplication(
   current: GoalPackage,
   options: PassOutcomeCoordinatorOptions,
 ): PassPublication {
-  const workPath = store.paths.workDocument(input.goalId, input.workId)
-  const proposedWorkFile = proposal.proposedFiles.get(workPath)
   const currentWork = requireWork(current, input.workId)
   if (!isPlanningWork(currentWork.attributes) || currentWork.attributes.stage !== 'plan') {
     throw new PassProposalError('Planner result does not own current Planning Work')
@@ -373,28 +364,15 @@ function buildPlannerApplication(
     }
   }
 
-  if (!proposedWorkFile?.content) {
-    throw new PassProposalError('Planner success must include its Planning Work proposal')
-  }
-  const proposedWork = parseWorkDocument(new TextDecoder().decode(proposedWorkFile.content))
-  if (
-    !isPlanningWork(proposedWork.attributes) ||
-    proposedWork.attributes.id !== input.workId ||
-    proposedWork.attributes.stage !== 'done'
-  ) {
-    throw new PassProposalError('Planner success must mark its Planning Work done')
-  }
-  proposedWork.attributes.evidenceRefs = appendUnique(
-    proposedWork.attributes.evidenceRefs,
-    evidence.attributes.id,
-  )
-  const supportingWrites = proposal.changedWrites.filter((write) => write.path !== workPath)
+  const completedWork = appendEvidence(currentWork, evidence.attributes.id)
+  completedWork.attributes.stage = 'done'
+  const supportingWrites = [...proposal.changedWrites]
   supportingWrites.push(evidenceWrite(store, input.goalId, evidence))
 
   return {
     supportingWrites,
     projectContextWrites: proposal.projectContextWrites,
-    gateWrite: workWrite(store, input.goalId, proposedWork, input.context.workHash),
+    gateWrite: workWrite(store, input.goalId, completedWork, input.context.workHash),
     async validateTransition(before, candidate, currentAuthority) {
       await validatePassSemanticGuard(
         store,
@@ -677,14 +655,21 @@ function validatePlannerTransition(
     ([attentionId, attention]) =>
       !before.attentions.has(attentionId) && attention.attributes.target === null,
   )
+  const hasNonterminalEngineering = [...after.works.values()].some(
+    (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
+  )
   if (newTargetless.length > 0) {
-    if (
-      [...after.works.values()].some(
-        (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
-      )
-    ) {
+    if (hasNonterminalEngineering) {
       throw new PassProposalError('Completion proposal requires no nonterminal Engineering Work')
     }
+  }
+  const hasOpenCompletion = [...after.attentions.values()].some(
+    (attention) => attention.attributes.target === null && attention.attributes.resolvedAt === null,
+  )
+  if (!hasNonterminalEngineering && !hasOpenCompletion) {
+    throw new PassProposalError(
+      'Planner success without nonterminal Engineering Work requires completion Attention',
+    )
   }
 }
 
@@ -800,12 +785,20 @@ function assertPlannerProposalPath(
   goalId: string,
   path: string,
   expectedHash: string | null,
+  source: string,
 ) {
   if (path === store.paths.goalDocument(goalId)) {
     throw new PassProposalError('Planner pass may not directly change the Goal contract')
   }
   if (path.startsWith(`${store.paths.designRoot(goalId)}/`) && path.endsWith('.md')) return
-  if (isWorkPath(store, goalId, path)) return
+  if (isWorkPath(store, goalId, path)) {
+    if (isPlanningWork(parseWorkDocument(source).attributes)) {
+      throw new PassProposalError(
+        'Planner may propose Engineering Work but may not write Planning Work',
+      )
+    }
+    return
+  }
   if (isAttentionPath(store, goalId, path) && expectedHash === null) return
   throw new PassProposalError(`Planner proposal path is not authorized: ${path}`)
 }
@@ -966,7 +959,6 @@ function emptyProposal(): PassProposal {
     changedWrites: [],
     projectContextWrites: [],
     newAttentions: [],
-    proposedFiles: new Map(),
   }
 }
 
