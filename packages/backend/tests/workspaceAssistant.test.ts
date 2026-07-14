@@ -96,6 +96,62 @@ describe('WorkspaceAssistant conversation', () => {
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
   })
 
+  test('accepts an empty final result only for disposable Reflection', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-empty')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-silent"}))',
+        'console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-silent",result:""}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+    const reflectionRoot = join(temporaryRoot, 'silent-reflection')
+
+    await expect(
+      runner.run({
+        eventId: 'RF-silent',
+        prompt: 'Finish silently when no handoff is useful.',
+        session: null,
+        cwd: reflectionRoot,
+        lastMessageFile: join(reflectionRoot, 'last-message.txt'),
+        transcriptFile: join(reflectionRoot, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'reflection-token',
+        toolMode: 'reflection',
+      }),
+    ).resolves.toEqual({
+      reply: '',
+      session: vendorSession('claude', 'claude-silent'),
+    })
+
+    const speakingRoot = join(temporaryRoot, 'empty-speaking-turn')
+    await expect(
+      runner.run({
+        eventId: 'EV-empty',
+        prompt: 'Answer the operator.',
+        session: null,
+        cwd: speakingRoot,
+        lastMessageFile: join(speakingRoot, 'last-message.txt'),
+        transcriptFile: join(speakingRoot, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'speaking-token',
+        toolMode: 'main',
+      }),
+    ).rejects.toThrow('claude produced an empty Assistant message')
+  })
+
   test('rebuilds directly instead of resuming an incompatible vendor session', async () => {
     const binary = join(temporaryRoot, 'fake-claude-switch')
     const argsFile = join(temporaryRoot, 'claude-switch-args.json')

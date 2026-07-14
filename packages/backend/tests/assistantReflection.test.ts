@@ -39,7 +39,7 @@ describe('Assistant Reflection', () => {
           await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
             brief: 'Work W-1 finished with a failure that needs main-thread assessment.',
           })
-          return { reply: 'Reflection complete.', session: codexSession('disposable-thread') }
+          return { reply: '', session: codexSession('disposable-thread') }
         },
       }),
     )

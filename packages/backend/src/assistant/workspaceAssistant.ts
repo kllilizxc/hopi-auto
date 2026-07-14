@@ -173,10 +173,13 @@ export function createConfiguredAssistantModelRunner(options: {
 
       const file = Bun.file(input.lastMessageFile)
       if (!(await file.exists())) {
+        if (input.toolMode === 'reflection') {
+          return { reply: '', session: { transport, sessionId: observedSessionId } }
+        }
         throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
       const reply = (await file.text()).trim()
-      if (!reply)
+      if (!reply && input.toolMode !== 'reflection')
         throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
       return { reply, session: { transport, sessionId: observedSessionId } }
     },
