@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current HOPI state, including active Runs, Work control facts, open Attention, latest Attempt diagnostics, and exact canonical document/log paths. The current page Project and Goal are default scope for speaking turns. Read a local path only when its exact body is needed.',
+      'Read compact current HOPI state, including active Runs, Work control facts, open Attention, latest Attempt diagnostics, and exact canonical document/log paths. Omit projectId and goalId to use the current page scope. Explicit IDs must be copied exactly, including P- and G- prefixes. Read a local path only when its exact body is needed.',
     inputSchema: assistantToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
@@ -78,7 +78,7 @@ if (mode !== 'reflection') {
     'hopi_resolve_attention',
     {
       description:
-        'Resolve an answered event- or Goal-target Attention after applying any required Goal or Work effects. Project Attention requires deterministic repair and cannot be asserted away.',
+        "Resolve an answered event- or Goal-target Attention after applying any required Goal or Work effects. Pass every required field in one call. Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...', attentionId: '...', resolution: '...' }. Workspace example: { scope: 'workspace', attentionId: '...', resolution: '...' }. Copy exact IDs from hopi_read_state or current-turn context. Project Attention requires deterministic repair and cannot be asserted away.",
       inputSchema: assistantToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),

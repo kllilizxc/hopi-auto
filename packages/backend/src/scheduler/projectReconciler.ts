@@ -1,4 +1,5 @@
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   engineeringWorkRepoIds,
   isEngineeringWork,
@@ -726,10 +727,6 @@ function hasOpenWorkAttention(
     (attention) =>
       attention.attributes.target === target && attention.attributes.resolvedAt === null,
   )
-}
-
-function workAttentionTarget(projectId: string, goalId: string, workId: string) {
-  return `project:${projectId}/goal:${goalId}/work:${workId}`
 }
 
 function boundedPreparationLogs(logs: string) {

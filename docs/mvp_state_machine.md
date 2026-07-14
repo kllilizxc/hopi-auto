@@ -119,6 +119,11 @@ project. Delivery identity is `(projectId, goalId, attentionId)` for Goal-local 
 `(homeId, attentionId)` for workspace Attention. Inbox context stores the complete canonical
 reference; a bare local ID is never written because it can repeat in another Goal or home.
 
+Planner, Generator, and Reviewer create only Work-targeted Attention for their current owning Work.
+The Run contract supplies the exact `project:<projectId>/goal:<goalId>/work:<workId>` value; a
+filesystem document path is not another valid representation. Goal targeting remains a readable
+Goal-wide control scope rather than a responsibility-selected alternative.
+
 Every open Attention with a non-null target has exactly the same kernel behavior:
 
 - it appears as **Waiting for Assistant** while `notifiedAt` is null and **Needs you** after a

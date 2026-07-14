@@ -1,4 +1,5 @@
 import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
+import { goalAttentionTarget, workAttentionTarget } from './attentionTarget'
 import { type WorkAttributes, isPlanningWork, isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
@@ -154,8 +155,8 @@ function findCoveringAttention(
   workId: string,
   goalPackage: GoalPackage,
 ) {
-  const goalTarget = `project:${projectId}/goal:${goalId}`
-  const workTarget = `${goalTarget}/work:${workId}`
+  const goalTarget = goalAttentionTarget(projectId, goalId)
+  const workTarget = workAttentionTarget(projectId, goalId, workId)
   const covering = [...goalPackage.attentions.values()].filter(
     (attention) =>
       attention.attributes.resolvedAt === null &&

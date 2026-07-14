@@ -36,8 +36,16 @@ export type ReflectionAssistantToolName = (typeof reflectionAssistantToolNames)[
 export const assistantToolSchemas = {
   hopi_read_state: z
     .object({
-      projectId: stableId.optional(),
-      goalId: stableId.optional(),
+      projectId: stableId
+        .describe(
+          'Exact canonical Project ID, including its P- prefix. Omit to use current page context.',
+        )
+        .optional(),
+      goalId: stableId
+        .describe(
+          'Exact canonical Goal ID, including its G- prefix. Omit to use current page context.',
+        )
+        .optional(),
     })
     .strict(),
   hopi_create_goal: z

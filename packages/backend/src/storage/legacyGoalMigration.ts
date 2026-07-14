@@ -1,5 +1,6 @@
 import { parse } from 'yaml'
 import { z } from 'zod'
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
   type GoalDocument,
@@ -271,7 +272,7 @@ function migrateBlocker(
   return {
     attributes: {
       id: `legacy-blocker-${item.ref}`,
-      target: `project:${paths.projectId}/goal:${goalId}/work:${item.ref}`,
+      target: workAttentionTarget(paths.projectId, goalId, item.ref),
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
       notifiedAt: null,

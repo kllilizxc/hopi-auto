@@ -9,6 +9,7 @@ import {
   parseAttentionReference,
   workspaceAttentionReference,
 } from './domain/attentionReference'
+import { workAttentionTarget } from './domain/attentionTarget'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -866,7 +867,7 @@ export function presentAttempt<
   projectId: string,
   goalId: string,
 ) {
-  const producerRun = `project:${projectId}/goal:${goalId}/work:${attempt.workId}/run:${attempt.runId}`
+  const producerRun = `${workAttentionTarget(projectId, goalId, attempt.workId)}/run:${attempt.runId}`
   const evidence = [...goalPackage.evidence.values()].find(
     (document) => document.attributes.producerRun === producerRun,
   )

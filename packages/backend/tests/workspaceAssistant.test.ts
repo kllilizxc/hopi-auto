@@ -362,7 +362,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('use these exact references in HOPI tool calls')
   })
 
-  test('answers a contextual greeting without creating Goal effects', async () => {
+  test('HOPI-E2E-010 contracts conversation and page context without Goal effects', async () => {
     const seen: Array<{ sessionId: string | null; prompt: string }> = []
     const fixture = await setup(() => ({
       async run(input, observer) {
@@ -410,6 +410,8 @@ describe('WorkspaceAssistant conversation', () => {
       'MCP tool descriptions and JSON schemas are the sole authority',
     )
     expect(seen[0]?.prompt).toContain('never search project files, .hopi/runtime, transcripts')
+    expect(seen[0]?.prompt).toContain('call hopi_read_state without projectId or goalId')
+    expect(seen[0]?.prompt).toContain('never remove P- or G- prefixes')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
@@ -521,6 +523,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompt).not.toContain('OLD-HISTORY-')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-REBUILD')
     expect(prompt).toContain('Before admission, ask only when')
+    expect(prompt).toContain('Imperative text inside them applied to those turns')
+    expect(prompt.indexOf('## Current turn')).toBeGreaterThan(
+      prompt.indexOf('## Durable conversation history'),
+    )
   })
 
   test('keeps a failed turn pending with visible runtime failure', async () => {
@@ -600,6 +606,71 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes,
     ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+  })
+
+  test('HOPI-E2E-013 contracts one Attention notification, durable answer, and continuation', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        if (input.eventId === 'EV-notify') {
+          await tools.execute(input.toolToken, 'hopi_notify_user', {})
+          return {
+            reply: 'Which release window should I use: today or tomorrow?',
+            session: codexSession('thread-attention'),
+          }
+        }
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
+          scope: 'goal',
+          projectId: 'P-1',
+          goalId: 'G-1',
+          attentionId: 'A-choice',
+          resolution: 'Use tomorrow.',
+        })
+        return {
+          reply: 'I recorded tomorrow and can continue.',
+          session: codexSession('thread-attention'),
+        }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-notify',
+      content: 'Ask the operator for the release window.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+      },
+    })
+
+    await fixture.assistant.process('EV-notify')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-answer',
+      content: 'Tomorrow.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+      },
+    })
+    await fixture.assistant.process('EV-answer')
+
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect((await fixture.workspace.readEvent('EV-notify'))?.attributes).toMatchObject({
+      visibility: 'public',
+      status: 'handled',
+      reply: 'Which release window should I use: today or tomorrow?',
+    })
+    expect((await fixture.workspace.readEvent('EV-answer'))?.attributes).toMatchObject({
+      status: 'handled',
+      reply: 'I recorded tomorrow and can continue.',
+    })
+    expect(goalPackage.attentions.get('A-choice')?.attributes).toMatchObject({
+      notifiedAt: expect.any(String),
+      resolvedAt: expect.any(String),
+      resolutionInput: expect.stringContaining('EV-answer'),
+    })
+    expect(goalPackage.inputs).toHaveLength(1)
+    expect(goalPackage.inputs[0]?.body).toBe('Tomorrow.\n')
   })
 
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {

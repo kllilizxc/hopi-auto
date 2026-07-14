@@ -214,6 +214,39 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-attention')).toBe(true)
   })
 
+  test('rejects a Planner document path target with the exact owning Work target', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-planner-path-target', 'planner')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-choice')
+    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedAttentionPath), { recursive: true })
+    await Bun.write(
+      stagedAttentionPath,
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-choice',
+          target: '.hopi/docs/goals/goal-1/work/plan-initial.md',
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Needs you\n\nChoose compact or verbose.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-planner-path-target', 'planner', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.attentions.has('A-choice')).toBe(false)
+    expect(goalPackage.works.get('plan-initial')?.attributes.attempts).toBe(1)
+    expect(goalPackage.evidence.get('E-run-planner-path-target')?.body).toContain(
+      'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
+    )
+  })
+
   test('rejects targeted Attention combined with Generator success', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-invalid-attention', 'generator')
@@ -279,7 +312,7 @@ describe('PassOutcomeCoordinator', () => {
       attempts: 1,
     })
     expect(goalPackage.evidence.get('E-run-wrong-attention-target')?.body).toContain(
-      'Engineering Attention must target its owning Work: project:project-1/goal:goal-1/work:W-1',
+      'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:W-1',
     )
   })
 

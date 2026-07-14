@@ -277,19 +277,24 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
   }
 }
 
-export async function sendAssistantMessage(harness: BrowserHarnessContext, content: string) {
-  const url = `${harness.baseUrl}/projects`
+export async function sendAssistantMessage(
+  harness: BrowserHarnessContext,
+  content: string,
+  options: { evidencePrefix?: string; pagePath?: string } = {},
+) {
+  const url = `${harness.baseUrl}${options.pagePath ?? '/projects'}`
   const contentExpression = browserUtf8Expression(content)
+  const prefix = options.evidencePrefix ? `${safeSegment(options.evidencePrefix)}-` : ''
   const screenshots = {
-    pageLoaded: await screenshotTarget(harness, '01-projects-loaded.png'),
-    assistantOpen: await screenshotTarget(harness, '02-assistant-open.png'),
-    composerFilled: await screenshotTarget(harness, '03-composer-filled.png'),
-    messageSubmitted: await screenshotTarget(harness, '04-message-submitted.png'),
+    pageLoaded: await screenshotTarget(harness, `${prefix}01-projects-loaded.png`),
+    assistantOpen: await screenshotTarget(harness, `${prefix}02-assistant-open.png`),
+    composerFilled: await screenshotTarget(harness, `${prefix}03-composer-filled.png`),
+    messageSubmitted: await screenshotTarget(harness, `${prefix}04-message-submitted.png`),
   }
   const openExpression = [
     '(() => {',
     '  const button = document.querySelector(\'button[aria-label="Open Assistant"]\')',
-    "  if (!button) return { opened: false, reason: 'missing Assistant button' }",
+    '  if (!button) return { opened: Boolean(document.querySelector(\'textarea[placeholder^="Tell HOPI"]\')), alreadyOpen: true }',
     '  button.click()',
     '  return { opened: true }',
     '})()',
@@ -338,7 +343,7 @@ export async function sendAssistantMessage(harness: BrowserHarnessContext, conte
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
-    'browser-send.log',
+    `${prefix}browser-send.log`,
     'HOPI_E2E_SEND=',
     script,
   )) as {
@@ -359,7 +364,7 @@ export async function sendAssistantMessage(harness: BrowserHarnessContext, conte
   await assertScreenshots(Object.values(screenshots))
   const retainedScreenshots = screenshotEvidence(screenshots)
   await Bun.write(
-    join(harness.artifactRoot, 'browser-send-evidence.json'),
+    join(harness.artifactRoot, `${prefix}browser-send-evidence.json`),
     `${JSON.stringify({ url, ...evidence, screenshots: retainedScreenshots }, null, 2)}\n`,
   )
   await recordAction(harness, 'assistant_message_submitted', {
@@ -480,11 +485,13 @@ export async function inspectKanban(
   harness: BrowserHarnessContext,
   projectId: string,
   goalId: string,
+  options: { evidencePrefix?: string } = {},
 ) {
   const url = `${harness.baseUrl}/projects/${encodeURIComponent(projectId)}/board/${encodeURIComponent(goalId)}`
+  const prefix = options.evidencePrefix ? `${safeSegment(options.evidencePrefix)}-` : ''
   const screenshots = {
-    start: await screenshotTarget(harness, '06-kanban-start.png'),
-    end: await screenshotTarget(harness, '07-kanban-end.png'),
+    start: await screenshotTarget(harness, `${prefix}06-kanban-start.png`),
+    end: await screenshotTarget(harness, `${prefix}07-kanban-end.png`),
   }
   const script = [
     'import base64, json, time',
@@ -492,7 +499,7 @@ export async function inspectKanban(
     'wait_for_load()',
     'view = None',
     'for _ in range(80):',
-    '    view = js("""(() => ({path: location.pathname, kanban: Boolean(document.querySelector(\'.kanban-board\')), title: document.querySelector(\'.goal-title-block h1\')?.textContent?.trim() || null, progress: document.querySelector(\'.goal-focus-strip > div:nth-child(3) strong\')?.textContent?.trim() || null}))()""")',
+    "    view = js(\"\"\"(() => ({path: location.pathname, kanban: Boolean(document.querySelector('.kanban-board')), cancelledArchive: Boolean(document.querySelector('.cancelled-archive')), title: document.querySelector('.goal-title-block h1')?.textContent?.trim() || null, progress: document.querySelector('.goal-focus-strip > div:nth-child(3) strong')?.textContent?.trim() || null}))()\"\"\")",
     '    if view and view.get("kanban"): break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.start),
@@ -505,11 +512,17 @@ export async function inspectKanban(
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
-    'browser-kanban.log',
+    `${prefix}browser-kanban.log`,
     'HOPI_E2E_BROWSER=',
     script,
   )) as {
-    view?: { path?: string; kanban?: boolean; title?: string; progress?: string }
+    view?: {
+      path?: string
+      kanban?: boolean
+      cancelledArchive?: boolean
+      title?: string
+      progress?: string
+    }
     scroll?: { scrolled?: boolean; left?: number; max?: number }
     audit?: { head_hash?: string }
     verify?: { valid?: boolean }
@@ -524,7 +537,7 @@ export async function inspectKanban(
   await assertScreenshots(Object.values(screenshots))
   const retainedScreenshots = screenshotEvidence(screenshots)
   await Bun.write(
-    join(harness.artifactRoot, 'browser-evidence.json'),
+    join(harness.artifactRoot, `${prefix}browser-evidence.json`),
     `${JSON.stringify({ url, ...evidence, screenshots: retainedScreenshots }, null, 2)}\n`,
   )
   await recordAction(harness, 'kanban_inspected', {
@@ -533,6 +546,58 @@ export async function inspectKanban(
     auditHeadHash: evidence.audit?.head_hash,
   })
   return { ...evidence, screenshots: retainedScreenshots }
+}
+
+export async function clickGoalControl(
+  harness: BrowserHarnessContext,
+  projectId: string,
+  goalId: string,
+  control: 'Pause' | 'Resume',
+) {
+  const url = `${harness.baseUrl}/projects/${encodeURIComponent(projectId)}/board/${encodeURIComponent(goalId)}`
+  const screenshot = await screenshotTarget(harness, `goal-${control.toLowerCase()}-clicked.png`)
+  const controlExpression = browserUtf8Expression(control)
+  const script = [
+    'import base64, json, time',
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    'clicked = None',
+    'for _ in range(80):',
+    `    clicked = js(${JSON.stringify(`(() => { const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${controlExpression}); if (!button) return { found: false }; if (button.disabled) return { found: true, disabled: true }; button.click(); return { found: true, disabled: false }; })()`)})`,
+    '    if clicked and clicked.get("found") and not clicked.get("disabled"): break',
+    '    time.sleep(0.25)',
+    'time.sleep(0.5)',
+    captureScreenshotLine(screenshot),
+    `audit_note(${JSON.stringify(`HOPI ${control} Goal control clicked`)}, scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
+    'print("HOPI_E2E_GOAL_CONTROL=" + json.dumps({"clicked": clicked, "audit": audit_status(), "verify": audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    `goal-${control.toLowerCase()}-control.log`,
+    'HOPI_E2E_GOAL_CONTROL=',
+    script,
+  )) as {
+    clicked?: { found?: boolean; disabled?: boolean }
+    audit?: { head_hash?: string }
+    verify?: { valid?: boolean }
+  }
+  if (!evidence.clicked?.found || evidence.clicked.disabled) {
+    throw new Error(`${control} control could not be clicked: ${safeJson(evidence.clicked)}`)
+  }
+  if (evidence.verify?.valid !== true) {
+    throw new Error(`Browser Harness audit verification failed: ${safeJson(evidence.verify)}`)
+  }
+  await assertScreenshots([screenshot])
+  await Bun.write(
+    join(harness.artifactRoot, `goal-${control.toLowerCase()}-evidence.json`),
+    `${JSON.stringify({ url, ...evidence, screenshot: screenshot.relativePath }, null, 2)}\n`,
+  )
+  await recordAction(harness, `goal_${control.toLowerCase()}_clicked`, {
+    projectId,
+    goalId,
+    auditHeadHash: evidence.audit?.head_hash,
+  })
+  return { ...evidence, screenshot: screenshot.relativePath }
 }
 
 async function screenshotTarget(

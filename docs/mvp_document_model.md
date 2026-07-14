@@ -559,6 +559,14 @@ Storage location derives ownership:
 - Assistant-home Attention may target one event or linked project. Goal and Work problems belong
   in Goal-local Attention while the project root is writable.
 
+A new targeted Attention produced by Planner, Generator, or Reviewer always targets that Run's
+owning Work with the exact canonical reference
+`project:<projectId>/goal:<goalId>/work:<workId>`. Coordinator supplies that exact value in the Run
+contract and validates it before publication. A canonical document path such as
+`.hopi/docs/goals/<goalId>/work/<workId>.md` is not an Attention target and is never accepted as an
+alias. Goal-targeted documents remain readable as Goal-wide control facts, but responsibilities do
+not choose between Goal and Work scope.
+
 The model may resolve event-target Workspace Attention from an answer document diff. Project-target
 Attention requires deterministic repair validation before resolution; reply prose alone cannot
 declare a Project root healthy.

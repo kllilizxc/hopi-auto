@@ -3,6 +3,7 @@ import {
   normalizeInboxAttentionReferences,
   parseAttentionReference,
 } from '../domain/attentionReference'
+import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   isWorkTerminal,
   parseAttentionDocument,
@@ -238,14 +239,24 @@ export function createAssistantTools(options: {
           const goalId =
             args.goalId ??
             (projectId && projectId === context?.projectId ? context.goalId : undefined)
+          let state: Awaited<ReturnType<typeof options.state.read>>
+          try {
+            state = await options.state.read({
+              ...(projectId ? { projectId } : {}),
+              ...(goalId ? { goalId } : {}),
+            })
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            const pageContext = context?.projectId
+              ? ` Current page context is ${context.projectId}${context.goalId ? ` / ${context.goalId}` : ''}; omit projectId and goalId to use it exactly.`
+              : ''
+            throw new Error(`${detail}.${pageContext}`)
+          }
           return {
             summary: 'Read current HOPI state.',
             changed: false,
             value: {
-              ...(await options.state.read({
-                ...(projectId ? { projectId } : {}),
-                ...(goalId ? { goalId } : {}),
-              })),
+              ...state,
               currentTurn: {
                 eventId: event.attributes.id,
                 source: event.attributes.source,
@@ -846,18 +857,17 @@ async function assertAttentionBlockerChanged(
   goalId: string,
   target: string | null,
 ) {
-  const match = target?.match(/^project:[^/]+\/goal:([^/]+)\/work:([^/]+)$/)
+  const match = target ? parseWorkAttentionTarget(target) : null
   if (!match) return
-  const [, targetGoalId, workId] = match
-  if (targetGoalId !== goalId || !workId) {
+  if (match.projectId !== store.paths.projectId || match.goalId !== goalId) {
     throw new Error(`Goal Attention has an invalid Work target: ${target}`)
   }
-  const work = (await store.readPackage(goalId)).works.get(workId)
+  const work = (await store.readPackage(goalId)).works.get(match.workId)
   if (!work || isWorkTerminal(work.attributes)) return
   const profile = await readSoftwareDeliveryProfile()
   if (work.attributes.attempts >= profile.retry.maxAttempts) {
     throw new Error(
-      `Work ${workId} is still exhausted; retry, cancel, or revise it before resolving Attention`,
+      `Work ${match.workId} is still exhausted; retry, cancel, or revise it before resolving Attention`,
     )
   }
 }

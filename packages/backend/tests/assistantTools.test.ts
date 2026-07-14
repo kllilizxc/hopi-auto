@@ -431,6 +431,14 @@ describe('Assistant HOPI tools', () => {
       }
     ).projects[0]?.goals
     expect(goals?.map((goal) => goal.goal.attributes.id)).toEqual(['G-2'])
+
+    await expect(
+      fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {
+        projectId: 'live-conversation',
+      }),
+    ).rejects.toThrow(
+      'Current page context is P-1 / G-2; omit projectId and goalId to use it exactly',
+    )
   })
 
   test('limits Reflection to one internal handoff and lets only main expose it', async () => {

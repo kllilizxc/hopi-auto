@@ -1,5 +1,6 @@
 import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
 import { HOPI_RELEASE_REF } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
@@ -174,12 +175,11 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
 }
 
 function parseWorkReference(projectId: string, reference: string) {
-  const pattern = new RegExp(
-    `^project:${escapeRegex(projectId)}/goal:([A-Za-z0-9._-]+)/work:([A-Za-z0-9._-]+)$`,
-  )
-  const match = pattern.exec(reference)
-  if (!match?.[1] || !match[2]) throw new Error(`C1 has invalid Work reference: ${reference}`)
-  return { goalId: match[1], workId: match[2] }
+  const match = parseWorkAttentionTarget(reference)
+  if (!match || match.projectId !== projectId) {
+    throw new Error(`C1 has invalid Work reference: ${reference}`)
+  }
+  return { goalId: match.goalId, workId: match.workId }
 }
 
 async function removeAbandonedTemporaryFiles(root: string, skipped: ReadonlySet<string>) {
@@ -214,10 +214,6 @@ async function gitBlob(cwd: string, object: string) {
     child.exited,
   ])
   return exitCode === 0 ? new TextDecoder().decode(stdout) : null
-}
-
-function escapeRegex(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function errorMessage(error: unknown) {

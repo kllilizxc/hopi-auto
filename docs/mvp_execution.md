@@ -252,6 +252,13 @@ and starts a fresh Run only after speaking Assistant resolves the request. Speak
 current authority, update design, request Planning, or ask the operator. Responsibilities never
 handoff directly to one another.
 
+The Run contract renders the exact owning Work target
+`project:<projectId>/goal:<goalId>/work:<workId>` in the targeted Attention frontmatter for every
+responsibility, including Planner. The responsibility chooses whether Attention is needed, its
+stable local ID, and its Markdown request; it does not infer target syntax from document paths or
+historical examples. Coordinator rejects any other target before publication and reports the exact
+expected value. Planner completion remains the separate `target: null` form.
+
 A targeted Attention proposal is valid only with `result: attention`. `success`, `reject`, or `fail`
 combined with targeted Attention is an invalid pass result and normalizes to ordinary `fail` without
 publishing the proposed Attention. A responsibility must not classify its own sandbox restrictions,
@@ -399,7 +406,8 @@ Assistant HOPI tool may propose a Goal contract change and its revision guard.
 
 Planner never creates a second nonterminal Planning Work. Success means the entire proposal was
 published before Planning Work becomes `done`. A clarification question uses the ordinary
-Attention-producing path, leaves Planning Work at `plan`, and consumes no failed attempt.
+Attention-producing path, targets the owning Planning Work, leaves it at `plan`, and consumes no
+failed attempt.
 
 Planner proposes only `design/**`, Work, targeted or completion Attention, and a missing root
 `AGENTS.md`. It never creates or rewrites `evidence/**` and never appends `evidenceRefs`. Every

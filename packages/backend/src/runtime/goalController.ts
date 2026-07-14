@@ -1,3 +1,4 @@
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
   type GoalDocument,
@@ -267,7 +268,7 @@ export function createGoalController(
           `Cannot create retry Attention for missing or terminal Work: ${workId}`,
         )
       }
-      const target = `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
       const existing = [...goalPackage.attentions.values()].find(
         (attention) =>
           attention.attributes.target === target && attention.attributes.resolvedAt === null,
@@ -309,7 +310,7 @@ export function createGoalController(
           `Cannot create operational Attention for missing or terminal Work: ${workId}`,
         )
       }
-      const target = `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
       const existing = [...goalPackage.attentions.values()].find(
         (attention) =>
           attention.attributes.target === target && attention.attributes.resolvedAt === null,

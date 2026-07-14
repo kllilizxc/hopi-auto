@@ -84,10 +84,42 @@ export async function captureGoalDeliveryPresentation(
   goalId: string,
   completionBody: string,
 ) {
-  const completionBrowser = await captureCompletionUpdate(
-    context,
-    readableCompletionBody(completionBody),
+  const feed = await requestJson<{
+    items: Array<{
+      kind: string
+      event?: { reply: string | null }
+      completion?: {
+        scope: string
+        projectId?: string
+        goalId?: string
+        body: string
+      } | null
+      attention?: {
+        scope: string
+        projectId?: string
+        goalId?: string
+        body: string
+      }
+    }>
+  }>(context.baseUrl, '/api/assistant/feed?limit=100')
+  const linkedCompletion = feed.items.find(
+    (item) =>
+      item.completion?.scope === 'goal' &&
+      item.completion.projectId === projectId &&
+      item.completion.goalId === goalId,
   )
+  const standaloneCompletion = feed.items.find(
+    (item) =>
+      item.attention?.scope === 'goal' &&
+      item.attention.projectId === projectId &&
+      item.attention.goalId === goalId,
+  )
+  const standaloneCompletionBody = standaloneCompletion?.attention?.body
+  const visibleCompletionText =
+    linkedCompletion?.event?.reply ??
+    (standaloneCompletionBody ? readableCompletionBody(standaloneCompletionBody) : null) ??
+    readableCompletionBody(completionBody)
+  const completionBrowser = await captureCompletionUpdate(context, visibleCompletionText)
   const browser = await inspectKanban(context, projectId, goalId)
   return { completionBrowser, browser }
 }

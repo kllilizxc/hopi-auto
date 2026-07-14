@@ -1,6 +1,7 @@
 import { chmod, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TransportContextBundle } from '../agent/vendorTransport'
+import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
   engineeringWorkRepoIds,
   isEngineeringWork,
@@ -315,8 +316,8 @@ function selectGuardFiles(
   }
 
   const goalRoot = paths.goalRoot(input.goalId)
-  const goalTarget = `project:${input.projectId}/goal:${input.goalId}`
-  const workTarget = `${goalTarget}/work:${input.workId}`
+  const goalTarget = goalAttentionTarget(input.projectId, input.goalId)
+  const workTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
   const referencedEvidence = new Set(
     work.attributes.evidenceRefs.map((evidenceId) =>
       paths.evidenceDocument(input.goalId, evidenceId),
@@ -372,7 +373,7 @@ function selectPlannerAuthorityFiles(
   const selectedWorkPaths = new Set([paths.workDocument(input.goalId, input.workId)])
   const selectedEvidencePaths = new Set<string>()
   const referencedImages = collectReferencedImages(owningWork.body, paths, input.goalId)
-  const owningWorkTarget = `project:${input.projectId}/goal:${input.goalId}/work:${input.workId}`
+  const owningWorkTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
   const latestResolvedAttention = latestResolvedAttentionForTarget(
     files,
     attentionRoot,
@@ -694,7 +695,7 @@ function renderResponsibilityPrompt(
     'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
-    ...(input.responsibility === 'planner' ? [] : engineeringAttentionContract(input, paths)),
+    ...targetedAttentionContract(input, paths),
     '',
   ]
   const responsibility =
@@ -713,11 +714,11 @@ function renderResponsibilityPrompt(
   ].join('\n')
 }
 
-function engineeringAttentionContract(
+function targetedAttentionContract(
   input: PrepareRoleContextInput,
   paths: { proposalRoot: string; attentionRoot: string },
 ) {
-  const target = `project:${input.projectId}/goal:${input.goalId}/work:${input.workId}`
+  const target = workAttentionTarget(input.projectId, input.goalId, input.workId)
   return [
     `Write targeted Attention as exactly one ${join(paths.proposalRoot, paths.attentionRoot, '<id>.md')}; the filename stem must equal the frontmatter id.`,
     'Use this exact frontmatter:',
@@ -818,7 +819,7 @@ function plannerPrompt(paths: {
     'repos: [<one-or-more-listed-repo-ids>]',
     '---',
     '```',
-    'New Attention frontmatter (target is null for completion, otherwise the canonical Work reference):',
+    'Completion Attention frontmatter (Planner final success only):',
     '```yaml',
     '---',
     'id: <stable-id>',

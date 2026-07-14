@@ -1,5 +1,6 @@
 import type { PublicationCandidate } from '../publication/types'
 import type { GoalPackagePaths } from '../storage/goalPackagePaths'
+import { goalAttentionTarget, matchGoalAttentionTarget } from './attentionTarget'
 import {
   type AttentionDocument,
   type EvidenceDocument,
@@ -338,7 +339,7 @@ function validateWorkGraph(
       }
       const producerRun = document.attributes.producerRun
       if (producerRun) {
-        const expectedPrefix = `project:${projectId}/goal:${goalId}/work:`
+        const expectedPrefix = `${goalAttentionTarget(projectId, goalId)}/work:`
         if (!producerRun.startsWith(expectedPrefix)) {
           throw invalid(goalId, `Evidence ${evidenceId} has a producerRun outside the Goal`)
         }
@@ -368,7 +369,6 @@ function validateAttentions(
   works: Map<string, WorkDocument>,
   attentions: Map<string, AttentionDocument>,
 ) {
-  const goalTarget = `project:${projectId}/goal:${goalId}`
   const openUnclaimedCompletion: string[] = []
   let openTargeted = 0
 
@@ -381,11 +381,11 @@ function validateAttentions(
       continue
     }
 
-    const workPrefix = `${goalTarget}/work:`
-    if (target !== goalTarget && !target.startsWith(workPrefix)) {
+    const match = matchGoalAttentionTarget(projectId, goalId, target)
+    if (!match) {
       throw invalid(goalId, `Attention ${attentionId} targets outside its Goal`)
     }
-    if (target.startsWith(workPrefix) && !works.has(target.slice(workPrefix.length))) {
+    if (match.scope === 'work' && !works.has(match.workId)) {
       throw invalid(goalId, `Attention ${attentionId} targets missing Work`)
     }
     if (resolvedAt === null) openTargeted += 1
@@ -414,12 +414,12 @@ function validateEvidenceOwnership(
   works: Map<string, WorkDocument>,
   evidence: Map<string, EvidenceDocument>,
 ) {
-  const goalOwner = `project:${projectId}/goal:${goalId}`
+  const goalOwner = goalAttentionTarget(projectId, goalId)
   for (const [evidenceId, document] of evidence) {
     const owner = document.attributes.owner
     if (owner === goalOwner) continue
-    const workPrefix = `${goalOwner}/work:`
-    if (!owner.startsWith(workPrefix) || !works.has(owner.slice(workPrefix.length))) {
+    const target = matchGoalAttentionTarget(projectId, goalId, owner)
+    if (target?.scope !== 'work' || !works.has(target.workId)) {
       throw invalid(goalId, `Evidence ${evidenceId} has an invalid owner`)
     }
   }

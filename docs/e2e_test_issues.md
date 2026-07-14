@@ -1,0 +1,382 @@
+# HOPI E2E Test Issue Log
+
+Last updated: 2026-07-14
+
+This append-only file records failures, executions, and environment limits observed while running
+the E2E gates. It does not own scenario status: `docs/e2e_test_cases.md` is the single coverage
+catalog, and a retained `run.json` is the authority for one invocation. A passing deterministic or
+browser preflight is not recorded as a Live Agent success.
+
+Latest verification: `bun run check` passed after the canonical Attention and recovery changes:
+backend **277 passing tests / 1,088 assertions**, frontend **43 passing tests / 145 assertions**, with
+type checks, static checks, and frontend build all passing.
+
+Latest remaining-scenario run: `bun test tests/projectReconciler.test.ts tests/multiRepoC1.test.ts
+tests/mvpServer.test.ts tests/assistantReflection.test.ts tests/coordinatorReconciler.test.ts
+tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStager.test.ts` passed with
+**79 tests / 478 assertions / 0 failures**. This is direct execution evidence for the existing
+contract/runtime coverage of `017`, `018`, `019`, `021`, `022`, and `027`; it does not replace their
+specified independent Browser or Live layers.
+
+## 2026-07-14: Real Live Baseline
+
+| Scenario       | Result                                                       | Artifact                                                                                        |
+| -------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `HOPI-E2E-002` | Failed at presentation verification after delivery succeeded | `/home/kllilizxc/Code/hopi-auto/test-artifacts/goal-delivery-2026-07-13T16-55-14-546Z-c46488a6` |
+
+The real Assistant, two Planner Runs, Generator, Reviewer, and two Reflection Runs completed. The
+Goal reached `done`; Generator output was published, Reviewer integrated C1, the fixture's `bun test`
+passed, no shared invariant was violated, and the original checkout was unchanged. The run consumed
+857,998 input tokens (652,160 cached) and 16,902 output tokens.
+
+**Failure:** `Goal completion update did not render in the feed` during `presentation_verification`.
+
+**Classification:** Harness assertion defect, not delivery failure. The retained
+`05-completion-update.png` visibly contains the green `COMPLETED` update. When a completion Attention
+is linked to a handled Reflection event, the frontend intentionally presents the public Assistant
+reply, not the raw completion Attention body. The Harness was comparing against the raw body.
+
+**Resolution and verification:** The completion checkpoint now reads the production feed and asserts
+the text that the frontend actually renders. `bun run artifact:inspect -- <source-run>` passed with
+zero Assistant and responsibility-model invocations; inspection artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/goal-delivery-inspection-2026-07-13T17-05-23-248Z-0fa0317d`.
+The original live run remains correctly retained as failed rather than rewritten.
+
+## 2026-07-14: HOPI-E2E-010 Conversation And Page Context
+
+| Run        | Result                                           | Artifact                                                                                                             |
+| ---------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| First run  | Harness failure before model completion          | `/home/kllilizxc/Code/hopi-auto/test-artifacts/conversation-page-context-boundary-2026-07-13T17-08-54-015Z-9309f1a6` |
+| Second run | Harness failure after three real Assistant turns | `/home/kllilizxc/Code/hopi-auto/test-artifacts/conversation-page-context-boundary-2026-07-13T17-09-41-824Z-362f910e` |
+| Final run  | Passed                                           | `/home/kllilizxc/Code/hopi-auto/test-artifacts/conversation-page-context-boundary-2026-07-13T17-10-47-416Z-12bd1df4` |
+
+Two Harness defects were found and fixed:
+
+1. Goal pages render the Assistant panel open by default. The browser helper treated the absent
+   “Open Assistant” button as a failure even though the visible composer could submit the message.
+2. The scenario compared a Goal projection for full object equality. Presentation-only summary fields
+   made that fail despite the required Goal ID, title, lifecycle, zero active Runs, and unchanged
+   canonical Goal package all being correct.
+
+The final real run used three Assistant turns (153,513 input tokens, 122,496 cached; 656 output) and
+confirmed that the Goal page context survives each turn while the paused Goal package remains unchanged.
+
+## 2026-07-14: HOPI-E2E-013 Blocking Question
+
+Final real-run artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/blocking-attention-continuation-2026-07-13T17-32-01-459Z-4f1356e0`
+
+The independently executable script `bun run e2e:live:013` completed with a terminal `failed` report
+at `attention_notification`; it was not stopped or edited. It created one real Goal, ran one real
+Assistant turn and three real Planner Attempts, and consumed 470,260 input tokens (396,928 cached)
+and 15,698 output tokens.
+
+All three Planner proposals staged a targeted Attention named `A-releaseLabel-value` under the owning
+Goal and set its target to the current `plan-initial` Work document. Coordinator nevertheless rejected
+each publication with the same persisted Attempt summary:
+
+```text
+Invalid Goal …: Attention A-releaseLabel-value targets outside its Goal
+```
+
+No valid targeted Attention was published, so no Reflection notification, operator answer, or delivery
+continuation could begin. A previous retained run also showed a model-variance admission failure in
+which Assistant asked the choice publicly without creating a Goal; the current script now fails that
+condition promptly rather than waiting for its full timeout.
+
+Classification: product prompt/publication compatibility defect. The Planner-facing Attention target
+contract and Coordinator validator disagree in a way a real model cannot resolve from its available
+context. The product must expose one canonical target representation (or accept the documented
+Goal-local Work path) before this scenario can pass.
+
+## 2026-07-14: HOPI-E2E-014 Operational Blocker Browser Execution
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/operational-recovery-browser-2026-07-13T18-32-59-568Z-6a1ea63c`
+
+`bun run e2e:browser:014` passed an independent production-server and real Browser Harness scenario.
+The deterministic RoleRunner returned an operational process failure three times; production
+Coordinator persisted three `operational_failure` Planner Attempts, opened one Work-target Attention,
+and stopped further dispatch. The deterministic Reflection/Assistant fixture invoked the same internal
+`hopi_notify_user` API used by a production model, which marked the Attention notified. The browser
+then visibly rendered `Needs you` in the Current Focus strip, blocker banner, and Plan card; Browser
+audit verification passed.
+
+One fixture assertion defect was encountered first:
+
+- Artifact `/home/kllilizxc/Code/hopi-auto/test-artifacts/operational-recovery-browser-2026-07-13T17-42-59-446Z-666b1143`
+  correctly created the Work Attention but failed because the scenario expected the wrong serialized
+  target (`/work/plan-initial` instead of `/work:plan-initial`) and treated the pre-notification
+  `Waiting for Assistant` projection as `Needs you`.
+
+The script now waits for notification and the final UI state. The remaining catalog action — repair
+the external executable and prove one fresh successful episode — is not yet implemented, so this does
+not close all of `HOPI-E2E-014`.
+
+## 2026-07-14: HOPI-E2E-013 Canonical Target Fix And Passing Live Run
+
+The product now supplies every responsibility with the exact owning Work target
+`project:<projectId>/goal:<goalId>/work:<workId>` and validates targeted Attention against that one
+grammar. A Planner document path is rejected as an ordinary failed pass with the exact expected
+target instead of becoming a Project failure.
+
+The first post-fix run is retained as failed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/blocking-attention-continuation-2026-07-14T01-38-13-009Z-8226a8e1`.
+It proved the Planner fix and one correct notification, then the provider repeatedly failed both
+WebSocket and HTTPS connections with TLS errors while processing the user's durable answer. The
+answer remained `pending`; the 15-minute Harness timeout interrupted the second HOPI Assistant
+attempt. This is environment-failure evidence, not a rewritten product pass.
+
+After a separate provider probe succeeded, `bun run e2e:live:013` passed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/blocking-attention-continuation-2026-07-14T04-39-29-191Z-c7fa2c35`.
+It completed one direct question, a browser-submitted `compact` answer, durable Goal Input and
+Attention resolution, three Planner Runs, Generator, Reviewer, C1, completion notification, and
+unchanged user checkout. It used 1,197,102 input tokens (955,904 cached) and 22,674 output tokens.
+
+## 2026-07-14: HOPI-E2E-014 Full Operational Recovery
+
+`bun run e2e:browser:014` passed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/operational-recovery-browser-2026-07-14T01-35-45-611Z-567e0ff7`
+with zero provider calls. A real Bun child process emitted distinct stdout and stderr and exited 23
+three times. Two Server restarts reconstructed the failure episode from Attempt logs, semantic Work
+attempts remained zero, and one ordinary Work Attention rendered `Needs you` in the browser.
+
+The scenario then repaired the external condition, submitted the answer through the ordinary Goal
+page Assistant composer, invoked the normal `hopi_resolve_attention` boundary, and completed the same
+Planning Work in a fresh episode through Generator, Reviewer, C1, and final Planning. The original
+blocker remains as resolved history, no targeted blocker remains open, the user checkout is unchanged,
+and separate blocked/recovered screenshots plus all three raw process streams are retained.
+
+## 2026-07-14: HOPI-E2E-018 Contract Execution
+
+## 2026-07-14: HOPI-E2E-011 Multiple Instructions While Goals Run
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/multiple-instructions-2026-07-14T01-02-22-656Z-175f7353`
+
+`bun run e2e:instructions:011` passed against a production Server and two independent real Git
+Projects. Project A's Generator remained active while an ordinary status question and a Project B
+repair instruction were received through Inbox. The public Assistant turn IDs were handled in receipt
+order; the status turn created no Goal, the second turn created only Project B's Goal, both scoped
+deliveries reached `done`, and neither user checkout changed.
+
+The Assistant tool selection and responsibility results are deterministic. This closes the independent
+production orchestration/race fixture but not the catalog's real-vendor concurrent-Assistant canary.
+
+## 2026-07-14: Remaining Local Contract Re-run
+
+The following local command completed successfully after the active-delivery revision scenario was
+added:
+
+`cd packages/backend && bun test tests/coordinatorReconciler.test.ts tests/multiRepoC1.test.ts tests/assistantReflection.test.ts tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStager.test.ts`
+
+Result: **59 passing tests, 346 assertions, 0 failures**. This is current execution evidence for the
+contract portions of `011`, `017`, `018`, `019`, `021`, `022`, and `027`. It includes real Git
+repositories/C1 boundaries for `017` and `018`, and managed local processes for `021`; it does not
+upgrade any of those rows to a Browser or provider-backed Live scenario.
+
+Per the operator instruction for this machine, Claude/OpenCode-dependent execution is temporarily
+skipped. Their prior evidence and compatibility failures remain retained under `HOPI-E2E-024` and
+`HOPI-E2E-026`; they are not used as prerequisites for the remaining local work.
+
+## 2026-07-14: HOPI-E2E-012 Design Revision During Active Delivery
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/design-revision-active-delivery-2026-07-13T18-52-23-767Z-47432909`
+
+`bun run e2e:revision:012` passed against the production Server, ordinary Inbox ingress, the internal
+Assistant tool boundary, durable Goal packages, real Git worktrees, and a deterministic RoleRunner.
+It waited for a revision-one Generator to become active, submitted a material design instruction, and
+verified that revision advanced to two. The old Generator Attempt was durably `interrupted` and never
+published; exactly one fresh Generator result published, its Reviewer result integrated, and the final
+candidate exports only revision two. The original user checkout remained unchanged.
+
+The first run retained at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/design-revision-active-delivery-2026-07-13T18-51-45-807Z-a43f500c`
+failed only because the scenario assumed every interrupted old result would be recorded as
+`application: stale`. Production cancellation records it as `status: interrupted`, `application: null`;
+both representations correctly prevent release movement. The assertion now accepts either protected
+outcome and requires exactly one published Generator result.
+
+This is not the requested real-Agent design-judgment canary: the Assistant tool choice and role output
+are deterministic. Provider-backed interpretation of a materially different user design remains a
+coverage gap.
+
+## 2026-07-14: HOPI-E2E-015 Pause And Resume
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/pause-resume-browser-2026-07-13T18-20-10-385Z-42818996`
+
+`bun run e2e:browser:015` passed against a production Server and real Browser Harness. It created a
+real Git-backed Goal, waited for the first Generator to write source and become active, then clicked
+the visible Pause control. The Goal became durably `paused`, the Generator Attempt became
+`interrupted`, and no additional responsibility was dispatched during the hold. It then clicked the
+visible Resume control and completed a fresh Generator, Reviewer, and one C1 integration to `done`.
+Both browser-control screenshots and the attempt history are retained in the artifact.
+The final run also compares the original checkout's branch, HEAD, and source status before and after
+the full lifecycle; they are identical.
+
+The first run was deliberately terminated after a Harness proposal bug produced repeated invalid final
+Planning proposals; its retained artifact is
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/pause-resume-browser-2026-07-13T18-17-02-663Z-cc339fbe`.
+The Harness now emits a completion Attention only after the Engineering Work is durably `done`.
+
+This is not a full Live canary: the active responsibility is a deterministic interruptable RoleRunner,
+not a configured external role model process. Raw provider process-group interruption remains missing.
+
+## 2026-07-14: HOPI-E2E-020 Configuration And Rebind
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/configuration-rebind-2026-07-13T18-26-42-566Z-33f19738`
+
+`bun run e2e:config:020` passed with a production Server, two real Git Repos, one linked secondary
+Repo, distinct Home and Project coding defaults, a secondary Repo rebind, and a complete Server
+restart. The Home Assistant remains Codex `gpt-5.4`/low while the Project remains OpenCode
+`openai/gpt-5`; the primary Repo path is unchanged and only the secondary Repo points to its new
+checkout after restart.
+
+Two retained failed artifacts document the safety semantics:
+
+- `...configuration-rebind-2026-07-13T18-25-56-305Z-027a0fde` used an unrelated Git Repo.
+- `...configuration-rebind-2026-07-13T18-26-13-704Z-663db7d1` used a clone with a different Git
+  common directory.
+
+Both are correctly rejected by the product. Rebind accepts a relocated worktree of the same Repo;
+the passing fixture uses `git worktree add`. Browser form submission and actual external adapter
+command capture remain unimplemented.
+
+## 2026-07-14: HOPI-E2E-024 Provider Environment Canary
+
+Environment probe results: Codex CLI is present (`codex-cli 0.144.1`); Claude CLI is present
+(`2.1.177`) and a non-interactive real canary returned the exact requested
+`HOPI_CLAUDE_CANARY_OK` marker within five seconds; OpenCode is absent (`command not found`).
+
+Claude HOPI artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/conversation-page-context-boundary-2026-07-13T18-29-15-309Z-fbedd4f6`
+
+`HOPI_E2E_TRANSPORT=claude bun run e2e:live:010` completed with `status: passed`. It exercised three
+real Claude Assistant turns through the browser and HOPI tool transport (29,292 input tokens and
+1,059 output tokens). The retained run report records the vendor-qualified session and all raw turn
+transcripts. During execution, two tool-state reads emitted `Project not found: live-conversation` API
+errors, but the scenario's durable boundary assertions still passed; this needs separate diagnosis
+before claiming general Claude tool reliability.
+
+This proves only that Claude can make a non-interactive provider call in the current environment. No
+image, durable session resume, or interruption was run. OpenCode's missing executable is an environment blocker for its rotating Live canary until installed
+and authenticated.
+
+Claude session-recovery failure artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-13T18-30-53-216Z-96eb693f`
+
+`HOPI_E2E_TRANSPORT=claude bun run e2e:live:026` made three real Claude Assistant calls (60,852
+input tokens; 671 output) and then failed at `vendor_session_removed`: the rebuilt conversation did
+not retain the newest public-history marker. This is a vendor/session compatibility failure, not an
+authentication blocker. The missing session was deliberately removed and all raw turn transcripts are
+retained for diagnosis.
+
+## 2026-07-14: HOPI-E2E-023 Cancel, Archive, And Reopen
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/cancel-reopen-browser-2026-07-13T18-22-07-499Z-e9e26907`
+
+`bun run e2e:browser:023` passed with a production Server, production Goal control API, managed Git,
+and a real Browser Harness. It cancelled a running initial Work and its dependent, observed no stale
+dispatch after cancellation, and retained the cancelled cards in the browser's Cancelled archive.
+Reopen created contract revision two, preserved the old Work as cancelled, created a new Work rather
+than reviving it, and completed the new Generator/Reviewer/C1 delivery. The user checkout stayed
+unchanged.
+
+This does not yet exercise a real Assistant model choosing the cancel/reopen tool; the production
+control endpoint internally invokes the same Assistant tool capability. A live Assistant control
+canary remains a coverage gap.
+
+## 2026-07-14: HOPI-E2E-016 Coordinator Replacement
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/restart-during-generator-2026-07-13T18-12-56-218Z-70faf41e`
+
+`bun run e2e:restart:016` passed with a production Server, retained Home, managed Git integration,
+and two Coordinator instances. The first Generator wrote a source delta and remained active; shutdown
+persisted its Attempt as `interrupted`. A replacement Coordinator then dispatched a fresh Generator,
+Reviewer, and completion Planner, reached `done`, and produced exactly one reachable C1 for the Work.
+The retained attempt manifests preserve both the interrupted and post-restart Runs.
+
+The first two test iterations are retained as Harness failures:
+
+- `/home/kllilizxc/Code/hopi-auto/test-artifacts/restart-during-generator-2026-07-13T18-11-32-851Z-0feb70b8`
+  read a non-existent `manifest.json`; the durable filename is `attempt.json`.
+- `/home/kllilizxc/Code/hopi-auto/test-artifacts/restart-during-generator-2026-07-13T18-12-09-399Z-fb3b63ea`
+  counted commits from the wrong repository/ref instead of the managed integration's `hopi/release`.
+
+This is not a full `016` Live pass: its RoleRunner is deterministic and shutdown is graceful. The
+catalog still requires an independently launched real model child Coordinator to be terminated at the
+OS-process boundary, with raw vendor transcript and checkpoint recovery verified.
+
+`bun test packages/backend/tests/multiRepoC1.test.ts` passed: 7 tests, 36 assertions. It exercised
+real multi-Repo Git refs, pre-C1 conflict rejection, restart after primary C1, partial projection
+continuation, and unexpected-secondary-ref blocking.
+
+No contract failure occurred. The required Browser distinction between Project unavailability and
+ordinary Goal execution remains unimplemented, so the Browser layer is still a coverage gap.
+
+## 2026-07-14: HOPI-E2E-021 Contract Execution
+
+`bun test packages/backend/tests/previewManager.test.ts` passed: 12 tests, 41 assertions. It exercised
+the real Preview process adapter, managed integration cwd, readiness signal, startup diagnostics,
+release invalidation, preparation stop race, and missing-adapter repair prompt.
+
+No contract failure occurred. The requested Browser operation and real-Agent repair delivery remain
+separate unimplemented scenario layers.
+
+## 2026-07-14: HOPI-E2E-025 Webhook Retry Execution
+
+Artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/webhook-delivery-retry-2026-07-13T17-56-56-553Z-d7c3327d`
+
+`bun run e2e:webhook:025` passed against a production Server and an actual local HTTP receiver. A
+durably handled public Reflection reply was queued before Server start. The receiver returned `503`
+for the first `POST` and `204` for the second. Coordinator retried without rerunning any model,
+persisted `webhookDeliveredAt` after the successful response, and sent the same
+`<homeId>/<eventId>` idempotency key with the same provider-neutral JSON payload both times.
+
+No product failure occurred. This case intentionally has no Browser or model requirement; it proves
+the real webhook transport boundary rather than a mock request function.
+
+## 2026-07-14: HOPI-E2E-026 Long Conversation And Session Recovery
+
+Final artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-13T18-03-36-164Z-84b3332f`
+
+`bun run e2e:live:026` passed with three real Codex Assistant turns (57,403 input tokens; 45,056
+cached; 132 output). Two durable public messages contributed more than the 16k reconstruction budget;
+a handled internal Reflection event was then inserted and the persisted vendor `session.json` deleted.
+The third real turn rebuilt a new Codex session, returned `NEW-HISTORY-MARKER`, and did not expose
+`INTERNAL-REFLECTION-MUST-NOT-APPEAR`. The old and new session IDs differ in `run.json`.
+
+First harness attempt artifact:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-13T18-00-09-153Z-70b0d11a`
+
+It was stopped after the first model turn had completed because the harness compared the raw Inbox body
+without normalizing its terminal newline. This was corrected to compare trimmed durable text; the
+final run is terminal and passed. No product failure occurred.
+
+## 2026-07-14: Contract and Browser Preflight
+
+| Gate                   | Result | Evidence                                                                                                   |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
+| `bun run e2e:contract` | Passed | 156 tests across 18 files; 751 assertions; zero provider calls.                                            |
+| `bun run test:browser` | Passed | `/home/kllilizxc/Code/hopi-auto/test-artifacts/global-assistant-browser-2026-07-13T16-45-22-030Z-0671c3cc` |
+
+No product or Harness failure occurred in these gates.
+
+## Open Coverage Gaps
+
+1. `HOPI-E2E-002`, `HOPI-E2E-010`, and `HOPI-E2E-013` have independent Live runners; `014` has a
+   partial independent Browser runner and `016` has a deterministic production Coordinator restart
+   runner. All remaining catalogued Planned scenarios still need their own independent Browser and/or
+   Live runners before they can be claimed as run.
+2. `HOPI-E2E-013`, `HOPI-E2E-018`, and `HOPI-E2E-020` retain their specified Browser layer beyond
+   the existing global Assistant ingress preflight. `014` still lacks its repair-and-retry half.
+3. The deterministic suite proves orchestration seams and durable boundaries only. It must not be
+   used to claim vendor behavior, multimodal transport, browser presentation, or real responsibility
+   execution for a scenario whose table row still marks that layer pending.

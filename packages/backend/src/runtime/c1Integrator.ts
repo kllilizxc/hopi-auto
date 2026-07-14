@@ -1,5 +1,6 @@
 import { chmod, lstat, mkdir, mkdtemp, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type EvidenceDocument,
   type WorkDocument,
@@ -1041,7 +1042,7 @@ async function validateIntegratedCommit(
 }
 
 function workRef(store: GoalPackageStore, goalId: string, workId: string) {
-  return `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+  return workAttentionTarget(store.paths.projectId, goalId, workId)
 }
 
 async function durableGit(

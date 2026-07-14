@@ -11,6 +11,9 @@ collection belong to deterministic test code rather than another model.
 The Harness is test infrastructure. It adds no production document, role, queue, workflow state,
 scenario DSL, or fault-injection route.
 
+The zero-context operating procedure and detailed HOPI coverage plan live in
+[the E2E test case catalog](./e2e_test_cases.md).
+
 ## One Scenario Model
 
 A scenario is ordinary code with four parts:

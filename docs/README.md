@@ -15,6 +15,8 @@
   permission, image, MCP, and session contracts for supported model vendors.
 - [`e2e_harness.md`](./e2e_harness.md): real-Agent E2E boundary, deterministic Harness, Project
   adapter, state invariants, evidence, and token-cost rules.
+- [`e2e_test_cases.md`](./e2e_test_cases.md): zero-context E2E runbook, failure diagnosis, detailed
+  HOPI scenario catalog, priorities, and acceptance criteria.
 - [`mvp_publish_protocol.md`](./mvp_publish_protocol.md): single-Coordinator publication ADR and
   process-crash recovery rules.
 - [`mvp_state_machine.md`](./mvp_state_machine.md): derived state charts, readiness, and Kanban

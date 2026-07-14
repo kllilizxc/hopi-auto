@@ -1,3 +1,4 @@
+import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import { isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { type WorkRuntimeFacts, deriveGoalWorkProjections } from '../domain/workProjection'
@@ -53,7 +54,7 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
     return {
       kind: 'ensure_attention',
       workId: exhausted.attributes.id,
-      target: `project:${projectId}/goal:${goalId}/work:${exhausted.attributes.id}`,
+      target: workAttentionTarget(projectId, goalId, exhausted.attributes.id),
       reason: 'attempts_exhausted',
     }
   }
@@ -119,8 +120,8 @@ function hasCoveringAttention(
   workId: string,
   goalPackage: GoalPackage,
 ) {
-  const goalTarget = `project:${projectId}/goal:${goalId}`
-  const workTarget = `${goalTarget}/work:${workId}`
+  const goalTarget = goalAttentionTarget(projectId, goalId)
+  const workTarget = workAttentionTarget(projectId, goalId, workId)
   return [...goalPackage.attentions.values()].some(
     (attention) =>
       attention.attributes.resolvedAt === null &&

@@ -1,3 +1,4 @@
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   isEngineeringWork,
   parseWorkDocument,
@@ -21,7 +22,7 @@ export function createCompletionStructureVerifier(
     async verify(goalId, goalPackage) {
       for (const work of goalPackage.works.values()) {
         if (!isEngineeringWork(work.attributes) || work.attributes.stage !== 'done') continue
-        const workReference = `project:${store.paths.projectId}/goal:${goalId}/work:${work.attributes.id}`
+        const workReference = workAttentionTarget(store.paths.projectId, goalId, work.attributes.id)
         const commits = await findIntegrationCommits(
           store.paths.projectRoot,
           HOPI_RELEASE_REF,

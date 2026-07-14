@@ -54,6 +54,9 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
       'writes: [{ path, content }]',
     )
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
+    ).toContain("Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...'")
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })

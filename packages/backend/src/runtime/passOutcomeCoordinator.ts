@@ -1,4 +1,5 @@
 import type { PassResultKind, RoleRunResult } from '../agent/RoleRunner'
+import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
   type EvidenceDocument,
@@ -565,8 +566,8 @@ export async function validatePassSemanticGuard(
       }
     }
   }
-  const goalTarget = `project:${store.paths.projectId}/goal:${input.goalId}`
-  const workTarget = `${goalTarget}/work:${input.workId}`
+  const goalTarget = goalAttentionTarget(store.paths.projectId, input.goalId)
+  const workTarget = workAttentionTarget(store.paths.projectId, input.goalId, input.workId)
   if (
     [...current.attentions.values()].some(
       (attention) =>
@@ -842,11 +843,11 @@ function validateNewAttention(
   if (document.attributes.resolvedAt !== null || document.attributes.notifiedAt !== null) {
     throw new PassProposalError('New Attention must be open and unnotified')
   }
-  if (input.responsibility !== 'planner') {
+  if (document.attributes.target !== null) {
     const expectedTarget = workRef(store, input.goalId, input.workId)
     if (document.attributes.target !== expectedTarget) {
       throw new PassProposalError(
-        `Engineering Attention must target its owning Work: ${expectedTarget}`,
+        `Targeted Attention must use owning Work target: ${expectedTarget}`,
       )
     }
   }
@@ -941,7 +942,7 @@ function producerRunRef(store: GoalPackageStore, input: ApplyPassOutcomeInput) {
 }
 
 function workRef(store: GoalPackageStore, goalId: string, workId: string) {
-  return `project:${store.paths.projectId}/goal:${goalId}/work:${workId}`
+  return workAttentionTarget(store.paths.projectId, goalId, workId)
 }
 
 function appendUnique(values: readonly string[], value: string) {

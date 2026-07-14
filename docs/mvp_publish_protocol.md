@@ -147,8 +147,10 @@ nonterminal Planning Work is itself the Goal-wide Engineering guard, so it is pu
 other replanning effects and changed to `done` only after Planner outputs validate.
 Planner success requires no separate design-approval publication; unresolved operator authority is
 represented by targeted Attention instead.
-An Attention-producing result must be `fail`; other pass results combined with targeted Attention
-are rejected before the Attention gate is publishable.
+An Attention-producing result must be `attention`; `success`, `reject`, or `fail` combined with
+targeted Attention is rejected before the Attention gate is publishable. Its target is the exact
+canonical reference of the producing Run's owning Work; a targetless Attention is reserved for the
+final Planner completion proposal.
 Planner publications require their staged integration target. Engineering publications allow an
 unrelated C1 to advance that target when all selected canonical guard hashes remain current; the
 task branch stays isolated and the later C1 path owns deterministic rebuild or conflict rejection.
