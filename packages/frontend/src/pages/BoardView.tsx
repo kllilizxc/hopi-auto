@@ -538,10 +538,12 @@ function WorkDetail({
                   <small>Recovery</small>
                   <strong>{work.attempts} / 3</strong>
                 </span>
-                <span>
-                  <small>Not before</small>
-                  <strong>{work.notBefore ?? 'now'}</strong>
-                </span>
+                {work.notBefore && work.notBefore !== 'now' ? (
+                  <span>
+                    <small>Not before</small>
+                    <strong>{work.notBefore}</strong>
+                  </span>
+                ) : null}
               </AppScrollShadow>
               <div className="work-detail-body">
                 <AppTabs.Panel className="work-detail-tab-panel" id="activity">
