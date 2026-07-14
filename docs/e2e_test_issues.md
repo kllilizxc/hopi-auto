@@ -447,3 +447,69 @@ hides transport telemetry.
 3. The deterministic suite proves orchestration seams and durable boundaries only. It must not be
    used to claim vendor behavior, multimodal transport, browser presentation, or real responsibility
    execution for a scenario whose table row still marks that layer pending.
+
+## 2026-07-14: Full Main Regression Baseline 07d2d79
+
+All executable deterministic, Browser, and Codex Live commands passed on clean `main` at `07d2d79`.
+The retained command log root is
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/full-regression-2026-07-14T05-49-42Z`.
+
+The pass exposed four evidence or efficiency defects that do not invalidate the delivered domain
+state:
+
+- `HOPI-E2E-015` captured Pause after the control changed but before the card projection stopped
+  showing `working`; the script used a fixed 500 ms delay instead of a semantic UI condition.
+- `HOPI-E2E-023` retained the cancelled archive but not the reopened terminal Kanban, despite proving
+  the terminal state through the API.
+- The first `HOPI-E2E-002` Planner tried to update files in an initially empty sparse proposal and
+  tried to replace example text in the zero-byte `result.json`. Both failed `apply_patch` calls were
+  recovered, but the Planner consumed 270,587 input tokens and 9,335 output tokens.
+- Speaking Assistant raw progress prose and one recoverable tool-schema correction appeared as
+  separate public chat messages even though the durable final replies were concise. Raw events are
+  useful diagnostics, but the Assistant surface should fold them into Activity rather than present
+  them as operator-facing speech.
+
+The same Attention run also showed a model-authored `createdAt` later than the actual proposal
+publication. Attention time is persistence metadata and will be normalized by Coordinator at
+publication instead of relying on model clock judgment.
+
+The first fixed `HOPI-E2E-002` rerun passed end to end and removed the empty-proposal and zero-byte
+patch failures, but its first Planner omitted the owning Planning Work from an otherwise complete
+success proposal. Coordinator correctly normalized that proposal to a failed attempt and a retry
+recovered, so durable state remained sound; the run nevertheless used 9 model calls and 938,104
+input tokens. The Planner contract now states the exact required authority-to-proposal Work copy and
+`stage: done` gate. This keeps the existing sparse model and deterministic validation while removing
+an avoidable interpretation gap.
+
+The next fixed `HOPI-E2E-002` rerun proved that initial gate fix, but its final Planner treated an
+older `evidenceRefs` entry as dangling because the compact responsibility authority intentionally
+staged only the latest Evidence. It tried to rewrite terminal Engineering Work; Coordinator rejected
+the mutation and a retry recovered. Canonical Evidence was never missing. The contract now states
+that omitted history is not absent canonical truth and terminal Engineering Work is never copied or
+edited by Planner. Staging all historical Evidence would spend more context to solve the wrong
+problem, so the compact authority model remains unchanged.
+
+The Claude `HOPI-E2E-026` canary then exposed a runtime-log race: `/api/assistant/feed` read an
+`events.jsonl` append between bytes and parsed the unfinished tail as a complete record, returning
+500 even though the model process continued. The shared JSONL reader now treats only an
+unterminated final line as in-flight and retries it on the next poll; malformed durable lines still
+fail visibly. This is transport-neutral and also aligns Assistant, Attempt, and Reflection readers.
+
+After that race was fixed, the Claude canary reached the history assertion but did not repeat
+`NEW-HISTORY-MARKER`. Artifact inspection showed the model had received and reasoned about the
+marker. The Live case itself was not a valid history proof because its recovery turn repeated both
+the public and internal marker strings. The case now withholds every marker from the current turn
+and asks for the previous public message's leading marker, while asserting newest present, oldest
+absent, and private Reflection absent. No vendor-specific runtime rule was added.
+
+The final `HOPI-E2E-002` run passed with all eight logical model Runs succeeding without a recovered
+responsibility attempt. Compared with the clean baseline, total input fell from 815,757 to 768,756,
+uncached input fell from 211,853 to 137,588, and output fell from 18,944 to 18,673. The retained
+artifact is
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/goal-delivery-2026-07-14T12-46-27-273Z-f2d75a55`.
+
+The strengthened `HOPI-E2E-026` proof passed with both available configured vendors. Claude evidence
+is `/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T13-02-16-562Z-dd665414`;
+Codex evidence is `/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T13-03-04-579Z-51102843`.
+OpenCode was not Live-tested because its executable is absent on this host; deterministic adapter
+coverage remains green.

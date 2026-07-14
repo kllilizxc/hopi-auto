@@ -62,6 +62,7 @@ docs/*
 !docs/mvp_state_machine.md
 !docs/multi_vendor_agent_support.md
 !docs/e2e_harness.md
+!docs/e2e_regression_report_2026-07-14.md
 !docs/e2e_test_cases.md
 !docs/e2e_test_issues.md
 !docs/unified_design.md

@@ -570,6 +570,14 @@ export async function clickGoalControl(
   const url = `${harness.baseUrl}/projects/${encodeURIComponent(projectId)}/board/${encodeURIComponent(goalId)}`
   const screenshot = await screenshotTarget(harness, `goal-${control.toLowerCase()}-clicked.png`)
   const controlExpression = browserUtf8Expression(control)
+  const nextControlExpression = browserUtf8Expression(control === 'Pause' ? 'Resume' : 'Pause')
+  const settleExpression = [
+    '(() => {',
+    `  const next = [...document.querySelectorAll('button')].some((candidate) => candidate.textContent?.trim() === ${nextControlExpression})`,
+    "  const working = Boolean(document.querySelector('.working-indicator'))",
+    `  return { nextControlVisible: next, working, settled: next && ${control === 'Pause' ? '!working' : 'true'} }`,
+    '})()',
+  ].join('\n')
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
@@ -580,10 +588,14 @@ export async function clickGoalControl(
     `    clicked = js(${JSON.stringify(`(() => { const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${controlExpression}); if (!button) return { found: false }; if (button.disabled) return { found: true, disabled: true }; button.click(); return { found: true, disabled: false }; })()`)})`,
     '    if clicked and clicked.get("found") and not clicked.get("disabled"): break',
     '    time.sleep(0.25)',
-    'time.sleep(0.5)',
+    'settled = None',
+    'for _ in range(80):',
+    `    settled = js(${JSON.stringify(settleExpression)})`,
+    '    if settled and settled.get("settled"): break',
+    '    time.sleep(0.25)',
     captureScreenshotLine(screenshot),
     `hopi_audit_note(${JSON.stringify(`HOPI ${control} Goal control clicked`)}, scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)}, goal_id=${JSON.stringify(goalId)})`,
-    'print("HOPI_E2E_GOAL_CONTROL=" + json.dumps({"clicked": clicked, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'print("HOPI_E2E_GOAL_CONTROL=" + json.dumps({"clicked": clicked, "settled": settled, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -592,11 +604,17 @@ export async function clickGoalControl(
     script,
   )) as {
     clicked?: { found?: boolean; disabled?: boolean }
+    settled?: { nextControlVisible?: boolean; working?: boolean; settled?: boolean }
     audit?: { head_hash?: string }
     verify?: BrowserAuditVerification
   }
   if (!evidence.clicked?.found || evidence.clicked.disabled) {
     throw new Error(`${control} control could not be clicked: ${safeJson(evidence.clicked)}`)
+  }
+  if (!evidence.settled?.settled) {
+    throw new Error(
+      `${control} control did not reach its visible settled projection: ${safeJson(evidence.settled)}`,
+    )
   }
   const auditMode = resolveBrowserAuditMode(evidence.verify)
   await assertScreenshots([screenshot])

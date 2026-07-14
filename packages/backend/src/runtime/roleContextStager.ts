@@ -680,6 +680,7 @@ function renderResponsibilityPrompt(
     `Treat ${paths.authorityRoot} as immutable canonical authority.`,
     `Write control-document proposals only beneath ${paths.proposalRoot}.`,
     'The proposal starts empty and is a sparse overlay: write only added or replaced documents. Read existing content from authority; do not mirror unchanged files. Absence means unchanged, and canonical deletion is unsupported.',
+    'No descendant file exists in proposal initially. Create each proposed file and its parent directories; do not try to patch an authority file in place.',
     'Do not invent actions, workflow states, roles, or control fields.',
     'Coordinator validates every proposed document and owns all state transitions.',
     'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
@@ -726,7 +727,7 @@ function targetedAttentionContract(
     '---',
     'id: <stable-id>',
     `target: ${target}`,
-    'createdAt: <ISO-8601-timestamp>',
+    'createdAt: 1970-01-01T00:00:00.000Z',
     'resolvedAt: null',
     'notifiedAt: null',
     '---',
@@ -778,14 +779,16 @@ function renderCurrentAssignment(assignment: RunAssignment) {
   ]
 }
 
-function plannerPrompt(paths: {
-  runRoot: string
-  proposalRoot: string
-  bootstrapSourceRoot?: string
-  prepareMissing: boolean
-  attentionRoot: string
-  apiOrigin?: string
-}) {
+function plannerPrompt(
+  paths: {
+    runRoot: string
+    proposalRoot: string
+    bootstrapSourceRoot?: string
+    prepareMissing: boolean
+    attentionRoot: string
+    apiOrigin?: string
+  },
+) {
   return [
     '## Planner',
     '',
@@ -800,6 +803,8 @@ function plannerPrompt(paths: {
     'Give every Engineering Work the smallest non-empty repos list containing every Repo its Generator or Reviewer must inspect, execute, or modify to prove the Work. There is no separate read-only Repo scope; unchanged listed Repos are C1 no-ops. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
     'Independent testability alone does not justify a separate Work. Keep prerequisite scaffolding with its only consumer when they share primary files and the prerequisite has no independently useful operator outcome.',
     'Every newly proposed Engineering Work must use kind engineering and stage generate. Never copy, create, or edit Planning Work in the proposal; a successful complete proposal lets Coordinator advance the owning Planning Work.',
+    'Terminal Engineering Work is immutable. Never copy it into proposal or edit its fields, body, or evidenceRefs.',
+    'This authority is intentionally compact: an Evidence document omitted from staging is historical, not missing canonical truth. Never repair an evidenceRef merely because its document is not staged.',
     'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
     'Your proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing root AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator preserves the current Planning Work and derives its Evidence reference from result.json during publication.',
     'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
@@ -824,7 +829,7 @@ function plannerPrompt(paths: {
     '---',
     'id: <stable-id>',
     'target: null',
-    'createdAt: <ISO-8601-timestamp>',
+    'createdAt: 1970-01-01T00:00:00.000Z',
     'resolvedAt: null',
     'notifiedAt: null',
     '---',
@@ -918,6 +923,7 @@ function resultInstruction(resultFile: string, responsibility: Responsibility) {
     '## Required Result',
     '',
     `Write exactly one JSON object to ${resultFile}:`,
+    'This file starts at zero bytes as a missing-result marker. Replace the whole file; the example below is not prewritten content.',
     '',
     '```json',
     '{"result":"success","summary":"Concise evidence-backed result","artifacts":[]}',

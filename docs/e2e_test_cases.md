@@ -643,9 +643,10 @@ Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`.
 Current partial implementation: `packages/backend/tests/e2e/pauseResume.browser.ts`
 (`bun run e2e:browser:015`) uses a production Server, real Browser Harness clicks, managed Git, and
 a deterministic interruptable RoleRunner. It clicks Pause during an active Generator, verifies the
-durable guard and interrupted Attempt without another dispatch, then clicks Resume and verifies the
-fresh Generator/Reviewer/C1 path reaches `done`. The required real role-process canary remains a
-separate Live layer.
+durable guard and interrupted Attempt without another dispatch, waits until the visible Work
+projection no longer claims that the interrupted Run is working, then clicks Resume and retains the
+terminal Kanban. The fresh Generator/Reviewer/C1 path must reach `done`. The required real
+role-process canary remains a separate Live layer.
 
 ### HOPI-E2E-016: Process Restart During Agent Execution
 
@@ -885,8 +886,9 @@ Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-10`.
 Current partial implementation: `packages/backend/tests/e2e/cancelReopen.browser.ts`
 (`bun run e2e:browser:023`) uses the production Goal control API, production Coordinator, real
 Browser Harness, and managed Git. It cancels an active Work plus its dependent, verifies the retained
-browser archive, reopens into contract revision two, and completes only newly planned Work. The
-required real Assistant control canary remains a separate Live layer.
+browser archive, reopens into contract revision two, completes only newly planned Work, and retains a
+second terminal Kanban capture proving that the reopened Work completed without erasing the archive.
+The required real Assistant control canary remains a separate Live layer.
 
 ### HOPI-E2E-024: Vendor, Model, And Session Compatibility Matrix
 
@@ -943,8 +945,11 @@ truth must remain available from documents even when conversational history is t
 
 The transport assertion and the model assertion are distinct: retained prompts prove which durable
 history was supplied, while the final reply proves that the configured model obeyed current-turn
-priority. Seeing the newest marker but following an older instruction is a model-contract failure,
-not evidence that session storage lost the marker.
+priority. The recovery turn must ask for the newest public-history marker without repeating any
+marker value itself; otherwise a matching reply proves only current-turn copying. The reply must
+contain the newest marker, exclude the older marker, and exclude internal Reflection content.
+Seeing the newest marker in retained history but following an older instruction is a model-contract
+failure, not evidence that session storage lost the marker.
 
 Primary invariants: `INV-01`, `INV-08`, `INV-10`, `INV-13`, `INV-14`.
 

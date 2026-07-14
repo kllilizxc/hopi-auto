@@ -14,6 +14,7 @@ import {
   createHarnessArtifactRoot,
   errorMessage,
   gitOutput,
+  inspectKanban,
   requestJson,
   waitForValue,
 } from '../live/liveHarness'
@@ -82,6 +83,9 @@ try {
       goal.works.some((work) => work.id === WORK_ID && work.stage === 'done'),
     { timeoutMs: 60_000, description: 'resumed delivery completion' },
   )
+  const terminalBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
+    evidencePrefix: 'resumed',
+  })
   const attempts = await requestJson<{
     attempts: Array<{ responsibility: string; status: string; application: string | null }>
   }>(context.baseUrl, `/api/projects/${PROJECT_ID}/goals/${GOAL_ID}/works/${WORK_ID}/attempts`)
@@ -102,7 +106,7 @@ try {
   )
   await Bun.write(
     join(artifactRoot, 'pause-resume-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, pauseBrowser, resumeBrowser, paused, settled, attempts, runs: roles.runs }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, pauseBrowser, resumeBrowser, terminalBrowser, paused, settled, attempts, runs: roles.runs }, null, 2)}\n`,
   )
   console.log(`HOPI-E2E-015 pause/resume browser passed: ${artifactRoot}`)
 } catch (error) {

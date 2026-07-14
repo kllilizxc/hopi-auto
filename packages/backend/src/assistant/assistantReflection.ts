@@ -5,6 +5,7 @@ import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
+import { readDurableJsonLines } from '../storage/jsonLines'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import type { AssistantTools } from './assistantTools'
 import type { AssistantModelRunner } from './workspaceAssistant'
@@ -496,26 +497,16 @@ async function readReflectionRunEvents(root: string, reflectionId: string) {
 }
 
 async function readReflectionEvents(path: string) {
-  const file = Bun.file(path)
-  if (!(await file.exists())) return []
-  const events: ReflectionRuntimeEvent[] = []
-  for (const line of (await file.text()).split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const event = JSON.parse(line) as unknown
-      if (
-        !isRecord(event) ||
-        typeof event.eventId !== 'string' ||
-        typeof event.createdAt !== 'string'
-      ) {
-        continue
-      }
-      events.push(event as ReflectionRuntimeEvent)
-    } catch {
-      // A concurrently appended partial runtime line is retried on the next debug poll.
+  return readDurableJsonLines(path, (value) => {
+    if (
+      !isRecord(value) ||
+      typeof value.eventId !== 'string' ||
+      typeof value.createdAt !== 'string'
+    ) {
+      throw new Error('Reflection event is missing its durable identity')
     }
-  }
-  return events
+    return value as ReflectionRuntimeEvent
+  })
 }
 
 async function writeManifest(path: string, manifest: ReflectionManifest) {

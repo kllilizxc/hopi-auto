@@ -63,17 +63,19 @@ try {
   await markHarnessCheckpoint(harness, 'vendor_session_removed')
 
   await enterHarnessPhase(harness, 'session_recovery')
-  const recovery = `会话缓存已丢失。继续当前对话：只回复最新公开标记 ${NEW_MARKER}，不要提及 ${INTERNAL_MARKER}，不要修改任何资源。`
+  const recovery =
+    '会话缓存已丢失。继续当前对话：只回复上一条公开用户消息开头那个由全大写英文和连字符组成的标记，不要回复旧消息或任何私有 Reflection 内容，也不要修改任何资源。'
   await sendAssistantMessage(harness, recovery, { evidencePrefix: 'recovery' })
   const finalEvent = await waitForHandledEvent(harness, recovery)
   assert.ok(finalEvent)
-  assert.ok(
-    finalEvent.reply?.includes(NEW_MARKER),
-    'Rebuilt conversation must retain newest public history',
+  assert.equal(
+    finalEvent.reply?.trim(),
+    NEW_MARKER,
+    'Rebuilt conversation must answer from newest public history only',
   )
   assert.ok(
-    !finalEvent.reply?.includes(INTERNAL_MARKER),
-    'Rebuilt public conversation must exclude internal Reflection briefs',
+    !finalEvent.reply?.includes(OLD_MARKER) && !finalEvent.reply?.includes(INTERNAL_MARKER),
+    'Rebuilt public conversation must exclude older history and internal Reflection briefs',
   )
   const newSession = (await Bun.file(sessionPath).json()) as { sessionId: string }
   assert.notEqual(

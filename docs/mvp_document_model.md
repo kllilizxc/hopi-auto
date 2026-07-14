@@ -147,6 +147,12 @@ Legacy thread-only manifests migrate as Codex. Per-turn `events.jsonl` stores no
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
 output for debugging.
 
+Every runtime `events.jsonl` uses newline as its record durability boundary. A concurrent reader
+omits the sole non-newline-terminated tail and sees it on a later read after append completes. A
+malformed newline-terminated record is durable corruption and remains a visible error; readers do
+not silently discard it. Assistant turns, responsibility Attempts, and Reflection diagnostics share
+this one rule.
+
 Each `runtime/assistant/reflections/<reflectionId>/reflection.json` records a disposable assessment's
 state digest, timing, and terminal runtime outcome. Its prompt, normalized events, and raw transcript
 exist only for diagnostics. Reflection directories are not canonical conversation history and may be
@@ -555,6 +561,12 @@ An open targeted Attention projects as **Waiting for Assistant** while `notified
 **Needs you** after notification while it remains unresolved.
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
+
+`createdAt` is the Coordinator's publication timestamp, not model-authored time. Responsibility
+proposals carry the fixed parseable placeholder `1970-01-01T00:00:00.000Z`; Coordinator replaces it
+while publishing every new targeted or completion Attention. The body and identity remain model
+output. This keeps time in the deterministic persistence boundary without adding another field or
+clock protocol.
 
 Storage location derives ownership:
 

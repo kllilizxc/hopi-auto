@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { AssistantTransport } from '../agent/vendorAssistantOutput'
+import { readDurableJsonLines } from '../storage/jsonLines'
 
 const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'])
 
@@ -222,15 +223,7 @@ async function finishManifest(
 }
 
 async function readEvents(path: string) {
-  const file = Bun.file(path)
-  if (!(await file.exists())) return []
-  const events: AssistantTurnEvent[] = []
-  for (const line of (await file.text()).split(/\r?\n/)) {
-    if (!line.trim()) continue
-    const parsed = storedEventSchema.parse(JSON.parse(line))
-    events.push(parsed as AssistantTurnEvent)
-  }
-  return events
+  return readDurableJsonLines(path, (value) => storedEventSchema.parse(value) as AssistantTurnEvent)
 }
 
 async function readJson<T>(path: string, schema: z.ZodType<T>) {

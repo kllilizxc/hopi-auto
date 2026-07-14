@@ -64,6 +64,8 @@ of Work, readiness, Runs, and Attention rather than another workflow authority.
 The three operator surfaces have distinct jobs: Assistant shows the latest outcome and any action
 the operator must take, Kanban shows current progress, and Attempt details show execution evidence
 and diagnostics. Assistant does not duplicate the board or narrate the internal delivery process.
+Provider progress messages, tool calls, and recoverable tool errors remain in the raw turn record and
+one collapsed Activity row; only the turn's final durable reply is rendered as Assistant speech.
 
 Internally:
 

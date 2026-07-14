@@ -347,6 +347,11 @@ Attention. The whole Goal package remains the semantic freshness guard, but hist
 resolved Attention, unrelated Inputs, and superseded Evidence are not staged merely because they
 exist. Guard coverage and model context are deliberately separate concerns.
 
+The staged authority is a compact responsibility view, not a claim that omitted canonical history
+does not exist. In particular, an older `evidenceRefs` entry whose Evidence document is not staged is
+not dangling and Planner never repairs it. Terminal Engineering Work is immutable and remains absent
+from the sparse proposal even when Planner uses its latest Evidence for completion assessment.
+
 Each accepted Goal instruction is published atomically with its Input and the Planning Work that owns
 it. The Planning Work body contains an `Accepted Inputs` section with canonical Input paths. Reusing
 an existing nonterminal Planning Work appends the new path instead of creating a second planning
@@ -420,6 +425,14 @@ earlier failed Planner Run is retry input, not a template for new Planner output
 Planner reads existing documents only from the immutable authority root and copies into the sparse
 proposal only a document it intends to replace. It does not mirror unchanged Goal-package files;
 their absence means unchanged, never deleted.
+
+Both writable outputs have explicit empty-file semantics. `proposal/` starts with no descendant
+files, so a responsibility creates every proposed path and its parents rather than trying to update
+an authority file in place. Run-local `result.json` starts as a zero-byte missing-result marker and
+must be replaced wholesale with the one required JSON object; the example in the prompt is not
+prewritten content. Leaving it empty remains a visible failed Run rather than a fabricated default.
+New Attention proposals use the fixed parseable `createdAt` placeholder from the Run contract;
+Coordinator replaces it with publication time.
 
 The Planner process starts in its Run root because `context.md`, `repos.json`, `result.json`, and the
 sparse overlay are siblings there. A canonical proposal path is written exactly once beneath the

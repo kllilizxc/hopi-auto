@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm } from 'node:fs/promises'
+import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-conversation-store')
 const sessionPath = join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'session.json')
+const turnEventsPath = (eventId: string) =>
+  join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId, 'events.jsonl')
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -46,5 +48,16 @@ describe('AssistantConversationStore session cache', () => {
     await Bun.write(sessionPath, '{not-json')
     expect(await store.readSession()).toBeNull()
     expect(await Bun.file(sessionPath).exists()).toBe(false)
+  })
+
+  test('ignores only a concurrently appended unterminated event tail', async () => {
+    const store = createAssistantConversationStore(temporaryRoot)
+    await store.begin('EV-live')
+    await appendFile(turnEventsPath('EV-live'), '{"kind":"message"')
+
+    expect((await store.readTurn('EV-live'))?.events).toHaveLength(1)
+
+    await appendFile(turnEventsPath('EV-live'), '\n')
+    await expect(store.readTurn('EV-live')).rejects.toThrow('Invalid durable JSONL record')
   })
 })

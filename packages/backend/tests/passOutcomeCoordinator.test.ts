@@ -172,7 +172,7 @@ describe('PassOutcomeCoordinator', () => {
         attributes: {
           id: 'A-storage',
           target: 'project:project-1/goal:goal-1/work:W-1',
-          createdAt: '2026-07-11T00:00:00Z',
+          createdAt: '2099-12-31T23:59:59Z',
           resolvedAt: null,
           notifiedAt: null,
         },
@@ -195,6 +195,9 @@ describe('PassOutcomeCoordinator', () => {
       attempts: 0,
       evidenceRefs: [],
     })
+    expect(goalPackage.attentions.get('A-storage')?.attributes.createdAt).toBe(
+      '2026-07-11T00:00:00.000Z',
+    )
     expect(goalPackage.evidence.has('E-run-attention')).toBe(true)
   })
 

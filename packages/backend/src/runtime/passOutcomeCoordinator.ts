@@ -9,6 +9,7 @@ import {
   isWorkTerminal,
   parseAttentionDocument,
   parseWorkDocument,
+  renderAttentionDocument,
   renderEvidenceDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
@@ -71,6 +72,7 @@ export function createPassOutcomeCoordinator(
       let proposal: PassProposal
       try {
         proposal = await readPassProposal(store, publisher, input)
+        proposal = normalizeNewAttentionTimestamps(proposal, evidence.attributes.createdAt)
       } catch (error) {
         const invalidProposal = asPassProposalError(error)
         if (!invalidProposal) throw error
@@ -214,6 +216,27 @@ interface PassPublication {
     candidate: GoalPackage,
     currentAuthority: PublicationCandidate,
   ): Promise<void> | void
+}
+
+function normalizeNewAttentionTimestamps(proposal: PassProposal, createdAt: string): PassProposal {
+  if (proposal.newAttentions.length === 0) return proposal
+
+  const sources = new Map<string, string>()
+  const newAttentions = proposal.newAttentions.map((attention) => {
+    const document: AttentionDocument = {
+      attributes: { ...attention.document.attributes, createdAt },
+      body: attention.document.body,
+    }
+    const source = renderAttentionDocument(document)
+    sources.set(attention.path, source)
+    return { ...attention, document, source }
+  })
+  const changedWrites = proposal.changedWrites.map((write) => {
+    const source = sources.get(write.path)
+    return source === undefined ? write : { ...write, content: source }
+  })
+
+  return { ...proposal, changedWrites, newAttentions }
 }
 
 async function readPassProposal(

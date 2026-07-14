@@ -89,6 +89,14 @@ try {
       goal.works.some((work) => work.id === INITIAL_WORK && work.stage === 'cancelled'),
     { timeoutMs: 60_000, description: 'reopened contract delivery completion' },
   )
+  const reopenedBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
+    evidencePrefix: 'reopened',
+  })
+  assert.equal(
+    reopenedBrowser.view?.cancelledArchive,
+    true,
+    'Reopened terminal Browser view must preserve the cancelled archive',
+  )
   const attempts = await requestJson<{
     attempts: Array<{ responsibility: string; status: string; application: string | null }>
   }>(
@@ -103,7 +111,7 @@ try {
   assert.deepEqual(await checkoutSnapshot(repoRoot), checkoutBefore)
   await Bun.write(
     join(artifactRoot, 'cancel-reopen-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, cancelled, archive, settled, attempts, runs: roles.runs }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, cancelled, archive, reopenedBrowser, settled, attempts, runs: roles.runs }, null, 2)}\n`,
   )
   console.log(`HOPI-E2E-023 cancel/reopen browser passed: ${artifactRoot}`)
 } catch (error) {

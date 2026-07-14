@@ -284,7 +284,7 @@ function inboxEventToMessageFeed(
     active: event.runtimeStatus === 'running',
   })
   const presentedRuntimeItems = options.assistantPresentation
-    ? presentAssistantRuntimeItems(runtimeItems, event.runtimeStatus)
+    ? presentAssistantRuntimeItems(runtimeItems, event.runtimeStatus, event.reply)
     : runtimeItems
   items.push(
     ...(options.assistantPresentation && event.runtimeStatus === 'failed' && event.runtimeError
@@ -535,6 +535,7 @@ function assistantRuntimeStatus(status: InboxEventView['runtimeStatus']) {
 function presentAssistantRuntimeItems(
   items: MessageFeedItem[],
   runtimeStatus: InboxEventView['runtimeStatus'],
+  finalReply: string | null,
 ) {
   const latestRetryIndex = runtimeStatus === 'running' ? items.findLastIndex(isProviderRetry) : -1
   const terminalErrorTexts = new Set(
@@ -558,7 +559,21 @@ function presentAssistantRuntimeItems(
       if (seenErrors.has(errorKey)) return []
       seenErrors.add(errorKey)
     }
-    if (item.kind === 'assistant_message' || item.kind === 'status') {
+    if (item.kind === 'assistant_message') {
+      if (finalReply && sameText(item.text, finalReply)) {
+        return [{ ...item, details: undefined }]
+      }
+      return [
+        {
+          ...item,
+          kind: 'status' as const,
+          role: 'system' as const,
+          label: 'Activity',
+          details: undefined,
+        },
+      ]
+    }
+    if (item.kind === 'status') {
       return [{ ...item, details: undefined }]
     }
     return [item]

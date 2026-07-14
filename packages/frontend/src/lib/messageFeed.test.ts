@@ -330,11 +330,13 @@ describe('unified message feed adapters', () => {
   })
 
   test('keeps one final assistant message and pairs tool calls with their results', () => {
-    const items = inboxEventsToMessageFeed([
-      inboxEvent({
+    const items = assistantEventsToMessageFeed(
+      [
+        inboxEvent({
         reply: 'Implemented the change.',
         runtimeStatus: 'completed',
         runtimeEvents: [
+          transcript('progress', 'assistant', 'I am inspecting the tool schema.'),
           transcript('tool-start', 'tool_call', 'Tool call: command (bun test)', {
             toolName: 'command',
             toolInvocationKey: 'call-1',
@@ -345,23 +347,31 @@ describe('unified message feed adapters', () => {
           }),
           transcript('answer', 'assistant', 'Implemented the change.'),
         ],
-      }),
-    ])
+        }),
+      ],
+      [],
+    )
 
     expect(items.map((item) => item.kind)).toEqual([
       'user_message',
       'tool_call',
+      'status',
       'tool_result',
       'assistant_message',
     ])
     expect(items.filter((item) => item.kind === 'assistant_message')).toHaveLength(1)
+    expect(items.find((item) => item.text === 'I am inspecting the tool schema.')).toMatchObject({
+      kind: 'status',
+      role: 'system',
+      label: 'Activity',
+    })
 
     const rows = buildMessageFeedRows(items)
     expect(rows.map((row) => row.type)).toEqual(['message', 'activity_group', 'message'])
     const activity = rows[1]
     expect(activity?.type).toBe('activity_group')
     if (activity?.type !== 'activity_group') throw new Error('Expected activity group')
-    expect(activity.entries).toHaveLength(1)
+    expect(activity.entries).toHaveLength(2)
     expect(activity.entries[0]).toMatchObject({
       type: 'tool_block',
       call: { toolInvocationKey: 'call-1' },

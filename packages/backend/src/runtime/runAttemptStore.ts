@@ -11,6 +11,7 @@ import {
   AGENT_TRANSCRIPT_TRANSPORTS,
   type AgentRuntimeEvent,
 } from '../agent/runtimeEvents'
+import { readDurableJsonLines } from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 
 export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as const
@@ -388,19 +389,7 @@ async function readStoredManifest(path: string) {
 }
 
 async function readEvents(path: string) {
-  const file = Bun.file(path)
-  if (!(await file.exists())) return []
-  const events: StoredRunAttemptEvent[] = []
-  for (const line of (await file.text()).split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const parsed = storedEventSchema.safeParse(JSON.parse(line))
-      if (parsed.success) events.push(parsed.data)
-    } catch {
-      // A partial final line after process interruption is not durable history.
-    }
-  }
-  return events
+  return readDurableJsonLines(path, (value) => storedEventSchema.parse(value))
 }
 
 async function readOptionalText(path: string) {
