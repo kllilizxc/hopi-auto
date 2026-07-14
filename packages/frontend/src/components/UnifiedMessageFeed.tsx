@@ -429,6 +429,7 @@ function ToolActivityEntry({
 }: {
   entry: Extract<MessageFeedActivityEntry, { type: 'tool_block' }>
 }) {
+  const attachments = (entry.result as any)?.attachments as { url: string; fileName: string; reference: string }[] | undefined
   const toolName = entry.call?.toolName ?? entry.result?.toolName
   const pending = entry.call?.pending === true && !entry.result
   const failed = entry.result?.kind === 'error'
@@ -480,6 +481,18 @@ function ToolActivityEntry({
             <p>No tool result was recorded.</p>
           )}
         </div>
+        {attachments && attachments.length > 0 ? (
+          <div>
+            <span>Attachments</span>
+            <div className="unified-feed-message__attachments">
+              {attachments.map((att) => (
+                <AppLink href={att.url} key={att.reference} target="_blank" rel="noreferrer" title={att.fileName}>
+                  <img src={att.url} alt={att.fileName} loading="lazy" />
+                </AppLink>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppDisclosure>
   )
