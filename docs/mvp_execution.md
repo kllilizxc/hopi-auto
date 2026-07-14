@@ -652,6 +652,14 @@ not consume a Work attempt or become a Goal-local Attention proposed by the resp
 Project validation, diagnostics, and Background Reflection own repair or escalation. Data-rescue
 patches and Git crash mechanics are implementation details, not workflow stages.
 
+A Project Attention is an Agent-managed recovery guard, not a second health-check state machine.
+After inspecting current state and applying the repair it judges sufficient, Assistant may resolve
+the exact Project Attention. Resolution makes the Project eligible again and wakes Coordinator; it
+does not pre-validate Git or C1 a second time. If that judgment is wrong, the next existing
+Coordinator, publication, or C1 boundary that observes the fault fails closed and creates a fresh
+Project Attention. Assistant may claim that the guard was removed only after the resolution tool
+itself succeeds.
+
 Likewise, a responsibility process that never returns a valid result is not evidence that the Work
 failed. Nonzero transport exit, provider quota, interrupted process, invalid result protocol, and a
 Reviewer write violation finish the diagnostic Attempt as operationally unapplied while leaving the

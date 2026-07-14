@@ -216,7 +216,6 @@ export function createCoordinatorReconciler(
           }
           const runtime: WorkRuntimeFacts = {
             projectEligible: true,
-            projectAttentionOpen: false,
             liveRunWorkIds: liveWorkIds,
             operationallyDeferredWorkIds:
               project.reconciler.operationallyDeferredWorkIds?.(goalId, now()) ?? new Set(),
@@ -267,7 +266,6 @@ export function createCoordinatorReconciler(
       try {
         const result = await deterministic.project.reconciler.reconcileGoal(deterministic.goalId, {
           projectEligible: true,
-          projectAttentionOpen: false,
         })
         if (result.kind === 'project_blocked') {
           eligibleProjects.delete(deterministic.project.projectId)
@@ -299,7 +297,6 @@ export function createCoordinatorReconciler(
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
           projectEligible: true,
-          projectAttentionOpen: false,
           passCapacity: { [responsibility]: true },
         })
         .then(async (result) => {

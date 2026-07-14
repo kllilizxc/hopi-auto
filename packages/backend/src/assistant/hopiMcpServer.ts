@@ -78,7 +78,7 @@ if (mode !== 'reflection') {
     'hopi_resolve_attention',
     {
       description:
-        "Resolve an answered event- or Goal-target Attention after applying any required Goal or Work effects. Pass every required field in one call. Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...', attentionId: '...', resolution: '...' }. Workspace example: { scope: 'workspace', attentionId: '...', resolution: '...' }. Copy exact IDs from hopi_read_state or current-turn context. Project Attention requires deterministic repair and cannot be asserted away.",
+        "Resolve an answered event-, Project-, Goal-, or Work-target Attention after applying the repair or requested effect. Pass every required field in one call. Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...', attentionId: '...', resolution: '...' }. Workspace or Project example: { scope: 'workspace', attentionId: '...', resolution: '...' }. Copy exact IDs from hopi_read_state or current-turn context. For Project Attention, inspect and repair the condition first, then resolve it when your judgment says execution may resume. A successful result makes the Project eligible and wakes Coordinator; if the judgment is wrong, the next execution boundary creates a new Attention. Never claim the Project is unblocked unless this tool call succeeds.",
       inputSchema: assistantToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),

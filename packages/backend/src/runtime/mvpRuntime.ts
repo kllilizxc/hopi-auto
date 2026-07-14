@@ -197,12 +197,14 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     attempts,
     activeRuns: () => readActiveRuns(),
   })
+  let restoreProjectEligibility: (projectId: string) => void = () => undefined
   const assistantTools = createAssistantTools({
     workspace,
     projects,
     publisher,
     preview,
     state: assistantState,
+    onProjectAttentionResolved: (projectId) => restoreProjectEligibility(projectId),
   })
   const assistant = createWorkspaceAssistant({
     homeRoot: options.homeRoot,
@@ -244,32 +246,16 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   })
   readActiveRuns = () => coordinator.activeRuns()
   wakeCoordinator = () => coordinator.wake()
+  restoreProjectEligibility = (projectId) => coordinator.setProjectEligible(projectId, true)
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
-  async function resolveProjectBindingAttentions(projectId: string) {
-    const state = await workspace.readWorkspace()
-    for (const attention of state.attentions.values()) {
-      if (
-        attention.attributes.target === `project:${projectId}` &&
-        attention.attributes.resolvedAt === null
-      ) {
-        await workspace.resolveAttention(
-          attention.attributes.id,
-          'Project binding and managed integration root passed deterministic validation after rebind.',
-        )
-      }
-    }
-  }
-
   async function rebindProject(projectId: string, repoPath: string) {
     await home.rebindProject({ projectId, repoPath })
-    await resolveProjectBindingAttentions(projectId)
   }
 
   async function rebindRepo(projectId: string, repoId: string, repoPath: string) {
     await home.rebindRepo({ projectId, repoId, repoPath })
-    await resolveProjectBindingAttentions(projectId)
   }
 
   async function readProjectCodingDefaults(projectId: string) {

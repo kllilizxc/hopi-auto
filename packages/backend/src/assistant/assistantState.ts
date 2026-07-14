@@ -119,8 +119,6 @@ export function createAssistantStateReader(options: {
                 goalPackage,
                 {
                   projectEligible: !projectAttentionOpen,
-                  projectAttentionOpen,
-                  projectAttentionNotified: Boolean(projectAttention?.notifiedAt),
                   liveRunWorkIds: liveWorkIds,
                   operationallyDeferredWorkIds:
                     project.reconciler?.operationallyDeferredWorkIds?.(goalId, observedAt) ??

@@ -602,8 +602,6 @@ async function presentState(runtime: MvpRuntime) {
       )
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: !projectAttentionOpen,
-        projectAttentionOpen,
-        projectAttentionNotified: Boolean(projectAttention?.attributes.notifiedAt),
         liveRunWorkIds: liveWorkIds,
         operationallyDeferredWorkIds:
           project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
@@ -913,8 +911,6 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
   const projectAttentionOpen = Boolean(projectAttention)
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: !projectAttentionOpen,
-    projectAttentionOpen,
-    projectAttentionNotified: Boolean(projectAttention?.attributes.notifiedAt),
     liveRunWorkIds: liveWorkIds,
     operationallyDeferredWorkIds:
       project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
@@ -945,6 +941,14 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
       ...attention.attributes,
       body: attention.body,
     })),
+    projectAttention: projectAttention
+      ? {
+          scope: 'workspace' as const,
+          projectId,
+          ...projectAttention.attributes,
+          body: projectAttention.body,
+        }
+      : null,
     evidence: [...goalPackage.evidence.values()].map((evidence) => ({
       ...evidence.attributes,
       body: evidence.body,

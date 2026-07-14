@@ -96,6 +96,22 @@ describe('derived Work projection', () => {
     })
   })
 
+  test('represents a Project blocker only as project ineligibility on each Work', () => {
+    const goalPackage = packageWith([work('P-1', 'planning', 'plan')])
+
+    const projection = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
+      ...runtime(),
+      projectEligible: false,
+    })[0]
+
+    expect(projection).toMatchObject({
+      ready: false,
+      primaryBadge: 'waiting',
+      failedPredicates: ['project_ineligible'],
+    })
+    expect(projection?.failedPredicates).not.toContain('attention')
+  })
+
   test('prioritizes a notified covering Attention over file order', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(

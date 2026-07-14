@@ -1508,7 +1508,7 @@ button:disabled,
   white-space: nowrap;
 }
 
-.needs-you-banner {
+.attention-status-banner {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 11px;
@@ -1522,7 +1522,7 @@ button:disabled,
   text-align: left;
 }
 
-.needs-you-banner > span:first-child {
+.attention-status-banner > span:first-child {
   display: grid;
   width: 32px;
   height: 32px;
@@ -1532,22 +1532,22 @@ button:disabled,
   color: var(--amber);
 }
 
-.needs-you-banner svg {
+.attention-status-banner svg {
   width: 16px;
 }
 
-.needs-you-banner > span:nth-child(2) {
+.attention-status-banner > span:nth-child(2) {
   display: flex;
   min-width: 0;
   flex-direction: column;
 }
 
-.needs-you-banner strong {
+.attention-status-banner strong {
   color: var(--color-warning-100);
   font-size: 11px;
 }
 
-.needs-you-banner small {
+.attention-status-banner small {
   overflow: hidden;
   color: var(--color-warning-300);
   font-size: 10px;
@@ -1555,8 +1555,20 @@ button:disabled,
   white-space: nowrap;
 }
 
-.needs-you-banner > svg {
+.attention-status-banner > svg {
   color: var(--amber);
+}
+
+.project-blocked-banner {
+  cursor: default;
+}
+
+.project-blocked-banner p {
+  margin: 3px 0;
+  color: var(--color-warning-200);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .kanban-scroll {
@@ -4858,7 +4870,7 @@ samp {
   font-size: 11px;
 }
 
-.needs-you-banner,
+.attention-status-banner,
 .preview-repair-banner {
   background: linear-gradient(90deg, color-mix(in srgb, var(--color-warning-400) 15%, transparent), color-mix(in srgb, var(--color-warning-400) 5.5%, transparent));
   box-shadow: var(--shadow-sm);
@@ -5673,7 +5685,7 @@ samp {
     padding: 12px;
   }
 
-  .needs-you-banner {
+  .attention-status-banner {
     margin: 10px 12px 0;
   }
 

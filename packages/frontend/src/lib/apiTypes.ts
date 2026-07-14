@@ -255,6 +255,7 @@ export interface GoalDetail {
   works: WorkView[]
   design: Array<{ path: string; content: string }>
   attentions: AttentionView[]
+  projectAttention: AttentionView | null
   evidence: EvidenceView[]
 }
 

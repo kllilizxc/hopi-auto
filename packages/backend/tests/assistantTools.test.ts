@@ -15,6 +15,7 @@ import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import type { Responsibility } from '../src/runtime/roleContextStager'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -400,6 +401,45 @@ describe('Assistant HOPI tools', () => {
     expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
   })
 
+  test('resolves Project Attention optimistically and restores eligibility exactly once', async () => {
+    const fixture = await setup()
+    const attention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'The managed integration root is invalid.')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-repaired',
+      content: 'I repaired the Project. Resume it.',
+    })
+    const resolution = {
+      scope: 'workspace' as const,
+      attentionId: attention.attributes.id,
+      resolution: 'The Assistant inspected the repair and judged the Project ready to resume.',
+    }
+
+    const result = await fixture.tools.executeForEvent(
+      'EV-project-repaired',
+      'hopi_resolve_attention',
+      resolution,
+    )
+    const repeated = await fixture.tools.executeForEvent(
+      'EV-project-repaired',
+      'hopi_resolve_attention',
+      resolution,
+    )
+    const resolved = (await fixture.workspace.readWorkspace()).attentions.get(
+      attention.attributes.id,
+    )
+
+    expect(result).toMatchObject({
+      changed: true,
+      value: { attentionId: attention.attributes.id, projectId: 'P-1' },
+    })
+    expect(repeated.changed).toBe(false)
+    expect(resolved?.attributes.resolvedAt).not.toBeNull()
+    expect(resolved?.body).toContain('## Resolution')
+    expect(fixture.restoredProjectIds).toEqual(['P-1'])
+  })
+
   test('requires a live per-turn capability for MCP calls', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Read state.' })
@@ -722,6 +762,7 @@ async function setup(
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
   const controller = createGoalController(goalStore, { verifyCompletion: () => false })
   const interruptedGoalIds: string[] = []
+  const restoredProjectIds: string[] = []
   const projects = new Map([
     [
       'P-1',
@@ -760,8 +801,18 @@ async function setup(
     preview: createPreviewManager(homeRoot),
     projects,
     state,
+    onProjectAttentionResolved: (projectId) => restoredProjectIds.push(projectId),
   })
-  return { homeRoot, workspace, goalStore, controller, attempts, tools, interruptedGoalIds }
+  return {
+    homeRoot,
+    workspace,
+    goalStore,
+    controller,
+    attempts,
+    tools,
+    interruptedGoalIds,
+    restoredProjectIds,
+  }
 }
 
 async function finishInitialPlanning(

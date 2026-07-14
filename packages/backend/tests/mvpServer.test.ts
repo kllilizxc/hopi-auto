@@ -355,13 +355,18 @@ describe('MVP server', () => {
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
 
-  test('resolves an existing Project Attention only after a moved Repo rebind validates', async () => {
+  test('keeps Project Attention explicit after rebind and exposes it on the Board contract', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
     const publisher = new PublicationCoordinator()
     const home = createAssistantHomeStore(homeRoot, publisher)
-    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
     const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+    })
     await createWorkspaceAttentionController(workspace).ensureProjectAttention(
       'P-1',
       'The Repo path moved.',
@@ -377,6 +382,24 @@ describe('MVP server', () => {
     expect(await request(base, '/api/state')).toMatchObject({
       projects: [{ projectId: 'P-1', openAttentionCount: 1 }],
     })
+    const blockedGoal = await request(base, '/api/projects/P-1/goals/G-1')
+    expect(blockedGoal).toMatchObject({
+      projectAttention: {
+        scope: 'workspace',
+        projectId: 'P-1',
+        target: 'project:P-1',
+        createdAt: expect.any(String),
+        body: expect.stringContaining('The Repo path moved.'),
+      },
+      works: [
+        {
+          projection: {
+            primaryBadge: 'waiting',
+            failedPredicates: ['project_ineligible'],
+          },
+        },
+      ],
+    })
 
     const state = await request(base, '/api/projects/P-1/rebind', {
       method: 'POST',
@@ -386,8 +409,11 @@ describe('MVP server', () => {
 
     expect(
       attentions.find((attention) => attention.target === 'project:P-1')?.resolvedAt,
-    ).not.toBeNull()
-    expect(state).toMatchObject({ projects: [{ projectId: 'P-1', openAttentionCount: 0 }] })
+    ).toBeNull()
+    expect(state).toMatchObject({ projects: [{ projectId: 'P-1', openAttentionCount: 1 }] })
+    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+      projectAttention: { target: 'project:P-1', resolvedAt: null },
+    })
   })
 
   test('links and rebinds a secondary Repo through the Project API without touching checkouts', async () => {

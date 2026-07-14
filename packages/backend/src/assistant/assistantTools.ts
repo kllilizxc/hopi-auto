@@ -3,7 +3,7 @@ import {
   normalizeInboxAttentionReferences,
   parseAttentionReference,
 } from '../domain/attentionReference'
-import { parseWorkAttentionTarget } from '../domain/attentionTarget'
+import { parseProjectAttentionTarget, parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   isWorkTerminal,
   parseAttentionDocument,
@@ -70,6 +70,7 @@ export function createAssistantTools(options: {
   publisher: PublicationCoordinator
   preview: PreviewManager
   state: AssistantStateReader
+  onProjectAttentionResolved?: (projectId: string) => void
   now?: () => Date
 }): AssistantTools {
   type Capability =
@@ -548,16 +549,24 @@ export function createAssistantTools(options: {
             const state = await options.workspace.readWorkspace()
             const attention = state.attentions.get(args.attentionId)
             if (!attention) throw new Error(`Workspace Attention not found: ${args.attentionId}`)
-            if (attention.attributes.target.startsWith('project:')) {
-              throw new Error('Project Attention requires deterministic repair before resolution')
-            }
-            if (attention.attributes.resolvedAt === null) {
+            const projectTarget = parseProjectAttentionTarget(attention.attributes.target)
+            if (projectTarget) requireProject(options.projects, projectTarget.projectId)
+            const changed = attention.attributes.resolvedAt === null
+            if (changed) {
               await options.workspace.resolveAttention(args.attentionId, args.resolution, now())
+              if (projectTarget) {
+                options.onProjectAttentionResolved?.(projectTarget.projectId)
+              }
             }
             return {
-              summary: `Resolved Workspace Attention ${args.attentionId}.`,
-              changed: attention.attributes.resolvedAt === null,
-              value: { attentionId: args.attentionId },
+              summary: projectTarget
+                ? `Resolved Project Attention ${args.attentionId}; Project ${projectTarget.projectId} is eligible again.`
+                : `Resolved Workspace Attention ${args.attentionId}.`,
+              changed,
+              value: {
+                attentionId: args.attentionId,
+                ...(projectTarget ? { projectId: projectTarget.projectId } : {}),
+              },
             }
           }
           const project = requireProject(options.projects, args.projectId ?? '')

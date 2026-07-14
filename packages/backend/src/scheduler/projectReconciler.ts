@@ -198,7 +198,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         .map((key) => key.slice(livePrefix.length))
       const facts: WorkRuntimeFacts = {
         projectEligible: runtime.projectEligible ?? true,
-        projectAttentionOpen: runtime.projectAttentionOpen ?? false,
         liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
         operationallyDeferredWorkIds:
           runtime.operationallyDeferredWorkIds ?? deferredWorkIds(goalId),

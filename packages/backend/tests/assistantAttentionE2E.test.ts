@@ -152,9 +152,18 @@ describe('Reflection to operator Attention E2E', () => {
     ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
     const state = await runtime.assistantState.read({ projectId: 'P-1', goalId: 'G-1' })
     const project = state.projects[0] as {
-      goals: Array<{ works: Array<{ projection: { primaryBadge: string | null } }> }>
+      available: boolean
+      goals: Array<{
+        works: Array<{
+          projection: { primaryBadge: string | null; failedPredicates: string[] }
+        }>
+      }>
     }
-    expect(project.goals[0]?.works[0]?.projection.primaryBadge).toBe('Needs you')
+    expect(project.available).toBe(false)
+    expect(project.goals[0]?.works[0]?.projection).toMatchObject({
+      primaryBadge: 'waiting',
+      failedPredicates: ['project_ineligible'],
+    })
     expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
   })
 })

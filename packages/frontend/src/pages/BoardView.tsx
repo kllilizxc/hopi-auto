@@ -50,7 +50,7 @@ import {
 } from '../lib/api'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
-import { cn, excerpt } from '../lib/utils'
+import { cn, excerpt, formatTime } from '../lib/utils'
 
 const COLUMNS: Array<{
   id: KanbanColumn
@@ -167,6 +167,8 @@ export function BoardView() {
   const assistantAttentionLabel = assistantAttention?.notifiedAt
     ? 'Needs you'
     : 'Waiting for Assistant'
+  const projectAttention =
+    goal.projectAttention?.resolvedAt === null ? goal.projectAttention : null
   const focus =
     goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
     goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
@@ -275,6 +277,19 @@ export function BoardView() {
         <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>
       )}
 
+      {projectAttention && (
+        <div className="attention-status-banner project-blocked-banner" role="status">
+          <span>
+            <AlertCircle />
+          </span>
+          <span>
+            <strong>Project blocked</strong>
+            <p>{excerpt(projectAttention.body, 360)}</p>
+            <small>Created {formatTime(projectAttention.createdAt)}</small>
+          </span>
+        </div>
+      )}
+
       <section className="goal-focus-strip">
         <div>
           <small>Contract · revision {goal.goal.contractRevision}</small>
@@ -283,10 +298,16 @@ export function BoardView() {
         <div>
           <small>Current focus</small>
           <strong>
-            {assistantAttention ? assistantAttentionLabel : (focus?.title ?? goal.goal.lifecycle)}
+            {projectAttention
+              ? 'Project blocked'
+              : assistantAttention
+                ? assistantAttentionLabel
+                : (focus?.title ?? goal.goal.lifecycle)}
           </strong>
           <p>
-            {assistantAttention
+            {projectAttention
+              ? excerpt(projectAttention.body)
+              : assistantAttention
               ? assistantAttention.notifiedAt
                 ? 'Your decision is needed. Open Assistant to reply.'
                 : 'Assistant is diagnosing the blocker and will contact you only if needed.'
@@ -303,7 +324,7 @@ export function BoardView() {
       </section>
 
       {assistantAttention && (
-        <div className="needs-you-banner" role="status">
+        <div className="attention-status-banner needs-you-banner" role="status">
           <span>
             <AlertCircle />
           </span>

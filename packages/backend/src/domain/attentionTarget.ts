@@ -1,4 +1,5 @@
 const stableId = '[A-Za-z0-9][A-Za-z0-9._-]*'
+const projectTargetPattern = new RegExp(`^project:(${stableId})$`)
 const workTargetPattern = new RegExp(
   `^project:(${stableId})/goal:(${stableId})/work:(${stableId})$`,
 )
@@ -7,6 +8,12 @@ export type GoalAttentionTargetMatch = { scope: 'goal' } | { scope: 'work'; work
 
 export function projectAttentionTarget(projectId: string) {
   return `project:${projectId}`
+}
+
+export function parseProjectAttentionTarget(target: string) {
+  const match = projectTargetPattern.exec(target)
+  if (!match?.[1]) return null
+  return { projectId: match[1] }
 }
 
 export function goalAttentionTarget(projectId: string, goalId: string) {

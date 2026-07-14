@@ -38,7 +38,7 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
   if (goal.lifecycle !== 'active') {
     return { kind: 'wait', reasons: [`goal_${goal.lifecycle}`] }
   }
-  if (!runtime.projectEligible || runtime.projectAttentionOpen) {
+  if (!runtime.projectEligible) {
     return { kind: 'wait', reasons: ['project_ineligible'] }
   }
 

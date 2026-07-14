@@ -412,6 +412,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('never search project files, .hopi/runtime, transcripts')
     expect(seen[0]?.prompt).toContain('call hopi_read_state without projectId or goalId')
     expect(seen[0]?.prompt).toContain('never remove P- or G- prefixes')
+    expect(seen[0]?.prompt).toContain(
+      'claim the Project is unblocked only after hopi_resolve_attention returns success',
+    )
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')

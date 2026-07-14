@@ -31,8 +31,6 @@ export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
   passCapacity: Partial<Record<'planner' | 'generator' | 'reviewer', boolean>>
-  projectAttentionOpen?: boolean
-  projectAttentionNotified?: boolean
   operationallyDeferredWorkIds?: ReadonlySet<string>
   now?: Date
   maxAttempts?: number
@@ -110,10 +108,8 @@ export function deriveWorkProjection(
   if (scheduled) failedPredicates.push('not_before')
   if (work.attempts >= maxAttempts) failedPredicates.push('attempts_exhausted')
   const coveringAttention = findCoveringAttention(projectId, goalId, work.id, goalPackage)
-  const needsAttention = runtime.projectAttentionOpen === true || Boolean(coveringAttention)
-  const attentionNotified = runtime.projectAttentionOpen
-    ? runtime.projectAttentionNotified === true
-    : Boolean(coveringAttention?.attributes.notifiedAt)
+  const needsAttention = Boolean(coveringAttention)
+  const attentionNotified = Boolean(coveringAttention?.attributes.notifiedAt)
   if (needsAttention) failedPredicates.push('attention')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')

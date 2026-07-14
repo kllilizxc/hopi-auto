@@ -604,6 +604,67 @@ describe('CoordinatorReconciler', () => {
       ),
     ).toHaveLength(1)
   })
+
+  test('recreates Project Attention when optimistic recovery reaches the same execution fault', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+    )
+    const original = await fixture.attentions.ensureProjectAttention(
+      'P-1',
+      'The Project failed its first execution boundary.',
+    )
+    const goalPackage = planningPackage('G-1')
+    let dispatches = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => ['G-1'],
+            readPackage: async () => goalPackage,
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal() {
+              dispatches += 1
+              return {
+                kind: 'project_blocked' as const,
+                reason: 'The repaired Project still fails C1 publication.',
+              }
+            },
+          },
+        },
+      ],
+    })
+    coordinator.setProjectEligible('P-1', false)
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    await fixture.workspace.resolveAttention(
+      original.attributes.id,
+      'Assistant judged the repair sufficient.',
+    )
+    coordinator.setProjectEligible('P-1', true)
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    await coordinator.waitForIdle()
+    const workspace = await fixture.workspace.readWorkspace()
+    const openProjectAttentions = [...workspace.attentions.values()].filter(
+      (attention) =>
+        attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
+    )
+
+    expect(dispatches).toBe(1)
+    expect(workspace.attentions.get(original.attributes.id)?.attributes.resolvedAt).not.toBeNull()
+    expect(openProjectAttentions).toHaveLength(1)
+    expect(openProjectAttentions[0]?.attributes.id).not.toBe(original.attributes.id)
+    expect(openProjectAttentions[0]?.body).toContain('still fails C1 publication')
+  })
 })
 
 async function workspaceFixture() {
@@ -663,4 +724,28 @@ function engineeringPackage(goalId: string): GoalPackage {
     evidence: new Map(),
     inputs: [],
   }
+}
+
+function planningPackage(goalId: string): GoalPackage {
+  const goalPackage = engineeringPackage(goalId)
+  goalPackage.works = new Map([
+    [
+      'plan-initial',
+      {
+        attributes: {
+          id: 'plan-initial',
+          title: 'Plan',
+          kind: 'planning',
+          stage: 'plan',
+          notBefore: null,
+          dependsOn: [],
+          contractRevision: 1,
+          evidenceRefs: [],
+          attempts: 0,
+        },
+        body: 'Plan.\n',
+      },
+    ],
+  ])
+  return goalPackage
 }
