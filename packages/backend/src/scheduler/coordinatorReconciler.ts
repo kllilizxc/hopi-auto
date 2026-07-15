@@ -38,6 +38,7 @@ export interface CoordinatorReconciler {
   stop(): Promise<void>
   wake(): void
   waitForIdle(): Promise<void>
+  runDirectAssistantCommand<T>(operation: () => Promise<T>): Promise<T>
   setProjectEligible(projectId: string, eligible: boolean): void
   interruptInternalAssistant(): void
   activeRuns(): ReadonlyMap<string, Responsibility>
@@ -68,6 +69,7 @@ export function createCoordinatorReconciler(
   let stopped = true
   let reconcileEpoch = 0
   let reconciling: Promise<CoordinatorReconcileTick> | null = null
+  let directAssistantCommands = 0
 
   const coordinator: CoordinatorReconciler = {
     activeRuns() {
@@ -118,6 +120,15 @@ export function createCoordinatorReconciler(
       }
       await options.reflection?.waitForIdle()
     },
+    async runDirectAssistantCommand(operation) {
+      directAssistantCommands += 1
+      try {
+        return await operation()
+      } finally {
+        directAssistantCommands -= 1
+        this.wake()
+      }
+    },
     async reconcileOnce() {
       if (reconciling) return reconciling
       const epoch = reconcileEpoch
@@ -162,7 +173,9 @@ export function createCoordinatorReconciler(
     const workspace = await options.workspace.readWorkspace()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const event =
-      assistantActive.size === 0 ? eligiblePendingEvent(workspace, assistantActive) : undefined
+      directAssistantCommands === 0 && assistantActive.size === 0
+        ? eligiblePendingEvent(workspace, assistantActive)
+        : undefined
     if (event) {
       const controller = new AbortController()
       const promise = options.assistant

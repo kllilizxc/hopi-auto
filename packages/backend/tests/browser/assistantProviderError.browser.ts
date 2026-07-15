@@ -8,18 +8,19 @@ import { createServer } from '../../src/mvpServer'
 import {
   type LiveState,
   captureAssistantReply,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   requestJson,
   sendAssistantMessage,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
 const SCENARIO = 'assistant-provider-error'
 const CONTENT = '浏览器契约：检查 Assistant provider error。'
 const PROVIDER_ERROR = 'API Error: Request rejected (429) · Daily provider allocation exceeded.'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 let invocations = 0
 const runner: AssistantModelRunner = {
@@ -108,6 +109,11 @@ try {
       2,
     )}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot },
+    resultFile: 'assistant-provider-error.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-029 Browser passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
@@ -118,6 +124,12 @@ try {
       2,
     )}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot },
+    resultFile: 'assistant-provider-error.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-029 Browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

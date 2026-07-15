@@ -7,12 +7,12 @@ import { captureGoalDeliveryPresentation, verifyGoalDeliveryDomain } from './goa
 import {
   type CodeProvenance,
   type LiveState,
-  createHarnessArtifactRoot,
   errorMessage,
-  readCodeProvenance,
+  finishTestRun,
   readGitSemanticState,
   requestJson,
   semanticDirectoryDigest,
+  startTestRun,
 } from './liveHarness'
 
 interface SourceRun {
@@ -38,7 +38,6 @@ interface CheckoutSnapshot {
   status: string
 }
 
-const startedAt = new Date().toISOString()
 const sourceInput = process.argv.slice(2).find((argument) => argument !== '--')
 if (!sourceInput) {
   console.error('Usage: bun run artifact:inspect -- <artifact-root>')
@@ -46,10 +45,10 @@ if (!sourceInput) {
 }
 
 const sourceRoot = resolve(sourceInput)
-const artifactRoot = await createHarnessArtifactRoot('goal-delivery-inspection', startedAt)
-const repositoryRoot = resolve(import.meta.dir, '..', '..', '..', '..')
+const testRun = await startTestRun('goal-delivery-inspection', 'inspection')
+const { artifactRoot, startedAt } = testRun
 const invocations = { assistant: 0, responsibility: 0 }
-let inspectorCode: CodeProvenance | null = null
+const inspectorCode: CodeProvenance | null = testRun.code
 let sourceRun: SourceRun | null = null
 let sourceDigestBefore: string | null = null
 let sourceGitBefore: Record<string, unknown> | null = null
@@ -75,7 +74,6 @@ try {
     userCheckout: await readGitSemanticState(repoRoot),
     integration: await readGitSemanticState(recordedIntegrationRoot),
   }
-  inspectorCode = await readCodeProvenance(repositoryRoot)
   await writeInspectionReport(artifactRoot, {
     status: 'running',
     startedAt,
@@ -184,6 +182,12 @@ try {
     },
     presentation,
   })
+  await finishTestRun(testRun, 'passed', {
+    source: { artifactRoot: sourceRoot, scenario: sourceRun.scenario, code: sourceRun.code },
+    resultFile: 'inspection.json',
+    invocations,
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`Artifact inspection passed: ${artifactRoot}`)
   console.log('Model runner invocations: 0')
 } catch (error) {
@@ -207,6 +211,13 @@ try {
     inspectorCode,
     invocations,
     error: errorMessage(error),
+  }).catch(() => undefined)
+  await finishTestRun(testRun, 'failed', {
+    source: { artifactRoot: sourceRoot, scenario: sourceRun?.scenario, code: sourceRun?.code },
+    resultFile: 'inspection.json',
+    invocations,
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
   }).catch(() => undefined)
   console.error(`Artifact inspection failed: ${errorMessage(error)}`)
   console.error(`Retained inspection evidence: ${artifactRoot}`)

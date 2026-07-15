@@ -15,19 +15,21 @@ import {
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   checkoutSnapshot,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   requestJson,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
+const SCENARIO = 'multiple-instructions'
 const PROJECT_A = 'P-instructions-a'
 const PROJECT_B = 'P-instructions-b'
 const GOAL_A = 'G-instructions-a'
 const GOAL_B = 'G-instructions-b'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot('multiple-instructions', startedAt)
+const testRun = await startTestRun(SCENARIO, 'contract')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoA = join(artifactRoot, 'repo-a')
 const repoB = join(artifactRoot, 'repo-b')
@@ -110,12 +112,23 @@ try {
     join(artifactRoot, 'multiple-instructions.json'),
     `${JSON.stringify({ status: 'passed', startedAt, settled, statusEvent, repair, assistant, roleRuns: roles.runs }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, repoA, repoB },
+    resultFile: 'multiple-instructions.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-011 multiple instructions passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'multiple-instructions.json'),
     `${JSON.stringify({ status: 'failed', startedAt, assistant, roleRuns: roles.runs, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, repoA, repoB },
+    resultFile: 'multiple-instructions.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-011 multiple instructions failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

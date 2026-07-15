@@ -1,6 +1,6 @@
 # Agent E2E Harness
 
-Status: first live scenario
+Status: unified Test Run artifacts and live scenarios
 
 ## Goal
 
@@ -26,27 +26,67 @@ A scenario is ordinary code with four parts:
 Scenarios fix inputs and required facts, not model wording, generated IDs, Work count, or incidental
 tool order. Every Agent path is allowed when it preserves the invariants and reaches the outcome.
 
+Coverage follows independent risk rather than a one-scenario/one-runner quota. One Test Run may
+support more than one catalogued risk, and one risk may combine Contract, Browser, and Live evidence
+from different Runs. The catalog owns that mapping; `run.json` does not gain a second coverage schema.
+Do not repeat an expensive model path merely to make a row green when existing Live evidence already
+proves model judgment or transport and a deterministic boundary proves the remaining scheduler, Git,
+process, or UI invariant exactly.
+
+A new Live Run is required only when the unproved behavior depends on model interpretation, a real
+vendor transport/session, or interaction between a real model process and production lifecycle.
+Deterministic process, publication, and Browser proofs remain the stronger evidence when model output
+cannot affect the result.
+
 ## Reality Boundary
 
-Live E2E starts the production server without injected `AssistantModelRunner` or `RoleRunner`
-implementations. The configured Assistant, Reflection, Planner, Generator, and Reviewer use their
-normal vendor transports, prompts, tools, worktrees, Attempt stores, publication, and C1 delivery.
+The full Live E2E starts the production server without injected `AssistantModelRunner` or
+`RoleRunner` implementations. The configured Assistant, Reflection, Planner, Generator, and
+Reviewer use their normal vendor transports, prompts, tools, worktrees, Attempt stores, publication,
+and C1 delivery.
+
+A focused Live canary may replace an unrelated background model role with a deterministic no-action
+runner while preserving that role's production trigger, scheduler, and document path. For example,
+a multi-Project delivery may use real Assistant and responsibility Agents but deterministic
+Reflection when Reflection judgment is covered elsewhere. The Test Run records this boundary and
+may claim only the roles that used real transports. This avoids paying for unrelated model reasoning
+without mocking the boundary under test.
 
 The Harness may create an isolated Home and a small real Git repository, link it through a public
 API, send an ordinary Inbox message, read public state, and inspect existing durable diagnostics.
 Those are external setup and observation, not substitutions for Agent decisions.
+
+A process-restart scenario launches Coordinator inside one host process boundary and kills that
+boundary rather than calling product shutdown. On Linux the adapter uses a user/PID namespace whose
+init death also kills detached Agent descendants; other hosts require an equivalent supervisor or
+report the Live case unsupported. HOPI does not gain a child-process registry for a deployment
+responsibility already owned by the supervisor.
 
 Browser Harness is reused for operator-visible UI interaction and its screenshot audit. The first
 scenario opens the Home-level Assistant from the Projects page and submits its instruction through
 the real composer. Public APIs, canonical documents, Git state, and Attempt logs remain the oracle
 for internal ordering that a screenshot cannot prove. Project fixture linking uses the public API
 because repository selection is setup for this scenario rather than the behavior under test.
+Each Test Run gives Browser Harness one artifact-local append-only audit chain. Browser interactions
+within that Run are issued serially. Product responsibilities may remain concurrent; parallel
+screenshot collection adds no coverage and can corrupt the evidence chain itself. Keeping the chain
+inside the Test Run also prevents an earlier Run from invalidating later evidence.
+
+The first Browser Harness script in each Test Run reloads the configured named daemon. That
+idempotent initialization may retry before any browser action if the host is still releasing its IPC
+endpoint. The shared executor then records the tabs that existed before each script and closes every
+tab the script created, including on failure. This keeps browser-process resources bounded across
+repeated regressions without making scenarios manage infrastructure. A script may contain several
+ordered actions and is never retried after failure because a missing response cannot prove whether a
+consequential click already happened. Browser Test Runs remain serial across processes as well as
+within one Run.
 
 ## Live Execution And Artifact Inspection
 
-A live execution always starts from its fixture and invokes the configured production Agents. It is
-the only command that may claim the current Assistant, Reflection, responsibility, scheduling, and
-publication code completed an end-to-end path.
+A live execution always starts from its fixture and invokes every configured real Agent needed for
+its claim. It is the only command that may claim those current Agent, scheduling, and publication
+paths completed end to end. A focused canary cannot claim a model role replaced by a deterministic
+runner.
 
 Artifact inspection is narrower. It opens one retained terminal live artifact with Coordinator and
 all Agent runners disabled, then reruns deterministic outcome assertions and current UI screenshots.
@@ -60,6 +100,30 @@ provenances. It never replaces the source `run.json`, action log, screenshots, o
 The source content is hashed before and after inspection. Git implementation files are excluded from
 that byte digest, so HEAD, branch, porcelain status, and refs are compared separately for the user
 checkout and managed integration. Any semantic mutation fails the inspection.
+
+## One Test Run Artifact
+
+Contract commands, Browser scenarios, Live scenarios, artifact inspections, visual reviews, and a
+multi-case Regression all use the same retained Test Run envelope: `run.json`. Its small fixed
+contract records the claim, status, start and end time, code provenance, model usage when present,
+and references to retained evidence. Scenario-specific JSON, documents, logs, Git repositories, and
+screenshots remain the detailed truth; the envelope indexes them rather than copying them into a
+second model.
+
+A Regression is only another Test Run whose `children` reference the terminal Test Runs created by
+existing scenario commands. It introduces no scenario DSL, dependency graph, workflow state,
+database, or alternate result schema. Commands that do not normally retain an artifact, such as the
+Contract suite, receive the same envelope from the thin Regression runner.
+
+`evidence.html` is a generated view over referenced screenshots. It is not authority and may be
+recreated from retained files. A visual conclusion belongs to a separate Inspection Test Run that
+references the source Run and exact screenshot hashes; it never edits a terminal source artifact.
+There is no separate `suite.json`, screenshot-index authority, or `visual-review.json`.
+
+Screenshots are captured while Browser Harness reaches semantic checkpoints. Visual interpretation
+happens after a cheap Browser batch and before expensive Live execution by default. A testing Agent
+may inspect earlier on failure or later when evidence is equivalent; this timing is judgment, not a
+new persisted state machine.
 
 ## Layers
 
@@ -96,10 +160,12 @@ enabled so the run measures its real cost and exposes unnecessary wakeups.
 
 ## Evidence And Cost
 
-Each execution receives a local artifact root containing the isolated Home, fixture Repo, action log,
-changed state snapshots, final report, retained Browser screenshots, and Browser Harness audit
-reference. The active execution may extend its action log and replace its `running` report with one
-terminal report; after that terminal boundary, retained evidence is immutable. Existing Assistant,
+Each execution receives a local artifact root containing `run.json`, the isolated Home and fixture
+Repo when applicable, action log, changed state snapshots, retained Browser screenshots, and Browser
+Harness audit reference. The active execution may extend its action log and replace its `running` report with one
+terminal report. Runtime cleanup that changes retained evidence, including stopping the Live server,
+must finish before that terminal write; repeated cleanup is a no-op. After the terminal boundary,
+retained evidence is immutable. Existing Assistant,
 Reflection, Attempt, prompt, raw transcript, proposal, and Git records remain in their normal
 locations under that root rather than being copied into a second fact model. The report records
 current code provenance plus the last successful scenario checkpoint. A caught failure also records
@@ -171,6 +237,17 @@ while at least one blank-to-completion scenario continues to prove the whole pat
 
 ## Commands
 
+`bun run e2e:regression` runs the fixed zero-provider Regression profile through Contract, runtime,
+and Browser cases. It retains one parent Test Run, child Test Runs, command logs, and a generated
+visual gallery. The testing Agent reviews that gallery before invoking `bun run e2e:regression:live`,
+which runs configured-provider canaries in a separate parent Test Run. Both commands are thin
+orchestration over existing scenario scripts and stop at the first failed child.
+
+From the repository root,
+`bun run artifact:review -- <artifact-root> --result=passed|failed --note=<summary>` records a visual
+conclusion as a new zero-provider Inspection Test Run. The command records the exact reviewed image
+hashes and source provenance; it does not make the review decision or mutate the source.
+
 `bun run e2e:preflight` runs the zero-token contract and browser layers. `bun run e2e` requires that
 preflight before starting the live scenario, so deterministic environment, encoding, UI, and
 orchestration failures stop before provider capacity is spent. `bun run e2e:live` exists only for
@@ -189,6 +266,14 @@ than a portable unit-test dependency.
 `bun run e2e` runs live Agents and therefore consumes configured provider capacity. It is explicit,
 retains its evidence, and is not part of the default per-edit check.
 
+Independent high-risk Live commands are `bun run e2e:live:011` (concurrent Projects),
+`bun run e2e:live:016` (hard Coordinator replacement), `bun run e2e:live:017` (multi-Repo plus
+silent bootstrap), and `bun run e2e:live:022` (multimodal delivery). They are not duplicated in the
+default edit loop; invoke the one whose real model/process boundary changed or run the explicit Live
+Regression for a release decision.
+
 `bun run artifact:inspect -- <artifact-root>` performs the narrower zero-model inspection described
-above. Its report explicitly records zero Assistant and responsibility invocations and may never be
-reported as a new live E2E success.
+above. `bun run artifact:inspect:011 -- <artifact-root>` does the same for the concurrent-Project
+scenario, and `bun run artifact:inspect:022 -- <artifact-root>` verifies a retained multimodal
+delivery. Paths are resolved from the repository root. Each report explicitly records zero Assistant
+and responsibility invocations and may never be reported as a new live E2E success.

@@ -9,10 +9,11 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   requestJson,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
@@ -20,8 +21,8 @@ const SCENARIO = 'restart-during-generator'
 const PROJECT_ID = 'P-restart'
 const GOAL_ID = 'G-restart'
 const WORK_ID = 'W-restart'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'contract')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const firstRunner = createRestartRoleRunner(true)
@@ -144,6 +145,11 @@ try {
       2,
     )}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'restart-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-016 restart contract passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
@@ -160,6 +166,12 @@ try {
       2,
     )}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'restart-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-016 restart contract failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

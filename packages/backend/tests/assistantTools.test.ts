@@ -547,14 +547,19 @@ describe('Assistant HOPI tools', () => {
     ).rejects.toThrow('already handed off')
 
     const mainToken = fixture.tools.issue(event.attributes.id)
-    expect(await fixture.tools.execute(mainToken, 'hopi_notify_user', {})).toMatchObject({
+    expect(
+      await fixture.tools.execute(mainToken, 'hopi_notify_user', {
+        message: 'Choose a release window.',
+      }),
+    ).toMatchObject({
       changed: false,
       value: {
         requested: true,
+        message: 'Choose a release window.',
         attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
       },
     })
-    expect(fixture.tools.notificationRequested(mainToken)).toBe(true)
+    expect(fixture.tools.notificationMessage(mainToken)).toBe('Choose a release window.')
     expect((await fixture.workspace.readEvent(event.attributes.id))?.attributes).toMatchObject({
       visibility: 'internal',
       status: 'pending',
@@ -580,9 +585,9 @@ describe('Assistant HOPI tools', () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Hello.' })
 
-    await expect(fixture.tools.executeForEvent('EV-1', 'hopi_notify_user', {})).rejects.toThrow(
-      'only for an internal Reflection turn',
-    )
+    await expect(
+      fixture.tools.executeForEvent('EV-1', 'hopi_notify_user', { message: 'Hello.' }),
+    ).rejects.toThrow('only for an internal Reflection turn')
   })
 
   test('reads current control state without inlining durable history', async () => {

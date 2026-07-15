@@ -36,6 +36,7 @@ export interface ServerOptions {
   port?: number
   roleRunner?: RoleRunner
   assistantRunner?: AssistantModelRunner
+  reflectionRunner?: AssistantModelRunner
   attentionTransport?: AttentionTransport
   startCoordinator?: boolean
 }
@@ -113,6 +114,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     homeRoot,
     roleRunner: options.roleRunner,
     assistantRunner: options.assistantRunner,
+    reflectionRunner: options.reflectionRunner,
     attentionTransport:
       options.attentionTransport ??
       (process.env.HOPI_ATTENTION_WEBHOOK_URL
@@ -317,17 +319,16 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const project = requireProject(runtime.projects, requirePart(parts, 2))
           const body = await parseBody(request, goalSchema)
           const goalId = body.goalId ?? `G-${crypto.randomUUID()}`
-          const event = await receiveUserEvent(runtime, {
+          await executeDirectUserCommand(runtime, {
             content: `Create Goal ${goalId}: ${body.title}\n\n${body.objective}`,
-          })
-          await runtime.assistantTools.executeForEvent(event.attributes.id, 'hopi_create_goal', {
-            projectId: project.projectId,
-            goalId,
-            title: body.title,
-            objective: body.objective,
-            priority: body.priority,
-          })
-          await runtime.workspace.handleEvent(event.attributes.id, {
+            tool: 'hopi_create_goal',
+            input: {
+              projectId: project.projectId,
+              goalId,
+              title: body.title,
+              objective: body.objective,
+              priority: body.priority,
+            },
             reply: `Created Goal ${goalId}.`,
             disposition: 'tool:create_goal',
           })
@@ -435,16 +436,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'pause') {
           const project = requireProject(runtime.projects, goalRoute.projectId)
-          const event = await receiveUserEvent(runtime, {
+          await executeDirectUserCommand(runtime, {
             content: `Pause Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-          })
-          await runtime.assistantTools.executeForEvent(event.attributes.id, 'hopi_control_goal', {
-            projectId: project.projectId,
-            goalId: goalRoute.goalId,
-            operation: 'pause',
-          })
-          await runtime.workspace.handleEvent(event.attributes.id, {
+            tool: 'hopi_control_goal',
+            input: {
+              projectId: project.projectId,
+              goalId: goalRoute.goalId,
+              operation: 'pause',
+            },
             reply: `Paused Goal ${goalRoute.goalId}.`,
             disposition: 'tool:pause',
           })
@@ -452,16 +452,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'resume') {
           const project = requireProject(runtime.projects, goalRoute.projectId)
-          const event = await receiveUserEvent(runtime, {
+          await executeDirectUserCommand(runtime, {
             content: `Resume Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-          })
-          await runtime.assistantTools.executeForEvent(event.attributes.id, 'hopi_control_goal', {
-            projectId: project.projectId,
-            goalId: goalRoute.goalId,
-            operation: 'resume',
-          })
-          await runtime.workspace.handleEvent(event.attributes.id, {
+            tool: 'hopi_control_goal',
+            input: {
+              projectId: project.projectId,
+              goalId: goalRoute.goalId,
+              operation: 'resume',
+            },
             reply: `Resumed Goal ${goalRoute.goalId}.`,
             disposition: 'tool:resume',
           })
@@ -470,16 +469,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'cancel') {
           const project = requireProject(runtime.projects, goalRoute.projectId)
-          const event = await receiveUserEvent(runtime, {
+          await executeDirectUserCommand(runtime, {
             content: `Cancel Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-          })
-          await runtime.assistantTools.executeForEvent(event.attributes.id, 'hopi_control_goal', {
-            projectId: project.projectId,
-            goalId: goalRoute.goalId,
-            operation: 'cancel',
-          })
-          await runtime.workspace.handleEvent(event.attributes.id, {
+            tool: 'hopi_control_goal',
+            input: {
+              projectId: project.projectId,
+              goalId: goalRoute.goalId,
+              operation: 'cancel',
+            },
             reply: `Cancelled Goal ${goalRoute.goalId}.`,
             disposition: 'tool:cancel',
           })
@@ -487,16 +485,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'reopen') {
           const project = requireProject(runtime.projects, goalRoute.projectId)
-          const event = await receiveUserEvent(runtime, {
+          await executeDirectUserCommand(runtime, {
             content: `Reopen Goal ${goalRoute.goalId} and reassess its current contract.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-          })
-          await runtime.assistantTools.executeForEvent(event.attributes.id, 'hopi_control_goal', {
-            projectId: project.projectId,
-            goalId: goalRoute.goalId,
-            operation: 'reopen',
-          })
-          await runtime.workspace.handleEvent(event.attributes.id, {
+            tool: 'hopi_control_goal',
+            input: {
+              projectId: project.projectId,
+              goalId: goalRoute.goalId,
+              operation: 'reopen',
+            },
             reply: `Reopened Goal ${goalRoute.goalId}.`,
             disposition: 'tool:reopen',
           })
@@ -891,6 +888,35 @@ async function receiveUserEvent(
   const event = await runtime.workspace.receiveEvent(input)
   runtime.coordinator.interruptInternalAssistant()
   return event
+}
+
+async function executeDirectUserCommand(
+  runtime: MvpRuntime,
+  command: {
+    content: string
+    context?: Parameters<MvpRuntime['workspace']['receiveEvent']>[0]['context']
+    tool: Parameters<MvpRuntime['assistantTools']['executeForEvent']>[1]
+    input: unknown
+    reply: string
+    disposition: string
+  },
+) {
+  return runtime.coordinator.runDirectAssistantCommand(async () => {
+    const event = await receiveUserEvent(runtime, {
+      content: command.content,
+      ...(command.context ? { context: command.context } : {}),
+    })
+    const result = await runtime.assistantTools.executeForEvent(
+      event.attributes.id,
+      command.tool,
+      command.input,
+    )
+    await runtime.workspace.handleEvent(event.attributes.id, {
+      reply: command.reply,
+      disposition: command.disposition,
+    })
+    return result
+  })
 }
 
 async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: string) {

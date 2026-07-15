@@ -10,21 +10,23 @@ import {
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   checkoutSnapshot,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   inspectKanban,
   requestJson,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
+const SCENARIO = 'cancel-reopen-browser'
 const PROJECT_ID = 'P-cancel-reopen'
 const GOAL_ID = 'G-cancel-reopen'
 const INITIAL_WORK = 'W-initial'
 const DEPENDENT_WORK = 'W-dependent'
 const REOPENED_WORK = 'W-reopened'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot('cancel-reopen-browser', startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const roles = createRoles()
@@ -113,12 +115,23 @@ try {
     join(artifactRoot, 'cancel-reopen-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, cancelled, archive, reopenedBrowser, settled, attempts, runs: roles.runs }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'cancel-reopen-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-023 cancel/reopen browser passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'cancel-reopen-contract.json'),
     `${JSON.stringify({ status: 'failed', startedAt, runs: roles.runs, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'cancel-reopen-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-023 cancel/reopen browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

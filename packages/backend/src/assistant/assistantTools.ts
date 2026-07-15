@@ -54,7 +54,7 @@ export interface AssistantTools {
     onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void,
   ): string
   revoke(token: string): void
-  notificationRequested(token: string): boolean
+  notificationMessage(token: string): string | null
   acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   execute(token: string, name: AssistantToolName, input: unknown): Promise<AssistantToolResult>
   executeForEvent(
@@ -74,7 +74,7 @@ export function createAssistantTools(options: {
   now?: () => Date
 }): AssistantTools {
   type Capability =
-    | { mode: 'main'; eventId: string; expiresAt: number; notifyRequested: boolean }
+    | { mode: 'main'; eventId: string; expiresAt: number; notificationMessage: string | null }
     | {
         mode: 'reflection'
         reflectionId: string
@@ -92,7 +92,7 @@ export function createAssistantTools(options: {
         mode: 'main',
         eventId,
         expiresAt: Date.now() + 60 * 60 * 1_000,
-        notifyRequested: false,
+        notificationMessage: null,
       })
       return token
     },
@@ -113,9 +113,9 @@ export function createAssistantTools(options: {
       capabilities.delete(token)
     },
 
-    notificationRequested(token) {
+    notificationMessage(token) {
       const capability = capabilities.get(token)
-      return capability?.mode === 'main' && capability.notifyRequested
+      return capability?.mode === 'main' ? capability.notificationMessage : null
     },
 
     async acknowledgeEventAttentions(eventId, acknowledgedAt = now()) {
@@ -221,7 +221,12 @@ export function createAssistantTools(options: {
         name as MainAssistantToolName,
         input,
       )
-      if (name === 'hopi_notify_user') capability.notifyRequested = true
+      if (name === 'hopi_notify_user') {
+        capability.notificationMessage = parseAssistantToolArguments(
+          'hopi_notify_user',
+          input,
+        ).message
+      }
       return result
     },
 
@@ -638,7 +643,7 @@ export function createAssistantTools(options: {
           }
         }
         case 'hopi_notify_user': {
-          parseAssistantToolArguments(name, input)
+          const args = parseAssistantToolArguments(name, input)
           if (
             event.attributes.source !== 'reflection' ||
             event.attributes.visibility !== 'internal'
@@ -646,11 +651,12 @@ export function createAssistantTools(options: {
             throw new Error('hopi_notify_user is available only for an internal Reflection turn')
           }
           return {
-            summary: 'The complete reply will be shown to the operator after this turn finishes.',
+            summary: 'The supplied message will be shown to the operator after this turn finishes.',
             changed: false,
             value: {
               eventId,
               requested: true,
+              message: args.message,
               attentionRefs: event.attributes.context
                 ? normalizeInboxAttentionReferences(event.attributes.context)
                 : [],

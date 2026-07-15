@@ -1,7 +1,7 @@
 # HOPI E2E Test Cases
 
-Status: executable runbook and planned scenario catalog
-Last updated: 2026-07-14
+Status: executable runbook and coverage catalog
+Last updated: 2026-07-15
 
 This document is the operating entry point for running, diagnosing, and extending HOPI E2E tests.
 It assumes the reader has no prior conversation context. The Harness design and evidence boundary
@@ -100,14 +100,19 @@ non-interactively, report the environment blocker before starting an expensive r
 | `bun run check`                      | No           | No         | Type, lint, unit, integration, and deterministic contract behavior                          |
 | `bun run e2e:contract`               | No           | No         | Every catalogued deterministic scenario binding passes at its production orchestration seam |
 | `bun run e2e:preflight`              | Yes          | No         | Production UI ingress and deterministic orchestration are ready for a live run              |
+| `bun run e2e:regression`             | Yes          | No         | Every executable zero-provider case in the fixed Regression profile passed                  |
+| `bun run e2e:regression:live`        | Yes          | Yes        | Every configured-provider canary in the fixed Live profile passed                           |
 | `bun run e2e:live`                   | Yes          | Yes        | The configured production Agents completed the current live scenario                        |
 | `bun run e2e`                        | Yes          | Yes        | Preflight passed, then the live scenario passed                                             |
 | `bun run artifact:inspect -- <root>` | Yes          | No         | Retained live truth is still readable, valid, immutable, and presentable                    |
 
-Only `e2e` and `e2e:live` may be reported as a current real-Agent E2E success. Contract tests use
-deterministic implementations at existing adapter seams. Artifact inspection rereads an earlier
-real run; it does not reproduce Assistant, Reflection, Planner, Generator, Reviewer, scheduling, or
-publication behavior.
+`bun run artifact:review -- <root> --result=passed --note=<summary>` uses no new Browser interaction
+or model call. It records a testing Agent's visual conclusion as a separate Inspection Test Run.
+
+Only `e2e`, `e2e:live`, and `e2e:regression:live` may be reported as a current real-Agent E2E
+success. Contract tests use deterministic implementations at existing adapter seams. Artifact
+inspection rereads an earlier real run; it does not reproduce Assistant, Reflection, Planner,
+Generator, Reviewer, scheduling, or publication behavior.
 
 Use this applicability rule:
 
@@ -127,6 +132,26 @@ For ordinary repository verification:
 bun run check
 bun run e2e:preflight
 ```
+
+For the complete fixed zero-provider Regression:
+
+```sh
+bun run e2e:regression
+```
+
+Open its generated `evidence.html` and inspect every referenced checkpoint. Record the conclusion as
+a separate immutable Inspection Run, then start provider-consuming cases only after Browser
+evidence is acceptable:
+
+```sh
+bun run artifact:review -- "$RUN" --result=passed --note="All semantic checkpoints are visible."
+bun run e2e:regression:live
+```
+
+The Regression runner only invokes existing scenario commands and aggregates their Test Runs. It
+does not define scenario behavior, infer visual correctness, retry failures, or choose whether a
+changed product area requires Live evidence. It stops at the first failed child so a cheap defect is
+diagnosed before later provider capacity is spent.
 
 For a full real-Agent run after preflight has already passed:
 
@@ -167,9 +192,10 @@ The important files are:
 
 | Path                            | Meaning                                                                    |
 | ------------------------------- | -------------------------------------------------------------------------- |
-| `run.json`                      | Live status, phase, checkpoint, code provenance, outcome, and model usage  |
-| `browser-contract.json`         | Deterministic browser scenario result                                      |
-| `inspection.json`               | Independent retained-artifact inspection result                            |
+| `run.json`                      | Universal Test Run claim, status, provenance, usage, evidence, and children |
+| `evidence.html`                 | Regenerable visual gallery; never authority or an automatic visual pass     |
+| `browser-contract.json`         | Scenario-specific Browser detail referenced by `run.json`                   |
+| `inspection.json`               | Scenario-specific inspection detail referenced by `run.json`                |
 | `actions.jsonl`                 | External actions and semantic checkpoints in time order                    |
 | `states.jsonl`                  | Changed public state observations, not timer samples                       |
 | `invariants.jsonl`              | First observation of each invariant violation; absent or empty is expected |
@@ -190,6 +216,12 @@ test ! -s "$RUN/invariants.jsonl"
 Open every required PNG with an image-viewing tool. File existence and byte size do not prove that
 the expected state was visible. Screenshots prove presentation only; use documents, APIs, Attempt
 records, and Git state for workflow truth.
+
+Screenshot capture and visual interpretation are deliberately separate. Browser Harness writes each
+PNG at its semantic checkpoint during execution. The testing Agent normally reviews one generated
+gallery after the zero-provider Browser batch, before Live cases. A failure may be inspected
+immediately; equivalent successful evidence may be reviewed together. Do not encode that judgment as
+another workflow state.
 
 ### 6. Diagnose A Failure Without Rerunning
 
@@ -306,37 +338,68 @@ interaction with deterministic model output. `Live` means the configured product
 and responsibility processes. A scenario may use more than one layer when each layer proves a
 different risk.
 
-| ID             | Scenario                                                  | Priority | Layer                      | Status                                            |
-| -------------- | --------------------------------------------------------- | -------- | -------------------------- | ------------------------------------------------- |
-| `HOPI-E2E-001` | Global Assistant browser ingress                          | P0       | Browser                    | Implemented                                       |
-| `HOPI-E2E-002` | Single-Repo autonomous repair and delivery                | P0       | Live                       | Implemented                                       |
-| `HOPI-E2E-003` | Immutable artifact inspection                             | P0       | Inspection                 | Implemented                                       |
-| `HOPI-E2E-010` | Conversation and page-context boundary                    | P0       | Live Assistant             | Implemented                                       |
-| `HOPI-E2E-011` | Multiple user instructions while Goals run                | P0       | Contract/runtime           | Partial; two-Project FIFO runner executed         |
-| `HOPI-E2E-012` | Design revision during active delivery                    | P0       | Contract/runtime           | Partial; active-delivery revision runner executed |
-| `HOPI-E2E-013` | Blocking question, notification, answer, and continuation | P0       | Live                       | Implemented; full Live path passed                 |
-| `HOPI-E2E-014` | Operational failure, bounded recovery, and retry          | P0       | Contract and Browser       | Implemented; full Browser recovery path passed     |
-| `HOPI-E2E-015` | Pause and Resume during an active Run                     | P0       | Browser and Contract       | Partial; browser interrupt/recovery runner added  |
-| `HOPI-E2E-016` | Process restart during Agent execution                    | P0       | Contract and Live          | Partial; deterministic restart runner implemented |
-| `HOPI-E2E-017` | Multi-Repo full-stack delivery                            | P0       | Contract and Live          | Planned; contract regression available            |
-| `HOPI-E2E-018` | Multi-Repo conflict and post-C1 projection recovery       | P0       | Contract and Browser       | Planned; contract regression available            |
-| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live                       | Planned; contract regression available            |
-| `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Contract/runtime           | Partial; rebind persistence runner implemented    |
-| `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Contract and Live          | Planned; contract regression available            |
-| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Planned; contract regression available            |
-| `HOPI-E2E-023` | Cancel, archive, and Reopen                               | P1       | Browser and Contract       | Partial; browser lifecycle runner implemented     |
-| `HOPI-E2E-024` | Vendor, model, and session compatibility matrix           | P1       | Contract and rotating Live | Planned; contract regression available            |
-| `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Implemented                                       |
-| `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Implemented                                       |
-| `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Planned; contract regression available            |
-| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Implemented; Browser and Codex Live passed          |
-| `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Browser passed                                       |
+`Partial` means a dedicated Run proves some but not every independently useful reality boundary.
+`Planned` means acceptance is designed but the missing boundary has no accepted Run yet. These are
+test-coverage states, not product implementation states. A case does not require its own runner when
+other retained Runs jointly prove the exact risk; the catalog may close it by citing that composition.
+
+### 2026-07-15 Completion Audit
+
+OpenCode execution is excluded by operator decision. The remaining gaps are reduced by independent
+risk rather than mechanically adding one Live runner per row:
+
+| ID | Decision | Required new execution |
+| --- | -------- | ---------------------- |
+| `011` | Keep | Real Assistant plus responsibilities must accept FIFO cross-Project instructions while one Goal runs. |
+| `012` | Compose | Existing active-revision Run proves stale-result safety; existing Live delivery proves model design and planning. No duplicate canary. |
+| `015` | Compose | Browser lifecycle Run plus real process-group contract proves Pause/Resume; model wording cannot affect the guard. |
+| `016` | Keep | Kill and replace an independently launched Coordinator while a real responsibility process is active. |
+| `017` | Keep | Real Planner must choose a multi-Repo workspace and deliver one compatible cross-Repo release. |
+| `018` | Compose | Real multi-Repo Git contracts prove every C1 boundary; Project Attention Browser Runs already prove unavailable/recovery presentation. |
+| `019` | Compose | Real Reflection handoff Runs prove vendor behavior; deterministic reconciliation proves priority, preemption, and stale-handoff rejection exactly. |
+| `020` | Keep Browser | Visible multi-Repo linking, settings, and rebind persistence remain unproved; vendor command construction is already Contract evidence. |
+| `021` | Keep Browser | Preview readiness, stop, invalidation, and repair prompt need visible product proof; ordinary Agent repair needs no duplicate delivery canary. |
+| `022` | Keep | A real multimodal Assistant and responsibility chain must preserve one relevant image through delivery. |
+| `023` | Compose | Browser lifecycle and Assistant-tool contracts prove Cancel/Reopen; a model merely choosing the same validated tool adds no independent safety proof. |
+| `024` | Rotate | Re-run one small Codex and Claude session canary; do not multiply full delivery by vendor. OpenCode remains skipped. |
+| `027` | Fold into `017` | The multi-Repo Live fixture starts without root `AGENTS.md` or `scripts/hopi/prepare`, proving silent bootstrap in the same Run. |
+
+Only `011`, `016`, `017/027`, `020`, `021`, and `022` need new runners. `024` reuses the existing
+session-recovery runner. This is the minimum set that adds a previously unproved execution boundary.
+
+| ID             | Scenario                                                  | Priority | Layer                      | Status                                                           |
+| -------------- | --------------------------------------------------------- | -------- | -------------------------- | ---------------------------------------------------------------- |
+| `HOPI-E2E-001` | Global Assistant browser ingress                          | P0       | Browser                    | Covered                                                          |
+| `HOPI-E2E-002` | Single-Repo autonomous repair and delivery                | P0       | Live                       | Covered                                                          |
+| `HOPI-E2E-003` | Immutable artifact inspection                             | P0       | Inspection                 | Covered                                                          |
+| `HOPI-E2E-010` | Conversation and page-context boundary                    | P0       | Live Assistant             | Covered                                                          |
+| `HOPI-E2E-011` | Multiple user instructions while Goals run                | P0       | Contract and Live          | Covered; real chain completed and terminal artifact inspected    |
+| `HOPI-E2E-012` | Design revision during active delivery                    | P0       | Contract/runtime           | Covered by revision race plus real delivery evidence             |
+| `HOPI-E2E-013` | Blocking question, notification, answer, and continuation | P0       | Live                       | Covered                                                          |
+| `HOPI-E2E-014` | Operational failure, bounded recovery, and retry          | P0       | Contract and Browser       | Covered                                                          |
+| `HOPI-E2E-015` | Pause and Resume during an active Run                     | P0       | Browser and Contract       | Covered by lifecycle UI plus process-group contracts             |
+| `HOPI-E2E-016` | Process restart during Agent execution                    | P0       | Contract and Live          | Covered; real child process killed and recovered                 |
+| `HOPI-E2E-017` | Multi-Repo full-stack delivery                            | P0       | Contract and Live          | Covered                                                          |
+| `HOPI-E2E-018` | Multi-Repo conflict and post-C1 projection recovery       | P0       | Contract and Browser       | Covered by multi-Repo C1 and Project Attention evidence          |
+| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered by real handoff plus deterministic priority races        |
+| `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered                                                          |
+| `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
+| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Covered; real chain completed and terminal artifact inspected    |
+| `HOPI-E2E-023` | Cancel, archive, and Reopen                               | P1       | Browser and Contract       | Covered; model choice adds no boundary beyond the validated tool |
+| `HOPI-E2E-024` | Vendor, model, and session compatibility matrix           | P1       | Contract and rotating Live | Covered for Codex and Claude; OpenCode intentionally skipped     |
+| `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Covered                                                          |
+| `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Covered                                                          |
+| `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
+| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
+| `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
 support the scenario designs but are not themselves implementations of the catalogued Browser or Live
-scenarios. The current `e2e:live` command runs `HOPI-E2E-002` only, so every row marked Planned still
-requires its own executable scenario before it can be reported as covered.
+scenarios. Dedicated commands exist for the independent Browser and Live boundaries selected by the
+completion audit; composed rows deliberately reuse the listed evidence instead of adding a model
+call whose output cannot affect the asserted boundary. There are no remaining `Planned` or `Partial`
+rows. OpenCode is the only intentional execution exclusion.
 
 | ID             | Deterministic scenario binding                                             |
 | -------------- | -------------------------------------------------------------------------- |
@@ -640,13 +703,13 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`.
 
-Current partial implementation: `packages/backend/tests/e2e/pauseResume.browser.ts`
+Current implementation: `packages/backend/tests/e2e/pauseResume.browser.ts`
 (`bun run e2e:browser:015`) uses a production Server, real Browser Harness clicks, managed Git, and
 a deterministic interruptable RoleRunner. It clicks Pause during an active Generator, verifies the
 durable guard and interrupted Attempt without another dispatch, waits until the visible Work
 projection no longer claims that the interrupted Run is working, then clicks Resume and retains the
-terminal Kanban. The fresh Generator/Reviewer/C1 path must reach `done`. The required real
-role-process canary remains a separate Live layer.
+terminal Kanban. The fresh Generator/Reviewer/C1 path must reach `done`; real process interruption
+and replacement are proven by `016` rather than repeating that boundary here.
 
 ### HOPI-E2E-016: Process Restart During Agent Execution
 
@@ -676,12 +739,13 @@ Pass conditions:
 
 Primary invariants: `INV-02`, `INV-05`, `INV-06`, `INV-09`, `INV-10`, `INV-14`.
 
-Current partial implementation: `packages/backend/tests/e2e/restartDuringGenerator.e2e.ts`
-(`bun run e2e:restart:016`) starts a production Coordinator with a real Git fixture, waits for an
-active Generator Attempt after a source delta, shuts it down, starts a replacement Coordinator on the
-same Home, and asserts the durable interruption, a new accepted Generator/Reviewer path, and exactly
-one C1. It uses a deterministic RoleRunner; the required real model process launched as a replaceable
-OS child remains a separate missing Live layer.
+The zero-model contract remains in
+`packages/backend/tests/e2e/restartDuringGenerator.e2e.ts` (`bun run e2e:restart:016`). The Live
+runner launches the production Coordinator and real responsibility processes inside a replaceable
+host process boundary, waits for a Generator source delta, kills that boundary without product
+shutdown, and starts a replacement against the same Home. The boundary must kill detached Agent
+descendants without deleting durable files; on Linux the adapter uses a user/PID namespace. A host
+without an equivalent supervisor cannot claim this Live case.
 
 ### HOPI-E2E-017: Multi-Repo Full-Stack Delivery
 
@@ -795,11 +859,13 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-05`, `INV-14`.
 
-Current partial implementation: `packages/backend/tests/e2e/configurationRebind.e2e.ts`
+Current implementation: `packages/backend/tests/e2e/configurationRebind.e2e.ts`
 (`bun run e2e:config:020`) creates two Git Repos, configures distinct Home Assistant and Project
 coding defaults, rebinds one secondary Repo to a real checkout of the same Git common directory, and
-verifies all links/settings survive Coordinator restart. Browser form submission and an external
-adapter-command capture remain separate missing layers.
+drives the visible link, settings, and rebind controls through Browser Harness. It verifies the
+configuration survives browser reload and Coordinator restart. Adapter-command construction is
+covered by the vendor/configuration Contract tests because repeating the same choice through a model
+would not add another execution boundary.
 
 ### HOPI-E2E-021: Preview Creation, Readiness, Invalidation, And Repair
 
@@ -883,12 +949,13 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-10`.
 
-Current partial implementation: `packages/backend/tests/e2e/cancelReopen.browser.ts`
+Current implementation: `packages/backend/tests/e2e/cancelReopen.browser.ts`
 (`bun run e2e:browser:023`) uses the production Goal control API, production Coordinator, real
 Browser Harness, and managed Git. It cancels an active Work plus its dependent, verifies the retained
 browser archive, reopens into contract revision two, completes only newly planned Work, and retains a
 second terminal Kanban capture proving that the reopened Work completed without erasing the archive.
-The required real Assistant control canary remains a separate Live layer.
+Assistant tool selection is covered by the shared control contracts; adding a model call that can
+only select the same validated operation would not add another safety boundary.
 
 ### HOPI-E2E-024: Vendor, Model, And Session Compatibility Matrix
 
@@ -1070,9 +1137,9 @@ Implement scenarios in this order unless a production incident changes the risk:
 8. Rotate `HOPI-E2E-024` vendors rather than multiplying every expensive delivery scenario by three.
 9. Add `HOPI-E2E-027` when extending the Project adapter beyond the current fixture.
 
-Do not add one command that runs every live case on each edit. Keep `e2e:preflight` cheap, retain
-`HOPI-E2E-002` as the blank-to-completion smoke, and run other live cases by stable individual script
-until measured cost justifies a release or scheduled suite.
+Do not run `e2e:regression:live` on each edit. Keep `e2e:preflight` cheap, retain `HOPI-E2E-002` as
+the blank-to-completion smoke, and use the explicit Live Regression only for a release, scheduled
+suite, or a change whose execution boundary requires its configured-provider canaries.
 
 ## New Scenario Checklist
 

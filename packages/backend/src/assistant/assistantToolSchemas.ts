@@ -137,7 +137,7 @@ export const assistantToolSchemas = {
       failure: z.string().optional(),
     })
     .strict(),
-  hopi_notify_user: z.object({}).strict(),
+  hopi_notify_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
   hopi_handoff_to_main: z
     .object({
       brief: z.string().trim().min(1).max(12_000),

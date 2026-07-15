@@ -4,18 +4,19 @@ import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistan
 import { createServer } from '../../src/mvpServer'
 import {
   captureAssistantReply,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   requestJson,
   sendAssistantMessage,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
 const SCENARIO = 'global-assistant-browser'
 const CONTENT = '浏览器契约：发送一条全局 Assistant 消息。'
 const REPLY = '浏览器契约回复。'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const modes: string[] = []
 const runner: AssistantModelRunner = {
@@ -58,12 +59,23 @@ try {
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, event, modes, browser, replyBrowser }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot },
+    resultFile: 'browser-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`Browser contract passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify({ status: 'failed', startedAt, error: errorMessage(error), modes }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot },
+    resultFile: 'browser-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`Browser contract failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

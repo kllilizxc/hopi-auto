@@ -81,6 +81,7 @@ export interface CreateMvpRuntimeOptions {
   homeRoot: string
   roleRunner?: RoleRunner
   assistantRunner?: AssistantModelRunner
+  reflectionRunner?: AssistantModelRunner
   assistantToolUrl?: () => string
   attentionTransport?: AttentionTransport
   start?: boolean
@@ -221,7 +222,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     workspace,
     state: assistantState,
     tools: assistantTools,
-    runner: assistantRunner,
+    runner: options.reflectionRunner ?? assistantRunner,
     resolveToolUrl:
       options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
     onWake: () => wakeCoordinator(),

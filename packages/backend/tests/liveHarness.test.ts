@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renderInboxEventDocument } from '../src/domain/assistantWorkspaceDocuments'
+import { DEFAULT_PROJECT_CODING_DEFAULTS } from '../src/domain/projectCodingDefaults'
 import {
+  type LiveHarness,
+  finishLiveHarness,
   gitOutput,
   readCodeProvenance,
   readGitSemanticState,
@@ -11,7 +14,9 @@ import {
   readPendingInboxEvents,
   resolveBrowserAuditMode,
   semanticDirectoryDigest,
+  shutdownLiveHarness,
 } from './live/liveHarness'
+import { readTestRun, writeTestRunReport } from './testRunArtifact'
 
 test('browser audit degradation is explicit and never fabricates verification', () => {
   expect(resolveBrowserAuditMode({ valid: true }, false)).toBe('verified')
@@ -122,6 +127,61 @@ test('code provenance includes dirty and untracked worktree content', async () =
     expect(gitAfter.status).toBe('?? untracked.txt')
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Live Test Run stops its server before sealing terminal evidence', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'hopi-live-terminal-'))
+  const homeRoot = join(artifactRoot, 'home')
+  const repoRoot = join(artifactRoot, 'repo')
+  let shutdowns = 0
+  const harness: LiveHarness = {
+    scenario: 'terminal-shutdown-order',
+    claim: 'live',
+    artifactRoot,
+    homeRoot,
+    repoRoot,
+    baseUrl: 'http://127.0.0.1:0',
+    codingDefaults: DEFAULT_PROJECT_CODING_DEFAULTS,
+    modelBoundaries: { reflection: 'real' },
+    code: {
+      head: 'a'.repeat(40),
+      branch: 'main',
+      dirty: false,
+      status: [],
+      worktreeDigest: 'b'.repeat(64),
+    },
+    currentPhase: 'verification',
+    lastCheckpoint: 'complete',
+    startedAt: '2026-07-14T00:00:00.000Z',
+    server: {
+      shutdown: async () => {
+        shutdowns += 1
+      },
+    } as unknown as LiveHarness['server'],
+    stopped: false,
+  }
+
+  try {
+    await Promise.all([mkdir(homeRoot, { recursive: true }), mkdir(repoRoot, { recursive: true })])
+    await writeTestRunReport(harness, 'running')
+    await finishLiveHarness(harness, 'passed')
+    const actionsBeforeSecondShutdown = await Bun.file(join(artifactRoot, 'actions.jsonl')).text()
+
+    await shutdownLiveHarness(harness)
+
+    expect(shutdowns).toBe(1)
+    expect(await Bun.file(join(artifactRoot, 'actions.jsonl')).text()).toBe(
+      actionsBeforeSecondShutdown,
+    )
+    expect(actionsBeforeSecondShutdown).toContain('"action":"server_stopped"')
+    const report = await readTestRun(artifactRoot)
+    const retainedActions = report.evidence.find((evidence) => evidence.path === 'actions.jsonl')
+    const hasher = new Bun.CryptoHasher('sha256')
+    hasher.update(await Bun.file(join(artifactRoot, 'actions.jsonl')).arrayBuffer())
+    expect(retainedActions?.sha256).toBe(hasher.digest('hex'))
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
   }
 })
 

@@ -660,12 +660,14 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
-  test('publishes the complete Reflection reply before acknowledging linked Attention', async () => {
+  test('publishes only the explicit notification before acknowledging linked Attention', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        await tools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'Choose the release window: today or tomorrow?',
+        })
         return {
-          reply: 'Choose the release window: today or tomorrow?',
+          reply: 'Internal diagnostic narration must remain hidden.',
           session: codexSession('thread-notify'),
         }
       },
@@ -698,7 +700,9 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         if (input.eventId === 'EV-notify') {
-          await tools.execute(input.toolToken, 'hopi_notify_user', {})
+          await tools.execute(input.toolToken, 'hopi_notify_user', {
+            message: 'Which release window should I use: today or tomorrow?',
+          })
           return {
             reply: 'Which release window should I use: today or tomorrow?',
             session: codexSession('thread-attention'),
@@ -762,7 +766,9 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        await tools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'Choose the release window.',
+        })
         throw new Error('reply generation failed')
       },
     }))
@@ -793,7 +799,9 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {})
+        await tools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'Choose the release window.',
+        })
         return {
           reply: 'Choose the release window.',
           session: codexSession('thread-retry-ack'),

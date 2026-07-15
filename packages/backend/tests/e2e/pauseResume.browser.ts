@@ -11,19 +11,21 @@ import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   checkoutSnapshot,
   clickGoalControl,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   inspectKanban,
   requestJson,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
+const SCENARIO = 'pause-resume-browser'
 const PROJECT_ID = 'P-pause-resume'
 const GOAL_ID = 'G-pause-resume'
 const WORK_ID = 'W-pause-resume'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot('pause-resume-browser', startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const roles = createRoles()
@@ -108,12 +110,23 @@ try {
     join(artifactRoot, 'pause-resume-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, pauseBrowser, resumeBrowser, terminalBrowser, paused, settled, attempts, runs: roles.runs }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'pause-resume-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-015 pause/resume browser passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'pause-resume-contract.json'),
     `${JSON.stringify({ status: 'failed', startedAt, runs: roles.runs, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'pause-resume-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-015 pause/resume browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

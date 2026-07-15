@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, rm } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
@@ -13,14 +13,14 @@ import { createGoalPackageStore } from '../../src/storage/goalPackageStore'
 import {
   captureAssistantReply,
   checkoutSnapshot,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   inspectKanban,
-  readCodeProvenance,
   recordAction,
   requestJson,
   sendAssistantMessage,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
@@ -30,11 +30,10 @@ const GOAL_ID = 'G-project-attention'
 const WORK_ID = 'W-after-project-recovery'
 const USER_MESSAGE = '我已经检查过项目环境，请解除 Project blocker 并继续。'
 const ASSISTANT_REPLY = 'Project Attention 已解除，Coordinator 已恢复执行。'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
-const code = await readCodeProvenance(resolve(import.meta.dir, '..', '..', '..', '..'))
 const roleRuns: Array<{ runId: string; responsibility: string; status: string }> = []
 const assistantToolResults: Array<{ attentionId: string; changed: boolean }> = []
 let attentionToResolve = ''
@@ -96,7 +95,6 @@ let initial: GoalView | null = null
 let resumed: GoalView | null = null
 let reblocked: GoalView | null = null
 
-await writeRunReport('running')
 try {
   await initializeRepo(repoRoot)
   const checkoutBefore = await checkoutSnapshot(repoRoot)
@@ -200,7 +198,12 @@ try {
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify(evidence, null, 2)}\n`,
   )
-  await writeRunReport('passed', evidence)
+  await finishTestRun(testRun, 'passed', {
+    ...evidence,
+    resultFile: 'browser-contract.json',
+    paths: { home: homeRoot, repo: repoRoot },
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-028 Browser passed: ${artifactRoot}`)
 } catch (error) {
   const evidence = {
@@ -217,7 +220,12 @@ try {
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify(evidence, null, 2)}\n`,
   )
-  await writeRunReport('failed', evidence)
+  await finishTestRun(testRun, 'failed', {
+    ...evidence,
+    resultFile: 'browser-contract.json',
+    paths: { home: homeRoot, repo: repoRoot },
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-028 Browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
@@ -331,30 +339,6 @@ async function initializeRepo(root: string) {
   await gitOutput(root, ['config', 'user.name', 'HOPI E2E'])
   await gitOutput(root, ['add', '.'])
   await gitOutput(root, ['commit', '-m', 'initial Project Attention fixture'])
-}
-
-async function writeRunReport(
-  status: 'running' | 'passed' | 'failed',
-  details: Record<string, unknown> = {},
-) {
-  await Bun.write(
-    join(artifactRoot, 'run.json'),
-    `${JSON.stringify(
-      {
-        version: 1,
-        scenario: SCENARIO,
-        status,
-        startedAt,
-        endedAt: status === 'running' ? null : new Date().toISOString(),
-        code,
-        paths: { home: homeRoot, repo: repoRoot },
-        modelUsage: { providerRuns: 0, inputTokens: 0, outputTokens: 0 },
-        ...details,
-      },
-      null,
-      2,
-    )}\n`,
-  )
 }
 
 interface GoalView {

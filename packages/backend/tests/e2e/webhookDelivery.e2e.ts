@@ -5,11 +5,11 @@ import { PublicationCoordinator } from '../../src/publication/publisher'
 import { createWebhookAttentionTransport } from '../../src/runtime/attentionDelivery'
 import { createAssistantHomeStore } from '../../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../../src/storage/assistantWorkspaceStore'
-import { createHarnessArtifactRoot, errorMessage, waitForValue } from '../live/liveHarness'
+import { errorMessage, finishTestRun, startTestRun, waitForValue } from '../live/liveHarness'
 
 const SCENARIO = 'webhook-delivery-retry'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'contract')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const home = createAssistantHomeStore(homeRoot)
 const homeDocument = await home.initialize()
@@ -80,12 +80,23 @@ try {
       2,
     )}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot },
+    resultFile: 'webhook-e2e.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-025 webhook E2E passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'webhook-e2e.json'),
     `${JSON.stringify({ status: 'failed', startedAt, requests, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot },
+    resultFile: 'webhook-e2e.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-025 webhook E2E failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

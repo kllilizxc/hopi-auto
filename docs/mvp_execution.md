@@ -137,6 +137,12 @@ Assistant home and project Git are not one atomic store. HOPI uses a simple idem
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
+Known product controls use the same sequence without a model call. Coordinator temporarily excludes
+their newly admitted pending receipt from speaking dispatch until the request publishes its handled
+acknowledgement. The exclusion is process-local and covers the whole receive/effect/acknowledge
+sequence; it adds no canonical status. A failure or process replacement releases the exclusion, so
+the still-pending receipt follows the ordinary Assistant recovery path instead of being lost.
+
 The tool target owns destination choice for that call; the qualified Goal Input path and digest are
 the project-effects receipt. One turn may create receipts in multiple Goals. Goal-local Attention
 resolution may follow as the final unblocking gate. None of these is a generic operation receipt or
@@ -874,8 +880,9 @@ you**. Both are projections of the same Attention document, not additional state
 handled through Reflection and the speaking Assistant rather than exposed directly inside
 conversation and Goal views. Targetless completion Attention appears in the normal update feed.
 An eligible Reflection handoff binds exact canonical Goal-local or workspace Attention references
-in ordinary Inbox context, and `notify_user` records Run-local intent only. After the model returns,
-Coordinator first publishes the complete public Inbox reply and only then acknowledges every
+in ordinary Inbox context, and `notify_user` records one Run-local operator-facing message. Other
+internal model text remains diagnostic only. After the model returns, Coordinator first publishes
+that message as the complete public Inbox reply and only then acknowledges every
 still-current linked Attention. Targeted Attention remains open. Completion resolves in its
 acknowledgement publication. A crash between roots leaves a complete public reply and an
 unacknowledged Attention; ordinary Inbox recovery finishes the acknowledgement. HOPI never records

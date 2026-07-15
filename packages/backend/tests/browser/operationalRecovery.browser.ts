@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   ConfiguredRoleRunner,
   type RoleRunInput,
@@ -18,14 +18,14 @@ import {
   captureAssistantReply,
   captureCompletionUpdate,
   checkoutSnapshot,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   inspectKanban,
-  readCodeProvenance,
   recordAction,
   requestJson,
   sendAssistantMessage,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
@@ -36,13 +36,12 @@ const WORK_ID = 'W-operational-recovery'
 const USER_REPLY = '外部执行条件已经修复，请继续当前任务。'
 const ASSISTANT_REPLY = '修复信息已记录，任务已恢复执行。'
 const COMPLETION_REPLY = '任务已完成，外部执行失败已恢复。'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const failureExecutable = join(artifactRoot, 'operational-failure.ts')
 const repairFlag = join(artifactRoot, 'external-condition-repaired')
-const code = await readCodeProvenance(resolve(import.meta.dir, '..', '..', '..', '..'))
 const roleRuns: RoleRunRecord[] = []
 const assistantRuns: AssistantRunRecord[] = []
 const successfulRoles = createSuccessfulRoles()
@@ -81,13 +80,11 @@ const assistantRunner: AssistantModelRunner = {
     const mode = input.toolMode ?? 'main'
     assistantRuns.push({ eventId: input.eventId, mode, action: 'reply' })
     if (mode === 'internal') {
-      await callAssistantTool(input, observer, 'hopi_notify_user', {})
-      return assistantResult(
-        (await Bun.file(repairFlag).exists())
-          ? COMPLETION_REPLY
-          : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。',
-        mode,
-      )
+      const message = (await Bun.file(repairFlag).exists())
+        ? COMPLETION_REPLY
+        : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。'
+      await callAssistantTool(input, observer, 'hopi_notify_user', { message })
+      return assistantResult(message, mode)
     }
     if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
       const attentionId = attentionToResolve
@@ -110,7 +107,6 @@ const context = { scenario: SCENARIO, artifactRoot, baseUrl: '' }
 let blocked: GoalView | null = null
 let settled: GoalView | null = null
 
-await writeRunReport('running')
 try {
   await initializeFixture(repoRoot, failureExecutable)
   const checkoutBefore = await checkoutSnapshot(repoRoot)
@@ -243,7 +239,12 @@ try {
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify(evidence, null, 2)}\n`,
   )
-  await writeRunReport('passed', evidence)
+  await finishTestRun(testRun, 'passed', {
+    ...evidence,
+    resultFile: 'browser-contract.json',
+    paths: { home: homeRoot, repo: repoRoot },
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-014 Browser passed: ${artifactRoot}`)
 } catch (error) {
   const evidence = {
@@ -260,7 +261,12 @@ try {
     join(artifactRoot, 'browser-contract.json'),
     `${JSON.stringify(evidence, null, 2)}\n`,
   )
-  await writeRunReport('failed', evidence)
+  await finishTestRun(testRun, 'failed', {
+    ...evidence,
+    resultFile: 'browser-contract.json',
+    paths: { home: homeRoot, repo: repoRoot },
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-014 Browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
@@ -497,30 +503,6 @@ async function initializeFixture(root: string, executable: string) {
   await gitOutput(root, ['config', 'user.name', 'HOPI E2E'])
   await gitOutput(root, ['add', '.'])
   await gitOutput(root, ['commit', '-m', 'initial operational recovery fixture'])
-}
-
-async function writeRunReport(
-  status: 'running' | 'passed' | 'failed',
-  details: Record<string, unknown> = {},
-) {
-  await Bun.write(
-    join(artifactRoot, 'run.json'),
-    `${JSON.stringify(
-      {
-        version: 1,
-        scenario: SCENARIO,
-        status,
-        startedAt,
-        endedAt: status === 'running' ? null : new Date().toISOString(),
-        code,
-        paths: { home: homeRoot, repo: repoRoot },
-        modelUsage: { providerRuns: 0, inputTokens: 0, outputTokens: 0 },
-        ...details,
-      },
-      null,
-      2,
-    )}\n`,
-  )
 }
 
 interface RoleRunRecord {

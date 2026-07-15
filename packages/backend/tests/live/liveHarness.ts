@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
+import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { parseInboxEventDocument } from '../../src/domain/assistantWorkspaceDocuments'
 import {
   type ProjectCodingDefaults,
@@ -8,6 +9,12 @@ import {
   normalizeProjectCodingDefaults,
 } from '../../src/domain/projectCodingDefaults'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import {
+  type TestRunClaim,
+  type TestRunCodeProvenance,
+  type TestRunContext,
+  writeTestRunReport,
+} from '../testRunArtifact'
 
 export interface LiveState {
   home: { homeId: string; assistantCodingDefaults: ProjectCodingDefaults }
@@ -51,25 +58,22 @@ export interface LiveGoalDetail {
 
 export interface LiveHarness {
   scenario: string
+  claim: 'live'
   artifactRoot: string
   homeRoot: string
   repoRoot: string
   baseUrl: string
   codingDefaults: ProjectCodingDefaults
+  modelBoundaries: { reflection: 'real' | 'deterministic' }
   code: CodeProvenance
   currentPhase: string
   lastCheckpoint: string | null
   startedAt: string
   server: MvpServer
+  stopped: boolean
 }
 
-export interface CodeProvenance {
-  head: string
-  branch: string
-  dirty: boolean
-  status: string[]
-  worktreeDigest: string
-}
+export type CodeProvenance = TestRunCodeProvenance
 
 export interface GitSemanticState {
   head: string
@@ -96,6 +100,8 @@ interface ScreenshotTarget {
   relativePath: string
 }
 
+const initializedBrowserRuns = new WeakSet<BrowserHarnessContext>()
+
 export interface BrowserAuditVerification {
   available?: boolean
   valid?: boolean
@@ -110,32 +116,48 @@ export interface StateRecorder {
   stop(): Promise<void>
 }
 
-export async function startLiveHarness(scenario: string): Promise<LiveHarness> {
-  const startedAt = new Date().toISOString()
-  const artifactRoot = await createHarnessArtifactRoot(scenario, startedAt)
+export async function startLiveHarness(
+  scenario: string,
+  options: { deterministicReflection?: boolean } = {},
+): Promise<LiveHarness> {
+  const run = await startTestRun(scenario, 'live')
+  const { artifactRoot, startedAt } = run
   const homeRoot = join(artifactRoot, 'home')
   const repoRoot = join(artifactRoot, 'repo')
   const codingDefaults = liveCodingDefaults()
-  const code = await readCodeProvenance(resolve(import.meta.dir, '..', '..', '..', '..'))
+  const modelBoundaries = {
+    reflection: options.deterministicReflection ? 'deterministic' : 'real',
+  } as const
+  const code = run.code
   await ensureDefaultAgentAdapterConfig(homeRoot, codingDefaults)
-  const server = createServer({ rootDir: homeRoot, port: 0 })
+  const server = createServer({
+    rootDir: homeRoot,
+    port: 0,
+    ...(options.deterministicReflection
+      ? { reflectionRunner: createDeterministicReflectionRunner(codingDefaults.transport) }
+      : {}),
+  })
   const harness: LiveHarness = {
     scenario,
+    claim: 'live',
     artifactRoot,
     homeRoot,
     repoRoot,
     baseUrl: `http://127.0.0.1:${server.port}`,
     codingDefaults,
+    modelBoundaries,
     code,
     currentPhase: 'startup',
     lastCheckpoint: null,
     startedAt,
     server,
+    stopped: false,
   }
   await writeRunReport(harness, 'running')
   await recordAction(harness, 'server_started', {
     baseUrl: harness.baseUrl,
     codingDefaults,
+    modelBoundaries,
   })
   return harness
 }
@@ -160,11 +182,34 @@ export async function createHarnessArtifactRoot(scenario: string, startedAt: str
   return artifactRoot
 }
 
+export async function startTestRun(scenario: string, claim: TestRunClaim): Promise<TestRunContext> {
+  const startedAt = new Date().toISOString()
+  const artifactRoot = await createHarnessArtifactRoot(scenario, startedAt)
+  const context: TestRunContext = {
+    scenario,
+    claim,
+    artifactRoot,
+    startedAt,
+    code: await readCodeProvenance(resolve(import.meta.dir, '..', '..', '..', '..')),
+  }
+  await writeTestRunReport(context, 'running')
+  return context
+}
+
+export async function finishTestRun(
+  context: TestRunContext,
+  status: 'passed' | 'failed' | 'blocked',
+  details: Record<string, unknown> = {},
+) {
+  return writeTestRunReport(context, status, details)
+}
+
 export async function finishLiveHarness(
   harness: LiveHarness,
   status: 'passed' | 'failed',
   details: Record<string, unknown> = {},
 ) {
+  await stopLiveServer(harness)
   const usage = await readModelUsage(harness.homeRoot)
   await writeRunReport(harness, status, {
     ...details,
@@ -176,7 +221,13 @@ export async function finishLiveHarness(
 }
 
 export async function shutdownLiveHarness(harness: LiveHarness) {
+  await stopLiveServer(harness)
+}
+
+async function stopLiveServer(harness: LiveHarness) {
+  if (harness.stopped) return
   await harness.server.shutdown()
+  harness.stopped = true
   await recordAction(harness, 'server_stopped')
 }
 
@@ -290,19 +341,73 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
   }
 }
 
+export async function waitForGoalQuiescence(
+  harness: Pick<LiveHarness, 'baseUrl' | 'homeRoot'>,
+  projectId: string,
+  goalId: string,
+  options: { timeoutMs?: number; stableMs?: number } = {},
+) {
+  let stableSince = 0
+  let previous = ''
+  return waitForValue(
+    async () => {
+      const [state, reflections, pendingInbox] = await Promise.all([
+        requestJson<LiveState>(harness.baseUrl, '/api/state'),
+        requestJson<{
+          items: Array<{ manifest: { reflectionId: string; status: string } }>
+        }>(harness.baseUrl, '/api/debug/reflections?limit=100'),
+        readPendingInboxEvents(harness.homeRoot),
+      ])
+      const goal = state.projects
+        .find((project) => project.projectId === projectId)
+        ?.goals.find((candidate) => candidate.id === goalId)
+      const signature = JSON.stringify({ state, reflections: reflections.items, pendingInbox })
+      const quiet =
+        goal?.lifecycle === 'done' &&
+        state.activeRuns.length === 0 &&
+        reflections.items.every((item) => item.manifest.status !== 'running') &&
+        pendingInbox.length === 0
+      if (!quiet || signature !== previous) {
+        previous = signature
+        stableSince = quiet ? Date.now() : 0
+      }
+      return { quiet, stableFor: stableSince ? Date.now() - stableSince : 0 }
+    },
+    (value) => value.quiet && value.stableFor >= (options.stableMs ?? 3_000),
+    {
+      timeoutMs: options.timeoutMs ?? 5 * 60_000,
+      description: `Goal ${projectId}/${goalId} and post-completion Reflection to settle`,
+    },
+  )
+}
+
 export async function sendAssistantMessage(
   harness: BrowserHarnessContext,
   content: string,
-  options: { evidencePrefix?: string; pagePath?: string } = {},
+  options: { evidencePrefix?: string; pagePath?: string; imagePaths?: string[] } = {},
 ) {
   const url = `${harness.baseUrl}${options.pagePath ?? '/projects'}`
   const contentExpression = browserUtf8Expression(content)
   const prefix = options.evidencePrefix ? `${safeSegment(options.evidencePrefix)}-` : ''
-  const screenshots = {
+  const screenshots: {
+    pageLoaded: ScreenshotTarget
+    assistantOpen: ScreenshotTarget
+    composerFilled: ScreenshotTarget
+    messageSubmitted: ScreenshotTarget
+    imagesAttached?: ScreenshotTarget
+  } = {
     pageLoaded: await screenshotTarget(harness, `${prefix}01-projects-loaded.png`),
     assistantOpen: await screenshotTarget(harness, `${prefix}02-assistant-open.png`),
     composerFilled: await screenshotTarget(harness, `${prefix}03-composer-filled.png`),
     messageSubmitted: await screenshotTarget(harness, `${prefix}04-message-submitted.png`),
+  }
+  const imagePaths = options.imagePaths ?? []
+  for (const path of imagePaths) {
+    if (!(await Bun.file(path).exists())) throw new Error(`Assistant image does not exist: ${path}`)
+  }
+  const browserImagePaths = await Promise.all(imagePaths.map(browserWritablePath))
+  if (imagePaths.length > 0) {
+    screenshots.imagesAttached = await screenshotTarget(harness, `${prefix}03b-images-attached.png`)
   }
   const openExpression = [
     '(() => {',
@@ -333,6 +438,18 @@ export async function sendAssistantMessage(
     '})()',
   ].join('\n')
   const visibleExpression = `document.body.innerText.includes(${contentExpression})`
+  const uploadLines =
+    browserImagePaths.length > 0
+      ? [
+          `upload_file('input[type="file"]', [${browserImagePaths.map(pythonUtf8Expression).join(', ')}])`,
+          'attached = 0',
+          'for _ in range(40):',
+          '    attached = int(js("document.querySelectorAll(\'.composer-images img\').length"))',
+          `    if attached == ${browserImagePaths.length}: break`,
+          '    time.sleep(0.25)',
+          captureScreenshotLine(screenshots.imagesAttached as ScreenshotTarget),
+        ]
+      : ['attached = 0']
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
@@ -345,6 +462,7 @@ export async function sendAssistantMessage(
     `filled = js(${JSON.stringify(fillExpression)})`,
     'time.sleep(0.25)',
     captureScreenshotLine(screenshots.composerFilled),
+    ...uploadLines,
     `hopi_audit_note("about to submit HOPI live E2E Assistant message", scenario=${JSON.stringify(harness.scenario)})`,
     `sent = js(${JSON.stringify(sendExpression)})`,
     'visible = False',
@@ -353,7 +471,7 @@ export async function sendAssistantMessage(
     '    if visible: break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.messageSubmitted),
-    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "filled": filled, "sent": sent, "visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "filled": filled, "attached": attached, "sent": sent, "visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -363,6 +481,7 @@ export async function sendAssistantMessage(
   )) as {
     opened?: { opened?: boolean; reason?: string }
     filled?: { filled?: boolean; reason?: string }
+    attached?: number
     sent?: { sent?: boolean; reason?: string }
     visible?: boolean
     audit?: { head_hash?: string }
@@ -370,6 +489,9 @@ export async function sendAssistantMessage(
   }
   if (!evidence.opened?.opened || !evidence.filled?.filled || !evidence.sent?.sent) {
     throw new Error(`Assistant composer submission failed: ${safeJson(evidence)}`)
+  }
+  if (evidence.attached !== imagePaths.length) {
+    throw new Error(`Assistant image attachment failed: ${safeJson(evidence)}`)
   }
   if (!evidence.visible) throw new Error('Submitted Assistant message did not render in the feed')
   const auditMode = resolveBrowserAuditMode(evidence.verify)
@@ -380,10 +502,52 @@ export async function sendAssistantMessage(
     `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
   )
   await recordAction(harness, 'assistant_message_submitted', {
+    images: imagePaths.length,
     auditHeadHash: evidence.audit?.head_hash,
     browserAuditMode: auditMode,
   })
   return { ...evidence, auditMode, screenshots: retainedScreenshots }
+}
+
+export async function captureBrowserPage(
+  harness: BrowserHarnessContext,
+  url: string,
+  options: { evidencePrefix: string; visibleText?: string; auditLabel: string },
+) {
+  const screenshot = await screenshotTarget(harness, `${safeSegment(options.evidencePrefix)}.png`)
+  const visibleExpression = options.visibleText
+    ? `document.body.innerText.includes(${browserUtf8Expression(options.visibleText)})`
+    : 'true'
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    `visible = bool(js(${JSON.stringify(visibleExpression)}))`,
+    captureScreenshotLine(screenshot),
+    `hopi_audit_note(${JSON.stringify(options.auditLabel)}, scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_PAGE=" + json.dumps({"visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    `${safeSegment(options.evidencePrefix)}-browser-page.log`,
+    'HOPI_E2E_PAGE=',
+    script,
+  )) as {
+    visible?: boolean
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  if (!evidence.visible) throw new Error(`Expected page content was not visible: ${url}`)
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots([screenshot])
+  await recordAction(harness, 'browser_page_captured', {
+    url,
+    screenshot: screenshot.relativePath,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshot: screenshot.relativePath }
 }
 
 export async function captureAssistantReply(
@@ -575,7 +739,8 @@ export async function clickGoalControl(
     '(() => {',
     `  const next = [...document.querySelectorAll('button')].some((candidate) => candidate.textContent?.trim() === ${nextControlExpression})`,
     "  const working = Boolean(document.querySelector('.working-indicator'))",
-    `  return { nextControlVisible: next, working, settled: next && ${control === 'Pause' ? '!working' : 'true'} }`,
+    "  const terminal = document.querySelector('.goal-focus-strip > div:nth-child(2) strong')?.textContent?.trim() === 'done'",
+    `  return { nextControlVisible: next, working, terminal, settled: ${control === 'Pause' ? 'next && !working' : 'next || terminal'} }`,
     '})()',
   ].join('\n')
   const script = [
@@ -604,7 +769,12 @@ export async function clickGoalControl(
     script,
   )) as {
     clicked?: { found?: boolean; disabled?: boolean }
-    settled?: { nextControlVisible?: boolean; working?: boolean; settled?: boolean }
+    settled?: {
+      nextControlVisible?: boolean
+      working?: boolean
+      terminal?: boolean
+      settled?: boolean
+    }
     audit?: { head_hash?: string }
     verify?: BrowserAuditVerification
   }
@@ -628,6 +798,374 @@ export async function clickGoalControl(
     auditHeadHash: evidence.audit?.head_hash,
     browserAuditMode: auditMode,
   })
+  return { ...evidence, auditMode, screenshot: screenshot.relativePath }
+}
+
+export async function configureProjectInBrowser(
+  harness: BrowserHarnessContext,
+  input: {
+    projectId: string
+    primaryRepoPath: string
+    secondaryRepoId: string
+    secondaryRepoPath: string
+    reboundSecondaryRepoPath: string
+    assistantModel: string
+    projectModel: string
+  },
+) {
+  const url = `${harness.baseUrl}/projects`
+  const screenshots = {
+    initial: await screenshotTarget(harness, '01-project-link-initial.png'),
+    primaryLinked: await screenshotTarget(harness, '02-project-primary-linked.png'),
+    secondaryLinked: await screenshotTarget(harness, '03-project-secondary-linked.png'),
+    assistantConfigured: await screenshotTarget(harness, '04-assistant-model-configured.png'),
+    projectConfigured: await screenshotTarget(harness, '05-project-model-configured.png'),
+    rebound: await screenshotTarget(harness, '06-project-repo-rebound.png'),
+    reloaded: await screenshotTarget(harness, '07-project-configuration-reloaded.png'),
+  }
+  const values = Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
+  ) as Record<keyof typeof input, string>
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    'def wait_js(expression, attempts=120):',
+    '    value = None',
+    '    for _ in range(attempts):',
+    '        value = js(expression)',
+    '        if value: return value',
+    '        time.sleep(0.25)',
+    '    return value',
+    captureScreenshotLine(screenshots.initial),
+    `linked = js(${JSON.stringify(
+      [
+        '(() => {',
+        "  const form = document.querySelector('.link-project-panel')",
+        '  const path = form?.querySelector(\'input[placeholder="/home/me/Code/product"]\')',
+        '  const project = form?.querySelector(\'input[placeholder="Derived when omitted"]\')',
+        '  const submit = form?.querySelector(\'button[type="submit"]\')',
+        "  if (!path || !project || !submit) return { ok: false, reason: 'missing link form' }",
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!setter) return { ok: false, reason: 'missing input setter' }",
+        `  setter.call(path, ${values.primaryRepoPath})`,
+        "  path.dispatchEvent(new Event('input', { bubbles: true }))",
+        `  setter.call(project, ${values.projectId})`,
+        "  project.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("link primary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
+    `primary_visible = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.projectId}) && Boolean(document.querySelector('.project-card'))`)})`,
+    captureScreenshotLine(screenshots.primaryLinked),
+    `manager = js(${JSON.stringify(
+      [
+        '(() => {',
+        "  const button = [...document.querySelectorAll('.project-card button')].find((candidate) => candidate.textContent?.includes('Manage'))",
+        "  if (!button) return { ok: false, reason: 'missing repository manager' }",
+        '  button.click()',
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `wait_js(${JSON.stringify('Boolean(document.querySelector(\'input[aria-label="Repository ID"]\'))')})`,
+    `secondary_filled = js(${JSON.stringify(
+      [
+        '(() => {',
+        '  const id = document.querySelector(\'input[aria-label="Repository ID"]\')',
+        '  const path = document.querySelector(\'input[aria-label="Repository path"]\')',
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!id || !path || !setter) return { ok: false, reason: 'missing secondary form' }",
+        `  setter.call(id, ${values.secondaryRepoId})`,
+        "  id.dispatchEvent(new Event('input', { bubbles: true }))",
+        `  setter.call(path, ${values.secondaryRepoPath})`,
+        "  path.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("link secondary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify('document.querySelector(\'.project-repo-link-form button[type="submit"]\')?.click()')})`,
+    `secondary_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-id')].some((element) => element.textContent?.trim() === ${values.secondaryRepoId})`)})`,
+    captureScreenshotLine(screenshots.secondaryLinked),
+    `assistant_filled = js(${JSON.stringify(
+      [
+        '(() => {',
+        "  const input = document.querySelector('.assistant-settings-form input')",
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!input || !setter) return { ok: false, reason: 'missing Assistant model input' }",
+        `  setter.call(input, ${values.assistantModel})`,
+        "  input.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("save Home Assistant model", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify("[...document.querySelectorAll('.assistant-settings-form button')].find((candidate) => candidate.textContent?.trim().endsWith('Save'))?.click()")})`,
+    `assistant_visible = wait_js(${JSON.stringify(`document.querySelector('.assistant-settings-current strong')?.textContent?.includes(${values.assistantModel})`)})`,
+    captureScreenshotLine(screenshots.assistantConfigured),
+    `configured_open = js(${JSON.stringify("(() => { const button = document.querySelector('.project-model-row button'); if (!button) return false; button.click(); return true })()")})`,
+    `wait_js(${JSON.stringify("Boolean(document.querySelector('.project-model-form .app-select__trigger'))")})`,
+    `hopi_audit_note("select Claude for Project coding agents", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify("document.querySelector('.project-model-form .app-select__trigger')?.click()")})`,
+    `wait_js(${JSON.stringify("[...document.querySelectorAll('[role=option]')].some((option) => option.textContent?.includes('Claude'))")})`,
+    `agent_selected = js(${JSON.stringify("(() => { const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.textContent?.includes('Claude')); if (!option) return false; option.click(); return true })()")})`,
+    'time.sleep(0.25)',
+    `project_filled = js(${JSON.stringify(
+      [
+        '(() => {',
+        "  const input = document.querySelector('.project-model-form input')",
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!input || !setter) return { ok: false, reason: 'missing Project model input' }",
+        `  setter.call(input, ${values.projectModel})`,
+        "  input.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("save Project coding model", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify("[...document.querySelectorAll('.project-model-form button')].find((candidate) => candidate.textContent?.includes('Save model'))?.click()")})`,
+    `project_model_visible = wait_js(${JSON.stringify(`document.querySelector('.project-model-row strong')?.textContent?.includes(${values.projectModel})`)})`,
+    captureScreenshotLine(screenshots.projectConfigured),
+    `rebind_open = js(${JSON.stringify(`(() => { const row = [...document.querySelectorAll('.project-repo-entry')].find((candidate) => candidate.querySelector('.project-repo-id')?.textContent?.trim() === ${values.secondaryRepoId}); const button = row ? [...row.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Rebind')) : null; if (!button) return false; button.click(); return true })()`)})`,
+    `wait_js(${JSON.stringify(`Boolean(document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]'))`)})`,
+    `rebind_filled = js(${JSON.stringify(
+      [
+        '(() => {',
+        `  const input = document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]')`,
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!input || !setter) return { ok: false, reason: 'missing rebind input' }",
+        `  setter.call(input, ${values.reboundSecondaryRepoPath})`,
+        "  input.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("rebind secondary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify(`(() => { const input = document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]'); input?.closest('form')?.querySelector('button[type="submit"]')?.click() })()`)})`,
+    `rebound_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-path')].some((element) => element.textContent?.trim() === ${values.reboundSecondaryRepoPath})`)})`,
+    captureScreenshotLine(screenshots.rebound),
+    `goto_url(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    `reloaded = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.assistantModel}) && document.body.innerText.includes(${values.projectModel}) && document.body.innerText.includes(${values.reboundSecondaryRepoPath})`)})`,
+    captureScreenshotLine(screenshots.reloaded),
+    `hopi_audit_note("HOPI Project configuration survived browser reload", scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"linked": linked, "primaryVisible": primary_visible, "manager": manager, "secondaryFilled": secondary_filled, "secondaryVisible": secondary_visible, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectFilled": project_filled, "projectModelVisible": project_model_visible, "rebindOpen": rebind_open, "rebindFilled": rebind_filled, "reboundVisible": rebound_visible, "reloaded": reloaded, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    'browser-configuration.log',
+    'HOPI_E2E_CONFIGURATION=',
+    script,
+  )) as Record<string, unknown> & {
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  for (const field of [
+    'primaryVisible',
+    'secondaryVisible',
+    'assistantVisible',
+    'configuredOpen',
+    'agentSelected',
+    'projectModelVisible',
+    'rebindOpen',
+    'reboundVisible',
+    'reloaded',
+  ]) {
+    if (evidence[field] !== true) {
+      throw new Error(
+        `Project browser configuration did not complete ${field}: ${safeJson(evidence)}`,
+      )
+    }
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots(Object.values(screenshots))
+  const retainedScreenshots = screenshotEvidence(screenshots)
+  await Bun.write(
+    join(harness.artifactRoot, 'browser-configuration-evidence.json'),
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
+  )
+  await recordAction(harness, 'project_configured_in_browser', {
+    projectId: input.projectId,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
+}
+
+export async function controlPreviewInBrowser(
+  harness: BrowserHarnessContext,
+  projectId: string,
+  goalId: string,
+  control: 'start' | 'stop',
+  evidencePrefix: string,
+) {
+  const url = `${harness.baseUrl}/projects/${encodeURIComponent(projectId)}/board/${encodeURIComponent(goalId)}`
+  const screenshot = await screenshotTarget(
+    harness,
+    `${safeSegment(evidencePrefix)}-preview-${control}.png`,
+  )
+  const selector = control === 'start' ? '.preview-start-button' : '[aria-label="Stop Preview"]'
+  const settledExpression =
+    control === 'start'
+      ? "(() => { const stop = document.querySelector('[aria-label=\"Stop Preview\"]'); const open = document.querySelector('.preview-compact-open'); return { settled: Boolean(stop && open), openVisible: Boolean(open) } })()"
+      : "(() => ({ settled: Boolean(document.querySelector('.preview-start-button')) && !document.querySelector('[aria-label=\"Stop Preview\"]') }))()"
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    'clicked = None',
+    'for _ in range(120):',
+    `    clicked = js(${JSON.stringify(`(() => { const button = document.querySelector('${selector}'); if (!button) return { found: false }; if (button.disabled) return { found: true, disabled: true }; button.click(); return { found: true, disabled: false } })()`)})`,
+    '    if clicked and clicked.get("found") and not clicked.get("disabled"): break',
+    '    time.sleep(0.25)',
+    'settled = None',
+    'for _ in range(160):',
+    `    settled = js(${JSON.stringify(settledExpression)})`,
+    '    if settled and settled.get("settled"): break',
+    '    time.sleep(0.25)',
+    captureScreenshotLine(screenshot),
+    `hopi_audit_note(${JSON.stringify(`HOPI Preview ${control} completed`)}, scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)})`,
+    'print("HOPI_E2E_PREVIEW_CONTROL=" + json.dumps({"clicked": clicked, "settled": settled, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    `${safeSegment(evidencePrefix)}-preview-${control}.log`,
+    'HOPI_E2E_PREVIEW_CONTROL=',
+    script,
+  )) as {
+    clicked?: { found?: boolean; disabled?: boolean }
+    settled?: { settled?: boolean; openVisible?: boolean }
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  if (!evidence.clicked?.found || evidence.clicked.disabled || !evidence.settled?.settled) {
+    throw new Error(`Preview ${control} did not settle in the browser: ${safeJson(evidence)}`)
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots([screenshot])
+  await recordAction(harness, `preview_${control}_in_browser`, {
+    projectId,
+    goalId,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshot: screenshot.relativePath }
+}
+
+export async function requestPreviewRepairInBrowser(
+  harness: BrowserHarnessContext,
+  projectId: string,
+  goalId: string,
+) {
+  const url = `${harness.baseUrl}/projects/${encodeURIComponent(projectId)}/board/${encodeURIComponent(goalId)}`
+  const screenshots = {
+    repairRequired: await screenshotTarget(harness, 'missing-preview-repair-required.png'),
+    repairSent: await screenshotTarget(harness, 'missing-preview-repair-sent.png'),
+  }
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    'start = None',
+    'for _ in range(120):',
+    '    start = js("(() => { const button = document.querySelector(\'.preview-start-button\'); if (!button) return { found: false }; if (button.disabled) return { found: true, disabled: true }; button.click(); return { found: true, disabled: false } })()")',
+    '    if start and start.get("found") and not start.get("disabled"): break',
+    '    time.sleep(0.25)',
+    'repair = None',
+    'for _ in range(120):',
+    '    repair = js("(() => { const banner = document.querySelector(\'.preview-repair-banner\'); return banner ? { visible: true, text: banner.innerText } : { visible: false, text: null } })()")',
+    '    if repair and repair.get("visible"): break',
+    '    time.sleep(0.25)',
+    captureScreenshotLine(screenshots.repairRequired),
+    `hopi_audit_note("send ordinary Preview repair instruction to Assistant", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)})`,
+    "sent = js(\"(() => { const button = [...document.querySelectorAll('.preview-repair-banner button')].find((candidate) => candidate.textContent?.includes('Ask Assistant to repair')); if (!button) return false; button.click(); return true })()\")",
+    'assistant = None',
+    'for _ in range(120):',
+    '    assistant = js("(() => ({ open: Boolean(document.querySelector(\'textarea[placeholder^=\\"Tell HOPI\\"]\')), repairVisible: document.body.innerText.includes(\'Preview could not start through\') }))()")',
+    '    if assistant and assistant.get("open") and assistant.get("repairVisible"): break',
+    '    time.sleep(0.25)',
+    captureScreenshotLine(screenshots.repairSent),
+    'print("HOPI_E2E_PREVIEW_REPAIR=" + json.dumps({"start": start, "repair": repair, "sent": sent, "assistant": assistant, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    'missing-preview-repair.log',
+    'HOPI_E2E_PREVIEW_REPAIR=',
+    script,
+  )) as {
+    start?: { found?: boolean; disabled?: boolean }
+    repair?: { visible?: boolean; text?: string | null }
+    sent?: boolean
+    assistant?: { open?: boolean; repairVisible?: boolean }
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  if (
+    !evidence.start?.found ||
+    evidence.start.disabled ||
+    !evidence.repair?.visible ||
+    !evidence.sent ||
+    !evidence.assistant?.open ||
+    !evidence.assistant.repairVisible
+  ) {
+    throw new Error(`Preview repair did not reach Assistant: ${safeJson(evidence)}`)
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots(Object.values(screenshots))
+  const retainedScreenshots = screenshotEvidence(screenshots)
+  await recordAction(harness, 'preview_repair_sent_in_browser', {
+    projectId,
+    goalId,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
+}
+
+export async function inspectProjectPreviewStatus(
+  harness: BrowserHarnessContext,
+  projectId: string,
+  expectedStatus: string,
+) {
+  const url = `${harness.baseUrl}/projects`
+  const screenshot = await screenshotTarget(harness, 'preview-release-updated.png')
+  const projectExpression = browserUtf8Expression(projectId)
+  const statusExpression = browserUtf8Expression(expectedStatus)
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `new_tab(${JSON.stringify(url)})`,
+    'wait_for_load()',
+    'projection = None',
+    'for _ in range(120):',
+    `    projection = js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.textContent?.trim() === ${projectExpression}); const status = card?.querySelector('.preview-status')?.textContent?.replace(/\\s+/g, ' ').trim() || null; return { found: Boolean(card), status, settled: status === ${statusExpression} } })()`)})`,
+    '    if projection and projection.get("settled"): break',
+    '    time.sleep(0.25)',
+    captureScreenshotLine(screenshot),
+    `hopi_audit_note("HOPI Preview release projection inspected", scenario=${JSON.stringify(harness.scenario)}, project_id=${JSON.stringify(projectId)})`,
+    'print("HOPI_E2E_PREVIEW_STATUS=" + json.dumps({"projection": projection, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    'preview-release-updated.log',
+    'HOPI_E2E_PREVIEW_STATUS=',
+    script,
+  )) as {
+    projection?: { found?: boolean; status?: string | null; settled?: boolean }
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  if (!evidence.projection?.settled) {
+    throw new Error(`Preview status did not render ${expectedStatus}: ${safeJson(evidence)}`)
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots([screenshot])
   return { ...evidence, auditMode, screenshot: screenshot.relativePath }
 }
 
@@ -721,14 +1259,19 @@ async function runBrowserHarness(
   markerPrefix: string,
   script: string,
 ) {
+  await initializeBrowserHarness(harness, logName)
   const command = resolveBrowserHarnessCommand()
+  const auditRoot = join(harness.artifactRoot, 'browser-audit')
+  await mkdir(auditRoot, { recursive: true })
+  const managedScript = withOwnedBrowserTabs(script)
   const child = Bun.spawn([command], {
+    env: { ...process.env, BH_AUDIT_DIR: await browserWritablePath(auditRoot) },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
   })
   if (typeof child.stdin !== 'number') {
-    child.stdin.write(`${script}\n`)
+    child.stdin.write(`${managedScript}\n`)
     child.stdin.end()
   }
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -740,9 +1283,78 @@ async function runBrowserHarness(
   if (exitCode !== 0) {
     throw new Error(`Browser Harness exited with code ${exitCode}: ${stderr.trim()}`)
   }
+  const cleanupFailure = stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('HOPI_BROWSER_CLEANUP_FAILED='))
+  if (cleanupFailure) {
+    throw new Error(`Browser Harness tab cleanup failed: ${cleanupFailure.split('=', 2)[1]}`)
+  }
   const marker = stdout.split(/\r?\n/).find((line) => line.startsWith(markerPrefix))
   if (!marker) throw new Error(`Browser Harness did not return ${markerPrefix} evidence`)
   return JSON.parse(marker.slice(markerPrefix.length)) as unknown
+}
+
+function withOwnedBrowserTabs(script: string) {
+  const body = script
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n')
+  return [
+    'import json as _hopi_json',
+    '_hopi_tabs_before = {tab.get("targetId") or tab.get("target_id") for tab in list_tabs(include_chrome=True)}',
+    '_hopi_cleanup_errors = []',
+    'try:',
+    body,
+    'finally:',
+    '    try:',
+    '        _hopi_current = current_tab().get("targetId") or current_tab().get("target_id")',
+    '    except Exception:',
+    '        _hopi_current = None',
+    '    _hopi_created = [tab for tab in list_tabs(include_chrome=True) if (tab.get("targetId") or tab.get("target_id")) not in _hopi_tabs_before]',
+    '    _hopi_created.sort(key=lambda tab: (tab.get("targetId") or tab.get("target_id")) == _hopi_current)',
+    '    for _hopi_tab in _hopi_created:',
+    '        try:',
+    '            close_tab(_hopi_tab.get("targetId") or _hopi_tab.get("target_id"))',
+    '        except Exception as _hopi_cleanup_error:',
+    '            _hopi_cleanup_errors.append(type(_hopi_cleanup_error).__name__ + ": " + str(_hopi_cleanup_error))',
+    '    if _hopi_cleanup_errors:',
+    '        print("HOPI_BROWSER_CLEANUP_FAILED=" + _hopi_json.dumps(_hopi_cleanup_errors))',
+  ].join('\n')
+}
+
+async function reloadBrowserHarness(context: BrowserHarnessContext, browserLogName: string) {
+  const attempts: string[] = []
+  const command = resolveBrowserHarnessCommand()
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const child = Bun.spawn([command, '--reload'], { stdout: 'pipe', stderr: 'pipe' })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    attempts.push(
+      `attempt ${attempt}: $ ${command} --reload\nexit: ${exitCode}\n\n[stdout]\n${stdout}\n[stderr]\n${stderr}`,
+    )
+    if (exitCode === 0) {
+      await Bun.write(
+        join(context.artifactRoot, `${safeSegment(browserLogName)}-daemon-reload.log`),
+        attempts.join('\n\n'),
+      )
+      return
+    }
+    if (attempt < 2) await Bun.sleep(250)
+  }
+  await Bun.write(
+    join(context.artifactRoot, `${safeSegment(browserLogName)}-daemon-reload.log`),
+    attempts.join('\n\n'),
+  )
+  throw new Error('Browser Harness daemon reload failed; inspect the retained reload log')
+}
+
+async function initializeBrowserHarness(context: BrowserHarnessContext, browserLogName: string) {
+  if (initializedBrowserRuns.has(context)) return
+  await reloadBrowserHarness(context, browserLogName)
+  initializedBrowserRuns.add(context)
 }
 
 export async function runCommand(command: string[], cwd: string) {
@@ -918,7 +1530,7 @@ function stateInvariantViolations(observation: StateObservation) {
   return violations
 }
 
-function liveCodingDefaults() {
+export function liveCodingDefaults() {
   const transport = process.env.HOPI_E2E_TRANSPORT?.trim() || 'codex'
   const model = process.env.HOPI_E2E_MODEL?.trim()
   const reasoningEffort = process.env.HOPI_E2E_REASONING_EFFORT?.trim() || 'low'
@@ -1069,28 +1681,32 @@ async function writeRunReport(
   status: 'running' | 'passed' | 'failed',
   details: Record<string, unknown> = {},
 ) {
-  await Bun.write(
-    join(harness.artifactRoot, 'run.json'),
-    `${JSON.stringify(
-      {
-        version: 1,
-        scenario: harness.scenario,
-        status,
-        startedAt: harness.startedAt,
-        endedAt: status === 'running' ? null : new Date().toISOString(),
-        codingDefaults: harness.codingDefaults,
-        browserAuditPolicy:
-          process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
-        code: harness.code,
-        lastCheckpoint: harness.lastCheckpoint,
-        failedAt: status === 'failed' ? harness.currentPhase : null,
-        paths: { home: harness.homeRoot, repo: harness.repoRoot },
-        ...details,
-      },
-      null,
-      2,
-    )}\n`,
-  )
+  await writeTestRunReport(harness, status, {
+    codingDefaults: harness.codingDefaults,
+    modelBoundaries: harness.modelBoundaries,
+    browserAuditPolicy:
+      process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
+    lastCheckpoint: harness.lastCheckpoint,
+    failedAt: status === 'failed' ? harness.currentPhase : null,
+    paths: { home: harness.homeRoot, repo: harness.repoRoot },
+    ...details,
+  })
+}
+
+function createDeterministicReflectionRunner(
+  transport: ProjectCodingDefaults['transport'],
+): AssistantModelRunner {
+  return {
+    async run(input) {
+      if (input.toolMode !== 'reflection') {
+        throw new Error('Deterministic Reflection runner received a speaking turn')
+      }
+      return {
+        reply: '',
+        session: { transport, sessionId: `e2e-no-action-${input.eventId}` },
+      }
+    },
+  }
 }
 
 function numberValue(value: unknown) {

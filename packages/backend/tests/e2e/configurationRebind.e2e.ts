@@ -3,15 +3,19 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  createHarnessArtifactRoot,
+  checkoutSnapshot,
+  configureProjectInBrowser,
   errorMessage,
+  finishTestRun,
   gitOutput,
   requestJson,
+  startTestRun,
 } from '../live/liveHarness'
 
+const SCENARIO = 'configuration-rebind'
 const PROJECT_ID = 'P-configuration'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot('configuration-rebind', startedAt)
+const testRun = await startTestRun(SCENARIO, 'browser')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const primaryRoot = join(artifactRoot, 'primary')
 const secondaryRoot = join(artifactRoot, 'secondary')
@@ -22,38 +26,34 @@ let restarted: MvpServer | null = null
 try {
   await initializeRepo(primaryRoot)
   await initializeRepo(secondaryRoot)
+  const primaryBefore = await checkoutSnapshot(primaryRoot)
+  const secondaryBefore = await checkoutSnapshot(secondaryRoot)
   server = createServer({ rootDir: homeRoot, port: 0 })
   const baseUrl = `http://127.0.0.1:${server.port}`
-  await requestJson(baseUrl, '/api/projects', {
-    method: 'POST',
-    body: { projectId: PROJECT_ID, repoId: 'web', repoPath: primaryRoot },
-  })
-  await requestJson(baseUrl, `/api/projects/${PROJECT_ID}/repos`, {
-    method: 'POST',
-    body: { repoId: 'api', repoPath: secondaryRoot },
-  })
   await gitOutput(secondaryRoot, [
     'worktree',
     'add',
     '-b',
     'relocated-checkout',
     movedSecondaryRoot,
-    'hopi/release',
+    'HEAD',
   ])
-  await requestJson(baseUrl, '/api/assistant/settings', {
-    method: 'PATCH',
-    body: { codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'low' } },
-  })
-  await requestJson(baseUrl, `/api/projects/${PROJECT_ID}/settings`, {
-    method: 'PATCH',
-    body: { codingDefaults: { transport: 'opencode', model: 'openai/gpt-5' } },
-  })
-  const rebound = await requestJson<StateView>(
-    baseUrl,
-    `/api/projects/${PROJECT_ID}/repos/api/rebind`,
-    { method: 'POST', body: { repoPath: movedSecondaryRoot } },
+  const browser = await configureProjectInBrowser(
+    { scenario: SCENARIO, artifactRoot, baseUrl },
+    {
+      projectId: PROJECT_ID,
+      primaryRepoPath: primaryRoot,
+      secondaryRepoId: 'api',
+      secondaryRepoPath: secondaryRoot,
+      reboundSecondaryRepoPath: movedSecondaryRoot,
+      assistantModel: 'gpt-5.4',
+      projectModel: 'claude-sonnet-4-6',
+    },
   )
+  const rebound = await requestJson<StateView>(baseUrl, '/api/state')
   assertState(rebound)
+  assert.deepEqual(await checkoutSnapshot(primaryRoot), primaryBefore)
+  assert.deepEqual(await checkoutSnapshot(secondaryRoot), secondaryBefore)
   await server.shutdown()
   server = null
   restarted = createServer({ rootDir: homeRoot, port: 0 })
@@ -61,14 +61,25 @@ try {
   assertState(durable)
   await Bun.write(
     join(artifactRoot, 'configuration-rebind-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, rebound, durable }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, browser, rebound, durable }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, primary: primaryRoot, secondary: secondaryRoot },
+    resultFile: 'configuration-rebind-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-020 configuration/rebind passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'configuration-rebind-contract.json'),
     `${JSON.stringify({ status: 'failed', startedAt, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, primary: primaryRoot, secondary: secondaryRoot },
+    resultFile: 'configuration-rebind-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-020 configuration/rebind failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
@@ -81,12 +92,12 @@ function assertState(state: StateView) {
   assert.deepEqual(state.home.assistantCodingDefaults, {
     transport: 'codex',
     model: 'gpt-5.4',
-    reasoningEffort: 'low',
+    reasoningEffort: 'xhigh',
   })
   const project = state.projects.find((candidate) => candidate.projectId === PROJECT_ID)
   assert.ok(project)
-  assert.deepEqual(project.codingDefaults, { transport: 'opencode', model: 'openai/gpt-5' })
-  assert.equal(project.repos.find((repo) => repo.repoId === 'web')?.repoPath, primaryRoot)
+  assert.deepEqual(project.codingDefaults, { transport: 'claude', model: 'claude-sonnet-4-6' })
+  assert.equal(project.repos.find((repo) => repo.repoId === 'primary')?.repoPath, primaryRoot)
   assert.equal(project.repos.find((repo) => repo.repoId === 'api')?.repoPath, movedSecondaryRoot)
 }
 

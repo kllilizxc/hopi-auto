@@ -15,10 +15,11 @@ import {
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   checkoutSnapshot,
-  createHarnessArtifactRoot,
   errorMessage,
+  finishTestRun,
   gitOutput,
   requestJson,
+  startTestRun,
   waitForValue,
 } from '../live/liveHarness'
 
@@ -26,8 +27,8 @@ const SCENARIO = 'design-revision-active-delivery'
 const PROJECT_ID = 'P-design-revision'
 const GOAL_ID = 'G-design-revision'
 const WORK_ID = 'W-design-revision'
-const startedAt = new Date().toISOString()
-const artifactRoot = await createHarnessArtifactRoot(SCENARIO, startedAt)
+const testRun = await startTestRun(SCENARIO, 'contract')
+const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const roles = createRoles()
@@ -127,12 +128,23 @@ try {
     join(artifactRoot, 'design-revision-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, settled, attempts, roleRuns: roles.runs }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'passed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'design-revision-contract.json',
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  })
   console.log(`HOPI-E2E-012 design revision passed: ${artifactRoot}`)
 } catch (error) {
   await Bun.write(
     join(artifactRoot, 'design-revision-contract.json'),
     `${JSON.stringify({ status: 'failed', startedAt, roleRuns: roles.runs, error: errorMessage(error) }, null, 2)}\n`,
   )
+  await finishTestRun(testRun, 'failed', {
+    paths: { home: homeRoot, repo: repoRoot },
+    resultFile: 'design-revision-contract.json',
+    error: errorMessage(error),
+    providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+  }).catch(() => undefined)
   console.error(`HOPI-E2E-012 design revision failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1

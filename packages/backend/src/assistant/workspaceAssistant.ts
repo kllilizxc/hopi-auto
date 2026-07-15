@@ -195,7 +195,7 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
       const reply = (await file.text()).trim()
-      if (!reply && input.toolMode !== 'reflection')
+      if (!reply && (input.toolMode ?? 'main') === 'main')
         throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
       return { reply, session: { transport, sessionId: observedSessionId } }
     },
@@ -303,15 +303,19 @@ export function createWorkspaceAssistant(input: {
         }
 
         await input.conversation.writeSession(result.session)
-        const notifyRequested = input.tools.notificationRequested(toolToken)
+        const notificationMessage = input.tools.notificationMessage(toolToken)
+        const reply = notificationMessage ?? result.reply.trim()
+        if (!reply && event.attributes.source !== 'reflection') {
+          throw new WorkspaceAssistantError('Assistant produced an empty public reply')
+        }
         await input.workspace.handleEvent(eventId, {
-          reply: result.reply,
+          reply: reply || 'No operator update.',
           disposition: usedTool ? 'tools-used' : 'answered',
           handledAt: now(),
-          expose: notifyRequested,
+          expose: notificationMessage !== null,
         })
         await input.conversation.complete(eventId)
-        if (notifyRequested) {
+        if (notificationMessage !== null) {
           try {
             await input.tools.acknowledgeEventAttentions(eventId, now())
           } catch {
@@ -572,7 +576,7 @@ function renderTurn(event: InboxEventDocument) {
       'Re-read current HOPI state and every referenced unresolved Attention before acting. Attention is an internal request for Assistant management, not automatically a user question.',
       'Resolve what current code and canonical documents can answer. Update design or request Planning when needed. Ask the operator only for a decision or external action that Assistant cannot safely supply.',
       'When the brief is stale or all referenced Attention is already resolved, finish silently.',
-      'Call hopi_notify_user only when the operator should see your final reply; otherwise finish silently and the turn stays hidden.',
+      'Call hopi_notify_user with the exact concise message only when the operator should see an update; otherwise finish silently and the turn stays hidden. Other text from this internal turn is never shown.',
       renderOperatorReplyContract(),
       '[Rewrite the internal brief for the operator. Do not copy its internal IDs, role names, stages, or diagnostic process unless the operator needs that detail.]',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Workspace context]',

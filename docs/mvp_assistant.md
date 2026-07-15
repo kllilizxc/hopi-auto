@@ -96,7 +96,8 @@ snapshot. Reflection follows one small protocol:
    not scan the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
 5. If no response or action is useful, it ends silently. A successful Reflection transport may
    express that result with an empty final message; empty output is `No action` in Reflection mode,
-   not a failed model Run. Speaking turns still require a non-empty reply. Unnotified Attention is
+   not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
+   turn may remain silent or supply one explicit `notify_user` message. Unnotified Attention is
    the one exception: it already declares that Assistant management is required, so Coordinator
    creates one internal fallback brief when the model omitted handoff and attaches exact canonical
    Attention references from the current snapshot. Otherwise Reflection may prepare one concise
@@ -104,7 +105,7 @@ snapshot. Reflection follows one small protocol:
    current; it does not accept an `actions[]` plan.
 6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
    persistent speaking thread used for user turns rereads current state and
-   decides whether to call normal HOPI tools, remain silent, or explicitly expose a final reply
+   decides whether to call normal HOPI tools, remain silent, or publish one explicit notification
    rewritten under the operator-facing communication policy. Internal IDs and diagnostics from the
    brief are not copied into that reply by default.
 
@@ -200,6 +201,13 @@ source content, attachments, optional page context, final Assistant reply, and t
   those distinctions are derived from runtime facts and Attention.
 - `handled` means a final Assistant reply is durable. It does not imply that the model called a tool.
 
+A deterministic product control may execute a known HOPI tool directly and mirror its command and
+reply into the same public Inbox history without invoking the model. While that request is between
+its durable `pending` receipt and deterministic `handled` acknowledgement, Coordinator holds only a
+transient admission guard so the speaking loop cannot race the request. This is not another Inbox
+state or lease. If the process stops before acknowledgement, the guard disappears and the retained
+pending turn becomes an ordinary idempotent Assistant recovery input.
+
 The free-form disposition is diagnostic only: speaking turns use `answered` when no tool event was
 observed and `tools-used` when one was. It never claims that a side effect was applied; durable
 documents and the recorded tool result remain the only evidence of an effect.
@@ -259,9 +267,9 @@ publisher remain authoritative.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Subsequent user messages use normal
-compatible vendor session resume. A public turn's final model answer is the operator-facing reply; an internal
-turn's answer remains hidden unless that Run requested delivery with `notify_user` and Coordinator
-published the complete handled reply.
+compatible vendor session resume. A public turn's final model answer is the operator-facing reply.
+An internal turn's model narration always remains hidden; only the message supplied to
+`notify_user` may become its operator-facing reply.
 
 Once one speaking invocation reaches terminal failure, the Inbox turn stays pending under one
 event-target Attention. Coordinator does not rerun the same failed invocation: a later operator or
@@ -288,7 +296,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Control Work | Retry, cancel, or change `notBefore` | Validated Work documents |
 | Resolve Attention | Record an operator answer after any required Goal/Work effects | Goal Input and Attention resolution |
 | Control Preview | Start, stop, or request repair of Preview | Runtime process, or ordinary Planning request for repair |
-| Notify operator | Request exposure of the current internal Reflection turn after its final reply exists | Handled public Inbox reply, then Attention `notifiedAt` |
+| Notify operator | Publish one concise message from the current internal Reflection turn | Handled public Inbox reply, then Attention `notifiedAt` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
@@ -331,15 +339,15 @@ capability.
 
 Reflection receives a narrower MCP capability containing only state read and `handoff_to_main`.
 `handoff_to_main` may create one internal Inbox turn and has no Project or Goal effect. The speaking
-thread receives the ordinary tool surface plus `notify_user`, which may only request final exposure
-of its current Reflection-sourced turn. Capability mode is server-owned and cannot be selected by
-the model.
+thread receives the ordinary tool surface plus `notify_user`, which accepts the one concise
+operator-facing message for its current Reflection-sourced turn. Capability mode is server-owned
+and cannot be selected by the model.
 
 When a Reflection brief exists specifically to deliver Attention, Coordinator augments its ordinary
 Inbox context with every exact unnotified canonical reference selected from the immutable snapshot.
 Goal-local and workspace Attention use the same mechanism; the model does not own identity copying.
-`notify_user` records only Run-local intent. After the speaking model returns, Coordinator exposes
-and handles the complete reply before publishing `notifiedAt` for each still-current reference.
+`notify_user` records only its Run-local message. After the speaking model returns, Coordinator
+publishes that message as the handled reply before publishing `notifiedAt` for each still-current reference.
 Recovery of an already handled public Reflection turn finishes any missing acknowledgement.
 Targeted Attention remains open; completion Attention is notified and resolved. The optional webhook
 then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It

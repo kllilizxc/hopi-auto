@@ -1,14 +1,118 @@
 # HOPI E2E Test Issue Log
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 This append-only file records failures, executions, and environment limits observed while running
 the E2E gates. It does not own scenario status: `docs/e2e_test_cases.md` is the single coverage
 catalog, and a retained `run.json` is the authority for one invocation. A passing deterministic or
 browser preflight is not recorded as a Live Agent success.
 
-Latest verification: `bun run check` passed on integrated `main` at `590d283`: backend **289 passing
-tests / 1,156 assertions**, frontend **45 passing tests / 154 assertions**, with type checks, static
+## 2026-07-15: Planned/Partial coverage completion audit
+
+The audit retained independent execution only where a model, browser, or hard process boundary could
+change the outcome. All other rows are now explicitly composed from stronger existing evidence; no
+catalog row remains ambiguously `Planned` or `Partial`. OpenCode is the sole intentional exclusion.
+
+| Risk | Result | Retained Test Run |
+| --- | --- | --- |
+| `011` concurrent Projects | Real Assistant and both responsibility chains completed; the source Run's old shared browser audit failed, then immutable inspection passed | `test-artifacts/concurrent-project-instructions-2026-07-14T17-20-56-699Z-6f16798d`; `test-artifacts/concurrent-projects-inspection-2026-07-14T17-34-26-879Z-418779f6` |
+| `016` hard restart | Passed after killing the Coordinator PID namespace during a real Generator and recovering with a replacement process | `test-artifacts/process-restart-during-generator-2026-07-14T18-08-50-707Z-cf026b5c` |
+| `017/027` multi-Repo/bootstrap | Passed with two Repos, real responsibilities, one C1, and silent `AGENTS.md`/prepare bootstrap | `test-artifacts/multi-repo-bootstrap-delivery-2026-07-14T17-02-15-209Z-60e51845` |
+| `020` configuration | Passed through Browser Harness with multi-Repo link, model settings, safe rebind, reload, and Server restart | `test-artifacts/configuration-rebind-2026-07-14T16-37-29-146Z-42775605` |
+| `021` Preview | Passed through Browser Harness for ready, stop, release invalidation, and ordinary Assistant repair admission | `test-artifacts/preview-lifecycle-browser-2026-07-14T16-56-48-479Z-26c1f1c5` |
+| `022` multimodal | Real image upload, Assistant adoption, Planner/Generator/Reviewer delivery, C1, and completion all succeeded; corrected terminal assertions passed immutable inspection | `test-artifacts/multimodal-reference-delivery-2026-07-14T18-24-44-699Z-0b9d3971`; `test-artifacts/multimodal-delivery-inspection-2026-07-14T18-33-36-132Z-74326d2f` |
+| `024/026` provider/session | Current adapter generation passed the same lost-session canary on Codex and Claude; Codex also passed the real image chain | `test-artifacts/long-conversation-session-recovery-2026-07-14T14-13-17-516Z-cd3efc41`; `test-artifacts/long-conversation-session-recovery-2026-07-14T14-14-33-926Z-44810d87` |
+
+The final zero-provider Regression passed all 14 children with no mixed code provenance and no model
+usage at
+`test-artifacts/regression-preflight-2026-07-14T19-39-38-532Z-f37a5af3`. It includes the repository
+check, 166-test Contract suite, and every selected Browser scenario. A separate Inspection Run
+records the human review of 53 retained screenshots at
+`test-artifacts/regression-preflight-visual-review-2026-07-14T19-47-00-271Z-99cde995`.
+
+## 2026-07-15: Multimodal Live confused immutable Input with portable model prose
+
+The first `HOPI-E2E-022` Live Run completed real Assistant, Planner, Generator, Reviewer, C1, and
+completion handling, but its terminal assertion rejected the canonical Goal Input because that
+lossless receipt correctly retained the original Assistant-home attachment reference. The product
+contract forbids such paths only in editable Goal, design, and Work prose; `inputs/**` must preserve
+the exact received content and attachment references so its digest remains meaningful.
+
+The runner now scans only the editable documents governed by that portability rule. The failed Live
+artifact remains immutable and is verified through a separate zero-model inspection rather than
+spending another full multimodal delivery merely to rerun a corrected assertion.
+
+## 2026-07-15: Preview Browser CLI did not exit after clean shutdown
+
+`HOPI-E2E-021` reached every pass condition and wrote a terminal `passed` report, but its Bun process
+did not exit. Server, Coordinator, Preview child, and reported active handles were already closed;
+two earlier invocations showed the same orphaned process shape. Replacing the in-process Preview
+endpoint fetch with a real Browser Harness open added the missing user-visible proof but correctly
+did not pretend that evidence improvement alone fixed the Bun lifecycle.
+
+The scenario now closes the Server before sealing its terminal report, then explicitly exits its CLI
+after every awaited cleanup and write. This containment stays in test code and adds no product
+process state or timeout. The corrected command passed and exited normally at
+`test-artifacts/preview-lifecycle-browser-2026-07-14T18-59-47-554Z-e2e3edef`.
+
+## 2026-07-15: Resume browser assertion missed a fast terminal Goal
+
+The full preflight reached `HOPI-E2E-015`; Resume then completed Generator, Reviewer, C1, and final
+Planning before Browser Harness sampled the expected active-state Pause button. The screenshot and
+canonical Goal both showed `done` with no pending Work, but the generic control helper accepted only
+the transient active projection and reported a false failure.
+
+Resume now settles on either the next Pause control or the terminal `done` focus. This does not add a
+timing delay or product state: both are existing valid UI projections of the same successful control.
+Pause remains stricter and requires Resume visible with no working indicator.
+
+## 2026-07-15: Browser resources accumulated between Test Runs
+
+After several independent Browser commands, `HOPI-E2E-015` and later `028` timed out in the first
+`Page.navigate` IPC call before any product action. Restarting only the named Browser Harness daemon
+was not sufficient. Inspection found that the dedicated automation Chrome had accumulated hundreds
+of renderer processes from tabs created by earlier scripts; replacing that isolated automation
+process restored navigation. Retrying the whole browser script inside a scenario would be unsafe
+because later failures may occur after a click.
+
+Reloading before every atomic script also exposed a transient Windows endpoint-cleanup race and was
+unnecessary once tabs had an owner. The shared Browser executor now performs one idempotent daemon
+reload before the Test Run's first browser action, retains its attempts in one log, and closes every
+tab created by each script in a `finally` boundary. Only that pre-action initialization may retry; a
+browser script never does. Browser instance ownership remains with the host adapter and tab
+ownership remains with the Test Run. This keeps recovery and cleanup at the exact external
+infrastructure boundary without call-site flags, scenario-specific rules, or duplicate product
+actions. After the isolated Chrome was repaired, `028` passed at
+`test-artifacts/project-attention-recovery-browser-2026-07-14T19-32-21-885Z-c5a0e0e0`.
+The cleanup-enabled `028` and the subsequent full Regression both left the CDP target count at the
+same baseline of eight.
+
+## 2026-07-15: Artifact review changed the caller's path base
+
+The root-level `artifact:review` command changed into `packages/backend` before starting its CLI, so
+a repository-relative artifact path resolved under the package and failed before creating a review
+Run. The root script now executes the same Bun file without changing directories. Relative paths,
+absolute paths, and every other root-level artifact command therefore share one path base; no new
+path option or fallback rule is needed.
+
+## 2026-07-15: Internal notification exposed diagnostic narration
+
+The concurrent-Project Live Run completed both deliveries but one completion card exposed an
+intermediate Assistant explanation after a failed `notify_user({ message })` call. The old no-arg
+tool coupled visibility to whatever the vendor selected as the turn's final non-empty text. The
+contract now makes `notify_user({ message })` the sole operator-facing content for an internal turn;
+all other model text remains retained diagnostics.
+
+## 2026-07-15: Restart Live sampled completion before Reflection settled
+
+The first successful process-restart delivery observed `done` immediately before completion
+Reflection published its internal Inbox handoff, then stopped Coordinator with that event pending.
+One terminal snapshot is not quiescence. External-process Live runners now reuse the shared stable
+state-signature window covering Goal, Runs, Reflection, and pending Inbox before collecting terminal
+evidence.
+
+Latest verification: `bun run check` passed with the unified Test Run Harness: backend **293 passing
+tests / 1,170 assertions**, frontend **45 passing tests / 154 assertions**, with type checks, static
 checks, and frontend build all passing. `bun run e2e:contract` passed **164 tests / 816 assertions**.
 
 Latest remaining-scenario run: `bun test tests/projectReconciler.test.ts tests/multiRepoC1.test.ts
@@ -17,6 +121,20 @@ tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStage
 **79 tests / 478 assertions / 0 failures**. This is direct execution evidence for the existing
 contract/runtime coverage of `017`, `018`, `019`, `021`, `022`, and `027`; it does not replace their
 specified independent Browser or Live layers.
+
+## 2026-07-15: Deterministic UI command raced the speaking Assistant
+
+`HOPI-E2E-021` created and paused a Goal through product APIs before requesting Preview repair. A
+Coordinator tick observed the freshly written Create Goal Inbox receipt between its direct tool
+effect and handled acknowledgement, started a speaking turn, then failed the turn when the route
+updated the same event document. The false failure produced an event-target Workspace Attention and
+an unnecessary Reflection handoff.
+
+The fix is one process-local Assistant admission guard around every deterministic
+receive/effect/acknowledge sequence. It blocks only speaking dispatch for the in-flight receipt and
+adds no durable state; a process failure leaves the pending receipt eligible for ordinary recovery.
+The regression asserts that direct Goal controls create no Assistant runtime turn or event Attention,
+while the later Preview repair creates exactly one public speaking turn.
 
 ## 2026-07-14: Real Live Baseline
 
@@ -436,17 +554,12 @@ hides transport telemetry.
 | `bun run check`        | Passed | Backend 288 tests, frontend 48 tests, typecheck, lint, and build passed. |
 | `bun run e2e:contract` | Passed | 164 tests across 18 files; 809 assertions; zero provider calls.         |
 
-## Open Coverage Gaps
+## Current Execution Boundary
 
-1. `HOPI-E2E-002`, `HOPI-E2E-010`, and `HOPI-E2E-013` have independent Live runners; `014` has a
-   partial independent Browser runner and `016` has a deterministic production Coordinator restart
-   runner. All remaining catalogued Planned scenarios still need their own independent Browser and/or
-   Live runners before they can be claimed as run.
-2. `HOPI-E2E-013`, `HOPI-E2E-018`, and `HOPI-E2E-020` retain their specified Browser layer beyond
-   the existing global Assistant ingress preflight. `014` still lacks its repair-and-retry half.
-3. The deterministic suite proves orchestration seams and durable boundaries only. It must not be
-   used to claim vendor behavior, multimodal transport, browser presentation, or real responsibility
-   execution for a scenario whose table row still marks that layer pending.
+All catalogued risks now have the required independent or composed evidence. OpenCode remains
+intentionally unexecuted by operator decision. A retained inspection proves only the persisted
+outcome and current presentation of its source Live Run; changes to the corresponding model,
+scheduler, publication, or Git path still require that Live command to run again.
 
 ## 2026-07-14: Full Main Regression Baseline 07d2d79
 
@@ -554,3 +667,44 @@ The strengthened `HOPI-E2E-026` history proof passed again with Codex at
 and Claude at
 `/home/kllilizxc/Code/hopi-auto/test-artifacts/long-conversation-session-recovery-2026-07-14T14-14-33-926Z-44810d87`.
 OpenCode still lacks a host executable, so only its deterministic adapter contract was exercised.
+
+## 2026-07-14: Unified Test Run Regression
+
+The E2E Harness now gives Contract commands, Runtime scenarios, Browser scenarios, Live scenarios,
+artifact inspection, visual review, and Regression one `run.json` envelope. A parent Regression is
+the same Test Run with child artifact references; scenario-specific JSON remains detailed evidence.
+No scenario DSL, DAG, retry system, database, `suite.json`, or `visual-review.json` was added.
+
+Three Harness defects were found before accepting the implementation:
+
+1. `sourceRoots.map(resolve)` passed the array index into Node's variadic `path.resolve`. The helper
+   now resolves each root through an explicit unary callback, with a deterministic regression.
+2. The first generated gallery sorted screenshots lexically, putting recovery outcomes before their
+   triggering steps. The gallery now preserves the parent profile order and each child Run's capture
+   time. A test fixes both ordering guarantees. The gallery remains a derived view, not authority.
+3. Live cleanup originally appended `server_stopped` after writing the terminal report, immediately
+   invalidating its retained `actions.jsonl` hash. Live finalization now stops the server first and
+   makes later cleanup idempotent; a deterministic test checks both the one-stop boundary and the
+   sealed evidence hash.
+
+The final zero-provider Regression passed all 13 children: repository check, Contract suite, Runtime
+`011/012/016/020/025`, and Browser `001/014/015/023/028/029`. It recorded zero logical model Runs,
+zero provider usage, and no mixed code provenance. The retained parent is
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/test-run-regression-current/regression-preflight-2026-07-14T15-43-58-009Z-e28dfd14`.
+
+The embedded repository gate passed 294 Backend tests with 1,174 assertions and 45 Frontend tests
+with 154 assertions. The independently retained Contract child passed 164 tests with 816 assertions.
+After adding the compact-usage aggregation regression, the final repository gate passed 295 Backend
+tests with 1,175 assertions and the same 45 Frontend tests with 154 assertions.
+
+Its 39 checkpoint screenshots were reviewed through the generated gallery in profile and capture
+order. The separate Inspection Test Run records every exact screenshot path and SHA-256 without
+mutating the source:
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/test-run-regression-current-review/regression-preflight-visual-review-2026-07-14T15-50-38-431Z-094f771a`.
+The Browser Harness audit chain verified with head hash
+`5b8dd30036dc08243c3f347fcd07f0b934e616fdcbc2092d7cb17505fdaddd54`.
+
+The Live Regression profile was not executed because this change affects only test artifact,
+aggregation, and visual-review infrastructure. Contract, real Browser, immutable Inspection, and
+zero-provider execution cover that boundary; invoking production models would add cost without
+testing another changed behavior.

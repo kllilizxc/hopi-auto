@@ -20,6 +20,52 @@ afterEach(async () => {
 })
 
 describe('Reflection to operator Attention E2E', () => {
+  test('keeps speaking and Reflection runners on their configured boundaries', async () => {
+    const repoRoot = join(temporaryRoot, 'runner-boundary-repo')
+    await initializeGitRepo(repoRoot)
+    const homeRoot = join(temporaryRoot, 'runner-boundary-home')
+    const mainModes: Array<string | undefined> = []
+    const reflectionModes: Array<string | undefined> = []
+    const mainRunner: AssistantModelRunner = {
+      async run(input) {
+        mainModes.push(input.toolMode)
+        return { reply: 'Speaking reply.', session: codexSession('main-boundary') }
+      },
+    }
+    const reflectionRunner: AssistantModelRunner = {
+      async run(input) {
+        reflectionModes.push(input.toolMode)
+        return { reply: 'No handoff.', session: codexSession('reflection-boundary') }
+      },
+    }
+    const home = createAssistantHomeStore(homeRoot, new PublicationCoordinator())
+    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const runtime = await createMvpRuntime({
+      homeRoot,
+      assistantRunner: mainRunner,
+      reflectionRunner,
+      start: false,
+    })
+    await runtime.workspace.receiveEvent({ eventId: 'EV-user', content: 'Report status.' })
+
+    await runtime.assistant.process('EV-user')
+    await runtime.workspace.createAttention({
+      attributes: {
+        id: 'A-runner-boundary',
+        target: 'project:P-1',
+        createdAt: '2026-07-14T00:00:00Z',
+        resolvedAt: null,
+        notifiedAt: null,
+      },
+      body: 'Inspect this state change.\n',
+    })
+    expect(await runtime.reflection.observe({ settled: false })).toBe('started')
+    await runtime.reflection.waitForIdle()
+
+    expect(mainModes).toEqual(['main'])
+    expect(reflectionModes).toEqual(['reflection'])
+  })
+
   test('recovers an omitted handoff and projects Needs you only after the reply is durable', async () => {
     const repoRoot = join(temporaryRoot, 'repo')
     await initializeGitRepo(repoRoot)
@@ -54,7 +100,9 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'Choose the release window: today or tomorrow?',
+        })
         return {
           reply: 'Choose the release window: today or tomorrow?',
           session: codexSession('assistant-e2e'),
@@ -117,7 +165,9 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {})
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'The Project checkout needs to be rebound before work can continue.',
+        })
         return {
           reply: 'The Project checkout needs to be rebound before work can continue.',
           session: codexSession('workspace-assistant-e2e'),

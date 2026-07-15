@@ -55,6 +55,35 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.status).toBe('handled')
   })
 
+  test('does not dispatch a deterministic direct command receipt before acknowledgement', async () => {
+    const fixture = await workspaceFixture()
+    const processed: string[] = []
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          processed.push(eventId)
+          return { kind: 'answered' as const, eventId }
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    await coordinator.runDirectAssistantCommand(async () => {
+      await fixture.workspace.receiveEvent({ eventId: 'EV-direct', content: 'Pause Goal G-1.' })
+      expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+      await fixture.workspace.handleEvent('EV-direct', {
+        reply: 'Paused Goal G-1.',
+        disposition: 'tool:pause',
+      })
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(processed).toEqual([])
+    expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)
+  })
+
   test('turns one terminal Assistant failure into event-target Attention without retrying', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Unsafe ambiguity.' })

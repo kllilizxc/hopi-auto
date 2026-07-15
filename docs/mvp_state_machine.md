@@ -42,6 +42,10 @@ Inbox `source: user | reflection` and `visibility: public | internal` are proven
 facts, not more status values. Reflection itself has no canonical lifecycle. Its runtime manifest is
 disposable; only a useful internal brief enters the ordinary Inbox state machine.
 
+A direct product control can hold a process-local admission guard while it deterministically moves
+its receipt from `pending` to `handled`. Eligibility ignores that receipt during the guard; the
+receipt itself has no extra state, and after a crash it is eligible as normal pending input.
+
 Pass results are `success | reject | attention | fail`. Prose explains a result but cannot invent a
 transition. A tool error observed by Coordinator is `fail`. If the Coordinator or runner process
 disappears before a Work gate is published, no result is consumed and `attempts` may remain
@@ -168,7 +172,7 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|final reply| HR[Publish complete reply and mark turn handled; expose only when requested]
+    CE -->|public final reply or notify_user message| HR[Publish complete reply and mark turn handled]
     HR --> AL{Linked Attention?}
     AL -->|yes| NA[Publish Attention notifiedAt after reply]
     AL -->|no| D
@@ -238,7 +242,7 @@ Public user turns are selected before internal Reflection turns, with receipt or
 each class. Reflection never enters the publication path directly. Its one optional brief is ordinary
 pending Inbox input to the speaking thread, which rereads current truth before choosing any HOPI tool.
 A hidden internal turn remains absent from the conversation projection unless the speaking thread
-explicitly promotes it for operator notification.
+supplies an explicit operator message through `notify_user`; internal narration is never promoted.
 
 ## Reflection Runtime Lifecycle
 
