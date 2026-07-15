@@ -47,6 +47,7 @@ interface UnifiedMessageFeedProps {
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
+const INITIAL_BOTTOM_LOCATION = { index: 'LAST', align: 'end' } as const
 const FEED_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour12: false,
   month: 'short',
@@ -87,6 +88,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
     length: 0,
   })
   const displayRows = useMemo(() => buildMessageFeedRows(items), [items])
+  const lastRowId = displayRows.at(-1)?.id
 
   useEffect(() => {
     setExpandedItems({})
@@ -127,14 +129,16 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
 
   const renderRow = useCallback((row: MessageFeedDisplayRow) => {
     if (row.type === 'activity_group') {
+      const isLastToolActivity =
+        row.id === lastRowId && row.entries.some((entry) => entry.type === 'tool_block')
       return (
         <ActivityGroupRow
           row={row}
-          expanded={expandedItems[row.id] ?? false}
-          onToggle={() =>
+          expanded={expandedItems[row.id] ?? isLastToolActivity}
+          onToggle={(expanded) =>
             setExpandedItems((current) => ({
               ...current,
-              [row.id]: !(current[row.id] ?? false),
+              [row.id]: expanded,
             }))
           }
         />
@@ -143,7 +147,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
     if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
     if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
     return <MessageRow item={row.item} />
-  }, [expandedItems])
+  }, [expandedItems, lastRowId])
   const itemContent = useCallback(
     (_index: number, row: MessageFeedDisplayRow) => renderRow(row),
     [renderRow],
@@ -209,7 +213,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
         className="unified-message-feed__virtuoso"
         data={displayRows}
         firstItemIndex={firstItemIndex}
-        initialTopMostItemIndex={Math.max(displayRows.length - 1, 0)}
+        initialTopMostItemIndex={INITIAL_BOTTOM_LOCATION}
         computeItemKey={(_, row) => row.id}
         followOutput={isAtBottom ? 'auto' : false}
         alignToBottom
@@ -369,7 +373,7 @@ function ActivityGroupRow({
 }: {
   row: Extract<MessageFeedDisplayRow, { type: 'activity_group' }>
   expanded: boolean
-  onToggle: () => void
+  onToggle: (expanded: boolean) => void
 }) {
   const summary = summarizeActivityGroup(row.entries)
   const pendingStatus = row.entries.find(

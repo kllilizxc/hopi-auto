@@ -403,9 +403,10 @@ The Assistant drawer shows one chronological conversation:
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking
   turn itself fails
-- a tool activity aggregate is expanded by default only while it is the final conversation row;
-  historical and non-tool aggregates are collapsed, and individual tool calls remain collapsed
-  diagnostics, not chat commands the user must understand
+- a tool activity aggregate is expanded by default only while it is the final conversation row,
+  and the stream initially anchors that expanded row to the bottom; historical and non-tool
+  aggregates are collapsed, and individual tool calls remain collapsed diagnostics, not chat
+  commands the user must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
 - internal Reflection turns and their diagnostics are hidden

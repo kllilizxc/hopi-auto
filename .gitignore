@@ -66,3 +66,5 @@ docs/*
 !docs/e2e_test_cases.md
 !docs/e2e_test_issues.md
 !docs/unified_design.md
+.playwright*
+artifacts
