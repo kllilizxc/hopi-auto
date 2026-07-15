@@ -430,8 +430,9 @@ same canonical Inbox event identity and cannot repeat domain effects.
 Git refs and canonical `.hopi` files move to another machine. Goal Inputs, contracts, DAG, timing,
 task branches, Attention, Evidence, stable Repo IDs, and the primary release manifest remain
 self-contained. Assistant-home Inbox turns and workspace Attention move with the HOPI-home export
-together with `home.yml`; every local `repoPath` and Git worktree administration entry is explicitly
-rebound before startup validation allows work to resume. HOPI refuses to reconstruct a missing
+together with `home.yml`; the complete existing Repo-ID set is explicitly rebound as one local
+operation before validation allows work to resume. A startup against stale paths fails closed and
+may expose Project Attention, but cannot schedule Agent work. HOPI refuses to reconstruct a missing
 primary managed root from a potentially older Git checkpoint.
 
 ## Evidence From CardGame

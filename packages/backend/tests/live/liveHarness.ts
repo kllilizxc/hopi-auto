@@ -805,7 +805,9 @@ export async function configureProjectInBrowser(
   harness: BrowserHarnessContext,
   input: {
     projectId: string
+    primaryRepoId: string
     primaryRepoPath: string
+    duplicateRepoPath: string
     secondaryRepoId: string
     secondaryRepoPath: string
     reboundSecondaryRepoPath: string
@@ -816,12 +818,14 @@ export async function configureProjectInBrowser(
   const url = `${harness.baseUrl}/projects`
   const screenshots = {
     initial: await screenshotTarget(harness, '01-project-link-initial.png'),
-    primaryLinked: await screenshotTarget(harness, '02-project-primary-linked.png'),
-    secondaryLinked: await screenshotTarget(harness, '03-project-secondary-linked.png'),
-    assistantConfigured: await screenshotTarget(harness, '04-assistant-model-configured.png'),
-    projectConfigured: await screenshotTarget(harness, '05-project-model-configured.png'),
-    rebound: await screenshotTarget(harness, '06-project-repo-rebound.png'),
-    reloaded: await screenshotTarget(harness, '07-project-configuration-reloaded.png'),
+    cancelled: await screenshotTarget(harness, '02-project-picker-cancelled.png'),
+    duplicateSelected: await screenshotTarget(harness, '03-project-duplicate-selected.png'),
+    conflict: await screenshotTarget(harness, '04-project-duplicate-rejected.png'),
+    linked: await screenshotTarget(harness, '05-project-multi-repo-linked.png'),
+    assistantConfigured: await screenshotTarget(harness, '06-assistant-model-configured.png'),
+    projectConfigured: await screenshotTarget(harness, '07-project-model-configured.png'),
+    rebound: await screenshotTarget(harness, '08-project-repo-rebound.png'),
+    reloaded: await screenshotTarget(harness, '09-project-configuration-reloaded.png'),
   }
   const values = Object.fromEntries(
     Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
@@ -839,28 +843,62 @@ export async function configureProjectInBrowser(
     '        time.sleep(0.25)',
     '    return value',
     captureScreenshotLine(screenshots.initial),
-    `linked = js(${JSON.stringify(
+    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    'time.sleep(0.25)',
+    `cancelled = wait_js(${JSON.stringify("!document.querySelector('.project-directory-picker')?.disabled && document.querySelectorAll('.project-create-repo').length === 0")})`,
+    captureScreenshotLine(screenshots.cancelled),
+    `hopi_audit_note("cancel system repository selection", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `primary_selected = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 1")})`,
+    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `duplicate_selected = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 2")})`,
+    captureScreenshotLine(screenshots.duplicateSelected),
+    `project_filled = js(${JSON.stringify(
       [
         '(() => {',
-        "  const form = document.querySelector('.link-project-panel')",
-        '  const path = form?.querySelector(\'input[placeholder="/home/me/Code/product"]\')',
-        '  const project = form?.querySelector(\'input[placeholder="Derived when omitted"]\')',
-        '  const submit = form?.querySelector(\'button[type="submit"]\')',
-        "  if (!path || !project || !submit) return { ok: false, reason: 'missing link form' }",
+        '  const project = document.querySelector(\'input[placeholder="Derived when omitted"]\')',
         "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        "  if (!setter) return { ok: false, reason: 'missing input setter' }",
-        `  setter.call(path, ${values.primaryRepoPath})`,
-        "  path.dispatchEvent(new Event('input', { bubbles: true }))",
+        "  if (!project || !setter) return { ok: false, reason: 'missing Project ID input' }",
         `  setter.call(project, ${values.projectId})`,
         "  project.dispatchEvent(new Event('input', { bubbles: true }))",
         '  return { ok: true }',
         '})()',
       ].join('\n'),
     )})`,
-    `hopi_audit_note("link primary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
+    `hopi_audit_note("reject duplicate Git identity before Project link", scenario=${JSON.stringify(harness.scenario)})`,
     `js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
-    `primary_visible = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.projectId}) && Boolean(document.querySelector('.project-card'))`)})`,
-    captureScreenshotLine(screenshots.primaryLinked),
+    `conflict_visible = wait_js(${JSON.stringify("document.querySelector('.error-banner')?.textContent?.includes('same Git Repo')")})`,
+    `js(${JSON.stringify("fetch('/api/state').then((response) => response.json()).then((state) => { window.__hopiConflictAtomic = state.projects.length === 0 })")})`,
+    `conflict_atomic = wait_js(${JSON.stringify('window.__hopiConflictAtomic === true')})`,
+    captureScreenshotLine(screenshots.conflict),
+    `duplicate_removed = js(${JSON.stringify(
+      `(() => { const row = [...document.querySelectorAll('.project-create-repo')].find((candidate) => candidate.querySelector('.project-create-repo-copy small')?.title === ${values.duplicateRepoPath}); const button = row?.querySelector('button[aria-label^="Remove"]'); if (!button) return false; button.click(); return true })()`,
+    )})`,
+    `one_repo_remains = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 1")})`,
+    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `final_selection = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 2")})`,
+    `repo_ids_filled = js(${JSON.stringify(
+      [
+        '(() => {',
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        '  if (!setter) return false',
+        `  const values = new Map([[${values.primaryRepoPath}, ${values.primaryRepoId}], [${values.secondaryRepoPath}, ${values.secondaryRepoId}]])`,
+        "  for (const row of document.querySelectorAll('.project-create-repo')) {",
+        "    const path = row.querySelector('.project-create-repo-copy small')?.title",
+        "    const input = row.querySelector('.project-create-repo-copy input')",
+        '    const value = path ? values.get(path) : null',
+        '    if (!input || !value) return false',
+        '    setter.call(input, value)',
+        "    input.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  }',
+        '  return true',
+        '})()',
+      ].join('\n'),
+    )})`,
+    `hopi_audit_note("create one multi-repository HOPI Project", scenario=${JSON.stringify(harness.scenario)})`,
+    `js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
+    `linked = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.projectId}) && document.querySelectorAll('.project-repo-entry').length === 2`)})`,
+    captureScreenshotLine(screenshots.linked),
     `manager = js(${JSON.stringify(
       [
         '(() => {',
@@ -871,26 +909,7 @@ export async function configureProjectInBrowser(
         '})()',
       ].join('\n'),
     )})`,
-    `wait_js(${JSON.stringify('Boolean(document.querySelector(\'input[aria-label="Repository ID"]\'))')})`,
-    `secondary_filled = js(${JSON.stringify(
-      [
-        '(() => {',
-        '  const id = document.querySelector(\'input[aria-label="Repository ID"]\')',
-        '  const path = document.querySelector(\'input[aria-label="Repository path"]\')',
-        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        "  if (!id || !path || !setter) return { ok: false, reason: 'missing secondary form' }",
-        `  setter.call(id, ${values.secondaryRepoId})`,
-        "  id.dispatchEvent(new Event('input', { bubbles: true }))",
-        `  setter.call(path, ${values.secondaryRepoPath})`,
-        "  path.dispatchEvent(new Event('input', { bubbles: true }))",
-        '  return { ok: true }',
-        '})()',
-      ].join('\n'),
-    )})`,
-    `hopi_audit_note("link secondary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify('document.querySelector(\'.project-repo-link-form button[type="submit"]\')?.click()')})`,
     `secondary_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-id')].some((element) => element.textContent?.trim() === ${values.secondaryRepoId})`)})`,
-    captureScreenshotLine(screenshots.secondaryLinked),
     `assistant_filled = js(${JSON.stringify(
       [
         '(() => {',
@@ -953,7 +972,7 @@ export async function configureProjectInBrowser(
     `reloaded = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.assistantModel}) && document.body.innerText.includes(${values.projectModel}) && document.body.innerText.includes(${values.reboundSecondaryRepoPath})`)})`,
     captureScreenshotLine(screenshots.reloaded),
     `hopi_audit_note("HOPI Project configuration survived browser reload", scenario=${JSON.stringify(harness.scenario)})`,
-    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"linked": linked, "primaryVisible": primary_visible, "manager": manager, "secondaryFilled": secondary_filled, "secondaryVisible": secondary_visible, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectFilled": project_filled, "projectModelVisible": project_model_visible, "rebindOpen": rebind_open, "rebindFilled": rebind_filled, "reboundVisible": rebound_visible, "reloaded": reloaded, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"cancelled": cancelled, "primarySelected": primary_selected, "duplicateSelected": duplicate_selected, "projectFilled": project_filled, "conflictVisible": conflict_visible, "conflictAtomic": conflict_atomic, "duplicateRemoved": duplicate_removed, "oneRepoRemains": one_repo_remains, "finalSelection": final_selection, "repoIdsFilled": repo_ids_filled, "linked": linked, "manager": manager, "secondaryVisible": secondary_visible, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectModelVisible": project_model_visible, "rebindOpen": rebind_open, "rebindFilled": rebind_filled, "reboundVisible": rebound_visible, "reloaded": reloaded, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -965,7 +984,16 @@ export async function configureProjectInBrowser(
     verify?: BrowserAuditVerification
   }
   for (const field of [
-    'primaryVisible',
+    'cancelled',
+    'primarySelected',
+    'duplicateSelected',
+    'conflictVisible',
+    'conflictAtomic',
+    'duplicateRemoved',
+    'oneRepoRemains',
+    'finalSelection',
+    'repoIdsFilled',
+    'linked',
     'secondaryVisible',
     'assistantVisible',
     'configuredOpen',

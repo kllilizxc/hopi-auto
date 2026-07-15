@@ -17,18 +17,32 @@ const PROJECT_ID = 'P-configuration'
 const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
-const primaryRoot = join(artifactRoot, 'primary')
-const secondaryRoot = join(artifactRoot, 'secondary')
-const movedSecondaryRoot = join(artifactRoot, 'secondary-moved')
+const primaryRoot = join(artifactRoot, 'web')
+const duplicatePrimaryRoot = join(artifactRoot, 'web-duplicate')
+const secondaryRoot = join(artifactRoot, 'api')
+const movedSecondaryRoot = join(artifactRoot, 'api-moved')
 let server: MvpServer | null = null
 let restarted: MvpServer | null = null
 
 try {
   await initializeRepo(primaryRoot)
   await initializeRepo(secondaryRoot)
+  await gitOutput(primaryRoot, [
+    'worktree',
+    'add',
+    '-b',
+    'duplicate-selection',
+    duplicatePrimaryRoot,
+    'HEAD',
+  ])
   const primaryBefore = await checkoutSnapshot(primaryRoot)
   const secondaryBefore = await checkoutSnapshot(secondaryRoot)
-  server = createServer({ rootDir: homeRoot, port: 0 })
+  const selections: Array<string | null> = [null, primaryRoot, duplicatePrimaryRoot, secondaryRoot]
+  server = createServer({
+    rootDir: homeRoot,
+    port: 0,
+    directoryPicker: async () => selections.shift() ?? null,
+  })
   const baseUrl = `http://127.0.0.1:${server.port}`
   await gitOutput(secondaryRoot, [
     'worktree',
@@ -42,7 +56,9 @@ try {
     { scenario: SCENARIO, artifactRoot, baseUrl },
     {
       projectId: PROJECT_ID,
+      primaryRepoId: 'web',
       primaryRepoPath: primaryRoot,
+      duplicateRepoPath: duplicatePrimaryRoot,
       secondaryRepoId: 'api',
       secondaryRepoPath: secondaryRoot,
       reboundSecondaryRepoPath: movedSecondaryRoot,
@@ -97,7 +113,8 @@ function assertState(state: StateView) {
   const project = state.projects.find((candidate) => candidate.projectId === PROJECT_ID)
   assert.ok(project)
   assert.deepEqual(project.codingDefaults, { transport: 'claude', model: 'claude-sonnet-4-6' })
-  assert.equal(project.repos.find((repo) => repo.repoId === 'primary')?.repoPath, primaryRoot)
+  assert.equal(project.primaryRepoId, 'web')
+  assert.equal(project.repos.find((repo) => repo.repoId === 'web')?.repoPath, primaryRoot)
   assert.equal(project.repos.find((repo) => repo.repoId === 'api')?.repoPath, movedSecondaryRoot)
 }
 
@@ -115,6 +132,7 @@ interface StateView {
   home: { assistantCodingDefaults: unknown }
   projects: Array<{
     projectId: string
+    primaryRepoId: string
     codingDefaults: unknown
     repos: Array<{ repoId: string; repoPath: string }>
   }>

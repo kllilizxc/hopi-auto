@@ -721,6 +721,10 @@ the matching HOPI tool.
 Lifecycle control has no separate worker or queue. On each ordinary reconciliation scan, a Goal
 whose lifecycle is not `active` loses all of its Run leases before any further decision. The
 interrupt is Goal-scoped, so pausing one Goal does not stop independent work in the same Project.
+An interrupt also invalidates dispatch admission that began before the interrupt but is still
+preparing canonical context or a workspace: that older reconciliation may not install a new Run
+lease afterward. Coordinator shutdown uses the same project-wide boundary. This is an in-memory
+execution guard, not another durable lifecycle or queue.
 The existing semantic publication guard remains the final protection for a result that races the
 interrupt.
 

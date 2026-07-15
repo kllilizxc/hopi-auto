@@ -81,10 +81,19 @@ remain ordinary Markdown.
 
 ## Linking and Initialization
 
-Creating a Project links one primary Repo. Adding a Repo requires a stable ID, validates that the
-Git common directory is not already linked anywhere in the Assistant home, creates or validates its
-HOPI release ref and managed worktree, and publishes the portable membership and local binding.
-Repeating the exact request is idempotent. Repo ID is immutable; a moved checkout uses rebind.
+The create form collects one or more Repos before it creates a Project. Each click asks the local
+Coordinator to open the host directory chooser and returns either one absolute directory or cancel;
+the chooser result is transient UI input, not a new document or browser filesystem authority. The
+operator gives every selected Repo a stable ID and chooses exactly one primary Repo. macOS, Linux,
+and WSL use small host adapters behind this same boundary. Browser automation injects deterministic
+chooser results rather than pretending that a text field proves the native boundary.
+
+Create submits the complete `{ primaryRepoId, repos[] }` set once. Coordinator resolves every Git
+root and common directory, rejects duplicate IDs or Git identities before changing the Project
+link, creates or validates the managed roots, then publishes `project.yml` and finally the one
+`projects.yml` link gate. A failure before that gate may leave retryable managed Git preparation but
+cannot expose a partially linked Project. Repeating the exact request is idempotent. A later Repo
+addition uses the same validation rules; Repo ID is immutable and a moved checkout uses rebind.
 
 Linking performs only deterministic Git and document work. It creates no Init Goal, Work, state, or
 model Run. The next ordinary Planner Run reads all linked Repo roots. It refreshes
@@ -94,6 +103,9 @@ HOPI does not manufacture one in every Repo merely because it was linked.
 
 An inconsistent partial link or an unavailable Repo creates one Project Attention and makes the
 Project ineligible. HOPI never guesses a replacement path or silently drops a Repo from a release.
+When several paths move together, rebind accepts the complete existing Repo-ID set in one request,
+repairs every managed-worktree entry, and changes the local binding document only after all targets
+validate. This is the same Project-link publication boundary, not a migration workflow.
 
 ## Work Workspace
 
@@ -185,9 +197,10 @@ adapter implements it under the normal approval policy.
 
 ## UI
 
-Linked Projects shows one primary Repo and a list of secondary Repos. The MVP supports creating a
-Project, adding a secondary Repo, and rebinding a moved Repo. Primary switching and Repo removal are
-deferred. Project model settings remain Project-level.
+Linked Projects shows one primary Repo and a list of secondary Repos. The MVP supports selecting
+multiple Repos before Project creation, adding a secondary Repo later, and rebinding one or all
+moved Repos. Primary switching after creation and Repo removal are deferred. Project model settings
+remain Project-level.
 
 Kanban remains Goal/Work based. Engineering cards show compact Repo badges; no Repo columns or
 Repo subcards are introduced. Work Attempts remain one stream and may show the per-Repo workspace
@@ -198,7 +211,10 @@ paths, checkpoints, diffs, and integration diagnostics. Preview remains one Proj
 The implementation is complete only when automated tests cover:
 
 - version 1 single-Repo Projects and Work run without behavioral migration regressions
+- the host chooser can be cancelled without an effect and one create request atomically links two Repos
+- two selected checkouts of one Git common directory fail before a durable Project link exists
 - a secondary Repo can be added and rebound without touching either user checkout
+- a moved Assistant home and complete Repo set can be rebound together without losing portable state
 - one Work modifies primary and secondary Repos, receives one review, and produces one primary C1
 - one Work modifies only a secondary Repo while its Work and Evidence remain canonical in primary
 - a target advance or merge conflict in any Repo rejects before the primary boundary

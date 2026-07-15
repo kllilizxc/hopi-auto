@@ -22,6 +22,7 @@ import {
   type AttentionTransport,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
+import { HostDirectoryPickerError, selectHostDirectory } from './runtime/hostDirectoryPicker'
 import { assertSupportedPlatform } from './runtime/hostPlatform'
 import {
   type MvpProjectRuntime,
@@ -29,6 +30,7 @@ import {
   createMvpRuntime,
   requireProject,
 } from './runtime/mvpRuntime'
+import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 
 export interface ServerOptions {
@@ -39,28 +41,53 @@ export interface ServerOptions {
   reflectionRunner?: AssistantModelRunner
   attentionTransport?: AttentionTransport
   startCoordinator?: boolean
+  directoryPicker?: () => Promise<string | null>
 }
 
 export type MvpServer = Bun.Server<undefined> & {
   shutdown(): Promise<void>
 }
 
-const projectSchema = z.object({
+const projectIdentitySchema = z.object({
   projectId: z
     .string()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
     .optional(),
-  repoPath: z.string().min(1),
-  repoId: z
-    .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-    .optional(),
 })
-const rebindProjectSchema = z.object({ repoPath: z.string().min(1) })
 const projectRepoSchema = z.object({
   repoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   repoPath: z.string().min(1),
 })
+const repoPathSchema = z.object({ repoPath: z.string().min(1) }).strict()
+const projectSchema = z.union([
+  projectIdentitySchema
+    .extend({
+      primaryRepoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+      repos: z.array(projectRepoSchema).min(1),
+    })
+    .strict(),
+  projectIdentitySchema
+    .extend({
+      repoPath: z.string().min(1),
+      repoId: z
+        .string()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+        .optional(),
+    })
+    .strict()
+    .transform((input) => {
+      const repoId = input.repoId ?? 'primary'
+      return {
+        projectId: input.projectId,
+        primaryRepoId: repoId,
+        repos: [{ repoId, repoPath: input.repoPath }],
+      }
+    }),
+])
+const rebindProjectSchema = z.union([
+  z.object({ repos: z.array(projectRepoSchema).min(1) }).strict(),
+  repoPathSchema,
+])
 const projectSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
@@ -169,6 +196,16 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'GET' && url.pathname === '/api/state') {
           return json(await presentState(runtime))
         }
+        if (request.method === 'POST' && url.pathname === '/api/system/select-directory') {
+          try {
+            return json({ path: await (options.directoryPicker ?? selectHostDirectory)() })
+          } catch (error) {
+            if (error instanceof HostDirectoryPickerError) {
+              throw new ApiError(503, error.message)
+            }
+            throw error
+          }
+        }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
         }
@@ -257,7 +294,8 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, rebindProjectSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
-            await current.rebindProject(projectId, body.repoPath)
+            if ('repos' in body) await current.home.rebindRepos({ projectId, repos: body.repos })
+            else await current.rebindProject(projectId, body.repoPath)
           })
           return json(await presentState(await nextRuntime))
         }
@@ -285,7 +323,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const projectId = requirePart(parts, 2)
           const repoId = requirePart(parts, 4)
-          const body = await parseBody(request, rebindProjectSchema)
+          const body = await parseBody(request, repoPathSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
             await current.rebindRepo(projectId, repoId, body.repoPath)
           })
@@ -545,6 +583,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json({ error: error.message }, 400)
         }
         if (error instanceof CursorPageError) return json({ error: error.message }, 400)
+        if (error instanceof AssistantHomeStoreError) {
+          const status =
+            error.code === 'repo_invalid' ? 400 : error.code === 'project_not_found' ? 404 : 409
+          return json({ error: error.message }, status)
+        }
         if (error instanceof z.ZodError) {
           return json({ error: error.issues.map((issue) => issue.message).join(', ') }, 400)
         }

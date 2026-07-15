@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
+import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   type LiveGoalDetail,
   type LiveState,
@@ -24,11 +25,14 @@ import {
 const SCENARIO = 'process-restart-during-generator'
 const PROJECT_ID = 'P-process-restart'
 const GOAL_ID = 'G-process-restart'
+const ASSISTANT_GOAL_ID = 'G-assistant-restart'
 const testRun = await startTestRun(SCENARIO, 'live')
 const homeRoot = join(testRun.artifactRoot, 'home')
 const repoRoot = join(testRun.artifactRoot, 'repo')
 const artifactContext = { scenario: SCENARIO, artifactRoot: testRun.artifactRoot, baseUrl: '' }
-let first: CoordinatorBoundary | null = null
+let setupServer: MvpServer | null = null
+let assistantFirst: CoordinatorBoundary | null = null
+let generatorFirst: CoordinatorBoundary | null = null
 let replacement: CoordinatorBoundary | null = null
 
 try {
@@ -38,20 +42,115 @@ try {
   await ensureDefaultAgentAdapterConfig(homeRoot, codingDefaults)
   await recordAction(artifactContext, 'fixture_created', { checkout, codingDefaults })
 
-  first = await launchCoordinator('first')
-  await recordAction(artifactContext, 'coordinator_started', {
-    instance: 'first',
-    pid: first.child.pid,
-    origin: first.origin,
-  })
-  const linked = await requestJson<LiveState>(first.origin, '/api/projects', {
+  setupServer = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+  const setupOrigin = `http://127.0.0.1:${setupServer.port}`
+  const linked = await requestJson<LiveState>(setupOrigin, '/api/projects', {
     method: 'POST',
     body: { projectId: PROJECT_ID, repoId: 'primary', repoPath: repoRoot },
   })
   const integrationRoot = linked.projects.find((project) => project.projectId === PROJECT_ID)
     ?.repos[0]?.integrationRoot
   assert.ok(integrationRoot)
-  await requestJson(first.origin, `/api/projects/${PROJECT_ID}/goals`, {
+  await requestJson(setupOrigin, `/api/projects/${PROJECT_ID}/goals`, {
+    method: 'POST',
+    body: {
+      goalId: ASSISTANT_GOAL_ID,
+      title: 'Preserve one Assistant tool effect across restart',
+      objective: 'Keep one idempotent design update while this Goal remains paused.',
+    },
+  })
+  await requestJson(setupOrigin, `/api/projects/${PROJECT_ID}/goals/${ASSISTANT_GOAL_ID}/pause`, {
+    method: 'POST',
+  })
+  await setupServer.shutdown()
+  setupServer = null
+
+  assistantFirst = await launchCoordinator('assistant-first')
+  await recordAction(artifactContext, 'coordinator_started', {
+    instance: 'assistant-first',
+    pid: assistantFirst.child.pid,
+    origin: assistantFirst.origin,
+  })
+  const rejectedCoordinator = await launchRejectedCoordinator('lock-contender')
+  assert.match(
+    `${rejectedCoordinator.output.stdout}\n${rejectedCoordinator.output.stderr}`,
+    /Another Coordinator owns/,
+  )
+  await requestJson<LiveState>(assistantFirst.origin, '/api/state')
+  const admitted = await requestJson<{ eventId: string }>(assistantFirst.origin, '/api/inbox', {
+    method: 'POST',
+    body: {
+      content: 'Record the agreed Assistant restart design note on the paused Goal.',
+      context: { projectId: PROJECT_ID, goalId: ASSISTANT_GOAL_ID },
+    },
+  })
+  const assistantCheckpoint = await waitForAssistantToolCheckpoint(admitted.eventId)
+  const assistantBeforeCrash = await readAssistantFeedEvent(assistantFirst.origin, admitted.eventId)
+  assert.equal(assistantBeforeCrash?.status, 'pending')
+  assert.equal(assistantBeforeCrash?.runtimeStatus, 'running')
+  assert.match(
+    await Bun.file(
+      join(
+        integrationRoot,
+        '.hopi',
+        'docs',
+        'goals',
+        ASSISTANT_GOAL_ID,
+        'design',
+        'assistant-restart.md',
+      ),
+    ).text(),
+    /durable tool effect survived/,
+  )
+  await crashCoordinator(assistantFirst)
+  assistantFirst = null
+
+  generatorFirst = await launchCoordinator('generator-first')
+  const assistantRecovered = await waitForValue(
+    () => readAssistantFeedEvent(generatorFirst?.origin ?? '', admitted.eventId),
+    (event) => event?.status === 'handled' && event.runtimeStatus === 'completed',
+    { timeoutMs: 60_000, description: 'Assistant turn to recover after its durable tool effect' },
+  )
+  assert.equal(assistantRecovered?.reply, 'The requested design update was recorded once.')
+  const assistantTurn = (await Bun.file(
+    join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', admitted.eventId, 'turn.json'),
+  ).json()) as { attempt: number; status: string }
+  assert.equal(assistantTurn.attempt, 2)
+  assert.equal(assistantTurn.status, 'completed')
+  const assistantEvents = await Bun.file(
+    join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', admitted.eventId, 'events.jsonl'),
+  ).text()
+  assert.match(assistantEvents, /Resuming Assistant turn after interrupted/)
+  assert.equal(
+    await countGoalInputsForEvent(integrationRoot, ASSISTANT_GOAL_ID, admitted.eventId),
+    1,
+  )
+  const assistantGoal = await requestJson<{ design: Array<{ path: string }> }>(
+    generatorFirst.origin,
+    `/api/projects/${PROJECT_ID}/goals/${ASSISTANT_GOAL_ID}`,
+  )
+  assert.equal(
+    assistantGoal.design.filter((entry) => entry.path.endsWith('/assistant-restart.md')).length,
+    1,
+  )
+  const stateAfterAssistantRecovery = await requestJson<LiveState>(
+    generatorFirst.origin,
+    '/api/state',
+  )
+  assert.equal(
+    stateAfterAssistantRecovery.attentions.some(
+      (attention) => attention.target?.includes(admitted.eventId) && attention.resolvedAt === null,
+    ),
+    false,
+  )
+  await recordAction(artifactContext, 'assistant_restart_verified', {
+    eventId: admitted.eventId,
+    checkpoint: assistantCheckpoint,
+    attempt: assistantTurn.attempt,
+    rejectedCoordinator: rejectedCoordinator.output,
+  })
+
+  await requestJson(generatorFirst.origin, `/api/projects/${PROJECT_ID}/goals`, {
     method: 'POST',
     body: {
       goalId: GOAL_ID,
@@ -61,8 +160,8 @@ try {
     },
   })
 
-  const checkpoint = await waitForGeneratorCheckpoint(first.origin)
-  const descendants = await descendantPids(first.child.pid)
+  const checkpoint = await waitForGeneratorCheckpoint(generatorFirst.origin)
+  const descendants = await descendantPids(generatorFirst.child.pid)
   assert.ok(descendants.length > 0, 'Coordinator boundary must contain a real child process')
   assert.equal(await Bun.file(checkpoint.sourcePath).text(), "export const protocol = 'v2'\n")
   assert.ok((await Bun.file(checkpoint.transcriptPath).text()).trim())
@@ -79,8 +178,8 @@ try {
     boundaryDescendants: descendants,
   })
 
-  await crashCoordinator(first)
-  first = null
+  await crashCoordinator(generatorFirst)
+  generatorFirst = null
   await waitForProcessesToExit(descendants)
   assert.equal(await Bun.file(checkpoint.sourcePath).text(), "export const protocol = 'v2'\n")
   await recordAction(artifactContext, 'coordinator_crashed', {
@@ -191,6 +290,9 @@ try {
     paths: { home: homeRoot, repo: repoRoot, integration: integrationRoot },
     modelBoundaries: { reflection: 'deterministic' },
     checkpoint,
+    assistantCheckpoint,
+    assistantTurn,
+    rejectedCoordinator: rejectedCoordinator.output,
     attempts,
     browser,
     usage,
@@ -198,7 +300,9 @@ try {
   console.log(`HOPI-E2E-016 process restart Live passed: ${testRun.artifactRoot}`)
   console.log(`Model usage: ${JSON.stringify(usage)}`)
 } catch (error) {
-  if (first) await stopCoordinator(first).catch(() => undefined)
+  await setupServer?.shutdown().catch(() => undefined)
+  if (assistantFirst) await stopCoordinator(assistantFirst).catch(() => undefined)
+  if (generatorFirst) await stopCoordinator(generatorFirst).catch(() => undefined)
   if (replacement) await stopCoordinator(replacement).catch(() => undefined)
   const usage = await readModelUsage(homeRoot).catch(() => undefined)
   await finishTestRun(testRun, 'failed', {
@@ -216,7 +320,23 @@ try {
 interface CoordinatorBoundary {
   child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>
   origin: string
-  output: Promise<void>
+  output: Promise<CoordinatorOutput>
+}
+
+interface CoordinatorOutput {
+  stdout: string
+  stderr: string
+}
+
+interface AssistantFeedEvent {
+  id: string
+  status: string
+  reply: string | null
+  runtimeStatus: string
+}
+
+interface AssistantFeedView {
+  items: Array<{ event?: AssistantFeedEvent }>
 }
 
 interface AttemptView {
@@ -232,6 +352,34 @@ async function launchCoordinator(instance: string): Promise<CoordinatorBoundary>
   if (process.platform !== 'linux' || !Bun.which('unshare')) {
     throw new Error('Process restart Live requires a Linux user/PID namespace boundary')
   }
+  const boundary = spawnCoordinator(instance)
+  await waitForValue(
+    async () => {
+      try {
+        const response = await fetch(`${boundary.origin}/api/state`)
+        return response.ok
+      } catch {
+        return false
+      }
+    },
+    Boolean,
+    { timeoutMs: 30_000, intervalMs: 100, description: `${instance} Coordinator startup` },
+  )
+  return boundary
+}
+
+async function launchRejectedCoordinator(instance: string) {
+  const boundary = spawnCoordinator(instance)
+  const exitCode = await waitForValue(
+    async () => boundary.child.exitCode,
+    (value) => value !== null,
+    { timeoutMs: 30_000, intervalMs: 100, description: `${instance} Coordinator rejection` },
+  )
+  assert.notEqual(exitCode, 0, 'A second Coordinator must fail while the instance lock is held')
+  return { exitCode, output: await boundary.output }
+}
+
+function spawnCoordinator(instance: string): CoordinatorBoundary {
   const port = reservePort()
   const child = Bun.spawn(
     [
@@ -252,6 +400,7 @@ async function launchCoordinator(instance: string): Promise<CoordinatorBoundary>
         ...process.env,
         HOPI_E2E_HOME_ROOT: homeRoot,
         HOPI_E2E_PORT: String(port),
+        HOPI_E2E_INSTANCE: instance,
       },
       stdin: 'ignore',
       stdout: 'pipe',
@@ -261,18 +410,6 @@ async function launchCoordinator(instance: string): Promise<CoordinatorBoundary>
   )
   const output = retainProcessOutput(child, instance)
   const origin = `http://127.0.0.1:${port}`
-  await waitForValue(
-    async () => {
-      try {
-        const response = await fetch(`${origin}/api/state`)
-        return response.ok
-      } catch {
-        return false
-      }
-    },
-    Boolean,
-    { timeoutMs: 30_000, intervalMs: 100, description: `${instance} Coordinator startup` },
-  )
   return { child, origin, output }
 }
 
@@ -286,7 +423,7 @@ function reservePort() {
 async function retainProcessOutput(
   child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>,
   instance: string,
-) {
+): Promise<CoordinatorOutput> {
   const [stdout, stderr] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -295,6 +432,7 @@ async function retainProcessOutput(
     Bun.write(join(testRun.artifactRoot, `coordinator-${instance}.stdout.log`), stdout),
     Bun.write(join(testRun.artifactRoot, `coordinator-${instance}.stderr.log`), stderr),
   ])
+  return { stdout, stderr }
 }
 
 async function crashCoordinator(boundary: CoordinatorBoundary) {
@@ -309,6 +447,36 @@ async function stopCoordinator(boundary: CoordinatorBoundary) {
   }
   await boundary.child.exited
   await boundary.output
+}
+
+async function waitForAssistantToolCheckpoint(eventId: string) {
+  const path = join(homeRoot, '.hopi', 'runtime', 'assistant', 'restart-tool-checkpoint.json')
+  return waitForValue(
+    async () => {
+      const file = Bun.file(path)
+      if (!(await file.exists())) return null
+      const checkpoint = (await file.json()) as { eventId?: string; applied?: boolean }
+      return checkpoint.eventId === eventId && checkpoint.applied ? { ...checkpoint, path } : null
+    },
+    (checkpoint) => checkpoint !== null,
+    { timeoutMs: 60_000, intervalMs: 100, description: 'durable Assistant tool checkpoint' },
+  ).then((checkpoint) => {
+    assert.ok(checkpoint)
+    return checkpoint
+  })
+}
+
+async function readAssistantFeedEvent(origin: string, eventId: string) {
+  if (!origin) return null
+  const feed = await requestJson<AssistantFeedView>(origin, '/api/assistant/feed?limit=100')
+  return feed.items.find((item) => item.event?.id === eventId)?.event ?? null
+}
+
+async function countGoalInputsForEvent(integrationRoot: string, goalId: string, eventId: string) {
+  const inputRoot = join(integrationRoot, '.hopi', 'docs', 'goals', goalId, 'inputs')
+  return (
+    await Array.fromAsync(new Bun.Glob(`*/${eventId}.md`).scan({ cwd: inputRoot, onlyFiles: true }))
+  ).length
 }
 
 async function waitForGeneratorCheckpoint(origin: string) {

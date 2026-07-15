@@ -54,7 +54,12 @@ try {
   })
   await waitForValue(
     () => requestJson<StateView>(context.baseUrl, '/api/state'),
-    (state) => state.activeRuns.some((run) => run.key === `${PROJECT_ID}/${GOAL_ID}/${WORK_ID}`),
+    (state) =>
+      roles.firstGeneratorWorktree !== null &&
+      state.activeRuns.some(
+        (run) =>
+          run.key === `${PROJECT_ID}/${GOAL_ID}/${WORK_ID}` && run.responsibility === 'generator',
+      ),
     { timeoutMs: 30_000, description: 'active Generator before Pause' },
   )
   assert.ok(roles.firstGeneratorWorktree)
@@ -243,7 +248,7 @@ async function initializeFixture(root: string) {
 }
 
 interface StateView {
-  activeRuns: Array<{ key: string }>
+  activeRuns: Array<{ key: string; responsibility: string }>
 }
 interface GoalView {
   goal: { lifecycle: string }

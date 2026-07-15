@@ -142,6 +142,99 @@ describe('createAssistantHomeStore', () => {
     ).resolves.toEqual(project)
   })
 
+  test('preflights and links a complete multi-Repo Project behind one durable link', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const store = createAssistantHomeStore(homeRoot)
+    const webPath = await createRepo(join(temporaryRoot, 'web'))
+    const apiPath = await createRepo(join(temporaryRoot, 'api'))
+    const duplicateWebPath = join(temporaryRoot, 'web-duplicate')
+    await git(webPath, ['worktree', 'add', '-b', 'duplicate-selection', duplicateWebPath, 'HEAD'])
+    const beforeWeb = await snapshotUserCheckout(webPath)
+    const beforeApi = await snapshotUserCheckout(apiPath)
+
+    await expect(
+      store.linkProject({
+        projectId: 'P-1',
+        primaryRepoId: 'web',
+        repos: [
+          { repoId: 'web', repoPath: webPath },
+          { repoId: 'duplicate', repoPath: duplicateWebPath },
+        ],
+      }),
+    ).rejects.toThrow('same Git Repo')
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 2, projects: [] })
+    expect(await Bun.file(store.paths.integrationRoot('P-1')).exists()).toBe(false)
+
+    const linked = await store.linkProject({
+      projectId: 'P-1',
+      primaryRepoId: 'web',
+      repos: [
+        { repoId: 'web', repoPath: webPath },
+        { repoId: 'api', repoPath: apiPath },
+      ],
+    })
+
+    expect(linked.primaryRepoId).toBe('web')
+    expect(linked.repos.map((repo) => repo.repoId)).toEqual(['web', 'api'])
+    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
+      projects: [
+        { projectId: 'P-1', primaryRepoId: 'web', repos: [{ repoId: 'web' }, { repoId: 'api' }] },
+      ],
+    })
+    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toMatchObject({
+      projectId: 'P-1',
+      primaryRepoId: 'web',
+      repos: [{ repoId: 'web' }, { repoId: 'api', releaseCommit: beforeApi.head }],
+    })
+    expect(await snapshotUserCheckout(webPath)).toEqual(beforeWeb)
+    expect(await snapshotUserCheckout(apiPath)).toEqual(beforeApi)
+  })
+
+  test('rebinds a moved Home and complete Repo set in one publication', async () => {
+    const originalHome = join(temporaryRoot, 'source-home')
+    const originalWeb = await createRepo(join(temporaryRoot, 'source-web'))
+    const originalApi = await createRepo(join(temporaryRoot, 'source-api'))
+    const source = createAssistantHomeStore(originalHome)
+    await source.linkProject({
+      projectId: 'P-1',
+      primaryRepoId: 'web',
+      repos: [
+        { repoId: 'web', repoPath: originalWeb },
+        { repoId: 'api', repoPath: originalApi },
+      ],
+    })
+    const movedHome = join(temporaryRoot, 'moved-home')
+    const movedWeb = join(temporaryRoot, 'moved-web')
+    const movedApi = join(temporaryRoot, 'moved-api')
+    await rename(originalHome, movedHome)
+    await rename(originalWeb, movedWeb)
+    await rename(originalApi, movedApi)
+    const destination = createAssistantHomeStore(movedHome)
+    const linksBefore = await Bun.file(destination.paths.projectLinksPath).text()
+
+    await expect(
+      destination.rebindRepos({
+        projectId: 'P-1',
+        repos: [{ repoId: 'web', repoPath: movedWeb }],
+      }),
+    ).rejects.toThrow('complete Repo set')
+    expect(await Bun.file(destination.paths.projectLinksPath).text()).toBe(linksBefore)
+
+    const rebound = await destination.rebindRepos({
+      projectId: 'P-1',
+      repos: [
+        { repoId: 'web', repoPath: movedWeb },
+        { repoId: 'api', repoPath: movedApi },
+      ],
+    })
+
+    expect(rebound.repos.map((repo) => repo.repoPath)).toEqual([
+      await realpath(movedWeb),
+      await realpath(movedApi),
+    ])
+    await expect(destination.validateProject('P-1')).resolves.toEqual(rebound)
+  })
+
   test('rebinds one secondary Repo without changing the primary binding', async () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const primaryPath = await createRepo(join(temporaryRoot, 'primary'))

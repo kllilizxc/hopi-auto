@@ -356,7 +356,7 @@ risk rather than mechanically adding one Live runner per row:
 | `016` | Keep | Kill and replace an independently launched Coordinator while a real responsibility process is active. |
 | `017` | Keep | Real Planner must choose a multi-Repo workspace and deliver one compatible cross-Repo release. |
 | `018` | Compose | Real multi-Repo Git contracts prove every C1 boundary; Project Attention Browser Runs already prove unavailable/recovery presentation. |
-| `019` | Compose | Real Reflection handoff Runs prove vendor behavior; deterministic reconciliation proves priority, preemption, and stale-handoff rejection exactly. |
+| `019` | Compose + canary | Deterministic reconciliation proves priority, preemption, and stale-handoff rejection; one focused configured-provider turn proves the notification schema. |
 | `020` | Keep Browser | Visible multi-Repo linking, settings, and rebind persistence remain unproved; vendor command construction is already Contract evidence. |
 | `021` | Keep Browser | Preview readiness, stop, invalidation, and repair prompt need visible product proof; ordinary Agent repair needs no duplicate delivery canary. |
 | `022` | Keep | A real multimodal Assistant and responsibility chain must preserve one relevant image through delivery. |
@@ -364,8 +364,8 @@ risk rather than mechanically adding one Live runner per row:
 | `024` | Rotate | Re-run one small Codex and Claude session canary; do not multiply full delivery by vendor. OpenCode remains skipped. |
 | `027` | Fold into `017` | The multi-Repo Live fixture starts without root `AGENTS.md` or `scripts/hopi/prepare`, proving silent bootstrap in the same Run. |
 
-Only `011`, `016`, `017/027`, `020`, `021`, and `022` need new runners. `024` reuses the existing
-session-recovery runner. This is the minimum set that adds a previously unproved execution boundary.
+The selected runners now cover every previously unproved execution boundary. `024` reuses the
+existing session-recovery runner; OpenCode remains the only operator-approved exclusion.
 
 | ID             | Scenario                                                  | Priority | Layer                      | Status                                                           |
 | -------------- | --------------------------------------------------------- | -------- | -------------------------- | ---------------------------------------------------------------- |
@@ -378,11 +378,11 @@ session-recovery runner. This is the minimum set that adds a previously unproved
 | `HOPI-E2E-013` | Blocking question, notification, answer, and continuation | P0       | Live                       | Covered                                                          |
 | `HOPI-E2E-014` | Operational failure, bounded recovery, and retry          | P0       | Contract and Browser       | Covered                                                          |
 | `HOPI-E2E-015` | Pause and Resume during an active Run                     | P0       | Browser and Contract       | Covered by lifecycle UI plus process-group contracts             |
-| `HOPI-E2E-016` | Process restart during Agent execution                    | P0       | Contract and Live          | Covered; real child process killed and recovered                 |
+| `HOPI-E2E-016` | Process lifecycle, exclusion, and restart recovery        | P0       | Contract and Live          | Covered; real Coordinator and Agent process replacement passed   |
 | `HOPI-E2E-017` | Multi-Repo full-stack delivery                            | P0       | Contract and Live          | Covered                                                          |
 | `HOPI-E2E-018` | Multi-Repo conflict and post-C1 projection recovery       | P0       | Contract and Browser       | Covered by multi-Repo C1 and Project Attention evidence          |
-| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered by real handoff plus deterministic priority races        |
-| `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered                                                          |
+| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered by deterministic races plus a real notification canary   |
+| `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered; native-picker boundary and nine UI checkpoints passed   |
 | `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
 | `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Covered; real chain completed and terminal artifact inspected    |
 | `HOPI-E2E-023` | Cancel, archive, and Reopen                               | P1       | Browser and Contract       | Covered; model choice adds no boundary beyond the validated tool |
@@ -392,6 +392,7 @@ session-recovery runner. This is the minimum set that adds a previously unproved
 | `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
 | `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
+| `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                      |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
@@ -423,6 +424,7 @@ rows. OpenCode is the only intentional execution exclusion.
 | `HOPI-E2E-027` | `tests/roleContextStager.test.ts`, `tests/projectReconciler.test.ts`       |
 | `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts` |
 | `HOPI-E2E-029` | `tests/browser/assistantProviderError.browser.ts`, `tests/workspaceAssistant.test.ts`, `tests/coordinatorReconciler.test.ts` |
+| `HOPI-E2E-030` | `tests/e2e/projectMigration.e2e.ts`                                      |
 
 ## Detailed Cases
 
@@ -696,6 +698,8 @@ Pass conditions:
 
 - Pause is a Goal lifecycle guard, not a Work stage.
 - No new responsibility dispatch occurs while paused.
+- An interrupt that lands during asynchronous dispatch preparation invalidates that admission; it
+  cannot install a Run after Pause or Coordinator shutdown.
 - An admitted obsolete result cannot publish a Work transition after the Pause guard.
 - A paused contract edit remains durable and is included in Resume planning.
 - Resume ensures a valid Planning guard before Engineering proceeds.
@@ -705,31 +709,35 @@ Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`.
 
 Current implementation: `packages/backend/tests/e2e/pauseResume.browser.ts`
 (`bun run e2e:browser:015`) uses a production Server, real Browser Harness clicks, managed Git, and
-a deterministic interruptable RoleRunner. It clicks Pause during an active Generator, verifies the
+a deterministic interruptable RoleRunner. It waits for both the Coordinator lease and actual
+Generator entry before clicking Pause, verifies the
 durable guard and interrupted Attempt without another dispatch, waits until the visible Work
 projection no longer claims that the interrupted Run is working, then clicks Resume and retains the
 terminal Kanban. The fresh Generator/Reviewer/C1 path must reach `done`; real process interruption
 and replacement are proven by `016` rather than repeating that boundary here.
 
-### HOPI-E2E-016: Process Restart During Agent Execution
+### HOPI-E2E-016: Process Lifecycle, Exclusion, And Restart Recovery
 
 | Field   | Value                                                                                                                 |
 | ------- | --------------------------------------------------------------------------------------------------------------------- |
-| Risk    | A Coordinator crash loses partial work, leaves a permanent running Attempt, duplicates C1, or repeats a notification. |
-| Reality | Real model process and production server started as replaceable OS processes against one retained Home.               |
-| Fixture | One delivery whose Generator remains active long enough for a process-level interruption.                             |
+| Risk    | Concurrent Coordinators or a crash around an Assistant/tool or Agent boundary duplicates effects or leaves permanent running state. |
+| Reality | Production Coordinators and real responsibility processes started as replaceable OS processes against one retained Home.          |
+| Fixture | One paused Goal for an idempotent Assistant design effect, then one delivery with a long-running Generator.                       |
 | Cost    | High. Preserve the first failure artifact rather than repeating blindly.                                              |
 
 Actions:
 
-1. Start the live scenario in a child Coordinator process.
-2. Wait for Generator source delta and an active Attempt.
-3. Terminate the Coordinator process without deleting Home or worktrees.
-4. Start a new Coordinator against the same Home.
-5. Let bootstrap, interruption recovery, checkpoint reuse, Review, C1, Reflection, and UI settle.
+1. Start one child Coordinator and prove a second production entry cannot acquire the same Home.
+2. Let Assistant durably apply one tool effect, then kill Coordinator before its final reply.
+3. Start a replacement and verify the pending Inbox turn converges once without repeating the effect.
+4. Start delivery, wait for Generator source delta and an active Attempt, and kill Coordinator again.
+5. Start the final replacement and let checkpoint recovery, Review, C1, Reflection, and UI settle.
 
 Pass conditions:
 
+- The rejected second Coordinator performs no reconciliation while the owner remains healthy.
+- One pending Inbox event, one domain effect, and one public reply survive the Assistant crash window.
+- The Assistant turn manifest reaches attempt two and its event stream retains the interrupted-turn resume marker.
 - The old running Attempt becomes durably interrupted and never returns to running.
 - Safe Generator source is checkpointed or the stable task branch is rebuilt without contaminating release.
 - The replacement Run sees current durable context and does not rely on lost process memory.
@@ -741,11 +749,14 @@ Primary invariants: `INV-02`, `INV-05`, `INV-06`, `INV-09`, `INV-10`, `INV-14`.
 
 The zero-model contract remains in
 `packages/backend/tests/e2e/restartDuringGenerator.e2e.ts` (`bun run e2e:restart:016`). The Live
-runner launches the production Coordinator and real responsibility processes inside a replaceable
-host process boundary, waits for a Generator source delta, kills that boundary without product
-shutdown, and starts a replacement against the same Home. The boundary must kill detached Agent
-descendants without deleting durable files; on Linux the adapter uses a user/PID namespace. A host
-without an equivalent supervisor cannot claim this Live case.
+runner also exercises the production instance lock and Assistant post-tool/pre-reply window before
+launching real responsibility processes inside the replaceable host boundary. It then waits for a
+Generator source delta, kills that boundary without product shutdown, and starts a final replacement
+against the same Home. The boundary must kill detached Agent descendants without deleting durable
+files; on Linux the adapter uses a user/PID namespace. A host without an equivalent supervisor cannot
+claim this Live case. The complete executable is
+`packages/backend/tests/live/processRestart.live.ts` (`bun run e2e:live:016`); it also asserts one
+event-specific Goal Input, one design path, one public reply, and one C1 after recovery.
 
 ### HOPI-E2E-017: Multi-Repo Full-Stack Delivery
 
@@ -819,6 +830,7 @@ Actions:
 3. Create a real unnotified targeted Attention through product behavior.
 4. While its internal speaking handoff is running, submit a new public user message.
 5. Let the public turn finish, then allow current-state revalidation and Attention notification.
+6. Run one focused configured-provider turn that must call `hopi_notify_user({ message })`.
 
 Pass conditions:
 
@@ -827,9 +839,16 @@ Pass conditions:
 - Public input receives speaking priority without cancelling the read-only Reflection model process.
 - A stale handoff is discarded before publication.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
+- The configured speaking model accepts the current notification schema; only its supplied message is public.
 - Debug UI distinguishes `Completed: sent` from `Completed: no action`.
 
 Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`.
+
+Current implementation composes the exact scheduler and Reflection contracts with
+`packages/backend/tests/live/reflectionNotification.live.ts` (`bun run e2e:live:019`). The focused
+Live canary creates one legal internal handoff, uses the configured speaking model once, requires
+exactly one successful `hopi_notify_user` call, and retains the raw turn stream plus a verified
+Assistant-panel screenshot. It does not repeat a full Goal merely to exercise the same schema.
 
 ### HOPI-E2E-020: Project Linking, Repo Rebind, And Model Settings
 
@@ -842,11 +861,11 @@ Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`.
 
 Actions:
 
-1. Create a Project through the visible repository-selection flow with two Repos.
-2. Set a Home Assistant model and a different Project coding default.
-3. Send one Assistant greeting and dispatch one Project responsibility.
-4. Move one checkout and rebind only that Repo through Linked Projects.
-5. Reload the server and UI.
+1. Cancel the system directory chooser and verify no draft or Project is created.
+2. Select two checkouts of one Git Repo and verify submission fails before any Project link exists.
+3. Remove the duplicate, select a second Repo, choose the primary, and create the Project once.
+4. Set a Home Assistant model and a different Project coding default.
+5. Move one checkout, rebind only that Repo through Linked Projects, then reload the server and UI.
 
 Pass conditions:
 
@@ -856,16 +875,51 @@ Pass conditions:
 - Rebind updates only the selected Repo after validation and preserves both user checkouts.
 - Reload presents the same links and settings from durable documents.
 - Invalid or duplicate Repo identity fails closed with actionable UI feedback.
+- Repository paths enter the create form only through the Coordinator-host chooser boundary.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-14`.
 
 Current implementation: `packages/backend/tests/e2e/configurationRebind.e2e.ts`
-(`bun run e2e:config:020`) creates two Git Repos, configures distinct Home Assistant and Project
-coding defaults, rebinds one secondary Repo to a real checkout of the same Git common directory, and
-drives the visible link, settings, and rebind controls through Browser Harness. It verifies the
-configuration survives browser reload and Coordinator restart. Adapter-command construction is
-covered by the vendor/configuration Contract tests because repeating the same choice through a model
-would not add another execution boundary.
+(`bun run e2e:config:020`) drives the Coordinator-host chooser through Browser Harness. It proves
+cancel is inert, duplicate Git identity is rejected before any Project link exists, and two distinct
+Repos are submitted behind one Project creation gate. The same Run configures distinct Home Assistant
+and Project coding defaults, rebinds one Repo, restarts the Coordinator, reloads the UI, and retains
+nine screenshots. Adapter-command construction remains in the vendor/configuration Contract tests
+because repeating the same choice through a model would not add another execution boundary.
+
+### HOPI-E2E-030: Project And Assistant-Home Migration
+
+| Field   | Value                                                                                                            |
+| ------- | ---------------------------------------------------------------------------------------------------------------- |
+| Risk    | Moving Home and several Repos loses portable state, resumes against stale paths, or repairs only half the Project. |
+| Reality | Production stores, server bootstrap, real Git worktree administration, and an isolated destination root.         |
+| Fixture | Two-Repo Project with Goal Input/design/image provenance, Inbox history, session, and open Project Attention.     |
+| Cost    | Zero provider calls; real Git and filesystem moves.                                                               |
+
+Actions:
+
+1. Create portable Project and Assistant-home state, then stop the source Coordinator.
+2. Move Home and both Git Repos so every recorded local path is stale.
+3. Start against the moved Home and verify no Agent work becomes eligible.
+4. Submit the complete stable Repo-ID mapping through one rebind operation.
+5. Resolve the retained Attention, restart, and inspect portable state and Git projections.
+
+Pass conditions:
+
+- `homeId`, Project/Goal identity, contract revision, DAG, Input, design, image bytes, Inbox reply,
+  session, Attention identity, Project manifest, and release refs survive.
+- A partial or mismatched Repo set is rejected without changing `projects.yml`.
+- Complete rebind repairs every managed worktree and publishes all local paths together.
+- Old paths are absent, no Agent Run begins before valid bindings, and user checkouts stay unchanged.
+- Restart after rebind is clean and idempotent; a missing primary managed root still fails closed.
+
+Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
+
+Current implementation: `packages/backend/tests/e2e/projectMigration.e2e.ts`
+(`bun run e2e:migration:030`) moves one complete Home plus two Repos, proves stale startup dispatches
+no Agent, rejects partial rebind without changing `projects.yml`, and repairs the exact stable Repo-ID
+set in one operation. It then restarts and byte-checks identity, Goal documents, image provenance,
+Inbox reply, session, Attention, release refs, and unchanged user checkouts.
 
 ### HOPI-E2E-021: Preview Creation, Readiness, Invalidation, And Repair
 
@@ -1112,7 +1166,10 @@ Actions:
 Pass conditions:
 
 - Terminal `is_error` wins over a contradictory `success` subtype.
-- Coordinator invokes the speaking turn exactly once and creates one event-target Attention.
+- The event-specific speaking manifest remains at `attempt: 1`; Coordinator creates one event-target
+  Attention and does not retry that user turn.
+- Reflection may independently inspect the new Attention. Its runner invocation is not a retry of the
+  failed speaking turn and therefore does not affect the event-specific attempt assertion.
 - Cached session recovery is not attempted for provider failure.
 - The conversation displays the provider error once, stops showing `Working`, and exposes neither
   repeated generic `system` rows nor false `success`.

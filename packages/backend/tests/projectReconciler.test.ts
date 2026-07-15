@@ -114,6 +114,40 @@ describe('ProjectReconciler', () => {
     expect(fixture.runner.responsibilities).toEqual([])
   })
 
+  test('does not admit a responsibility after a project interrupt during dispatch preparation', async () => {
+    const fixture = await createFixture()
+    const originalReadPackage = fixture.store.readPackage.bind(fixture.store)
+    let releaseReadPackage: () => void = () => undefined
+    const readPackageReleased = new Promise<void>((resolve) => {
+      releaseReadPackage = resolve
+    })
+    let markReadPackageStarted: () => void = () => undefined
+    const readPackageStarted = new Promise<void>((resolve) => {
+      markReadPackageStarted = resolve
+    })
+    let blockNextRead = true
+    fixture.store.readPackage = async (goalId) => {
+      if (blockNextRead) {
+        blockNextRead = false
+        markReadPackageStarted()
+        await readPackageReleased
+      }
+      return originalReadPackage(goalId)
+    }
+
+    const running = fixture.reconciler.reconcileGoal('goal-1')
+    await readPackageStarted
+    fixture.reconciler.interruptRuns()
+    releaseReadPackage()
+
+    expect(await running).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['run_interrupted'] },
+    })
+    expect(fixture.runner.responsibilities).toEqual([])
+    expect(fixture.reconciler.liveWorkIds()).toEqual(new Set())
+  })
+
   test('checkpoints partial Generator source before applying fail', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({

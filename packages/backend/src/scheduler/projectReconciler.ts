@@ -142,6 +142,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     })
   const live = new Set<string>()
   const runControllers = new Map<string, AbortController>()
+  let projectInterruptionGeneration = 0
+  const goalInterruptionGenerations = new Map<string, number>()
   const operationalRetries = new Map<string, { failures: number; retryAt: number }>()
   const operationalRetryBaseMs = options.operationalRetryBaseMs ?? 30_000
   const maxOperationalFailures = options.maxOperationalFailures ?? 3
@@ -159,6 +161,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   return {
     interruptRuns(goalId) {
       const goalPrefix = goalId ? `${goalId}/` : null
+      if (goalId) {
+        goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
+      } else {
+        projectInterruptionGeneration += 1
+      }
       for (const [key, controller] of runControllers) {
         if (!goalPrefix || key.startsWith(goalPrefix)) controller.abort()
       }
@@ -170,6 +177,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       return deferredWorkIds(goalId, observedAt)
     },
     async reconcileGoal(goalId, runtime = {}) {
+      const interruptionGeneration = {
+        project: projectInterruptionGeneration,
+        goal: goalInterruptionGenerations.get(goalId) ?? 0,
+      }
       await readSoftwareDeliveryProfile()
       const goalPackage = await options.store.readPackage(goalId)
       for (const work of goalPackage.works.values()) {
@@ -239,6 +250,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
 
       const { workId, responsibility } = decision
+      if (
+        interruptionGeneration.project !== projectInterruptionGeneration ||
+        interruptionGeneration.goal !== (goalInterruptionGenerations.get(goalId) ?? 0)
+      ) {
+        return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+      }
       const liveKey = `${goalId}/${workId}`
       if (live.has(liveKey)) return { kind: 'wait', decision }
       live.add(liveKey)

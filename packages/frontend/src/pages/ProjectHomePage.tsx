@@ -1,5 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Cpu, FolderGit2, Link2, Plus, Radio, RefreshCw, Settings2 } from 'lucide-react'
+import {
+  ArrowRight,
+  Cpu,
+  FolderGit2,
+  FolderPlus,
+  Link2,
+  Plus,
+  Radio,
+  RefreshCw,
+  Settings2,
+  Star,
+  X,
+} from 'lucide-react'
 import { useState } from 'react'
 import {
   AppAlert,
@@ -25,6 +37,7 @@ import {
   linkProjectRepo,
   readState,
   rebindProjectRepo,
+  selectProjectDirectory,
   updateAssistantSettings,
   updateProjectSettings,
 } from '../lib/api'
@@ -33,7 +46,7 @@ import { excerpt } from '../lib/utils'
 
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
-  const [repoPath, setRepoPath] = useState('')
+  const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
   const [projectId, setProjectId] = useState('')
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
@@ -43,11 +56,34 @@ export function ProjectHomePage() {
   const createMutation = useMutation({
     mutationFn: createProject,
     onSuccess: async () => {
-      setRepoPath('')
+      setRepoDrafts([])
       setProjectId('')
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
+  const pickerMutation = useMutation({
+    mutationFn: selectProjectDirectory,
+    onSuccess: ({ path }) => {
+      if (!path) return
+      setRepoDrafts((current) => {
+        if (current.some((repo) => repo.repoPath === path)) return current
+        return [
+          ...current,
+          {
+            key: crypto.randomUUID(),
+            repoId: suggestedRepoId(path, current),
+            repoPath: path,
+            primary: current.length === 0,
+          },
+        ]
+      })
+    },
+  })
+  const primaryRepo = repoDrafts.find((repo) => repo.primary)
+  const canCreate =
+    Boolean(primaryRepo) &&
+    repoDrafts.length > 0 &&
+    repoDrafts.every((repo) => Boolean(repo.repoId.trim()))
 
   return (
     <AppScrollShadow className="page-scroll">
@@ -63,9 +99,11 @@ export function ProjectHomePage() {
           </StatusChip>
         </header>
 
-        {(snapshotQuery.error || createMutation.error) && (
+        {(snapshotQuery.error || createMutation.error || pickerMutation.error) && (
           <AppAlert className="error-banner">
-            {(snapshotQuery.error as Error | null)?.message ?? createMutation.error?.message}
+            {(snapshotQuery.error as Error | null)?.message ??
+              createMutation.error?.message ??
+              pickerMutation.error?.message}
           </AppAlert>
         )}
 
@@ -111,29 +149,93 @@ export function ProjectHomePage() {
               className="link-project-panel panel-card"
               onSubmit={(event) => {
                 event.preventDefault()
-                if (!repoPath.trim()) return
+                if (!primaryRepo || !canCreate) return
                 createMutation.mutate({
-                  repoPath: repoPath.trim(),
+                  primaryRepoId: primaryRepo.repoId.trim(),
+                  repos: repoDrafts.map((repo) => ({
+                    repoId: repo.repoId.trim(),
+                    repoPath: repo.repoPath,
+                  })),
                   ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
                 })
               }}
             >
               <div className="panel-title">
                 <span>
-                  <Link2 /> Link repository
+                  <Link2 /> Link project
                 </span>
               </div>
               <p className="panel-intro">
-                The selected path identifies the Repo. Canonical documents and Preview run from
-                HOPI's managed integration root.
+                Select every Git repository in this Project, then choose the primary control Repo.
+                HOPI keeps your checkouts untouched.
               </p>
-              <AppTextField
-                className="field"
-                label="Repository path"
-                onValueChange={setRepoPath}
-                placeholder="/home/me/Code/product"
-                value={repoPath}
-              />
+              <div className="project-create-repos">
+                {repoDrafts.length === 0 ? (
+                  <div className="project-create-repos-empty">
+                    <FolderGit2 />
+                    <span>No repositories selected</span>
+                  </div>
+                ) : (
+                  repoDrafts.map((repo) => (
+                    <div className="project-create-repo" key={repo.key}>
+                      <AppButton
+                        aria-label={`Use ${repo.repoId || 'repository'} as primary`}
+                        aria-pressed={repo.primary}
+                        className={repo.primary ? 'project-primary active' : 'project-primary'}
+                        type="button"
+                        variant="ghost"
+                        onClick={() =>
+                          setRepoDrafts((current) =>
+                            current.map((candidate) => ({
+                              ...candidate,
+                              primary: candidate.key === repo.key,
+                            })),
+                          )
+                        }
+                      >
+                        <Star />
+                      </AppButton>
+                      <span className="project-create-repo-copy">
+                        <AppInput
+                          aria-label={`Repository ID for ${repo.repoPath}`}
+                          value={repo.repoId}
+                          onChange={(event) =>
+                            setRepoDrafts((current) =>
+                              current.map((candidate) =>
+                                candidate.key === repo.key
+                                  ? { ...candidate, repoId: event.target.value }
+                                  : candidate,
+                              ),
+                            )
+                          }
+                        />
+                        <small title={repo.repoPath}>{repo.repoPath}</small>
+                      </span>
+                      {repo.primary && <small className="project-primary-label">Primary</small>}
+                      <AppButton
+                        aria-label={`Remove ${repo.repoId || 'repository'}`}
+                        type="button"
+                        variant="ghost"
+                        onClick={() =>
+                          setRepoDrafts((current) => removeRepoDraft(current, repo.key))
+                        }
+                      >
+                        <X />
+                      </AppButton>
+                    </div>
+                  ))
+                )}
+                <AppButton
+                  className="project-directory-picker"
+                  type="button"
+                  variant="ghost"
+                  disabled={pickerMutation.isPending}
+                  onClick={() => pickerMutation.mutate()}
+                >
+                  {pickerMutation.isPending ? <AppSpinner size="sm" /> : <FolderPlus />}
+                  Select repository
+                </AppButton>
+              </div>
               <AppTextField
                 className="field"
                 label={
@@ -148,7 +250,7 @@ export function ProjectHomePage() {
               <AppButton
                 className="primary-button"
                 type="submit"
-                disabled={!repoPath.trim() || createMutation.isPending}
+                disabled={!canCreate || createMutation.isPending || pickerMutation.isPending}
               >
                 {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
                 Link Project
@@ -159,6 +261,30 @@ export function ProjectHomePage() {
       </div>
     </AppScrollShadow>
   )
+}
+
+interface ProjectRepoDraft {
+  key: string
+  repoId: string
+  repoPath: string
+  primary: boolean
+}
+
+function suggestedRepoId(path: string, current: ProjectRepoDraft[]) {
+  const tail = path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'repo'
+  const base = tail.replaceAll(/[^A-Za-z0-9._-]+/g, '-').replaceAll(/^-+|-+$/g, '') || 'repo'
+  const used = new Set(current.map((repo) => repo.repoId))
+  if (!used.has(base)) return base
+  let suffix = 2
+  while (used.has(`${base}-${suffix}`)) suffix += 1
+  return `${base}-${suffix}`
+}
+
+function removeRepoDraft(current: ProjectRepoDraft[], key: string) {
+  const removed = current.find((repo) => repo.key === key)
+  const remaining = current.filter((repo) => repo.key !== key)
+  if (!removed?.primary || remaining.length === 0) return remaining
+  return remaining.map((repo, index) => ({ ...repo, primary: index === 0 }))
 }
 
 function AssistantSettingsPanel({

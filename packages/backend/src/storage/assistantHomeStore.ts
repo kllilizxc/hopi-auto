@@ -1,5 +1,5 @@
 import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import {
@@ -14,7 +14,6 @@ import {
   type ProjectLinksDocument,
   type ProjectRepoDocument,
   type ProjectRepoLink,
-  primaryProjectRepo,
 } from '../domain/project'
 import {
   type ProjectCodingDefaults,
@@ -92,11 +91,21 @@ export interface AssistantHomePaths {
   projectDocumentPath(projectId: string): string
 }
 
-export interface LinkProjectInput {
-  projectId?: string
-  repoPath: string
-  repoId?: string
-}
+export type LinkProjectInput =
+  | {
+      projectId?: string
+      repoPath: string
+      repoId?: string
+      primaryRepoId?: never
+      repos?: never
+    }
+  | {
+      projectId?: string
+      primaryRepoId: string
+      repos: ProjectRepoLink[]
+      repoPath?: never
+      repoId?: never
+    }
 
 export interface LinkRepoInput {
   projectId: string
@@ -111,6 +120,11 @@ export interface RebindProjectInput {
 
 export interface RebindRepoInput extends RebindProjectInput {
   repoId: string
+}
+
+export interface RebindProjectReposInput {
+  projectId: string
+  repos: ProjectRepoLink[]
 }
 
 export interface UpdateProjectSettingsInput {
@@ -128,6 +142,7 @@ export interface AssistantHomeStore {
   linkRepo(input: LinkRepoInput): Promise<LinkedProject>
   rebindProject(input: RebindProjectInput): Promise<LinkedProject>
   rebindRepo(input: RebindRepoInput): Promise<LinkedProject>
+  rebindRepos(input: RebindProjectReposInput): Promise<LinkedProject>
   updateProjectSettings(input: UpdateProjectSettingsInput): Promise<LinkedProject>
   validateProject(projectId: string): Promise<LinkedProject>
 }
@@ -240,23 +255,25 @@ export function createAssistantHomeStore(
       await this.initialize()
 
       return withFileLock(paths.mutationLockPath, async () => {
-        const projectId = input.projectId ?? `P-${crypto.randomUUID()}`
-        const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
+        const requested = normalizeLinkProjectInput(input)
+        const projectId = requested.projectId ?? `P-${crypto.randomUUID()}`
+        const { primaryRepoId, repos } = requested
         assertStableId(projectId, 'projectId')
-        assertStableId(repoId, 'repoId')
-        const repo = await inspectRepo(input.repoPath)
+        assertStableId(primaryRepoId, 'primaryRepoId')
+        for (const repo of repos) assertStableId(repo.repoId, 'repoId')
+        const inspected = await Promise.all(
+          repos.map(async (repo) => ({ ...repo, inspection: await inspectRepo(repo.repoPath) })),
+        )
+        assertUniqueRequestedRepos(projectId, primaryRepoId, inspected)
         const links = await readProjectLinks(paths.projectLinksPath)
         assertUniqueProjectLinks(links.projects)
 
         const byId = links.projects.find((entry) => entry.projectId === projectId)
-        const byRepo = await findLinkForRepo(links.projects, repo)
-        if (byId || byRepo) {
-          const existingPrimary = byId ? primaryProjectRepo(byId) : undefined
-          if (
-            existingPrimary?.repoId === repoId &&
-            existingPrimary.repoPath === repo.repoPath &&
-            byRepo?.projectId === projectId
-          ) {
+        const byRepos = await Promise.all(
+          inspected.map((repo) => findLinkForRepo(links.projects, repo.inspection)),
+        )
+        if (byId || byRepos.some(Boolean)) {
+          if (byId && exactProjectLink(byId, primaryRepoId, inspected)) {
             return this.validateProject(projectId)
           }
 
@@ -264,16 +281,47 @@ export function createAssistantHomeStore(
             'project_conflict',
             byId
               ? `Project ID is already linked to another Repo: ${projectId}`
-              : `Repo is already linked as Project: ${byRepo?.projectId}`,
+              : `Repo is already linked as Project: ${byRepos.find(Boolean)?.projectId}`,
           )
         }
 
-        await ensureManagedPrimaryRoot(paths, projectId, repoId, repo, publisher)
         const link: ProjectLink = {
           projectId,
-          primaryRepoId: repoId,
-          repos: [{ repoId, repoPath: repo.repoPath }],
+          primaryRepoId,
+          repos: inspected
+            .map((repo) => ({ repoId: repo.repoId, repoPath: repo.inspection.repoPath }))
+            .sort((left, right) => repoLinkOrder(primaryRepoId, left, right)),
         }
+        const primary = inspected.find((repo) => repo.repoId === primaryRepoId)
+        if (!primary) throw invalidProject(projectId, 'primary Repo is missing')
+        await ensureManagedPrimaryRoot(
+          paths,
+          projectId,
+          primaryRepoId,
+          primary.inspection,
+          publisher,
+        )
+        for (const repo of inspected) {
+          if (repo.repoId === primaryRepoId) continue
+          await ensureManagedSecondaryRoot(paths, link, repo.repoId, repo.inspection)
+        }
+        const projectDocument: ProjectDocument = {
+          version: 2,
+          projectId,
+          primaryRepoId,
+          repos: await Promise.all(
+            link.repos.map(async (repo) =>
+              repo.repoId === primaryRepoId
+                ? { repoId: repo.repoId }
+                : {
+                    repoId: repo.repoId,
+                    releaseCommit: (await runGit(repo.repoPath, ['rev-parse', HOPI_RELEASE_REF]))
+                      .stdout,
+                  },
+            ),
+          ),
+        }
+        await publishProjectDocument(paths, projectId, projectDocument, publisher)
         links.projects.push(link)
         links.projects.sort((left, right) => left.projectId.localeCompare(right.projectId))
         await publishYamlFile(
@@ -372,6 +420,24 @@ export function createAssistantHomeStore(
     async rebindRepo(input) {
       assertStableId(input.projectId, 'projectId')
       assertStableId(input.repoId, 'repoId')
+      const project = await this.readProject(input.projectId)
+      if (!project.repos.some((repo) => repo.repoId === input.repoId)) {
+        throw new AssistantHomeStoreError(
+          'project_not_found',
+          `Repo is not linked in Project ${input.projectId}: ${input.repoId}`,
+        )
+      }
+      return this.rebindRepos({
+        projectId: input.projectId,
+        repos: project.repos.map((repo) => ({
+          repoId: repo.repoId,
+          repoPath: repo.repoId === input.repoId ? input.repoPath : repo.repoPath,
+        })),
+      })
+    },
+    async rebindRepos(input) {
+      assertStableId(input.projectId, 'projectId')
+      for (const repo of input.repos) assertStableId(repo.repoId, 'repoId')
       await this.initialize()
       return withFileLock(paths.mutationLockPath, async () => {
         const links = await readProjectLinks(paths.projectLinksPath)
@@ -383,25 +449,33 @@ export function createAssistantHomeStore(
             `Project is not linked: ${input.projectId}`,
           )
         }
-        const repoLink = link.repos.find((candidate) => candidate.repoId === input.repoId)
-        if (!repoLink) {
+        const requestedIds = input.repos.map((repo) => repo.repoId).sort()
+        const linkedIds = link.repos.map((repo) => repo.repoId).sort()
+        if (JSON.stringify(requestedIds) !== JSON.stringify(linkedIds)) {
           throw new AssistantHomeStoreError(
-            'project_not_found',
-            `Repo is not linked in Project ${input.projectId}: ${input.repoId}`,
+            'project_conflict',
+            `Rebind requires the complete Repo set for ${input.projectId}: ${linkedIds.join(', ')}`,
           )
         }
-        const repo = await inspectRepo(input.repoPath)
-        await assertRepoAvailableForRebind(links.projects, input.projectId, input.repoId, repo)
-        if (repoLink.repoPath === repo.repoPath) return this.validateProject(input.projectId)
-
-        await repairManagedRepoRoot(paths, link, repoLink, repo, publisher)
+        const inspected = await Promise.all(
+          input.repos.map(async (repo) => ({
+            ...repo,
+            inspection: await inspectRepo(repo.repoPath),
+          })),
+        )
+        assertUniqueRequestedRepos(input.projectId, link.primaryRepoId, inspected)
+        await assertRepoSetAvailableForRebind(links.projects, input.projectId, inspected)
+        for (const requested of inspected) {
+          const repoLink = link.repos.find((repo) => repo.repoId === requested.repoId)
+          if (!repoLink)
+            throw invalidProject(input.projectId, `Repo ${requested.repoId} is missing`)
+          await repairManagedRepoRoot(paths, link, repoLink, requested.inspection, publisher)
+        }
         const updatedLink: ProjectLink = {
           ...link,
-          repos: link.repos.map((candidate) =>
-            candidate.repoId === input.repoId
-              ? { ...candidate, repoPath: repo.repoPath }
-              : candidate,
-          ),
+          repos: inspected
+            .map((repo) => ({ repoId: repo.repoId, repoPath: repo.inspection.repoPath }))
+            .sort((left, right) => repoLinkOrder(link.primaryRepoId, left, right)),
         }
         links.projects = links.projects.map((entry) =>
           entry.projectId === input.projectId ? updatedLink : entry,
@@ -506,28 +580,27 @@ async function findLinkForRepo(links: ProjectLink[], repo: RepoInspection) {
   return undefined
 }
 
-async function assertRepoAvailableForRebind(
+async function assertRepoSetAvailableForRebind(
   links: ProjectLink[],
   projectId: string,
-  repoId: string,
-  repo: RepoInspection,
+  repos: Array<ProjectRepoLink & { inspection: RepoInspection }>,
 ) {
   for (const link of links) {
+    if (link.projectId === projectId) continue
     for (const candidate of link.repos) {
-      if (link.projectId === projectId && candidate.repoId === repoId) continue
-      if (candidate.repoPath === repo.repoPath) {
-        throw new AssistantHomeStoreError(
-          'project_conflict',
-          `Repo is already linked as ${link.projectId}/${candidate.repoId}`,
-        )
-      }
       const linkedRepo = await inspectRepo(candidate.repoPath).catch((error) => {
         throw new AssistantHomeStoreError(
           'invalid_home',
           `Cannot validate linked Repo ${candidate.repoId} for ${link.projectId}: ${errorMessage(error)}`,
         )
       })
-      if (linkedRepo.commonDir === repo.commonDir) {
+      if (
+        repos.some(
+          (repo) =>
+            candidate.repoPath === repo.inspection.repoPath ||
+            linkedRepo.commonDir === repo.inspection.commonDir,
+        )
+      ) {
         throw new AssistantHomeStoreError(
           'project_conflict',
           `Repo is already linked as ${link.projectId}/${candidate.repoId}`,
@@ -535,6 +608,67 @@ async function assertRepoAvailableForRebind(
       }
     }
   }
+}
+
+function normalizeLinkProjectInput(input: LinkProjectInput) {
+  if ('repos' in input && input.repos) {
+    return {
+      projectId: input.projectId,
+      primaryRepoId: input.primaryRepoId,
+      repos: input.repos,
+    }
+  }
+  const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
+  return {
+    projectId: input.projectId,
+    primaryRepoId: repoId,
+    repos: [{ repoId, repoPath: input.repoPath }],
+  }
+}
+
+function assertUniqueRequestedRepos(
+  projectId: string,
+  primaryRepoId: string,
+  repos: Array<ProjectRepoLink & { inspection: RepoInspection }>,
+) {
+  const ids = new Set<string>()
+  const commonDirs = new Set<string>()
+  for (const repo of repos) {
+    if (ids.has(repo.repoId)) {
+      throw new AssistantHomeStoreError(
+        'project_conflict',
+        `Duplicate Repo ID in Project ${projectId}: ${repo.repoId}`,
+      )
+    }
+    if (commonDirs.has(repo.inspection.commonDir)) {
+      throw new AssistantHomeStoreError(
+        'project_conflict',
+        'The selected paths contain the same Git Repo more than once',
+      )
+    }
+    ids.add(repo.repoId)
+    commonDirs.add(repo.inspection.commonDir)
+  }
+  if (!ids.has(primaryRepoId)) {
+    throw new AssistantHomeStoreError(
+      'project_conflict',
+      `Primary Repo is missing in Project ${projectId}: ${primaryRepoId}`,
+    )
+  }
+}
+
+function exactProjectLink(
+  link: ProjectLink,
+  primaryRepoId: string,
+  repos: Array<ProjectRepoLink & { inspection: RepoInspection }>,
+) {
+  if (link.primaryRepoId !== primaryRepoId || link.repos.length !== repos.length) return false
+  return repos.every((repo) =>
+    link.repos.some(
+      (candidate) =>
+        candidate.repoId === repo.repoId && candidate.repoPath === repo.inspection.repoPath,
+    ),
+  )
 }
 
 async function inspectRepo(inputPath: string): Promise<RepoInspection> {
@@ -674,6 +808,9 @@ async function repairManagedRepoRoot(
       )
     }
   } else {
+    if (!(await inspectRepo(integrationRoot).catch(() => null))) {
+      await repairMovedManagedPointers(integrationRoot, repo)
+    }
     const repair = await runGit(repo.repoPath, ['worktree', 'repair', integrationRoot], true)
     if (repair.exitCode !== 0) {
       throw invalidProject(
@@ -705,6 +842,35 @@ async function repairManagedRepoRoot(
       )
     }
   }
+}
+
+async function repairMovedManagedPointers(integrationRoot: string, repo: RepoInspection) {
+  const managedPointerPath = join(integrationRoot, '.git')
+  const pointerFile = Bun.file(managedPointerPath)
+  if (!(await pointerFile.exists())) return
+  const pointer = (await pointerFile.text()).trim().match(/^gitdir:\s*(.+)$/)
+  const previousAdminRoot = pointer?.[1]
+  if (!previousAdminRoot) return
+  const adminName = basename(previousAdminRoot)
+  const adminRoot = join(repo.commonDir, 'worktrees', adminName)
+  const [adminStats, head] = await Promise.all([
+    stat(adminRoot).catch(() => null),
+    Bun.file(join(adminRoot, 'HEAD'))
+      .text()
+      .catch(() => ''),
+  ])
+  if (!adminStats?.isDirectory() || head.trim() !== `ref: ${HOPI_RELEASE_REF}`) return
+
+  await Promise.all([
+    writePointerAtomically(managedPointerPath, `gitdir: ${adminRoot}\n`),
+    writePointerAtomically(join(adminRoot, 'gitdir'), `${managedPointerPath}\n`),
+  ])
+}
+
+async function writePointerAtomically(path: string, content: string) {
+  const temporary = `${path}.hopi-tmp-${crypto.randomUUID()}`
+  await Bun.write(temporary, content)
+  await rename(temporary, path)
 }
 
 async function validateExistingManagedRepoRoot(

@@ -22,10 +22,10 @@ const PROVIDER_ERROR = 'API Error: Request rejected (429) · Daily provider allo
 const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
-let invocations = 0
+const invocations = { main: 0, internal: 0, reflection: 0 }
 const runner: AssistantModelRunner = {
-  async run(_input, observer) {
-    invocations += 1
+  async run(input, observer) {
+    invocations[input.toolMode ?? 'main'] += 1
     await observer?.onEvent?.({
       kind: 'transcript',
       transport: 'claude',
@@ -98,13 +98,27 @@ try {
       ),
     { timeoutMs: 30_000, description: 'one event Attention after the terminal failure' },
   )
-  assert.equal(invocations, 1, 'Coordinator must not retry a terminal Assistant failure')
+  const turnManifest = (await Bun.file(
+    join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', event.id, 'turn.json'),
+  ).json()) as { attempt: number; status: string }
+  assert.equal(turnManifest.status, 'failed', 'The speaking turn must remain terminally failed')
+  assert.equal(turnManifest.attempt, 1, 'Coordinator must not retry a terminal Assistant failure')
+  assert.equal(invocations.main, 1, 'The event-specific speaking turn must run exactly once')
   const errorBrowser = await captureAssistantReply(context, PROVIDER_ERROR)
   assert.equal(errorBrowser.visibleErrorActivity, true, 'Provider failure must render as an error')
   await Bun.write(
     join(artifactRoot, 'assistant-provider-error.json'),
     `${JSON.stringify(
-      { status: 'passed', startedAt, event, state, invocations, browser, errorBrowser },
+      {
+        status: 'passed',
+        startedAt,
+        event,
+        state,
+        turnManifest,
+        invocations,
+        browser,
+        errorBrowser,
+      },
       null,
       2,
     )}\n`,

@@ -122,6 +122,7 @@ test('Regression profiles stay linear and keep real models out of preflight', ()
     'HOPI-E2E-012',
     'HOPI-E2E-016',
     'HOPI-E2E-020',
+    'HOPI-E2E-030',
     'HOPI-E2E-021',
     'HOPI-E2E-025',
     'HOPI-E2E-001',

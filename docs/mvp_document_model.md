@@ -208,7 +208,10 @@ primary root. A missing Engineering Work `repos` field likewise means the Projec
 Newly published links and Engineering Work always use the explicit form.
 
 After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
-administration, validates its `hopi/release` projection, then changes only that Repo's local path.
+administration, validates its `hopi/release` projection, then changes the machine-local binding.
+A single moved Repo and a complete moved Repo set use the same operation; the complete form requires
+exactly the existing stable Repo IDs and publishes `projects.yml` only after every target validates.
+This lets several stale old paths recover together without weakening duplicate-Git-identity checks.
 A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
 canonical documents may be newer than the ref; that loss remains Project Attention.
 
