@@ -1,9 +1,11 @@
 # HOPI MVP Design
 
-Status: forward product and architecture authority
+Status: implemented Coding Agent baseline authority
 Last updated: 2026-07-16
 
-This document defines the target MVP for HOPI. New product and architecture work follows it.
+This document defines the implemented Coding Agent MVP baseline for HOPI. New product and
+architecture work follows [the Working Agent design](./working_agent_design.md); this document and
+its detailed companions remain authoritative for behavior not yet migrated.
 
 - [The document model](./mvp_document_model.md) owns file layout, schemas, and field invariants.
 - [The Assistant design](./mvp_assistant.md) owns conversation, vendor-qualified session continuity, HOPI

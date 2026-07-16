@@ -52,6 +52,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Keep untracked historical drafts ignored while versioning current authority docs.
 .hopi/docs/
 docs/*
+!docs/working_agent_design.md
 !docs/mvp_design.md
 !docs/mvp_assistant.md
 !docs/mvp_alignment_plan.md

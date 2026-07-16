@@ -1,8 +1,14 @@
 # HOPI Documentation
 
-## Current Authority
+## Forward Direction
 
-- [`mvp_design.md`](./mvp_design.md): product concepts, scope, accepted choices, UI, and scenarios.
+- [`working_agent_design.md`](./working_agent_design.md): forward product and architecture authority
+  for evolving HOPI from the implemented Coding Agent MVP into a general Working Agent.
+
+## Implemented Baseline Authority
+
+- [`mvp_design.md`](./mvp_design.md): implemented Coding Agent baseline, product concepts, scope,
+  accepted choices, UI, and scenarios.
 - [`mvp_document_model.md`](./mvp_document_model.md): canonical home, Project, Goal, Work, Input,
   Attention, and Evidence documents.
 - [`mvp_assistant.md`](./mvp_assistant.md): Home-configured Assistant conversation, HOPI tools,
@@ -23,6 +29,10 @@
   projection.
 - [`mvp_alignment_plan.md`](./mvp_alignment_plan.md): implementation evidence and cutover checklist;
   it is not a design authority.
+
+The `mvp_*.md` documents remain authoritative for behavior not yet migrated. When the forward
+Working Agent design conflicts with them, `working_agent_design.md` defines the target and the MVP
+documents describe the current implementation.
 
 ## Historical Reference
 
