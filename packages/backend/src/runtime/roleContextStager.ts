@@ -22,6 +22,7 @@ export type Responsibility = (typeof RESPONSIBILITIES)[number]
 
 export interface PrepareRoleContextInput {
   projectRoot: string
+  projectPath?: string
   projectId: string
   goalId: string
   workId: string
@@ -50,6 +51,8 @@ export interface RoleContextBundle extends TransportContextBundle {
   guardFiles: Readonly<Record<string, string | null>>
   guardPrefixes: readonly string[]
   bootstrapSourceRoot?: string
+  agentsPath?: string
+  preparePath?: string
   repoRoots: readonly RoleRepoRoot[]
   reposFile: string
 }
@@ -81,7 +84,7 @@ export function createRoleContextStager(
         input.repoRoots ?? [{ repoId: primaryRepoId, path: projectRoot, primary: true }],
         primaryRepoId,
       )
-      const paths = createGoalPackagePaths(projectRoot, input.projectId)
+      const paths = createGoalPackagePaths(projectRoot, input.projectId, input.projectPath)
       const runRoot = join(
         absoluteHomeRoot,
         '.hopi',
@@ -109,8 +112,8 @@ export function createRoleContextStager(
 
       const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, {
         paths: [
-          'AGENTS.md',
-          'scripts/hopi/prepare',
+          paths.agentsPath,
+          paths.preparePath,
           '.hopi/project.yml',
           '.hopi/preference.md',
           '.hopi/docs/index.md',
@@ -169,12 +172,12 @@ export function createRoleContextStager(
         join(authorityRoot, ...imagePath.split('/')),
       )
 
-      const agentsFile = snapshot.files.find((file) => file.path === 'AGENTS.md')
-      const prepareFile = snapshot.files.find((file) => file.path === 'scripts/hopi/prepare')
+      const agentsFile = snapshot.files.find((file) => file.path === paths.agentsPath)
+      const prepareFile = snapshot.files.find((file) => file.path === paths.preparePath)
       let bootstrapSourceRoot: string | undefined
       if (input.responsibility === 'planner' && agentsFile?.content === null) {
         bootstrapSourceRoot = join(contextRoot, 'source')
-        await stageTrackedSource(projectRoot, releaseHead, bootstrapSourceRoot)
+        await stageTrackedSource(projectRoot, releaseHead, bootstrapSourceRoot, paths.projectPath)
       }
 
       await Bun.write(
@@ -205,6 +208,7 @@ export function createRoleContextStager(
           primaryRepoId,
           repoRoots,
           reposFile,
+          projectPath: paths.projectPath,
           apiOrigin,
         }),
       )
@@ -220,6 +224,8 @@ export function createRoleContextStager(
             resultFile,
             bootstrapSourceRoot,
             prepareMissing: prepareFile?.content === null,
+            agentsPath: paths.agentsPath,
+            preparePath: paths.preparePath,
             attentionRoot: paths.attentionRoot(input.goalId),
             primaryRepoId,
             repoRoots,
@@ -247,6 +253,8 @@ export function createRoleContextStager(
         guardFiles,
         guardPrefixes,
         bootstrapSourceRoot,
+        agentsPath: paths.agentsPath,
+        preparePath: paths.preparePath,
         repoRoots,
         reposFile,
         apiOrigin,
@@ -572,23 +580,36 @@ async function writeSnapshotFile(root: string, relativePath: string, content: Ui
   await Bun.write(path, content)
 }
 
-async function stageTrackedSource(projectRoot: string, releaseHead: string, destination: string) {
+async function stageTrackedSource(
+  projectRoot: string,
+  releaseHead: string,
+  destination: string,
+  projectPath: string,
+) {
   await mkdir(destination, { recursive: true })
   const tracked = await gitOutput(projectRoot, ['ls-tree', '-r', '-z', '--name-only', releaseHead])
   const paths = tracked.split('\0').filter(Boolean)
+  const scopePrefix = projectPath === '.' ? '' : `${projectPath}/`
+  const scopedPaths = paths.filter((path) => !scopePrefix || path.startsWith(scopePrefix))
 
-  for (const relativePath of paths) {
+  for (const gitPath of scopedPaths) {
+    const relativePath = scopePrefix ? gitPath.slice(scopePrefix.length) : gitPath
     if (relativePath === '.hopi' || relativePath.startsWith('.hopi/')) continue
     const normalized = normalizeGitPath(relativePath)
     const target = safeJoin(destination, normalized)
     await mkdir(dirname(target), { recursive: true })
-    await Bun.write(target, await gitBytes(projectRoot, ['show', `${releaseHead}:${normalized}`]))
+    await Bun.write(target, await gitBytes(projectRoot, ['show', `${releaseHead}:${gitPath}`]))
     await chmod(target, 0o444)
   }
 
   await Bun.write(
     join(destination, '.hopi-source-manifest.txt'),
-    [`releaseHead: ${releaseHead}`, `trackedFiles: ${paths.length}`, ''].join('\n'),
+    [
+      `releaseHead: ${releaseHead}`,
+      `projectPath: ${projectPath}`,
+      `trackedFiles: ${scopedPaths.length}`,
+      '',
+    ].join('\n'),
   )
 }
 
@@ -606,6 +627,7 @@ function renderContextManifest(
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
+    projectPath: string
     apiOrigin?: string
   },
 ) {
@@ -622,6 +644,7 @@ function renderContextManifest(
     `- Writable proposal root: ${context.proposalRoot}`,
     `- Disposable runtime scratch: ${context.runtimeScratchDir}`,
     `- Project primary Repo: ${context.primaryRepoId}`,
+    `- Project source scope: ${context.projectPath}`,
     `- Repo workspace manifest: ${context.reposFile}`,
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
     ...context.repoRoots.map(
@@ -664,6 +687,8 @@ function renderResponsibilityPrompt(
     resultFile: string
     bootstrapSourceRoot?: string
     prepareMissing: boolean
+    agentsPath: string
+    preparePath: string
     attentionRoot: string
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
@@ -784,6 +809,8 @@ function plannerPrompt(paths: {
   proposalRoot: string
   bootstrapSourceRoot?: string
   prepareMissing: boolean
+  agentsPath: string
+  preparePath: string
   attentionRoot: string
   apiOrigin?: string
 }) {
@@ -804,7 +831,7 @@ function plannerPrompt(paths: {
     'Terminal Engineering Work is immutable. Never copy it into proposal or edit its fields, body, or evidenceRefs.',
     'This authority is intentionally compact: an Evidence document omitted from staging is historical, not missing canonical truth. Never repair an evidenceRef merely because its document is not staged.',
     'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
-    'Your proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing root AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator preserves the current Planning Work and derives its Evidence reference from result.json during publication.',
+    'Your proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing Project AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator preserves the current Planning Work and derives its Evidence reference from result.json during publication.',
     'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
     'The fixed control fields are listed below. Use them directly; never inspect another Goal or historical Run to infer document format. Markdown bodies remain free-form.',
     'New Engineering Work frontmatter:',
@@ -843,15 +870,17 @@ function plannerPrompt(paths: {
     `Write changed Goal-package documents into the sparse overlay at ${paths.proposalRoot}; do not edit source or ordinary project documents.`,
     ...(paths.bootstrapSourceRoot
       ? [
-          `Root AGENTS.md was absent. Scan ${paths.bootstrapSourceRoot} and create ${join(paths.proposalRoot, 'AGENTS.md')} as a concise project entrypoint in this same proposal.`,
-        ]
-      : ['Root AGENTS.md already exists and must not be replaced automatically.']),
-    ...(paths.prepareMissing
-      ? [
-          'scripts/hopi/prepare is absent. If this delivery needs an executable environment, include creation of the idempotent executable in the first real Engineering Work; do not create a separate Init Work or let Planner write the executable.',
+          `Project guidance ${paths.agentsPath} was absent. Scan the scoped snapshot at ${paths.bootstrapSourceRoot} and create ${join(paths.proposalRoot, 'AGENTS.md')} as a concise Project entrypoint in this same proposal.`,
         ]
       : [
-          'scripts/hopi/prepare already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.',
+          `Project guidance ${paths.agentsPath} already exists and must not be replaced automatically.`,
+        ]),
+    ...(paths.prepareMissing
+      ? [
+          `${paths.preparePath} is absent. If this delivery needs an executable environment, include creation of the idempotent executable in the first real Engineering Work; do not create a separate Init Work or let Planner write the executable.`,
+        ]
+      : [
+          `${paths.preparePath} already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.`,
         ]),
     `When Assistant management or operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}, return attention, and leave Planning Work at plan.`,
     'When final proof is sufficient, create the one target-null completion Attention. If this proposal creates or keeps any nonterminal Engineering Work, do not create completion Attention. Return success only after the complete semantic proposal is staged; Coordinator will advance the owning Planning Work after validation.',
@@ -862,12 +891,14 @@ function plannerPrompt(paths: {
 function generatorPrompt(paths: {
   proposalRoot: string
   attentionRoot: string
+  agentsPath: string
+  preparePath: string
 }) {
   return [
     '## Generator',
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
-    'Read root AGENTS.md and scripts/hopi/prepare before rediscovering project setup or runtime entrypoints. A Project Preparation Diagnostic appended below is exact preflight input, not a separate Work.',
+    `Read the Project guidance at ${paths.agentsPath} and preparation entrypoint at ${paths.preparePath} before rediscovering setup or runtime entrypoints. A Project Preparation Diagnostic appended below is exact preflight input, not a separate Work.`,
     "Use only Repo roots listed in $HOPI_REPOS_FILE. When a required Repo is absent, request Assistant management through attention; never discover or use another Work's checkout. Project scripts must use the manifest when it is present instead of scanning HOPI runtime siblings.",
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest.',
     'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
@@ -887,6 +918,8 @@ function generatorPrompt(paths: {
 function reviewerPrompt(paths: {
   proposalRoot: string
   attentionRoot: string
+  agentsPath: string
+  preparePath: string
 }) {
   return [
     '## Reviewer',
@@ -896,7 +929,7 @@ function reviewerPrompt(paths: {
     'Do not edit source, ordinary project documents, or .hopi in the task worktree.',
     'If the owning Work cites a reference image, compare material visual criteria against the attached original image and its documented purpose.',
     'Choose the strongest proportionate proof for every acceptance criterion.',
-    'Decide the proof plan before installing optional tools. Reuse root AGENTS.md, scripts/hopi/prepare, and the existing project test/browser stack; do not install a competing harness after decisive proof already exists.',
+    `Decide the proof plan before installing optional tools. Reuse ${paths.agentsPath}, ${paths.preparePath}, and the existing project test/browser stack; do not install a competing harness after decisive proof already exists.`,
     'Use only Repo roots listed in $HOPI_REPOS_FILE. If direct proof requires a missing Repo, request Assistant management through attention instead of inspecting another Work checkout or historical runtime directory.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
     'When scripts/hopi/preview is in scope, verify that readiness emits exactly one HOPI_PREVIEW_URL=<reachable-url> line; accepting a bare URL would leave Project Preview stuck in starting.',

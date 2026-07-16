@@ -5,7 +5,14 @@ import { PublicationCoordinator } from '../../src/publication/publisher'
 import { createWebhookAttentionTransport } from '../../src/runtime/attentionDelivery'
 import { createAssistantHomeStore } from '../../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../../src/storage/assistantWorkspaceStore'
-import { errorMessage, finishTestRun, startTestRun, waitForValue } from '../live/liveHarness'
+import {
+  errorMessage,
+  finishTestRun,
+  ownTestRunServer,
+  startTestRun,
+  waitForValue,
+} from '../live/liveHarness'
+import { registerTestRunCleanup } from '../testRunArtifact'
 
 const SCENARIO = 'webhook-delivery-retry'
 const testRun = await startTestRun(SCENARIO, 'contract')
@@ -48,6 +55,11 @@ const server = createServer({
   port: 0,
   attentionTransport: createWebhookAttentionTransport(`http://127.0.0.1:${webhook.port}/hook`),
 })
+const webhookCleanup = registerTestRunCleanup(testRun, {
+  name: 'webhook-server',
+  cleanup: () => webhook.stop(true),
+})
+ownTestRunServer(testRun, server)
 
 try {
   const delivered = await waitForValue(
@@ -102,5 +114,5 @@ try {
   process.exitCode = 1
 } finally {
   await server.shutdown()
-  webhook.stop(true)
+  await webhookCleanup.run()
 }

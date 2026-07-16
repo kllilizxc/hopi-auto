@@ -63,34 +63,7 @@ export async function bootstrapCoordinator(input: {
   const blocked = new Set<string>()
   for (const project of input.projects) {
     try {
-      const linkedBeforeValidation = await input.home.readProject(project.projectId)
-      const primaryRepoId = project.primaryRepoId ?? linkedBeforeValidation.primaryRepoId
-      const repos =
-        project.repos ??
-        linkedBeforeValidation.repos.map((repo) => ({
-          repoId: repo.repoId,
-          integrationRoot: repo.integrationRoot,
-          primary: repo.primary,
-        }))
-      for (const repo of repos) {
-        await removeAbandonedTemporaryFiles(
-          repo.integrationRoot,
-          new Set([join(repo.integrationRoot, '.git')]),
-        )
-      }
-      await reconcileProjectReleaseProjection({ primaryRepoId, repos })
-      const linked = await input.home.validateProject(project.projectId)
-      if (linked.integrationRoot !== project.projectRoot) {
-        throw new Error('Project runtime root disagrees with the Assistant-home link')
-      }
-      for (const runtimeRepo of repos) {
-        const linkedRepo = linked.repos.find((repo) => repo.repoId === runtimeRepo.repoId)
-        if (linkedRepo?.integrationRoot !== runtimeRepo.integrationRoot) {
-          throw new Error(`Project runtime Repo ${runtimeRepo.repoId} disagrees with its link`)
-        }
-      }
-      await project.store.migrateLegacyGoals()
-      await validateManagedProjection(project)
+      await recoverCoordinatorProject(input.home, project)
       eligible.add(project.projectId)
     } catch (error) {
       blocked.add(project.projectId)
@@ -103,6 +76,42 @@ export async function bootstrapCoordinator(input: {
   return { homeId, eligibleProjectIds: eligible, blockedProjectIds: blocked }
 }
 
+export async function recoverCoordinatorProject(
+  home: AssistantHomeStore,
+  project: CoordinatorBootstrapProject,
+) {
+  const linkedBeforeValidation = await home.readProject(project.projectId)
+  const primaryRepoId = project.primaryRepoId ?? linkedBeforeValidation.primaryRepoId
+  const repos =
+    project.repos ??
+    linkedBeforeValidation.repos.map((repo) => ({
+      repoId: repo.repoId,
+      integrationRoot: repo.integrationRoot,
+      checkoutRoot: repo.repoPath,
+      deliveryBranch: repo.deliveryBranch,
+      primary: repo.primary,
+    }))
+  for (const repo of repos) {
+    await removeAbandonedTemporaryFiles(
+      repo.integrationRoot,
+      new Set([join(repo.integrationRoot, '.git')]),
+    )
+  }
+  await reconcileProjectReleaseProjection({ primaryRepoId, repos })
+  const linked = await home.validateProject(project.projectId)
+  if (linked.integrationRoot !== project.projectRoot) {
+    throw new Error('Project runtime root disagrees with the Assistant-home link')
+  }
+  for (const runtimeRepo of repos) {
+    const linkedRepo = linked.repos.find((repo) => repo.repoId === runtimeRepo.repoId)
+    if (linkedRepo?.integrationRoot !== runtimeRepo.integrationRoot) {
+      throw new Error(`Project runtime Repo ${runtimeRepo.repoId} disagrees with its link`)
+    }
+  }
+  await project.store.migrateLegacyGoals()
+  await validateManagedProjection(project)
+}
+
 async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   // Index-reading Git commands may refresh and lock the index, so bootstrap must not race them.
   const head = await git(project.projectRoot, ['rev-parse', 'HEAD'])
@@ -112,6 +121,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   const sourceStatus = await git(project.projectRoot, [
     'status',
     '--porcelain=v1',
+    '-z',
     '--untracked-files=all',
     '--',
     '.',
@@ -121,9 +131,9 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
     throw new Error('managed integration index does not materialize the durable release ref')
   }
   const unsafeSourceStatus = sourceStatus
-    .split('\n')
+    .split('\0')
     .filter(Boolean)
-    .filter((line) => line !== '?? AGENTS.md')
+    .filter((line) => line !== `?? ${project.store.paths.agentsPath}`)
   if (unsafeSourceStatus.length > 0) {
     throw new Error(`managed integration source is dirty: ${unsafeSourceStatus.join(', ')}`)
   }

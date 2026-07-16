@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { type TestRunCleanupRegistration, registerTestRunCleanup } from '../testRunArtifact'
 import {
   type LiveGoalDetail,
   type LiveHarness,
@@ -70,6 +71,8 @@ let harness: LiveHarness | null = null
 let recorder: StateRecorder | null = null
 let referenceServer: ReturnType<typeof Bun.serve> | null = null
 let implementationServer: ReturnType<typeof Bun.serve> | null = null
+let referenceCleanup: TestRunCleanupRegistration | null = null
+let implementationCleanup: TestRunCleanupRegistration | null = null
 
 try {
   harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
@@ -92,6 +95,10 @@ try {
       })
     },
   })
+  referenceCleanup = registerTestRunCleanup(harness, {
+    name: 'reference-server',
+    cleanup: () => referenceServer?.stop(true),
+  })
   const referenceCapture = await captureBrowserPage(
     harness,
     `http://127.0.0.1:${referenceServer.port}`,
@@ -101,7 +108,7 @@ try {
       auditLabel: 'capture the immutable visual reference before HOPI upload',
     },
   )
-  referenceServer.stop(true)
+  await referenceCleanup.run()
   referenceServer = null
   const referencePath = join(harness.artifactRoot, referenceCapture.screenshot)
   const referenceBytes = new Uint8Array(await Bun.file(referencePath).arrayBuffer())
@@ -258,6 +265,10 @@ try {
       return new Response(Bun.file(join(integrationRoot, 'index.html')))
     },
   })
+  implementationCleanup = registerTestRunCleanup(harness, {
+    name: 'implementation-server',
+    cleanup: () => implementationServer?.stop(true),
+  })
   const finalCapture = await captureBrowserPage(
     harness,
     `http://127.0.0.1:${implementationServer.port}`,
@@ -267,7 +278,7 @@ try {
       auditLabel: 'capture the delivered multimodal implementation',
     },
   )
-  implementationServer.stop(true)
+  await implementationCleanup.run()
   implementationServer = null
   const kanban = await inspectKanban(harness, PROJECT_ID, goalId, {
     evidencePrefix: 'multimodal-terminal',
@@ -294,8 +305,8 @@ try {
   console.log(`HOPI-E2E-022 multimodal Live passed: ${harness.artifactRoot}`)
   console.log(`Model usage: ${JSON.stringify(usage)}`)
 } catch (error) {
-  referenceServer?.stop(true)
-  implementationServer?.stop(true)
+  await referenceCleanup?.run()
+  await implementationCleanup?.run()
   if (recorder) await recorder.stop().catch(() => undefined)
   if (harness) {
     await shutdownLiveHarness(harness).catch(() => undefined)

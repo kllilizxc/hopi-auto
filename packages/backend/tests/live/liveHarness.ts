@@ -13,6 +13,13 @@ import {
   type TestRunClaim,
   type TestRunCodeProvenance,
   type TestRunContext,
+  type TestRunDetails,
+  cleanupTestRun,
+  enterTestRunPhase,
+  markTestRunCheckpoint,
+  recordTestRunAction,
+  registerTestRunCleanup,
+  finishTestRun as sealTestRun,
   writeTestRunReport,
 } from '../testRunArtifact'
 
@@ -68,6 +75,7 @@ export interface LiveHarness {
   code: CodeProvenance
   currentPhase: string
   lastCheckpoint: string | null
+  logicalRunLimit: number
   startedAt: string
   server: MvpServer
   stopped: boolean
@@ -101,6 +109,11 @@ interface ScreenshotTarget {
 }
 
 const initializedBrowserRuns = new WeakSet<BrowserHarnessContext>()
+const activeLogicalRunGuards = new Set<LogicalRunGuard>()
+const ownedTestRunServers = new WeakMap<
+  TestRunContext,
+  Map<MvpServer, ReturnType<typeof registerTestRunCleanup>>
+>()
 
 export interface BrowserAuditVerification {
   available?: boolean
@@ -120,6 +133,7 @@ export async function startLiveHarness(
   scenario: string,
   options: { deterministicReflection?: boolean } = {},
 ): Promise<LiveHarness> {
+  const logicalRunLimit = resolveLogicalRunLimit()
   const run = await startTestRun(scenario, 'live')
   const { artifactRoot, startedAt } = run
   const homeRoot = join(artifactRoot, 'home')
@@ -149,27 +163,31 @@ export async function startLiveHarness(
     code,
     currentPhase: 'startup',
     lastCheckpoint: null,
+    logicalRunLimit,
     startedAt,
     server,
     stopped: false,
   }
+  ownTestRunServer(harness, server)
+  registerLogicalRunSafety(harness, homeRoot, { limit: logicalRunLimit })
   await writeRunReport(harness, 'running')
   await recordAction(harness, 'server_started', {
     baseUrl: harness.baseUrl,
     codingDefaults,
     modelBoundaries,
+    logicalRunLimit,
   })
   return harness
 }
 
 export async function enterHarnessPhase(harness: LiveHarness, phase: string) {
   harness.currentPhase = phase
-  await recordAction(harness, 'phase_started', { phase })
+  await enterTestRunPhase(harness, phase)
 }
 
 export async function markHarnessCheckpoint(harness: LiveHarness, checkpoint: string) {
   harness.lastCheckpoint = checkpoint
-  await recordAction(harness, 'checkpoint_reached', { checkpoint })
+  await markTestRunCheckpoint(harness, checkpoint)
 }
 
 export async function createHarnessArtifactRoot(scenario: string, startedAt: string) {
@@ -199,9 +217,11 @@ export async function startTestRun(scenario: string, claim: TestRunClaim): Promi
 export async function finishTestRun(
   context: TestRunContext,
   status: 'passed' | 'failed' | 'blocked',
-  details: Record<string, unknown> = {},
+  details: TestRunDetails = {},
 ) {
-  return writeTestRunReport(context, status, details)
+  const report = await sealTestRun(context, status, details)
+  signalUnexpectedFinalStatus(context, status, report.status)
+  return report
 }
 
 export async function finishLiveHarness(
@@ -209,37 +229,76 @@ export async function finishLiveHarness(
   status: 'passed' | 'failed',
   details: Record<string, unknown> = {},
 ) {
-  await stopLiveServer(harness)
-  const usage = await readModelUsage(harness.homeRoot)
-  await writeRunReport(harness, status, {
-    ...details,
-    usage,
-    lastCheckpoint: harness.lastCheckpoint,
-    failedAt: status === 'failed' ? harness.currentPhase : null,
+  ensureLiveServerOwned(harness)
+  let usage: Awaited<ReturnType<typeof readModelUsage>> | null = null
+  const report = await sealTestRun(harness, status, async () => {
+    usage = await readModelUsage(harness.homeRoot)
+    return {
+      codingDefaults: harness.codingDefaults,
+      modelBoundaries: harness.modelBoundaries,
+      browserAuditPolicy:
+        process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
+      logicalRunSafety: { limit: harness.logicalRunLimit },
+      paths: { home: harness.homeRoot, repo: harness.repoRoot },
+      ...details,
+      usage,
+      lastCheckpoint: harness.lastCheckpoint,
+      failedAt: status === 'failed' ? harness.currentPhase : null,
+    }
   })
+  signalUnexpectedFinalStatus(harness, status, report.status)
+  if (!usage) throw new Error('Live Test Run usage was not collected')
   return usage
 }
 
 export async function shutdownLiveHarness(harness: LiveHarness) {
+  ensureLiveServerOwned(harness)
   await stopLiveServer(harness)
+}
+
+export function ownTestRunServer(context: TestRunContext, server: MvpServer, name?: string) {
+  let servers = ownedTestRunServers.get(context)
+  if (!servers) {
+    servers = new Map()
+    ownedTestRunServers.set(context, servers)
+  }
+  const existing = servers.get(server)
+  if (existing) return existing
+  const resourceName = name ?? (servers.size === 0 ? 'server' : `server-${servers.size + 1}`)
+  let stopped = false
+  const registration = registerTestRunCleanup(context, {
+    name: resourceName,
+    timeoutMs: cleanupTimeoutMs(),
+    cleanup: async () => {
+      if (stopped) return
+      await server.shutdown()
+      stopped = true
+      await recordAction(context, 'server_stopped', { resource: resourceName })
+    },
+    force: () => server.stop(true),
+  })
+  servers.set(server, registration)
+  return registration
+}
+
+function ensureLiveServerOwned(harness: LiveHarness) {
+  return ownTestRunServer(harness, harness.server)
 }
 
 async function stopLiveServer(harness: LiveHarness) {
   if (harness.stopped) return
-  await harness.server.shutdown()
+  const results = await cleanupTestRun(harness)
   harness.stopped = true
-  await recordAction(harness, 'server_stopped')
+  const failure = results.find((result) => result.status !== 'completed')
+  if (failure) throw new Error(failure.error ?? `Cleanup failed: ${failure.name}`)
 }
 
 export async function recordAction(
-  harness: BrowserHarnessContext,
+  harness: Pick<TestRunContext, 'artifactRoot' | 'scenario'>,
   action: string,
   detail: Record<string, unknown> = {},
 ) {
-  await appendFile(
-    join(harness.artifactRoot, 'actions.jsonl'),
-    `${JSON.stringify({ occurredAt: new Date().toISOString(), action, ...detail })}\n`,
-  )
+  await recordTestRunAction(harness, action, detail)
 }
 
 export async function requestJson<T>(
@@ -271,13 +330,70 @@ export async function waitForValue<T>(
   const deadline = Date.now() + options.timeoutMs
   let lastValue: T | undefined
   while (Date.now() < deadline) {
+    await assertLogicalRunSafety()
     lastValue = await read()
+    await assertLogicalRunSafety()
     if (accepts(lastValue)) return lastValue
     await Bun.sleep(options.intervalMs ?? 500)
   }
   throw new Error(
     `Timed out waiting for ${options.description}. Last value: ${safeJson(lastValue)}`,
   )
+}
+
+interface LogicalRunGuard {
+  check(): Promise<void>
+  close(): void
+}
+
+export function registerLogicalRunSafety(
+  context: TestRunContext,
+  homeRoot: string,
+  options: { limit?: number } = {},
+) {
+  const limit = positiveLogicalRunLimit(options.limit ?? resolveLogicalRunLimit())
+  let closed = false
+  let exceeded: Error | null = null
+  let lastCheckedAt = 0
+  let pendingCheck: Promise<void> | null = null
+  const guard: LogicalRunGuard = {
+    async check() {
+      if (closed) return
+      if (exceeded) throw exceeded
+      if (Date.now() - lastCheckedAt < 100) return
+      pendingCheck ??= (async () => {
+        const logicalRuns = await countLogicalRuns(homeRoot, { tolerateUnreadable: true })
+        const observed = Object.values(logicalRuns).reduce((sum, count) => sum + count, 0)
+        lastCheckedAt = Date.now()
+        if (observed <= limit) return
+        exceeded = new Error(`Logical Run safety limit exceeded: ${observed} > ${limit}`)
+        await recordTestRunAction(
+          context,
+          'logical_run_limit_exceeded',
+          { limit, observed, logicalRuns },
+          true,
+        )
+        throw exceeded
+      })().finally(() => {
+        pendingCheck = null
+      })
+      await pendingCheck
+    },
+    close() {
+      closed = true
+      activeLogicalRunGuards.delete(guard)
+    },
+  }
+  activeLogicalRunGuards.add(guard)
+  registerTestRunCleanup(context, {
+    name: 'logical-run-safety',
+    cleanup: () => guard.close(),
+  })
+  return { limit, check: () => guard.check() }
+}
+
+async function assertLogicalRunSafety() {
+  for (const guard of activeLogicalRunGuards) await guard.check()
 }
 
 export async function startStateRecorder(harness: LiveHarness): Promise<StateRecorder> {
@@ -322,6 +438,24 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
     }
   })()
 
+  const stopRecorder = async () => {
+    stopping = true
+    await loop
+    try {
+      await capture()
+    } catch {
+      // The retained runtime already contains the server-side failure evidence.
+    }
+  }
+  const cleanup = registerTestRunCleanup(harness, {
+    name: 'state-recorder',
+    timeoutMs: cleanupTimeoutMs(),
+    cleanup: stopRecorder,
+    force: () => {
+      stopping = true
+    },
+  })
+
   return {
     get violations() {
       return [...violations]
@@ -330,12 +464,9 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
       return observations
     },
     async stop() {
-      stopping = true
-      await loop
-      try {
-        await capture()
-      } catch {
-        // The retained runtime already contains the server-side failure evidence.
+      const result = await cleanup.run()
+      if (result.status !== 'completed') {
+        throw new Error(result.error ?? 'State recorder cleanup failed')
       }
     },
   }
@@ -1308,14 +1439,41 @@ async function runBrowserHarness(
     child.exited,
   ])
   await Bun.write(join(harness.artifactRoot, logName), `${stdout}${stderr}`)
+  const resourceMarker = stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('HOPI_BROWSER_RESOURCES='))
+  const resources = resourceMarker
+    ? (JSON.parse(resourceMarker.slice('HOPI_BROWSER_RESOURCES='.length)) as {
+        before: string[]
+        created: string[]
+        closed: string[]
+        leaked: string[]
+      })
+    : null
+  if (resources) {
+    await appendFile(
+      join(harness.artifactRoot, 'browser-resources.jsonl'),
+      `${JSON.stringify({ occurredAt: new Date().toISOString(), logName, ...resources })}\n`,
+    )
+    await recordAction(harness, 'browser_resources_released', {
+      logName,
+      created: resources.created,
+      closed: resources.closed,
+      leaked: resources.leaked,
+    })
+  }
   if (exitCode !== 0) {
     throw new Error(`Browser Harness exited with code ${exitCode}: ${stderr.trim()}`)
   }
+  if (!resources) throw new Error('Browser Harness did not return owned-resource evidence')
   const cleanupFailure = stdout
     .split(/\r?\n/)
     .find((line) => line.startsWith('HOPI_BROWSER_CLEANUP_FAILED='))
   if (cleanupFailure) {
     throw new Error(`Browser Harness tab cleanup failed: ${cleanupFailure.split('=', 2)[1]}`)
+  }
+  if (resources.leaked.length > 0) {
+    throw new Error(`Browser Harness leaked owned tabs: ${resources.leaked.join(', ')}`)
   }
   const marker = stdout.split(/\r?\n/).find((line) => line.startsWith(markerPrefix))
   if (!marker) throw new Error(`Browser Harness did not return ${markerPrefix} evidence`)
@@ -1329,7 +1487,7 @@ function withOwnedBrowserTabs(script: string) {
     .join('\n')
   return [
     'import json as _hopi_json',
-    '_hopi_tabs_before = {tab.get("targetId") or tab.get("target_id") for tab in list_tabs(include_chrome=True)}',
+    '_hopi_tabs_before = {tab.get("targetId") or tab.get("target_id") for tab in list_tabs(include_chrome=True)} - {None}',
     '_hopi_cleanup_errors = []',
     'try:',
     body,
@@ -1339,12 +1497,19 @@ function withOwnedBrowserTabs(script: string) {
     '    except Exception:',
     '        _hopi_current = None',
     '    _hopi_created = [tab for tab in list_tabs(include_chrome=True) if (tab.get("targetId") or tab.get("target_id")) not in _hopi_tabs_before]',
+    '    _hopi_created_ids = sorted({tab.get("targetId") or tab.get("target_id") for tab in _hopi_created} - {None})',
     '    _hopi_created.sort(key=lambda tab: (tab.get("targetId") or tab.get("target_id")) == _hopi_current)',
     '    for _hopi_tab in _hopi_created:',
     '        try:',
     '            close_tab(_hopi_tab.get("targetId") or _hopi_tab.get("target_id"))',
     '        except Exception as _hopi_cleanup_error:',
     '            _hopi_cleanup_errors.append(type(_hopi_cleanup_error).__name__ + ": " + str(_hopi_cleanup_error))',
+    '    _hopi_tabs_after = {tab.get("targetId") or tab.get("target_id") for tab in list_tabs(include_chrome=True)} - {None}',
+    '    _hopi_leaked = sorted(set(_hopi_created_ids) & _hopi_tabs_after)',
+    '    _hopi_closed = sorted(set(_hopi_created_ids) - _hopi_tabs_after)',
+    '    print("HOPI_BROWSER_RESOURCES=" + _hopi_json.dumps({"before": sorted(_hopi_tabs_before), "created": _hopi_created_ids, "closed": _hopi_closed, "leaked": _hopi_leaked}))',
+    '    if _hopi_leaked:',
+    '        _hopi_cleanup_errors.append("owned targets still open: " + ", ".join(_hopi_leaked))',
     '    if _hopi_cleanup_errors:',
     '        print("HOPI_BROWSER_CLEANUP_FAILED=" + _hopi_json.dumps(_hopi_cleanup_errors))',
   ].join('\n')
@@ -1581,41 +1746,7 @@ function resolveBrowserHarnessCommand() {
 }
 
 export async function readModelUsage(homeRoot: string) {
-  const logicalRuns = {
-    assistant: 0,
-    reflection: 0,
-    planner: 0,
-    generator: 0,
-    reviewer: 0,
-  }
-  for await (const path of new Bun.Glob('.hopi/runtime/assistant/turns/*/turn.json').scan({
-    cwd: homeRoot,
-    onlyFiles: true,
-    dot: true,
-  })) {
-    const manifest = (await Bun.file(join(homeRoot, path)).json()) as { attempt?: number }
-    logicalRuns.assistant +=
-      typeof manifest.attempt === 'number' && manifest.attempt > 0 ? manifest.attempt : 1
-  }
-  for await (const path of new Bun.Glob(
-    '.hopi/runtime/assistant/reflections/*/reflection.json',
-  ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
-    if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
-  }
-  for await (const path of new Bun.Glob('.hopi/runtime/runs/*/*/*/*/attempt.json').scan({
-    cwd: homeRoot,
-    onlyFiles: true,
-    dot: true,
-  })) {
-    const manifest = (await Bun.file(join(homeRoot, path)).json()) as { responsibility?: string }
-    if (
-      manifest.responsibility === 'planner' ||
-      manifest.responsibility === 'generator' ||
-      manifest.responsibility === 'reviewer'
-    ) {
-      logicalRuns[manifest.responsibility] += 1
-    }
-  }
+  const logicalRuns = await countLogicalRuns(homeRoot)
 
   const tokens = { input: 0, cachedInput: 0, output: 0 }
   const byScope = {
@@ -1683,6 +1814,66 @@ export async function readModelUsage(homeRoot: string) {
   }
 }
 
+export async function countLogicalRuns(
+  homeRoot: string,
+  options: { tolerateUnreadable?: boolean } = {},
+) {
+  const logicalRuns = {
+    assistant: 0,
+    reflection: 0,
+    planner: 0,
+    generator: 0,
+    reviewer: 0,
+  }
+  for await (const path of new Bun.Glob('.hopi/runtime/assistant/turns/*/turn.json').scan({
+    cwd: homeRoot,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    const manifest = await readLogicalRunManifest<{ attempt?: number }>(
+      join(homeRoot, path),
+      options.tolerateUnreadable,
+    )
+    if (!manifest) continue
+    logicalRuns.assistant +=
+      typeof manifest.attempt === 'number' && manifest.attempt > 0 ? manifest.attempt : 1
+  }
+  for await (const path of new Bun.Glob(
+    '.hopi/runtime/assistant/reflections/*/reflection.json',
+  ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
+    if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
+  }
+  for await (const path of new Bun.Glob('.hopi/runtime/runs/*/*/*/*/attempt.json').scan({
+    cwd: homeRoot,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    const manifest = await readLogicalRunManifest<{ responsibility?: string }>(
+      join(homeRoot, path),
+      options.tolerateUnreadable,
+    )
+    if (!manifest) continue
+    if (
+      manifest.responsibility === 'planner' ||
+      manifest.responsibility === 'generator' ||
+      manifest.responsibility === 'reviewer'
+    ) {
+      logicalRuns[manifest.responsibility] += 1
+    }
+  }
+
+  return logicalRuns
+}
+
+async function readLogicalRunManifest<T>(path: string, tolerateUnreadable = false) {
+  try {
+    return (await Bun.file(path).json()) as T
+  } catch (error) {
+    if (tolerateUnreadable) return null
+    throw error
+  }
+}
+
 async function transcriptScope(homeRoot: string, path: string) {
   if (path.includes('/assistant/turns/')) return 'assistant' as const
   if (path.includes('/assistant/reflections/')) return 'reflection' as const
@@ -1714,11 +1905,24 @@ async function writeRunReport(
     modelBoundaries: harness.modelBoundaries,
     browserAuditPolicy:
       process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
+    logicalRunSafety: { limit: harness.logicalRunLimit },
     lastCheckpoint: harness.lastCheckpoint,
     failedAt: status === 'failed' ? harness.currentPhase : null,
     paths: { home: harness.homeRoot, repo: harness.repoRoot },
     ...details,
   })
+}
+
+function resolveLogicalRunLimit() {
+  const configured = process.env.HOPI_E2E_MAX_LOGICAL_RUNS?.trim()
+  return positiveLogicalRunLimit(configured ? Number(configured) : 50)
+}
+
+function positiveLogicalRunLimit(value: number) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('HOPI_E2E_MAX_LOGICAL_RUNS must be a positive integer')
+  }
+  return value
 }
 
 function createDeterministicReflectionRunner(
@@ -1739,6 +1943,23 @@ function createDeterministicReflectionRunner(
 
 function numberValue(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function cleanupTimeoutMs() {
+  const configured = Number(process.env.HOPI_E2E_CLEANUP_TIMEOUT_MS ?? 30_000)
+  return Number.isFinite(configured) && configured > 0 ? configured : 30_000
+}
+
+function signalUnexpectedFinalStatus(
+  context: Pick<TestRunContext, 'scenario' | 'artifactRoot'>,
+  intended: 'passed' | 'failed' | 'blocked',
+  actual: string,
+) {
+  if (actual === intended) return
+  console.error(
+    `[HOPI E2E][${context.scenario}] intended ${intended}, finalized ${actual}; inspect ${context.artifactRoot}/run.json`,
+  )
+  process.exitCode = 1
 }
 
 function safeSegment(value: string) {

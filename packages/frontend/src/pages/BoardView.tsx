@@ -124,7 +124,11 @@ export function BoardView() {
     onSuccess: refresh,
   })
   const previewRepairMutation = useMutation({
-    mutationFn: () => requestPreviewRepair(repairPrompt ?? ''),
+    mutationFn: () =>
+      requestPreviewRepair(repairPrompt ?? '', {
+        projectId: projectId ?? '',
+        goalId: goalId ?? '',
+      }),
     onSuccess: async () => {
       setRepairPrompt(null)
       await refresh()
@@ -696,7 +700,7 @@ function WorkContract({
         ) : (
           <>
             <div className="work-system-prompt-meta">
-              <StatusChip className={`attempt-status ${selectedAttempt.status}`} size="sm">
+              <StatusChip className={`attempt-status ${attemptStatusTone(selectedAttempt)}`} size="sm">
                 {selectedAttempt.status === 'running' ? (
                   <WorkingIndicator label={attemptStatus(selectedAttempt)} />
                 ) : (
@@ -832,7 +836,7 @@ function AttemptHistory({
                     {attempt.responsibility} · {formatAttemptTime(attempt.startedAt)}
                   </small>
                 </span>
-                <StatusChip className={`attempt-status ${attempt.status}`} size="sm">
+                <StatusChip className={`attempt-status ${attemptStatusTone(attempt)}`} size="sm">
                   {attempt.status === 'running' ? (
                     <WorkingIndicator label={attemptStatus(attempt)} />
                   ) : (
@@ -860,7 +864,7 @@ function AttemptHistory({
           <>
             <header>
               <div>
-                <StatusChip className={`attempt-status ${selectedAttempt.status}`} size="sm">
+                <StatusChip className={`attempt-status ${attemptStatusTone(selectedAttempt)}`} size="sm">
                   {selectedAttempt.status === 'running' ? (
                     <WorkingIndicator label={attemptStatus(selectedAttempt)} />
                   ) : (
@@ -896,9 +900,14 @@ function AttemptHistory({
   )
 }
 
-function attemptStatus(attempt: RunAttemptSummary) {
+export function attemptStatus(attempt: RunAttemptSummary) {
   if (attempt.status === 'running') return 'working'
+  if (attempt.application === 'stale') return 'stale'
   return attempt.result ?? attempt.status
+}
+
+function attemptStatusTone(attempt: RunAttemptSummary) {
+  return attempt.application === 'stale' ? 'stale' : attempt.status
 }
 
 function formatAttemptTime(timestamp: string) {

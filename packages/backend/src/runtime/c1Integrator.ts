@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, rename, rm, symlink } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, realpath, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -19,6 +19,7 @@ import {
   repoRelease,
   withRepoRelease,
 } from '../domain/projectDocument'
+import { normalizeProjectPath } from '../domain/projectPath'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type { PublicationSnapshot, PublicationWrite } from '../publication/types'
@@ -56,6 +57,9 @@ export interface C1FaultHooks {
 export interface C1ProjectRepo {
   repoId: string
   integrationRoot: string
+  checkoutRoot?: string
+  deliveryBranch?: string
+  projectPath?: string
   primary: boolean
 }
 
@@ -121,7 +125,7 @@ export function createC1Integrator(
           const oldTarget = await git(projectRoot, ['rev-parse', HOPI_RELEASE_REF])
 
           const snapshot = await session.snapshotSelection(store.paths.publicationRoot, {
-            paths: ['AGENTS.md', 'scripts/hopi/prepare'],
+            paths: [store.paths.agentsPath, store.paths.preparePath],
             prefixes: ['.hopi'],
           })
           const currentCandidate = publicationCandidateFromSnapshot(snapshot)
@@ -211,6 +215,7 @@ export function createC1Integrator(
             projectRoot,
             gitEnv,
             snapshot,
+            store.paths.agentsPath,
             primarySource.mergeBase,
             primarySource.taskHead,
           )
@@ -280,6 +285,7 @@ export function createC1Integrator(
               nextProject,
               faultHooks,
             )
+            await materializeDeliveryProjections(projectLayout, nextProject, commit)
             return { kind: 'integrated', commit, recoveredUncertainUpdate }
           } catch (error) {
             return {
@@ -297,15 +303,25 @@ export function createC1Integrator(
 }
 
 function normalizeProjectLayout(store: GoalPackageStore, layout?: C1ProjectLayout) {
-  const normalized: C1ProjectLayout = layout ?? {
+  const candidate: C1ProjectLayout = layout ?? {
     primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
     repos: [
       {
         repoId: DEFAULT_PRIMARY_REPO_ID,
         integrationRoot: store.paths.projectRoot,
+        projectPath: store.paths.projectPath,
         primary: true,
       },
     ],
+  }
+  const normalized: C1ProjectLayout = {
+    ...candidate,
+    repos: candidate.repos.map((repo) => ({
+      ...repo,
+      projectPath: normalizeProjectPath(
+        repo.projectPath ?? (repo.primary ? store.paths.projectPath : undefined),
+      ),
+    })),
   }
   const repoIds = new Set<string>()
   for (const repo of normalized.repos) {
@@ -411,6 +427,30 @@ async function buildSourceCandidate(input: {
   }
   const taskHead = await git(input.taskWorktreePath, ['rev-parse', 'HEAD'])
   const mergeBase = await git(input.repo.integrationRoot, ['merge-base', input.oldTarget, taskHead])
+  const projectPath = normalizeProjectPath(input.repo.projectPath)
+  if (projectPath !== '.') {
+    const changedPaths = (
+      await git(input.repo.integrationRoot, [
+        'diff',
+        '--name-only',
+        '--no-renames',
+        '-z',
+        mergeBase,
+        taskHead,
+      ])
+    )
+      .split('\0')
+      .filter(Boolean)
+    const escapedPaths = changedPaths.filter(
+      (path) => path !== projectPath && !path.startsWith(`${projectPath}/`),
+    )
+    if (escapedPaths.length > 0) {
+      return {
+        kind: 'rejected',
+        reason: `Repo ${input.repo.repoId} task changes escape Project scope ${projectPath}: ${escapedPaths.join(', ')}`,
+      }
+    }
+  }
   const merge = await gitResult(
     input.repo.integrationRoot,
     ['read-tree', '-m', mergeBase, input.oldTarget, taskHead],
@@ -562,6 +602,7 @@ async function recoverProjectProjection(
     await materializeSecondaryRepo(repo, expected ?? null, desired)
     await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
   }
+  await materializeDeliveryProjections(layout, nextProject, commit)
 }
 
 export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout) {
@@ -614,6 +655,104 @@ export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout)
     }
     await materializeSecondaryRepo(repo, expected ?? null, desired)
   }
+  await materializeDeliveryProjections(layout, currentProject, target)
+}
+
+async function materializeDeliveryProjections(
+  layout: C1ProjectLayout,
+  project: ProjectDocument,
+  primaryCommit: string,
+) {
+  for (const repo of layout.repos) {
+    if (!repo.checkoutRoot && !repo.deliveryBranch) continue
+    if (!repo.checkoutRoot || !repo.deliveryBranch) {
+      throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
+    }
+    const desired = repo.primary ? primaryCommit : repoRelease(project, repo.repoId)
+    if (!desired) throw new C1IntegrationError(`Repo ${repo.repoId} has no delivery commit`)
+    await materializeDeliveryCheckout(repo, desired)
+  }
+}
+
+async function materializeDeliveryCheckout(repo: C1ProjectRepo, desired: string) {
+  const checkoutRoot = repo.checkoutRoot
+  const deliveryBranch = repo.deliveryBranch
+  if (!checkoutRoot || !deliveryBranch) {
+    throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
+  }
+  const [managedCommon, checkoutCommon] = await Promise.all([
+    gitCommonDir(repo.integrationRoot),
+    gitCommonDir(checkoutRoot),
+  ])
+  if (managedCommon !== checkoutCommon) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} delivery checkout belongs to another Git Repo`,
+    )
+  }
+
+  const branch = await gitResult(checkoutRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+  if (branch.exitCode !== 0 || branch.stdout !== deliveryBranch) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} delivery checkout is on ${branch.stdout || 'detached HEAD'}, expected ${deliveryBranch}`,
+    )
+  }
+  const status = await git(checkoutRoot, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+  ])
+  if (status) {
+    throw new C1IntegrationError(`Repo ${repo.repoId} delivery checkout is dirty`)
+  }
+  const current = await git(checkoutRoot, ['rev-parse', 'HEAD'])
+  const ancestor = await gitResult(checkoutRoot, ['merge-base', '--is-ancestor', current, desired])
+  if (ancestor.exitCode !== 0) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} delivery branch ${deliveryBranch} cannot fast-forward to ${desired}`,
+    )
+  }
+  if (current !== desired) {
+    const merge = await gitResult(checkoutRoot, [
+      '-c',
+      'core.hooksPath=/dev/null',
+      'merge',
+      '--ff-only',
+      '--no-edit',
+      desired,
+    ])
+    if (merge.exitCode !== 0) {
+      throw new C1IntegrationError(
+        `Repo ${repo.repoId} delivery fast-forward failed: ${merge.stderr || merge.stdout}`,
+      )
+    }
+  }
+  const head = await git(checkoutRoot, ['rev-parse', 'HEAD'])
+  const finalBranch = await gitResult(checkoutRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+  const finalStatus = await git(checkoutRoot, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+  ])
+  const indexTree = await git(checkoutRoot, ['write-tree'])
+  const desiredTree = await git(checkoutRoot, ['show', '-s', '--format=%T', desired])
+  if (
+    head !== desired ||
+    finalBranch.exitCode !== 0 ||
+    finalBranch.stdout !== deliveryBranch ||
+    finalStatus ||
+    indexTree !== desiredTree
+  ) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} delivery checkout does not exactly materialize ${desired}`,
+    )
+  }
+}
+
+async function gitCommonDir(cwd: string) {
+  const common = await git(cwd, ['rev-parse', '--git-common-dir'])
+  return realpath(resolve(cwd, common))
 }
 
 async function materializeSecondaryProjections(
@@ -732,13 +871,14 @@ async function overlayBootstrapAgents(
   projectRoot: string,
   env: Record<string, string>,
   snapshot: PublicationSnapshot,
+  agentsPath: string,
   mergeBase?: string,
   taskHead?: string,
 ) {
   if (mergeBase && taskHead) {
     const taskChanged = await gitResult(
       projectRoot,
-      ['diff', '--quiet', mergeBase, taskHead, '--', 'AGENTS.md'],
+      ['diff', '--quiet', mergeBase, taskHead, '--', agentsPath],
       env,
     )
     if (taskChanged.exitCode !== 0 && taskChanged.exitCode !== 1) {
@@ -747,11 +887,11 @@ async function overlayBootstrapAgents(
     if (taskChanged.exitCode === 1) return
   }
 
-  const agents = snapshot.files.find((file) => file.path === 'AGENTS.md')
+  const agents = snapshot.files.find((file) => file.path === agentsPath)
   if (agents?.content) {
-    await addBlobToIndex(projectRoot, env, 'AGENTS.md', agents.content)
+    await addBlobToIndex(projectRoot, env, agentsPath, agents.content)
   } else {
-    await git(projectRoot, ['update-index', '--force-remove', '--', 'AGENTS.md'], env, true)
+    await git(projectRoot, ['update-index', '--force-remove', '--', agentsPath], env, true)
   }
 }
 

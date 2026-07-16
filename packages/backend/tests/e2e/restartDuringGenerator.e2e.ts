@@ -12,6 +12,7 @@ import {
   errorMessage,
   finishTestRun,
   gitOutput,
+  ownTestRunServer,
   requestJson,
   startTestRun,
   waitForValue,
@@ -29,10 +30,13 @@ const firstRunner = createRestartRoleRunner(true)
 const resumedRunner = createRestartRoleRunner(false)
 let firstServer: MvpServer | null = null
 let resumedServer: MvpServer | null = null
+let firstServerCleanup: ReturnType<typeof ownTestRunServer> | null = null
+let resumedServerCleanup: ReturnType<typeof ownTestRunServer> | null = null
 
 try {
   await initializeFixture(repoRoot)
   firstServer = createServer({ rootDir: homeRoot, port: 0, roleRunner: firstRunner })
+  firstServerCleanup = ownTestRunServer(testRun, firstServer)
   const firstUrl = `http://127.0.0.1:${firstServer.port}`
   await requestJson(firstUrl, '/api/projects', {
     method: 'POST',
@@ -62,7 +66,7 @@ try {
     'export const generatorCheckpoint = true\n',
   )
 
-  await firstServer.shutdown()
+  await firstServerCleanup.run()
   firstServer = null
 
   const interrupted = await readAttempts(homeRoot)
@@ -80,6 +84,7 @@ try {
   )
 
   resumedServer = createServer({ rootDir: homeRoot, port: 0, roleRunner: resumedRunner })
+  resumedServerCleanup = ownTestRunServer(testRun, resumedServer)
   const resumedUrl = `http://127.0.0.1:${resumedServer.port}`
   const settled = await waitForValue(
     () => requestJson<GoalView>(resumedUrl, `/api/projects/${PROJECT_ID}/goals/${GOAL_ID}`),
@@ -176,8 +181,8 @@ try {
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
 } finally {
-  await resumedServer?.shutdown()
-  await firstServer?.shutdown()
+  await resumedServerCleanup?.run()
+  await firstServerCleanup?.run()
 }
 
 function createRestartRoleRunner(blockFirstGenerator: boolean): RoleRunner & {

@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
@@ -25,7 +25,19 @@ import {
   projectDocumentSchema,
   validateProjectDocument,
 } from '../domain/projectDocument'
+import {
+  isNormalizedProjectPath,
+  normalizeProjectPath,
+  storedProjectPath,
+} from '../domain/projectPath'
 import { PublicationCoordinator, hashBytes } from '../publication/publisher'
+import { managedRepoWorktreePaths, managedTaskWorktreePath } from '../runtime/managedWorktreePaths'
+import {
+  type GitProjectDirectoryInspection,
+  ProjectDirectoryError,
+  inspectGitProjectDirectory,
+} from '../runtime/projectDirectory'
+import { relocateRegisteredWorktree } from '../runtime/worktreeRelocator'
 import { withFileLock } from './lock'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -51,10 +63,11 @@ const projectRepoLinkSchema = z
   .object({
     repoId: z.string().regex(STABLE_ID_PATTERN),
     repoPath: z.string().min(1),
+    projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
 
-const projectLinkSchema = z
+const legacyMultiRepoProjectLinkSchema = z
   .object({
     projectId: z.string().regex(STABLE_ID_PATTERN),
     primaryRepoId: z.string().regex(STABLE_ID_PATTERN),
@@ -65,9 +78,29 @@ const projectLinkSchema = z
   })
   .strict()
 
-const projectLinksDocumentSchema = z
+const legacyMultiRepoProjectLinksDocumentSchema = z
   .object({
     version: z.literal(2),
+    projects: z.array(legacyMultiRepoProjectLinkSchema),
+  })
+  .strict()
+
+const projectLinkSchema = z
+  .object({
+    projectId: z.string().regex(STABLE_ID_PATTERN),
+    primaryRepoId: z.string().regex(STABLE_ID_PATTERN),
+    repos: z
+      .array(projectRepoLinkSchema.extend({ deliveryBranch: z.string().min(1) }).strict())
+      .min(1),
+    codingDefaults: projectCodingDefaultsInputSchema
+      .transform((value) => normalizeProjectCodingDefaults(value))
+      .optional(),
+  })
+  .strict()
+
+const projectLinksDocumentSchema = z
+  .object({
+    version: z.literal(3),
     projects: z.array(projectLinkSchema),
   })
   .strict()
@@ -89,6 +122,9 @@ export interface AssistantHomePaths {
   integrationRoot(projectId: string): string
   repoIntegrationRoot(projectId: string, repoId: string, primaryRepoId: string): string
   projectDocumentPath(projectId: string): string
+  managedRepoRoot(repoPath: string): string
+  managedIntegrationRoot(repoPath: string): string
+  managedProjectDocumentPath(repoPath: string): string
 }
 
 export type LinkProjectInput =
@@ -96,6 +132,7 @@ export type LinkProjectInput =
       projectId?: string
       repoPath: string
       repoId?: string
+      projectPath?: string
       primaryRepoId?: never
       repos?: never
     }
@@ -111,11 +148,13 @@ export interface LinkRepoInput {
   projectId: string
   repoId: string
   repoPath: string
+  projectPath?: string
 }
 
 export interface RebindProjectInput {
   projectId: string
   repoPath: string
+  projectPath?: string
 }
 
 export interface RebindRepoInput extends RebindProjectInput {
@@ -188,6 +227,15 @@ export function createAssistantHomePaths(rootDir = process.cwd()): AssistantHome
     projectDocumentPath(projectId) {
       return join(this.integrationRoot(projectId), '.hopi', 'project.yml')
     },
+    managedRepoRoot(repoPath) {
+      return managedRepoWorktreePaths(repoPath).root
+    },
+    managedIntegrationRoot(repoPath) {
+      return managedRepoWorktreePaths(repoPath).integration
+    },
+    managedProjectDocumentPath(repoPath) {
+      return join(this.managedIntegrationRoot(repoPath), '.hopi', 'project.yml')
+    },
   }
 }
 
@@ -207,7 +255,8 @@ export function createAssistantHomeStore(
           'Assistant home',
         )
         if (existing) {
-          await ensureProjectLinksDocument(paths.projectLinksPath)
+          const links = await ensureProjectLinksDocument(paths.projectLinksPath)
+          await migrateManagedWorktrees(paths, links.projects)
           return existing
         }
 
@@ -216,7 +265,8 @@ export function createAssistantHomeStore(
           homeId: `H-${crypto.randomUUID()}`,
         }
         await writeYamlAtomically(paths.homeDocumentPath, home)
-        await ensureProjectLinksDocument(paths.projectLinksPath)
+        const links = await ensureProjectLinksDocument(paths.projectLinksPath)
+        await migrateManagedWorktrees(paths, links.projects)
         return home
       })
     },
@@ -262,7 +312,10 @@ export function createAssistantHomeStore(
         assertStableId(primaryRepoId, 'primaryRepoId')
         for (const repo of repos) assertStableId(repo.repoId, 'repoId')
         const inspected = await Promise.all(
-          repos.map(async (repo) => ({ ...repo, inspection: await inspectRepo(repo.repoPath) })),
+          repos.map(async (repo) => ({
+            ...repo,
+            inspection: await inspectRepo(repo.repoPath, repo.projectPath),
+          })),
         )
         assertUniqueRequestedRepos(projectId, primaryRepoId, inspected)
         const links = await readProjectLinks(paths.projectLinksPath)
@@ -289,7 +342,7 @@ export function createAssistantHomeStore(
           projectId,
           primaryRepoId,
           repos: inspected
-            .map((repo) => ({ repoId: repo.repoId, repoPath: repo.inspection.repoPath }))
+            .map((repo) => repoLink(repo.repoId, repo.inspection))
             .sort((left, right) => repoLinkOrder(primaryRepoId, left, right)),
         }
         const primary = inspected.find((repo) => repo.repoId === primaryRepoId)
@@ -312,16 +365,16 @@ export function createAssistantHomeStore(
           repos: await Promise.all(
             link.repos.map(async (repo) =>
               repo.repoId === primaryRepoId
-                ? { repoId: repo.repoId }
+                ? repoDocument(repo)
                 : {
-                    repoId: repo.repoId,
+                    ...repoDocument(repo),
                     releaseCommit: (await runGit(repo.repoPath, ['rev-parse', HOPI_RELEASE_REF]))
                       .stdout,
                   },
             ),
           ),
         }
-        await publishProjectDocument(paths, projectId, projectDocument, publisher)
+        await publishProjectDocument(paths, link, projectDocument, publisher)
         links.projects.push(link)
         links.projects.sort((left, right) => left.projectId.localeCompare(right.projectId))
         await publishYamlFile(
@@ -349,12 +402,13 @@ export function createAssistantHomeStore(
             `Project is not linked: ${input.projectId}`,
           )
         }
-        const repo = await inspectRepo(input.repoPath)
+        const repo = await inspectRepo(input.repoPath, input.projectPath)
         const existing = link.repos.find((candidate) => candidate.repoId === input.repoId)
         const byRepo = await findLinkForRepo(links.projects, repo)
         if (existing || byRepo) {
           if (
             existing?.repoPath === repo.repoPath &&
+            normalizeProjectPath(existing.projectPath) === repo.projectPath &&
             byRepo?.projectId === input.projectId &&
             byRepo.repos.some((candidate) => candidate.repoId === input.repoId)
           ) {
@@ -384,16 +438,17 @@ export function createAssistantHomeStore(
           ...projectDocument,
           repos: documentedRepo
             ? projectDocument.repos
-            : [...projectDocument.repos, { repoId: input.repoId, releaseCommit }].sort(
-                (left, right) => repoDocumentOrder(link.primaryRepoId, left, right),
-              ),
+            : [
+                ...projectDocument.repos,
+                { ...repoDocument({ repoId: input.repoId, ...repo }), releaseCommit },
+              ].sort((left, right) => repoDocumentOrder(link.primaryRepoId, left, right)),
         }
-        await publishProjectDocument(paths, input.projectId, nextProjectDocument, publisher)
+        await publishProjectDocument(paths, link, nextProjectDocument, publisher)
 
         const updatedLink: ProjectLink = {
           ...link,
-          repos: [...link.repos, { repoId: input.repoId, repoPath: repo.repoPath }].sort(
-            (left, right) => repoLinkOrder(link.primaryRepoId, left, right),
+          repos: [...link.repos, repoLink(input.repoId, repo)].sort((left, right) =>
+            repoLinkOrder(link.primaryRepoId, left, right),
           ),
         }
         links.projects = links.projects.map((entry) =>
@@ -432,6 +487,10 @@ export function createAssistantHomeStore(
         repos: project.repos.map((repo) => ({
           repoId: repo.repoId,
           repoPath: repo.repoId === input.repoId ? input.repoPath : repo.repoPath,
+          projectPath:
+            repo.repoId === input.repoId
+              ? (input.projectPath ?? repo.projectPath)
+              : repo.projectPath,
         })),
       })
     },
@@ -460,7 +519,7 @@ export function createAssistantHomeStore(
         const inspected = await Promise.all(
           input.repos.map(async (repo) => ({
             ...repo,
-            inspection: await inspectRepo(repo.repoPath),
+            inspection: await inspectRepo(repo.repoPath, repo.projectPath),
           })),
         )
         assertUniqueRequestedRepos(input.projectId, link.primaryRepoId, inspected)
@@ -469,13 +528,40 @@ export function createAssistantHomeStore(
           const repoLink = link.repos.find((repo) => repo.repoId === requested.repoId)
           if (!repoLink)
             throw invalidProject(input.projectId, `Repo ${requested.repoId} is missing`)
-          await repairManagedRepoRoot(paths, link, repoLink, requested.inspection, publisher)
+          if (normalizeProjectPath(repoLink.projectPath) !== requested.inspection.projectPath) {
+            throw new AssistantHomeStoreError(
+              'project_conflict',
+              `Rebind cannot change projectPath for ${requested.repoId}; link a different Project instead`,
+            )
+          }
+          if (repoLink.deliveryBranch !== requested.inspection.deliveryBranch) {
+            throw new AssistantHomeStoreError(
+              'project_conflict',
+              `Rebind checkout for ${requested.repoId} is on ${requested.inspection.deliveryBranch}, expected delivery branch ${repoLink.deliveryBranch}`,
+            )
+          }
+          await repairManagedRepoRoot(paths, link, repoLink, requested.inspection)
         }
         const updatedLink: ProjectLink = {
           ...link,
           repos: inspected
-            .map((repo) => ({ repoId: repo.repoId, repoPath: repo.inspection.repoPath }))
+            .map((repo) => repoLink(repo.repoId, repo.inspection))
             .sort((left, right) => repoLinkOrder(link.primaryRepoId, left, right)),
+        }
+        const projectDocument = await readAndValidateProjectDocument(paths, updatedLink, publisher)
+        assertProjectMembership(presentProject(paths, updatedLink), projectDocument)
+        for (const repo of presentProject(paths, updatedLink).repos) {
+          const targetHead = await validateManagedRepoProjection(input.projectId, repo)
+          if (repo.primary) continue
+          const documented = projectDocument.repos.find(
+            (candidate) => candidate.repoId === repo.repoId,
+          )?.releaseCommit
+          if (documented !== targetHead) {
+            throw invalidProject(
+              input.projectId,
+              `Repo ${repo.repoId} release disagrees with project.yml after rebind`,
+            )
+          }
         }
         links.projects = links.projects.map((entry) =>
           entry.projectId === input.projectId ? updatedLink : entry,
@@ -559,10 +645,7 @@ export function createAssistantHomeStore(
   return store
 }
 
-interface RepoInspection {
-  repoPath: string
-  commonDir: string
-}
+type RepoInspection = GitProjectDirectoryInspection & { deliveryBranch: string }
 
 async function findLinkForRepo(links: ProjectLink[], repo: RepoInspection) {
   for (const link of links) {
@@ -622,7 +705,7 @@ function normalizeLinkProjectInput(input: LinkProjectInput) {
   return {
     projectId: input.projectId,
     primaryRepoId: repoId,
-    repos: [{ repoId, repoPath: input.repoPath }],
+    repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
   }
 }
 
@@ -666,35 +749,37 @@ function exactProjectLink(
   return repos.every((repo) =>
     link.repos.some(
       (candidate) =>
-        candidate.repoId === repo.repoId && candidate.repoPath === repo.inspection.repoPath,
+        candidate.repoId === repo.repoId &&
+        candidate.repoPath === repo.inspection.repoPath &&
+        normalizeProjectPath(candidate.projectPath) === repo.inspection.projectPath,
     ),
   )
 }
 
-async function inspectRepo(inputPath: string): Promise<RepoInspection> {
-  const requestedPath = resolve(inputPath)
-  const requestedStats = await stat(requestedPath).catch(() => null)
-  if (!requestedStats?.isDirectory()) {
-    throw new AssistantHomeStoreError(
-      'repo_invalid',
-      `Repo path is not a directory: ${requestedPath}`,
-    )
+async function inspectRepo(inputPath: string, projectPath?: string): Promise<RepoInspection> {
+  try {
+    const repo = await inspectGitProjectDirectory(inputPath, projectPath)
+    return { ...repo, deliveryBranch: await readDeliveryBranch(repo.repoPath) }
+  } catch (error) {
+    if (error instanceof ProjectDirectoryError) {
+      throw new AssistantHomeStoreError('repo_invalid', error.message)
+    }
+    throw error
   }
+}
 
-  const rootResult = await runGit(requestedPath, ['rev-parse', '--show-toplevel'], true)
-  if (rootResult.exitCode !== 0 || !rootResult.stdout) {
-    throw new AssistantHomeStoreError(
-      'repo_invalid',
-      `Path is not inside a Git worktree: ${requestedPath}`,
-    )
-  }
-
-  const repoPath = await realpath(rootResult.stdout)
-  const commonResult = await runGit(repoPath, ['rev-parse', '--git-common-dir'])
+function repoLink(repoId: string, repo: RepoInspection): ProjectRepoLink {
   return {
-    repoPath,
-    commonDir: await realpath(resolve(repoPath, commonResult.stdout)),
+    repoId,
+    repoPath: repo.repoPath,
+    deliveryBranch: repo.deliveryBranch,
+    ...(storedProjectPath(repo.projectPath) ? { projectPath: repo.projectPath } : {}),
   }
+}
+
+function repoDocument(repo: Pick<ProjectRepoLink, 'repoId' | 'projectPath'>): ProjectRepoDocument {
+  const projectPath = storedProjectPath(repo.projectPath)
+  return { repoId: repo.repoId, ...(projectPath ? { projectPath } : {}) }
 }
 
 async function ensureManagedPrimaryRoot(
@@ -704,7 +789,7 @@ async function ensureManagedPrimaryRoot(
   repo: RepoInspection,
   publisher: PublicationCoordinator,
 ) {
-  const integrationRoot = paths.integrationRoot(projectId)
+  const integrationRoot = paths.managedIntegrationRoot(repo.repoPath)
   if (await pathExists(integrationRoot)) {
     const entries = await readdir(integrationRoot)
     if (entries.length > 0) {
@@ -712,7 +797,7 @@ async function ensureManagedPrimaryRoot(
       const link: ProjectLink = {
         projectId,
         primaryRepoId: repoId,
-        repos: [{ repoId, repoPath: repo.repoPath }],
+        repos: [repoLink(repoId, repo)],
       }
       const document = await readAndValidateProjectDocument(paths, link, publisher)
       if (document.projectId !== projectId || document.primaryRepoId !== repoId) {
@@ -728,9 +813,14 @@ async function ensureManagedPrimaryRoot(
     version: 2,
     projectId,
     primaryRepoId: repoId,
-    repos: [{ repoId }],
+    repos: [repoDocument(repoLink(repoId, repo))],
   }
-  await publishProjectDocument(paths, projectId, projectDocument, publisher)
+  await publishProjectDocument(
+    paths,
+    linkForRepo(projectId, repoId, repo),
+    projectDocument,
+    publisher,
+  )
 }
 
 async function ensureManagedSecondaryRoot(
@@ -739,11 +829,7 @@ async function ensureManagedSecondaryRoot(
   repoId: string,
   repo: RepoInspection,
 ) {
-  const integrationRoot = paths.repoIntegrationRoot(
-    project.projectId,
-    repoId,
-    project.primaryRepoId,
-  )
+  const integrationRoot = paths.managedIntegrationRoot(repo.repoPath)
   if (await pathExists(integrationRoot)) {
     const entries = await readdir(integrationRoot)
     if (entries.length > 0) {
@@ -791,13 +877,31 @@ async function repairManagedRepoRoot(
   project: ProjectLink,
   repoLink: ProjectRepoLink,
   repo: RepoInspection,
-  publisher: PublicationCoordinator,
 ) {
-  const integrationRoot = paths.repoIntegrationRoot(
-    project.projectId,
-    repoLink.repoId,
-    project.primaryRepoId,
-  )
+  const previousIntegrationRoot = paths.managedIntegrationRoot(repoLink.repoPath)
+  const integrationRoot = paths.managedIntegrationRoot(repo.repoPath)
+  if (previousIntegrationRoot !== integrationRoot && (await pathExists(previousIntegrationRoot))) {
+    if (!(await inspectRepo(previousIntegrationRoot).catch(() => null))) {
+      await repairMovedManagedPointers(previousIntegrationRoot, repo)
+      const repair = await runGit(
+        repo.repoPath,
+        ['worktree', 'repair', previousIntegrationRoot],
+        true,
+      )
+      if (repair.exitCode !== 0) {
+        throw invalidProject(
+          project.projectId,
+          `cannot repair moved managed worktree: ${repair.stderr || repair.stdout}`,
+        )
+      }
+    }
+    await relocateRegisteredWorktree({
+      repoRoot: repo.repoPath,
+      from: previousIntegrationRoot,
+      to: integrationRoot,
+      expectedBranch: HOPI_RELEASE_BRANCH,
+    })
+  }
   if (!(await pathExists(integrationRoot))) {
     if (repoLink.repoId !== project.primaryRepoId) {
       await createManagedRepoRoot(integrationRoot, project.projectId, repoLink.repoId, repo)
@@ -829,18 +933,6 @@ async function repairManagedRepoRoot(
       project.projectId,
       'rebound managed root does not materialize hopi/release',
     )
-  }
-  const projectDocument = await readAndValidateProjectDocument(paths, project, publisher)
-  if (repoLink.repoId !== project.primaryRepoId) {
-    const documented = projectDocument.repos.find(
-      (candidate) => candidate.repoId === repoLink.repoId,
-    )?.releaseCommit
-    if (documented !== targetHead.stdout) {
-      throw invalidProject(
-        project.projectId,
-        `rebound Repo ${repoLink.repoId} release disagrees with project.yml`,
-      )
-    }
   }
 }
 
@@ -896,8 +988,10 @@ async function validateExistingManagedRepoRoot(
 function presentProject(paths: AssistantHomePaths, link: ProjectLink): LinkedProject {
   const repos: LinkedProjectRepo[] = link.repos.map((repo) => ({
     ...repo,
+    projectPath: normalizeProjectPath(repo.projectPath),
+    deliveryBranch: requireDeliveryBranch(link.projectId, repo),
     primary: repo.repoId === link.primaryRepoId,
-    integrationRoot: paths.repoIntegrationRoot(link.projectId, repo.repoId, link.primaryRepoId),
+    integrationRoot: paths.managedIntegrationRoot(repo.repoPath),
   }))
   const primary = repos.find((repo) => repo.primary)
   if (!primary) throw invalidProject(link.projectId, 'primary Repo is missing from projects.yml')
@@ -905,6 +999,7 @@ function presentProject(paths: AssistantHomePaths, link: ProjectLink): LinkedPro
     ...link,
     repos,
     repoPath: primary.repoPath,
+    projectPath: primary.projectPath,
     integrationRoot: primary.integrationRoot,
   }
 }
@@ -919,13 +1014,13 @@ function sameCodingDefaults(
 async function ensureProjectLinksDocument(path: string) {
   const existing = await readRawProjectLinks(path)
   if (existing) {
-    const normalized = normalizeProjectLinks(existing)
+    const normalized = await normalizeProjectLinks(existing)
     assertUniqueProjectLinks(normalized.projects)
-    if (existing.version === 1) await writeYamlAtomically(path, normalized)
+    if (existing.version !== 3) await writeYamlAtomically(path, normalized)
     return normalized
   }
 
-  const links: ProjectLinksDocument = { version: 2, projects: [] }
+  const links: ProjectLinksDocument = { version: 3, projects: [] }
   await writeYamlAtomically(path, links)
   return links
 }
@@ -978,26 +1073,138 @@ function assertUniqueProjectLinks(links: ProjectLink[]) {
 async function readRawProjectLinks(path: string) {
   return readOptionalYaml(
     path,
-    z.union([projectLinksDocumentSchema, legacyProjectLinksDocumentSchema]),
+    z.union([
+      projectLinksDocumentSchema,
+      legacyMultiRepoProjectLinksDocumentSchema,
+      legacyProjectLinksDocumentSchema,
+    ]),
     'Project links',
   )
 }
 
-function normalizeProjectLinks(
+async function normalizeProjectLinks(
   raw:
     | z.infer<typeof projectLinksDocumentSchema>
+    | z.infer<typeof legacyMultiRepoProjectLinksDocumentSchema>
     | z.infer<typeof legacyProjectLinksDocumentSchema>,
-): ProjectLinksDocument {
-  if (raw.version === 2) return raw
+): Promise<ProjectLinksDocument> {
+  if (raw.version === 3) return raw
+  const projects =
+    raw.version === 2
+      ? raw.projects
+      : raw.projects.map((project) => ({
+          projectId: project.projectId,
+          primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
+          repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
+          ...(project.codingDefaults ? { codingDefaults: project.codingDefaults } : {}),
+        }))
   return {
-    version: 2,
-    projects: raw.projects.map((project) => ({
-      projectId: project.projectId,
-      primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
-      repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
-      ...(project.codingDefaults ? { codingDefaults: project.codingDefaults } : {}),
-    })),
+    version: 3,
+    projects: await Promise.all(
+      projects.map(async (project) => ({
+        ...project,
+        repos: await Promise.all(
+          project.repos.map(async (repo) => ({
+            ...repo,
+            deliveryBranch: await readDeliveryBranch(repo.repoPath),
+          })),
+        ),
+      })),
+    ),
   }
+}
+
+async function migrateManagedWorktrees(
+  paths: AssistantHomePaths,
+  projects: readonly ProjectLink[],
+) {
+  for (const project of projects) {
+    for (const repo of project.repos) {
+      if (!(await pathExists(repo.repoPath))) continue
+      const legacyRoot = paths.repoIntegrationRoot(
+        project.projectId,
+        repo.repoId,
+        project.primaryRepoId,
+      )
+      const integrationRoot = paths.managedIntegrationRoot(repo.repoPath)
+      if ((await pathExists(legacyRoot)) || (await pathExists(integrationRoot))) {
+        await relocateRegisteredWorktree({
+          repoRoot: repo.repoPath,
+          from: legacyRoot,
+          to: integrationRoot,
+          expectedBranch: HOPI_RELEASE_BRANCH,
+        })
+      }
+      await migrateTaskWorktrees(project.projectId, repo.repoPath)
+    }
+  }
+}
+
+async function migrateTaskWorktrees(projectId: string, repoPath: string) {
+  const listing = await runGit(repoPath, ['worktree', 'list', '--porcelain'])
+  const branchPrefix = `refs/heads/hopi/work/${projectId}/`
+  for (const block of listing.stdout.split(/\n\s*\n/)) {
+    const worktreeLine = block.split('\n').find((line) => line.startsWith('worktree '))
+    const branchLine = block.split('\n').find((line) => line.startsWith('branch '))
+    const worktreePath = worktreeLine?.slice('worktree '.length)
+    const branchRef = branchLine?.slice('branch '.length)
+    if (!worktreePath || !branchRef?.startsWith(branchPrefix)) continue
+    const identity = branchRef.slice(branchPrefix.length).split('/')
+    const [goalId, workId] = identity
+    if (!goalId || !workId || identity.length !== 2) continue
+    const target = managedTaskWorktreePath(repoPath, goalId, workId)
+    if (resolve(worktreePath) === resolve(target)) continue
+    await relocateRegisteredWorktree({
+      repoRoot: repoPath,
+      from: worktreePath,
+      to: target,
+      expectedBranch: branchRef.slice('refs/heads/'.length),
+    })
+  }
+}
+
+function requirePrimaryRepoLink(
+  project: Pick<ProjectLink, 'projectId' | 'primaryRepoId' | 'repos'>,
+) {
+  const primary = project.repos.find((repo) => repo.repoId === project.primaryRepoId)
+  if (!primary) throw invalidProject(project.projectId, 'primary Repo is missing from projects.yml')
+  return primary
+}
+
+function requireDeliveryBranch(projectId: string, repo: ProjectRepoLink) {
+  if (!repo.deliveryBranch) {
+    throw new AssistantHomeStoreError(
+      'invalid_home',
+      `Project ${projectId} Repo ${repo.repoId} is missing deliveryBranch`,
+    )
+  }
+  return repo.deliveryBranch
+}
+
+function linkForRepo(projectId: string, repoId: string, repo: RepoInspection): ProjectLink {
+  return {
+    projectId,
+    primaryRepoId: repoId,
+    repos: [repoLink(repoId, repo)],
+  }
+}
+
+async function readDeliveryBranch(repoPath: string) {
+  const branch = await runGit(repoPath, ['symbolic-ref', '--quiet', '--short', 'HEAD'], true)
+  if (branch.exitCode !== 0 || !branch.stdout) {
+    throw new AssistantHomeStoreError(
+      'repo_invalid',
+      `Linked checkout must be on a branch so releases can be delivered safely: ${repoPath}`,
+    )
+  }
+  const valid = await runGit(repoPath, ['check-ref-format', '--branch', branch.stdout], true)
+  if (valid.exitCode !== 0) {
+    throw new AssistantHomeStoreError(
+      'repo_invalid',
+      `Linked checkout has an invalid delivery branch ${branch.stdout}: ${repoPath}`,
+    )
+  }
+  return branch.stdout
 }
 
 async function readAndValidateProjectDocument(
@@ -1005,8 +1212,9 @@ async function readAndValidateProjectDocument(
   project: Pick<ProjectLink, 'projectId' | 'primaryRepoId' | 'repos'>,
   publisher?: PublicationCoordinator,
 ): Promise<ProjectDocument> {
+  const primary = requirePrimaryRepoLink(project)
   const raw = await readOptionalYaml(
-    paths.projectDocumentPath(project.projectId),
+    paths.managedProjectDocumentPath(primary.repoPath),
     z.union([projectDocumentSchema, legacyProjectDocumentSchema]),
     `Project ${project.projectId}`,
   )
@@ -1028,7 +1236,7 @@ async function readAndValidateProjectDocument(
     throw invalidProject(project.projectId, 'project.yml has the wrong primaryRepoId')
   }
   if (raw.version === 1 && publisher) {
-    await publishProjectDocument(paths, project.projectId, document, publisher)
+    await publishProjectDocument(paths, project, document, publisher)
   }
   return document
 }
@@ -1045,30 +1253,36 @@ function assertProjectMembership(
   project: Pick<LinkedProject, 'projectId' | 'primaryRepoId' | 'repos'>,
   document: ProjectDocument,
 ) {
-  const linked = [...project.repos].map((repo) => repo.repoId).sort()
-  const documented = document.repos.map((repo) => repo.repoId).sort()
+  const linked = [...project.repos]
+    .map((repo) => `${repo.repoId}=${normalizeProjectPath(repo.projectPath)}`)
+    .sort()
+  const documented = document.repos
+    .map((repo) => `${repo.repoId}=${normalizeProjectPath(repo.projectPath)}`)
+    .sort()
   if (JSON.stringify(linked) !== JSON.stringify(documented)) {
     throw invalidProject(
       project.projectId,
-      `projects.yml Repo membership disagrees with project.yml (${linked.join(', ')} vs ${documented.join(', ')})`,
+      `projects.yml Repo scope disagrees with project.yml (${linked.join(', ')} vs ${documented.join(', ')})`,
     )
   }
 }
 
 async function publishProjectDocument(
   paths: AssistantHomePaths,
-  projectId: string,
+  project: Pick<ProjectLink, 'projectId' | 'primaryRepoId' | 'repos'>,
   document: ProjectDocument,
   publisher: PublicationCoordinator,
 ) {
   assertProjectDocument(document)
+  const primary = requirePrimaryRepoLink(project)
+  const integrationRoot = paths.managedIntegrationRoot(primary.repoPath)
   await publishYamlFile(
     publisher,
-    { id: `project:${projectId}`, path: paths.integrationRoot(projectId) },
-    paths.projectDocumentPath(projectId),
+    { id: `project:${project.projectId}`, path: integrationRoot },
+    paths.managedProjectDocumentPath(primary.repoPath),
     document,
     projectDocumentSchema,
-    `Project ${projectId}`,
+    `Project ${project.projectId}`,
   )
 }
 

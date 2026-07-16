@@ -59,7 +59,7 @@ describe('ProjectReconciler', () => {
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('2')
     const workAttempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     const generatorAttempt = workAttempts.find((attempt) => attempt.responsibility === 'generator')
     expect(workAttempts).toHaveLength(2)
@@ -98,9 +98,62 @@ describe('ProjectReconciler', () => {
     })
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
     expect(await Bun.file(join(api.integrationRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
-    expect(await Bun.file(join(fixture.apiRepoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(fixture.apiRepoRoot, 'src', 'feature.ts')).text()).toContain('2')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
+  })
+
+  test('keeps a Git subdirectory Project inside its selected source scope', async () => {
+    const projectPath = 'apps/new-product'
+    const fixture = await createFixture({ projectPath })
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+
+    const managedScope = join(fixture.projectRoot, ...projectPath.split('/'))
+    const generatorRun = fixture.runner.repoRootsByRun.find(
+      (run) => run.responsibility === 'generator',
+    )
+    expect(fixture.linked.projectPath).toBe(projectPath)
+    expect(fixture.runner.repoRootsByRun[0]).toEqual({
+      responsibility: 'planner',
+      paths: [managedScope],
+    })
+    expect(generatorRun?.paths[0]).toBe(
+      join(dirname(fixture.projectRoot), 'work', 'goal-1', 'W-1', projectPath),
+    )
+    expect(await Bun.file(join(managedScope, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).exists()).toBe(false)
+    expect(await Bun.file(join(managedScope, 'AGENTS.md')).exists()).toBe(true)
+    expect(await Bun.file(join(fixture.projectRoot, 'AGENTS.md')).exists()).toBe(false)
+    expect(await Bun.file(join(fixture.projectSourceRoot, 'src', 'feature.ts')).text()).toContain(
+      '2',
+    )
+  })
+
+  test('rejects a reviewed task commit that escapes its selected Git subdirectory', async () => {
+    const projectPath = 'apps/new-product'
+    const fixture = await createFixture({ projectPath })
+    await fixture.reconciler.reconcileGoal('goal-1')
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const taskRoot = join(dirname(fixture.projectRoot), 'work', 'goal-1', 'W-1')
+    await Bun.write(join(taskRoot, 'outside-scope.ts'), 'export const escaped = true\n')
+    await checkpointTaskWorktree({
+      worktreePath: taskRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'escaped-source',
+    })
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+
+    expect(result).toMatchObject({ kind: 'pass_finished', result: 'reject' })
+    expect(await Bun.file(join(fixture.projectRoot, 'outside-scope.ts')).exists()).toBe(false)
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'generate',
+    )
   })
 
   test('Pause is a lifecycle guard and dispatches no responsibility pass', async () => {
@@ -148,6 +201,82 @@ describe('ProjectReconciler', () => {
     expect(fixture.reconciler.liveWorkIds()).toEqual(new Set())
   })
 
+  test('does not admit an exact Work after its interruption during dispatch preparation', async () => {
+    const fixture = await createFixture()
+    const planning = [...(await fixture.store.readPackage('goal-1')).works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+    if (!planning) throw new Error('Expected an active Planning Work')
+    const originalReadPackage = fixture.store.readPackage.bind(fixture.store)
+    let releaseReadPackage: () => void = () => undefined
+    const readPackageReleased = new Promise<void>((resolve) => {
+      releaseReadPackage = resolve
+    })
+    let markReadPackageStarted: () => void = () => undefined
+    const readPackageStarted = new Promise<void>((resolve) => {
+      markReadPackageStarted = resolve
+    })
+    let blockNextRead = true
+    fixture.store.readPackage = async (goalId) => {
+      if (blockNextRead) {
+        blockNextRead = false
+        markReadPackageStarted()
+        await readPackageReleased
+      }
+      return originalReadPackage(goalId)
+    }
+
+    const running = fixture.reconciler.reconcileGoal('goal-1')
+    await readPackageStarted
+    fixture.reconciler.interruptRuns('goal-1', planning.attributes.id)
+    releaseReadPackage()
+
+    expect(await running).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['run_interrupted'] },
+    })
+    expect(fixture.runner.responsibilities).toEqual([])
+    expect(fixture.reconciler.liveWorkIds()).toEqual(new Set())
+  })
+
+  test('interrupts one exact Work Run without affecting another live Run', async () => {
+    const fixture = await createFixture({ plannerWaitForAbort: true })
+    await fixture.store.createGoal({
+      goalId: 'goal-2',
+      title: 'Ship another feature',
+      objective: 'Plan an independent delivery.',
+    })
+    const planningWorkId = async (goalId: string) => {
+      const workId = [...(await fixture.store.readPackage(goalId)).works.values()].find(
+        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+      )?.attributes.id
+      if (!workId) throw new Error(`Expected an active Planning Work for ${goalId}`)
+      return workId
+    }
+    const firstWorkId = await planningWorkId('goal-1')
+    const secondWorkId = await planningWorkId('goal-2')
+    const first = fixture.reconciler.reconcileGoal('goal-1')
+    const second = fixture.reconciler.reconcileGoal('goal-2')
+    await waitUntil(async () => fixture.runner.responsibilities.length === 2)
+
+    fixture.reconciler.interruptRuns('goal-1', firstWorkId)
+    expect(await first).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['run_interrupted'] },
+    })
+    expect(fixture.reconciler.liveWorkIds()).toContain(`goal-2/${secondWorkId}`)
+
+    fixture.reconciler.interruptRuns('goal-2', secondWorkId)
+    expect(await second).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['run_interrupted'] },
+    })
+    const firstAttempt = (await fixture.attempts.list('project-1', 'goal-1', firstWorkId)).at(-1)
+    const secondAttempt = (await fixture.attempts.list('project-1', 'goal-2', secondWorkId)).at(-1)
+    expect(firstAttempt?.status).toBe('interrupted')
+    expect(secondAttempt?.status).toBe('interrupted')
+  })
+
   test('checkpoints partial Generator source before applying fail', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({
@@ -184,15 +313,7 @@ describe('ProjectReconciler', () => {
 
     await fixture.reconciler.reconcileGoal('goal-1')
     const running = fixture.reconciler.reconcileGoal('goal-1')
-    const expectedWorktree = join(
-      fixture.homeRoot,
-      '.hopi',
-      'runtime',
-      'worktrees',
-      'project-1',
-      'goal-1',
-      'W-1',
-    )
+    const expectedWorktree = join(dirname(fixture.projectRoot), 'work', 'goal-1', 'W-1')
     await waitUntil(async () =>
       (
         await Bun.file(join(expectedWorktree, 'src', 'feature.ts'))
@@ -424,6 +545,7 @@ class DeliveryScriptRunner implements RoleRunner {
   readonly responsibilities: string[] = []
   readonly plannerCwds: string[] = []
   readonly plannerRunRoots: string[] = []
+  readonly repoRootsByRun: Array<{ responsibility: string; paths: string[] }> = []
   private reviewerRuns = 0
 
   constructor(
@@ -433,12 +555,17 @@ class DeliveryScriptRunner implements RoleRunner {
       reviewerOperationalWriteOnce: boolean
       generatorCreatesPrepare: boolean
       generatorWaitForAbort: boolean
+      plannerWaitForAbort: boolean
       workRepos: readonly string[]
     },
   ) {}
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     this.responsibilities.push(input.responsibility)
+    this.repoRootsByRun.push({
+      responsibility: input.responsibility,
+      paths: input.context.repoRoots.map((repo) => repo.path),
+    })
     if (input.responsibility === 'planner') {
       this.plannerCwds.push(input.cwd)
       this.plannerRunRoots.push(input.context.runRoot)
@@ -449,7 +576,10 @@ class DeliveryScriptRunner implements RoleRunner {
       role: input.responsibility,
       content: `${input.responsibility} is working.`,
     })
-    if (input.responsibility === 'planner') await this.plan(input)
+    if (input.responsibility === 'planner') {
+      if (this.options.plannerWaitForAbort) await waitForAbort(input.signal)
+      else await this.plan(input)
+    }
     if (input.responsibility === 'generator') {
       for (const repo of input.context.repoRoots) {
         await mkdir(join(repo.path, 'src'), { recursive: true })
@@ -567,8 +697,10 @@ async function createFixture(
     generatorCreatesPrepare?: boolean
     generatorOperationalFailure?: boolean
     generatorWaitForAbort?: boolean
+    plannerWaitForAbort?: boolean
     reviewerOperationalWriteOnce?: boolean
     includeSecondaryRepo?: boolean
+    projectPath?: string
     operationalRetryBaseMs?: number
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
@@ -578,11 +710,14 @@ async function createFixture(
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
   temporaryRoots.push(temporaryRoot)
   const repoRoot = join(temporaryRoot, 'repo')
-  await mkdir(join(repoRoot, 'src'), { recursive: true })
-  await Bun.write(join(repoRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
+  const projectSourceRoot = options.projectPath
+    ? join(repoRoot, ...options.projectPath.split('/'))
+    : repoRoot
+  await mkdir(join(projectSourceRoot, 'src'), { recursive: true })
+  await Bun.write(join(projectSourceRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
   if (options.includePrepare !== false) {
-    await mkdir(join(repoRoot, 'scripts', 'hopi'), { recursive: true })
-    const prepareAdapter = join(repoRoot, 'scripts', 'hopi', 'prepare')
+    await mkdir(join(projectSourceRoot, 'scripts', 'hopi'), { recursive: true })
+    const prepareAdapter = join(projectSourceRoot, 'scripts', 'hopi', 'prepare')
     await Bun.write(prepareAdapter, '#!/usr/bin/env bun\nconsole.log("ready")\n')
     await chmod(prepareAdapter, 0o755)
   }
@@ -597,7 +732,7 @@ async function createFixture(
   const home = createAssistantHomeStore(homeRoot)
   let linked = await home.linkProject({
     projectId: 'project-1',
-    repoPath: repoRoot,
+    repoPath: projectSourceRoot,
   })
   let apiRepoRoot: string | null = null
   if (options.includeSecondaryRepo) {
@@ -617,7 +752,12 @@ async function createFixture(
     })
   }
   const publisher = new PublicationCoordinator()
-  const store = createGoalPackageStore(linked.integrationRoot, 'project-1', publisher)
+  const store = createGoalPackageStore(
+    linked.integrationRoot,
+    'project-1',
+    publisher,
+    linked.projectPath,
+  )
   await store.createGoal({
     goalId: 'goal-1',
     title: 'Ship feature',
@@ -629,6 +769,7 @@ async function createFixture(
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
     generatorWaitForAbort: options.generatorWaitForAbort ?? false,
+    plannerWaitForAbort: options.plannerWaitForAbort ?? false,
     workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
   })
   let runSequence = 0
@@ -656,6 +797,7 @@ async function createFixture(
   return {
     homeRoot,
     repoRoot,
+    projectSourceRoot,
     apiRepoRoot,
     linked,
     projectRoot: linked.integrationRoot,

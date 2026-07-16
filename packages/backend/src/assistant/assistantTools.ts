@@ -5,6 +5,7 @@ import {
 } from '../domain/attentionReference'
 import { parseProjectAttentionTarget, parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
+  isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
   parseInputDocument,
@@ -12,10 +13,15 @@ import {
   renderInputDocument,
 } from '../domain/canonicalDocuments'
 import type { LinkedProjectRepo } from '../domain/project'
+import { resolveProjectPath } from '../domain/projectPath'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import { acknowledgeGoalAttention } from '../runtime/attentionDelivery'
-import type { GoalController } from '../runtime/goalController'
+import type {
+  GoalController,
+  PlanningContext,
+  PlanningInputAdmission,
+} from '../runtime/goalController'
 import type { PreviewManager } from '../runtime/previewManager'
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -32,12 +38,13 @@ import {
 export interface AssistantToolProject {
   projectId: string
   projectRoot: string
+  sourceRoot?: string
   primaryRepoId?: string
   repos?: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   controller: GoalController
   reconciler?: {
-    interruptRuns(goalId?: string): void
+    interruptRuns(goalId?: string, workId?: string): void
   }
 }
 
@@ -425,7 +432,8 @@ export function createAssistantTools(options: {
             })
             project.reconciler?.interruptRuns(args.goalId)
           } else {
-            await project.controller.ensurePlanning(
+            await ensurePlanningWithRunInvalidation(
+              project,
               args.goalId,
               `Interpret accepted Inbox turn ${eventId} against the current Goal and design.`,
               admission,
@@ -602,11 +610,11 @@ export function createAssistantTools(options: {
           if (args.operation === 'start') {
             const result = await options.preview.start({
               projectId: project.projectId,
-              projectRoot: project.projectRoot,
+              projectRoot: project.sourceRoot ?? project.projectRoot,
               primaryRepoId: project.primaryRepoId,
               repoRoots: project.repos?.map((repo) => ({
                 repoId: repo.repoId,
-                path: repo.integrationRoot,
+                path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
               })),
             })
             return {
@@ -631,7 +639,8 @@ export function createAssistantTools(options: {
             contextGoalId,
             event,
           )
-          await project.controller.ensurePlanning(
+          await ensurePlanningWithRunInvalidation(
+            project,
             contextGoalId,
             `Establish or repair Preview from Inbox turn ${eventId}: ${args.failure ?? event.body}`,
             admission,
@@ -666,6 +675,30 @@ export function createAssistantTools(options: {
       }
     },
   }
+}
+
+async function ensurePlanningWithRunInvalidation(
+  project: AssistantToolProject,
+  goalId: string,
+  reason: string,
+  acceptedInput?: PlanningInputAdmission,
+  context: PlanningContext = {},
+) {
+  const before = await project.store.readPackage(goalId)
+  const existing = [...before.works.values()].find(
+    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
+  )
+  const planning = await project.controller.ensurePlanning(goalId, reason, acceptedInput, context)
+  const selectedAuthorityChanged =
+    Boolean(acceptedInput?.write) || Boolean(context.supportingWrites?.length)
+
+  if (
+    existing?.attributes.id === planning.attributes.id &&
+    (existing.body !== planning.body || selectedAuthorityChanged)
+  ) {
+    project.reconciler?.interruptRuns(goalId, planning.attributes.id)
+  }
+  return planning
 }
 
 async function prepareGoalReferences(

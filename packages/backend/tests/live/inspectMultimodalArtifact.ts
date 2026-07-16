@@ -3,12 +3,14 @@ import { join, resolve } from 'node:path'
 import type { RoleRunner } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import { registerTestRunCleanup } from '../testRunArtifact'
 import {
   type LiveGoalDetail,
   type LiveState,
   captureBrowserPage,
   finishTestRun,
   inspectKanban,
+  ownTestRunServer,
   readPendingInboxEvents,
   requestJson,
   runCommand,
@@ -54,6 +56,7 @@ try {
     assistantRunner,
     roleRunner,
   })
+  const serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   const state = await requestJson<LiveState>(baseUrl, '/api/state')
   assert.deepEqual(state.activeRuns, [])
@@ -166,6 +169,10 @@ try {
       return new Response(Bun.file(join(integrationRoot, 'index.html')))
     },
   })
+  const implementationCleanup = registerTestRunCleanup(testRun, {
+    name: 'implementation-server',
+    cleanup: () => implementationServer?.stop(true),
+  })
   const context = { scenario: testRun.scenario, artifactRoot: testRun.artifactRoot, baseUrl }
   const implementation = await captureBrowserPage(
     context,
@@ -176,13 +183,13 @@ try {
       auditLabel: 'inspect retained multimodal implementation',
     },
   )
-  implementationServer.stop(true)
+  await implementationCleanup.run()
   implementationServer = null
   const kanban = await inspectKanban(context, PROJECT_ID, goal.id, {
     evidencePrefix: 'multimodal-terminal',
   })
 
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
   assert.equal(await semanticDirectoryDigest(sourceRoot), sourceDigestBefore)
   assert.deepEqual(invocations, { assistant: 0, responsibility: 0 })

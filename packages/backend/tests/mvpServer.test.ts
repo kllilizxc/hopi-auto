@@ -12,6 +12,7 @@ import { createServer, presentAttempt } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
+import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -135,10 +136,140 @@ describe('MVP server', () => {
     }
   })
 
+  test('keeps host directory selection retryable after a chooser failure', async () => {
+    let attempts = 0
+    const pickerRepo = await createRepo(join(temporaryRoot, 'picker-repo'))
+    const selectedPath = join(pickerRepo, 'apps', 'web')
+    await mkdir(selectedPath, { recursive: true })
+    const server = createServer({
+      rootDir: join(temporaryRoot, 'home'),
+      port: 0,
+      startCoordinator: false,
+      directoryPicker: async () => {
+        attempts += 1
+        if (attempts === 1) throw new HostDirectoryPickerError('Folder chooser failed')
+        return attempts === 2 ? selectedPath : null
+      },
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const failed = await fetch(`${base}/api/system/select-directory`, { method: 'POST' })
+    expect(failed.status).toBe(503)
+    expect(await failed.json()).toEqual({ error: 'Folder chooser failed' })
+
+    const selected = await fetch(`${base}/api/system/select-directory`, { method: 'POST' })
+    expect(selected.status).toBe(200)
+    expect(await selected.json()).toEqual({
+      selection: {
+        kind: 'git_repository',
+        path: await realpath(selectedPath),
+        repoPath: await realpath(pickerRepo),
+        projectPath: 'apps/web',
+      },
+    })
+
+    const cancelled = await fetch(`${base}/api/system/select-directory`, { method: 'POST' })
+    expect(cancelled.status).toBe(200)
+    expect(await cancelled.json()).toEqual({ selection: null })
+  })
+
+  test('shares one host directory chooser across concurrent requests', async () => {
+    let attempts = 0
+    const pickerRepo = await createRepo(join(temporaryRoot, 'single-flight-picker-repo'))
+    const server = createServer({
+      rootDir: join(temporaryRoot, 'home'),
+      port: 0,
+      startCoordinator: false,
+      directoryPicker: async () => {
+        attempts += 1
+        await Bun.sleep(50)
+        return pickerRepo
+      },
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        fetch(`${base}/api/system/select-directory`, { method: 'POST' }),
+      ),
+    )
+
+    expect(attempts).toBe(1)
+    for (const response of responses) {
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({
+        selection: {
+          kind: 'git_repository',
+          path: await realpath(pickerRepo),
+          repoPath: await realpath(pickerRepo),
+          projectPath: '.',
+        },
+      })
+    }
+  })
+
+  test('initializes an explicitly confirmed empty project directory', async () => {
+    const selectedPath = join(temporaryRoot, 'empty-project')
+    await mkdir(selectedPath)
+    const server = createServer({
+      rootDir: join(temporaryRoot, 'home'),
+      port: 0,
+      startCoordinator: false,
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const response = await fetch(`${base}/api/system/initialize-repository`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: selectedPath }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      selection: {
+        kind: 'git_repository',
+        path: await realpath(selectedPath),
+        repoPath: await realpath(selectedPath),
+        projectPath: '.',
+      },
+    })
+    expect(await git(selectedPath, ['branch', '--show-current'])).toBe('main')
+    expect(await git(selectedPath, ['log', '-1', '--pretty=%s'])).toBe(
+      'chore: initialize repository',
+    )
+  })
+
+  test('starts Project Preview from the selected Git subdirectory scope', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
+    const selectedPath = join(repoRoot, 'apps', 'web')
+    await mkdir(selectedPath, { recursive: true })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    await request(base, '/api/projects', {
+      method: 'POST',
+      body: {
+        projectId: 'P-scoped',
+        primaryRepoId: 'web',
+        repos: [{ repoId: 'web', repoPath: repoRoot, projectPath: 'apps/web' }],
+      },
+    })
+    const preview = await request(base, '/api/projects/P-scoped/preview/start', {
+      method: 'POST',
+    })
+
+    expect(preview).toMatchObject({ kind: 'repair_required', reason: 'missing' })
+    expect(preview.prompt).toContain('/apps/web/scripts/hopi/preview')
+  })
+
   test('exposes canonical product APIs and Work Attempt streams', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
-    await Bun.write(join(repoRoot, 'local.txt'), 'dirty user checkout\n')
     const before = await checkoutSnapshot(repoRoot)
     const server = createServer({
       rootDir: homeRoot,
@@ -352,6 +483,23 @@ describe('MVP server', () => {
     })
     const preview = await request(base, '/api/projects/P-1/preview/start', { method: 'POST' })
     expect(preview).toMatchObject({ kind: 'repair_required', reason: 'missing' })
+    const repair = await request(base, '/api/preview/repair', {
+      method: 'POST',
+      body: {
+        prompt: preview.prompt,
+        context: { projectId: 'P-1', goalId: 'G-1' },
+      },
+    })
+    const repairFeed = await request(base, '/api/assistant/feed')
+    const repairEntries = repairFeed.items as Array<{
+      event?: { id: string; status: string; context: { projectId: string; goalId: string } | null }
+    }>
+    expect(repairEntries.find((entry) => entry.event?.id === repair.eventId)).toMatchObject({
+      event: {
+        status: 'pending',
+        context: { projectId: 'P-1', goalId: 'G-1' },
+      },
+    })
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
 

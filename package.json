@@ -41,6 +41,7 @@
     "artifact:inspect": "bun run packages/backend/tests/live/inspectGoalDeliveryArtifact.ts",
     "artifact:inspect:011": "bun run packages/backend/tests/live/inspectConcurrentProjectsArtifact.ts",
     "artifact:inspect:022": "bun run packages/backend/tests/live/inspectMultimodalArtifact.ts",
+    "artifact:summary": "bun run packages/backend/tests/e2e/artifactSummary.ts",
     "artifact:review": "bun run packages/backend/tests/e2e/recordArtifactReview.ts",
     "build:frontend": "cd packages/frontend && bun run build",
     "verify:runtime": "bun run scripts/verify-runtime.ts",

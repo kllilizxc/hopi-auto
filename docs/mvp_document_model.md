@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-13
+Last updated: 2026-07-16
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -43,13 +43,14 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
     delivery/
     leases/
     index/
-    worktrees/
-      <projectId>/
-        <goalId>/
-          <workId>/
-  projects/
-    <projectId>/
-      integration/
+```
+
+Managed Git checkouts are deliberately outside Assistant home and outside the selected checkout:
+
+```text
+<repo-parent>/.hopi-worktrees/<repo-name>/
+  integration/
+  work/<goalId>/<workId>/
 ```
 
 An inbox event is conceptually `pending | handled`.
@@ -169,21 +170,26 @@ required before Coordinator starts and travels with every lossless Assistant-hom
 filesystem path of Assistant home is only a current machine binding.
 
 Each `projects.yml` link owns `{ projectId, primaryRepoId, repos, codingDefaults? }`. Each Repo entry
-owns a stable `repoId` and its current-machine `repoPath` binding through a user-selected checkout.
-Coordinator derives one managed integration path per Repo under Assistant home. The primary managed
-root is the canonical Project document root. User checkouts may be dirty and are never reset,
-checked out, or written by HOPI.
+owns a stable `repoId`, its current-machine `repoPath` Git-checkout binding, the `deliveryBranch`
+recorded from that checkout at link time, and an optional portable `projectPath` relative to the Git
+root. Missing `projectPath` means `.`. Coordinator derives one Repo-adjacent managed integration
+path, then resolves the Project's source scope inside that managed worktree from `projectPath`. The
+primary managed root remains the canonical Project document root. `repoPath` is non-canonical and
+may be written only by the guarded release fast-forward protocol.
 
 ```yaml
-version: 2
+version: 3
 projects:
   - projectId: product-a
     primaryRepoId: web
     repos:
       - repoId: web
         repoPath: /home/operator/Code/product-web
+        deliveryBranch: main
+        projectPath: apps/storefront
       - repoId: api
         repoPath: /home/operator/Code/product-api
+        deliveryBranch: main
     codingDefaults:
       transport: codex
       model: gpt-5.4
@@ -203,26 +209,30 @@ with the selected transport so advanced binary/profile/permission settings are n
 switching transport replaces incompatible fields with that transport's safe defaults. `process` is
 allowed only for responsibility adapters and is not a configurable Assistant transport.
 
-Version 1 `{ projectId, repoPath }` links normalize to one Repo and preserve their existing managed
-primary root. A missing Engineering Work `repos` field likewise means the Project primary Repo.
-Newly published links and Engineering Work always use the explicit form.
+Version 1 `{ projectId, repoPath }` and version 2 multi-Repo links migrate by recording each linked
+checkout's current symbolic branch and relocating its registered managed worktrees without changing
+their branch, index, or working tree. A detached legacy checkout is ambiguous and blocks migration.
+A missing Engineering Work `repos` field still means the Project primary Repo. Newly published links
+and Engineering Work always use the explicit form.
 
 After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
-administration, validates its `hopi/release` projection, then changes the machine-local binding.
+administration, relocates the Repo-adjacent managed root when needed, validates its `hopi/release`
+and delivery projections, then changes the machine-local binding.
 A single moved Repo and a complete moved Repo set use the same operation; the complete form requires
 exactly the existing stable Repo IDs and publishes `projects.yml` only after every target validates.
 This lets several stale old paths recover together without weakening duplicate-Git-identity checks.
 A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
 canonical documents may be newer than the ref; that loss remains Project Attention.
 
-The managed root's `project.yml` remains authority for Project identity, and both IDs must match.
+The managed root's `project.yml` remains authority for Project identity, Repo membership, and each
+portable `projectPath`; the local link must match it after missing paths normalize to `.`.
 If the release ref or project file is missing, corrupt, or disagrees, the home link still supplies
 the canonical project target for workspace Attention; it never guesses or replaces identity.
 
 ### Managed project root
 
 ```text
-<hopi-home>/.hopi/projects/<projectId>/integration/       # primary Repo
+<repo-parent>/.hopi-worktrees/<repo-name>/integration/    # one per linked Repo
   AGENTS.md
   .hopi/
     project.yml
@@ -248,12 +258,11 @@ the canonical project target for workspace Attention; it never guesses or replac
             <attentionId>.md
           evidence/
             <evidenceId>.md
-
-<hopi-home>/.hopi/projects/<projectId>/repos/<repoId>/integration/  # secondary Repo
 ```
 
-Runs, leases, generated projections, Preview sessions, and task worktree checkouts live under
-Assistant-home runtime storage. The managed integration worktree is stable rather than disposable
+Runs, leases, generated projections, and Preview sessions live under Assistant-home runtime
+storage. Integration and task worktrees live under the Repo-adjacent root above. The managed
+integration worktree is stable rather than disposable
 because ordinary canonical document publications may precede their next Git checkpoint. Canonical
 documents, preferences, `project.yml`, the `hopi/release` ref, and task branch refs travel with a
 lossless Project migration.
@@ -290,12 +299,14 @@ with `application: operational_failure` after its latest resolved Work-target At
 failure ensures one ordinary open Work-target Attention. No operational counter is stored in Work,
 Attention IDs, or UI projection, and no new Attention field or kind is introduced.
 
-`project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership, and the current
-secondary release commits. Local filesystem paths remain solely in Assistant-home `projects.yml`.
+`project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership and
+`projectPath` values, and the current secondary release commits. Absolute local filesystem paths
+remain solely in Assistant-home `projects.yml`.
 The primary Repo's release commit is the `project.yml`-containing C1 itself and is therefore implicit;
 embedding its own hash would be self-referential. The integration target remains the kernel
 convention `hopi/release`, not editable Project configuration. Goal completion means the primary C1
-and all secondary release projections are verified; it does not change a user checkout.
+and all secondary managed and delivery projections are verified. Delivery changes only the recorded
+checkout branch by clean fast-forward and never makes that checkout canonical authority.
 
 Root `AGENTS.md` is the model-readable project context entrypoint. It may describe stable repository
 structure, responsibilities, commands, constraints, and links to deeper authoritative documents,
@@ -435,7 +446,8 @@ Planning Work omits engineering Git fields. For engineering Work:
 
 - `repos` is the non-empty, unique set of stable Repo IDs included in this Work workspace; omission
   is accepted only as the legacy shorthand for the primary Repo
-- branch and worktree paths are deterministic functions of Project, Goal, Work, and Repo identities
+- branch paths derive from Project, Goal, and Work identity; worktree paths derive from the Repo
+  binding plus Goal and Work identity
 - each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
 - a missing disposable task checkout may be rebuilt from that Repo's stable branch after migration
 - `evidenceRefs` is an append-only ordered list of consumed Run and supporting Evidence; it

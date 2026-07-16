@@ -8,6 +8,7 @@ import {
   type LiveState,
   finishTestRun,
   inspectKanban,
+  ownTestRunServer,
   readGitSemanticState,
   readPendingInboxEvents,
   requestJson,
@@ -56,6 +57,7 @@ try {
     assistantRunner,
     roleRunner,
   })
+  const serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   const state = await requestJson<LiveState>(baseUrl, '/api/state')
   assert.deepEqual(state.activeRuns, [])
@@ -125,7 +127,7 @@ try {
     )
   }
 
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
   assert.equal(await semanticDirectoryDigest(sourceRoot), sourceDigestBefore)
   const gitAfter: Record<string, unknown> = {}

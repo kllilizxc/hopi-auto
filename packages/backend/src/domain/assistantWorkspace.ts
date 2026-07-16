@@ -14,6 +14,7 @@ import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './projectCodingDefaults'
+import { isNormalizedProjectPath } from './projectPath'
 
 const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const homeSchema = z.object({ version: z.literal(1), homeId: stableIdSchema }).strict()
@@ -33,7 +34,7 @@ const legacyLinksSchema = z
     ),
   })
   .strict()
-const linksSchema = z
+const legacyMultiRepoLinksSchema = z
   .object({
     version: z.literal(2),
     projects: z.array(
@@ -47,6 +48,35 @@ const linksSchema = z
                 .object({
                   repoId: stableIdSchema,
                   repoPath: z.string().min(1),
+                  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+                })
+                .strict(),
+            )
+            .min(1),
+          codingDefaults: projectCodingDefaultsInputSchema
+            .transform((value) => normalizeProjectCodingDefaults(value))
+            .optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+const linksSchema = z
+  .object({
+    version: z.literal(3),
+    projects: z.array(
+      z
+        .object({
+          projectId: stableIdSchema,
+          primaryRepoId: stableIdSchema,
+          repos: z
+            .array(
+              z
+                .object({
+                  repoId: stableIdSchema,
+                  repoPath: z.string().min(1),
+                  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+                  deliveryBranch: z.string().min(1),
                 })
                 .strict(),
             )
@@ -104,11 +134,11 @@ export async function readAndValidateAssistantWorkspace(
   const home = parseYaml(await requiredText(candidate, paths.homeDocument), homeSchema, 'home.yml')
   const rawLinks = parseYaml(
     await requiredText(candidate, paths.projectLinks),
-    z.union([linksSchema, legacyLinksSchema]),
+    z.union([linksSchema, legacyMultiRepoLinksSchema, legacyLinksSchema]),
     'projects.yml',
   )
   const links: { projects: ProjectLink[] } =
-    rawLinks.version === 2
+    rawLinks.version === 3 || rawLinks.version === 2
       ? rawLinks
       : {
           projects: rawLinks.projects.map((project) => ({

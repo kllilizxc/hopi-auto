@@ -17,6 +17,7 @@ import {
   finishTestRun,
   gitOutput,
   inspectProjectPreviewStatus,
+  ownTestRunServer,
   requestJson,
   requestPreviewRepairInBrowser,
   startTestRun,
@@ -58,6 +59,7 @@ try {
     roleRunner: roles,
     assistantRunner,
   })
+  const serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   const browserContext = { scenario: SCENARIO, artifactRoot, baseUrl }
 
@@ -193,6 +195,7 @@ try {
   assert.equal(matchingRepairEvents.length, 1)
   const repairEvent = matchingRepairEvents[0]?.event
   assert.ok(repairEvent)
+  assert.deepEqual(repairEvent.context, { projectId: MISSING_PROJECT, goalId: MISSING_GOAL })
   assert.deepEqual(
     assistantInvocations.filter((invocation) => invocation.toolMode === 'main'),
     [{ eventId: repairEvent.id, toolMode: 'main' }],
@@ -245,7 +248,7 @@ try {
       2,
     )}\n`,
   )
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot, validRepo, missingRepo },
@@ -254,6 +257,7 @@ try {
   })
   console.log(`HOPI-E2E-021 Preview browser passed: ${artifactRoot}`)
 } catch (error) {
+  roles.releasePlanning()
   await Bun.write(
     join(artifactRoot, 'preview-lifecycle.json'),
     `${JSON.stringify(
@@ -268,19 +272,18 @@ try {
       2,
     )}\n`,
   )
-  await server?.shutdown().catch(() => undefined)
-  server = null
   await finishTestRun(testRun, 'failed', {
     paths: { home: homeRoot, validRepo, missingRepo },
     resultFile: 'preview-lifecycle.json',
     error: errorMessage(error),
     providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
   }).catch(() => undefined)
+  server = null
   console.error(`HOPI-E2E-021 Preview browser failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
 } finally {
-  await server?.shutdown()
+  server?.stop(true)
 }
 
 // Bun can retain internal HTML-bundler threads after this browser-heavy CLI has closed all handles.
@@ -469,6 +472,7 @@ interface AssistantFeed {
       id: string
       body: string
       status: string
+      context: { projectId: string; goalId: string } | null
       runtimeEvents: unknown[]
       runtimeError: string | null
     }

@@ -464,6 +464,15 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope',
     )
+    expect(seen[0]?.prompt).toContain(
+      'make the effect locatable by naming that Goal and its exact returned Goal ID',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Leave optional suggestions, future ideas, and reference-only comments in conversation',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Calling hopi_request_planning adopts the current turn as Goal Input',
+    )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
     expect(seen[0]?.prompt).toContain(
       'MCP tool descriptions and JSON schemas are the sole authority',
@@ -477,6 +486,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
+    expect(seen[0]?.prompt).toContain(
+      'include that Goal name and exact Goal ID so the operator can find it',
+    )
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 

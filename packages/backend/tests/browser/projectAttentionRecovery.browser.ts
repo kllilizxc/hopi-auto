@@ -17,6 +17,7 @@ import {
   finishTestRun,
   gitOutput,
   inspectKanban,
+  ownTestRunServer,
   recordAction,
   requestJson,
   sendAssistantMessage,
@@ -116,6 +117,7 @@ try {
   attentionToResolve = original.attributes.id
 
   server = createServer({ rootDir: homeRoot, port: 0, roleRunner, assistantRunner })
+  ownTestRunServer(testRun, server)
   context.baseUrl = `http://127.0.0.1:${server.port}`
   await recordAction(context, 'server_started', { baseUrl: context.baseUrl })
 

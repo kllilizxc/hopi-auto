@@ -18,6 +18,7 @@ import {
   errorMessage,
   finishTestRun,
   gitOutput,
+  ownTestRunServer,
   requestJson,
   startTestRun,
   waitForValue,
@@ -44,6 +45,7 @@ try {
     roleRunner: roles,
     assistantRunner: assistant,
   })
+  ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   await requestJson(baseUrl, '/api/projects', {
     method: 'POST',

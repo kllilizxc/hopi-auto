@@ -63,9 +63,12 @@ describe('multi-Repo C1', () => {
       ),
     ).toBe(true)
     for (const repo of fixture.linked.repos) {
-      expect(await checkoutSnapshot(repo.repoPath)).toEqual(
-        requireMapValue(fixture.userBefore, repo.repoId),
-      )
+      const before = requireMapValue(fixture.userBefore, repo.repoId)
+      expect(await checkoutSnapshot(repo.repoPath)).toEqual({
+        head: await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF]),
+        branch: before.branch,
+        status: '',
+      })
     }
   })
 
@@ -205,6 +208,23 @@ describe('multi-Repo C1', () => {
       'done',
     )
   })
+
+  test('recovers a partial multi-Repo delivery after one checkout becomes clean', async () => {
+    const fixture = await createFixture(['primary', 'api'])
+    const api = fixture.repo('api')
+    await Bun.write(join(api.repoPath, 'local.txt'), 'local state\n')
+
+    const blocked = await fixture.integrator.integrate(fixture.integrationInput)
+
+    expect(blocked.kind).toBe('blocked_after_boundary')
+    expect(await sourceValue(fixture.repo('primary').repoPath)).toBe(2)
+    expect(await sourceValue(api.repoPath)).toBe(1)
+    await rm(join(api.repoPath, 'local.txt'))
+
+    await reconcileProjectReleaseProjection(fixture.layout)
+
+    expect(await sourceValue(api.repoPath)).toBe(2)
+  })
 })
 
 async function createFixture(workRepoIds: string[]) {
@@ -339,6 +359,8 @@ async function createFixture(workRepoIds: string[]) {
     repos: linked.repos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
+      checkoutRoot: repo.repoPath,
+      deliveryBranch: repo.deliveryBranch,
       primary: repo.primary,
     })),
   }

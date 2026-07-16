@@ -14,6 +14,7 @@ import {
   finishTestRun,
   gitOutput,
   inspectKanban,
+  ownTestRunServer,
   requestJson,
   startTestRun,
   waitForValue,
@@ -36,6 +37,7 @@ try {
   await initializeFixture(repoRoot)
   const checkoutBefore = await checkoutSnapshot(repoRoot)
   server = createServer({ rootDir: homeRoot, port: 0, roleRunner: roles })
+  ownTestRunServer(testRun, server)
   const context = {
     scenario: 'cancel-reopen-browser',
     artifactRoot,

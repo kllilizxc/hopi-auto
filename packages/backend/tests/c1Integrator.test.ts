@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 describe('C1Integrator', () => {
-  test('moves only hopi/release and materializes reviewed source plus done Work', async () => {
+  test('moves hopi/release, materializes C1, and fast-forwards the delivery checkout', async () => {
     const fixture = await createFixture()
     const beforeUser = await checkoutSnapshot(fixture.repoRoot)
     const prepared = await fixture.prepareReviewer('run-review')
@@ -46,7 +46,11 @@ describe('C1Integrator', () => {
     expect(
       await git(fixture.projectRoot, ['show', '-s', '--format=%B', integrated.commit]),
     ).toContain('HOPI-Work-Ref: project:project-1/goal:goal-1/work:W-1')
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(beforeUser)
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual({
+      head: integrated.commit,
+      branch: beforeUser.branch,
+      status: '',
+    })
 
     const repeated = await fixture.integrator.integrate(prepared.integrationInput)
     expect(repeated).toEqual({ kind: 'already_integrated', commit: integrated.commit })
@@ -147,6 +151,40 @@ describe('C1Integrator', () => {
       'review',
     )
   })
+
+  test('blocks after C1 on a dirty delivery checkout and converges after it is clean', async () => {
+    const fixture = await createFixture()
+    const prepared = await fixture.prepareReviewer('run-dirty-delivery')
+    await Bun.write(join(fixture.repoRoot, 'local.txt'), 'local work\n')
+    const before = await checkoutSnapshot(fixture.repoRoot)
+
+    const blocked = await fixture.integrator.integrate(prepared.integrationInput)
+
+    expect(blocked.kind).toBe('blocked_after_boundary')
+    if (blocked.kind !== 'blocked_after_boundary') throw new Error('Expected blocked delivery')
+    expect(blocked.reason).toContain('delivery checkout is dirty')
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
+    expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(blocked.commit)
+
+    await rm(join(fixture.repoRoot, 'local.txt'))
+    const recovered = await fixture.integrator.integrate(prepared.integrationInput)
+
+    expect(recovered).toEqual({ kind: 'already_integrated', commit: blocked.commit })
+    expect(await git(fixture.repoRoot, ['rev-parse', 'HEAD'])).toBe(blocked.commit)
+  })
+
+  test('never switches a delivery checkout that left its recorded branch', async () => {
+    const fixture = await createFixture()
+    const prepared = await fixture.prepareReviewer('run-switched-delivery')
+    await git(fixture.repoRoot, ['switch', '-c', 'local-experiment'])
+
+    const result = await fixture.integrator.integrate(prepared.integrationInput)
+
+    expect(result.kind).toBe('blocked_after_boundary')
+    if (result.kind !== 'blocked_after_boundary') throw new Error('Expected blocked delivery')
+    expect(result.reason).toContain('expected main')
+    expect(await git(fixture.repoRoot, ['branch', '--show-current'])).toBe('local-experiment')
+  })
 })
 
 async function createFixture() {
@@ -225,6 +263,17 @@ async function createFixture() {
     store,
     publisher,
     () => new Date('2026-07-11T00:00:00Z'),
+    {
+      primaryRepoId: linked.primaryRepoId,
+      repos: linked.repos.map((repo) => ({
+        repoId: repo.repoId,
+        integrationRoot: repo.integrationRoot,
+        checkoutRoot: repo.repoPath,
+        deliveryBranch: repo.deliveryBranch,
+        projectPath: repo.projectPath,
+        primary: repo.primary,
+      })),
+    },
   )
 
   return {

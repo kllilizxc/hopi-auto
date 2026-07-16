@@ -1,6 +1,7 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../domain/project'
+import { relocateRegisteredWorktree } from './worktreeRelocator'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -34,21 +35,9 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
   function worktree(input: StableWorktreeInput): StableWorktree {
     assertInput(input)
     const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
-    const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
-    const workRoot = join(
-      absoluteHomeRoot,
-      '.hopi',
-      'runtime',
-      'worktrees',
-      input.projectId,
-      input.goalId,
-      input.workId,
-    )
+    const workRoot = join(dirname(resolve(input.projectRoot)), 'work', input.goalId, input.workId)
     return {
-      path:
-        repoId === primaryRepoId
-          ? workRoot
-          : join(dirname(workRoot), `${input.workId}.repos`, repoId),
+      path: workRoot,
       branch: stableWorkBranch(input),
       baseRef: HOPI_RELEASE_BRANCH,
       repoId,
@@ -58,6 +47,7 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
   return {
     async prepare(input) {
       const expected = worktree(input)
+      await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
       if (existing) return existing
 
@@ -65,6 +55,7 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
     },
     async prepareClean(input) {
       const expected = worktree(input)
+      await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
       if (!existing) return materialize(input, expected)
       const status = await runGit(existing.path, [
@@ -132,6 +123,32 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       )
     }
     return expected
+  }
+
+  async function migrateLegacyWorktree(input: StableWorktreeInput, expected: StableWorktree) {
+    if (await pathExists(expected.path)) return
+    const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
+    const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
+    const legacyPrimary = join(
+      absoluteHomeRoot,
+      '.hopi',
+      'runtime',
+      'worktrees',
+      input.projectId,
+      input.goalId,
+      input.workId,
+    )
+    const legacyPath =
+      repoId === primaryRepoId
+        ? legacyPrimary
+        : join(dirname(legacyPrimary), `${input.workId}.repos`, repoId)
+    if (!(await pathExists(legacyPath))) return
+    await relocateRegisteredWorktree({
+      repoRoot: input.projectRoot,
+      from: legacyPath,
+      to: expected.path,
+      expectedBranch: expected.branch,
+    })
   }
 }
 

@@ -1,22 +1,25 @@
 import { expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { renderInboxEventDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { DEFAULT_PROJECT_CODING_DEFAULTS } from '../src/domain/projectCodingDefaults'
 import {
   type LiveHarness,
+  countLogicalRuns,
   finishLiveHarness,
   gitOutput,
   readCodeProvenance,
   readGitSemanticState,
   readModelUsage,
   readPendingInboxEvents,
+  registerLogicalRunSafety,
   resolveBrowserAuditMode,
   semanticDirectoryDigest,
   shutdownLiveHarness,
+  waitForValue,
 } from './live/liveHarness'
-import { readTestRun, writeTestRunReport } from './testRunArtifact'
+import { cleanupTestRun, finishTestRun, readTestRun, writeTestRunReport } from './testRunArtifact'
 
 test('browser audit degradation is explicit and never fabricates verification', () => {
   expect(resolveBrowserAuditMode({ valid: true }, false)).toBe('verified')
@@ -78,6 +81,77 @@ test('reads hidden runtime usage and pending canonical Inbox events', async () =
     })
   } finally {
     await rm(homeRoot, { recursive: true, force: true })
+  }
+})
+
+test('logical Run safety stops a runaway once and cleans up through the Test Run lifecycle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hopi-live-run-safety-'))
+  const homeRoot = join(root, 'home')
+  const context = {
+    artifactRoot: root,
+    scenario: 'logical-run-safety',
+    claim: 'live' as const,
+    startedAt: '2026-07-16T00:00:00.000Z',
+    code: {
+      head: 'a'.repeat(40),
+      branch: 'main',
+      dirty: false,
+      status: [],
+      worktreeDigest: 'b'.repeat(64),
+    },
+  }
+  try {
+    await writeTestRunReport(context, 'running')
+    for (const id of ['RF-1', 'RF-2']) {
+      const reflectionRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'reflections', id)
+      await mkdir(reflectionRoot, { recursive: true })
+      await Bun.write(join(reflectionRoot, 'reflection.json'), '{}\n')
+    }
+    const partialAttempt = join(
+      homeRoot,
+      '.hopi',
+      'runtime',
+      'runs',
+      'P-1',
+      'G-1',
+      'W-1',
+      'R-writing',
+      'attempt.json',
+    )
+    await mkdir(dirname(partialAttempt), { recursive: true })
+    await Bun.write(partialAttempt, '{"responsibility":')
+    expect(await countLogicalRuns(homeRoot, { tolerateUnreadable: true })).toMatchObject({
+      reflection: 2,
+    })
+    const guard = registerLogicalRunSafety(context, homeRoot, { limit: 1 })
+    let reads = 0
+
+    await expect(
+      waitForValue(
+        async () => {
+          reads += 1
+          return false
+        },
+        Boolean,
+        { timeoutMs: 100, intervalMs: 1, description: 'a value that must not be read' },
+      ),
+    ).rejects.toThrow('Logical Run safety limit exceeded: 2 > 1')
+    await expect(guard.check()).rejects.toThrow('Logical Run safety limit exceeded: 2 > 1')
+    expect(reads).toBe(0)
+    const actions = await Bun.file(join(root, 'actions.jsonl')).text()
+    expect(actions.match(/logical_run_limit_exceeded/g)).toHaveLength(1)
+
+    const report = await finishTestRun(context, 'failed', { error: 'runaway stopped' })
+    expect(report).toMatchObject({
+      status: 'failed',
+      cleanup: {
+        status: 'passed',
+        resources: [{ name: 'logical-run-safety', status: 'completed' }],
+      },
+    })
+  } finally {
+    await cleanupTestRun(context).catch(() => undefined)
+    await rm(root, { recursive: true, force: true })
   }
 })
 
@@ -153,6 +227,7 @@ test('Live Test Run stops its server before sealing terminal evidence', async ()
     },
     currentPhase: 'verification',
     lastCheckpoint: 'complete',
+    logicalRunLimit: 50,
     startedAt: '2026-07-14T00:00:00.000Z',
     server: {
       shutdown: async () => {

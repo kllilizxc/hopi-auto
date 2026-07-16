@@ -22,6 +22,7 @@ import type {
   ProjectCodingDefaults,
   ProjectCodingDefaultsInput,
 } from '../domain/projectCodingDefaults'
+import { resolveProjectPath } from '../domain/projectPath'
 import { PublicationCoordinator } from '../publication/publisher'
 import { createCoordinatorReconciler } from '../scheduler/coordinatorReconciler'
 import { createProjectReconciler } from '../scheduler/projectReconciler'
@@ -31,7 +32,7 @@ import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStor
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
 import { createCompletionStructureVerifier } from './completionVerifier'
-import { bootstrapCoordinator } from './coordinatorBootstrap'
+import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
 import type { Responsibility } from './roleContextStager'
@@ -43,7 +44,9 @@ export interface MvpProjectRuntime {
   primaryRepoId: string
   repos: LinkedProjectRepo[]
   repoPath: string
+  projectPath: string
   projectRoot: string
+  sourceRoot: string
   store: ReturnType<typeof createGoalPackageStore>
   controller: ReturnType<typeof createGoalController>
   reconciler: ReturnType<typeof createProjectReconciler>
@@ -121,12 +124,19 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const assistantToolUrl = options.assistantToolUrl
 
   for (const linked of linkedProjects) {
-    const store = createGoalPackageStore(linked.integrationRoot, linked.projectId, publisher)
+    const store = createGoalPackageStore(
+      linked.integrationRoot,
+      linked.projectId,
+      publisher,
+      linked.projectPath,
+    )
     const layout = {
       primaryRepoId: linked.primaryRepoId,
       repos: linked.repos.map((repo) => ({
         repoId: repo.repoId,
         integrationRoot: repo.integrationRoot,
+        checkoutRoot: repo.repoPath,
+        deliveryBranch: repo.deliveryBranch,
         primary: repo.primary,
       })),
     }
@@ -158,7 +168,9 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       primaryRepoId: linked.primaryRepoId,
       repos: [...linked.repos],
       repoPath: linked.repoPath,
+      projectPath: linked.projectPath,
       projectRoot: linked.integrationRoot,
+      sourceRoot: resolveProjectPath(linked.integrationRoot, linked.projectPath),
       store,
       controller,
       reconciler,
@@ -176,6 +188,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       repos: project.repos.map((repo) => ({
         repoId: repo.repoId,
         integrationRoot: repo.integrationRoot,
+        checkoutRoot: repo.repoPath,
+        deliveryBranch: repo.deliveryBranch,
         primary: repo.primary,
       })),
       store: project.store,
@@ -242,17 +256,46 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       projectId: project.projectId,
       store: project.store,
       reconciler: project.reconciler,
+      recover: () => recoverRuntimeProject(project),
     })),
     delivery,
   })
   readActiveRuns = () => coordinator.activeRuns()
   wakeCoordinator = () => coordinator.wake()
-  restoreProjectEligibility = (projectId) => coordinator.setProjectEligible(projectId, true)
+  restoreProjectEligibility = (projectId) => {
+    const project = projects.get(projectId)
+    if (!project) return
+    coordinator.setProjectEligible(projectId, false)
+    void recoverRuntimeProject(project)
+      .then(() => coordinator.setProjectEligible(projectId, true))
+      .catch(async (error) => {
+        await attentions.ensureProjectAttention(
+          projectId,
+          `Project recovery validation failed: ${errorMessage(error)}`,
+        )
+      })
+  }
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
   async function rebindProject(projectId: string, repoPath: string) {
     await home.rebindProject({ projectId, repoPath })
+  }
+
+  async function recoverRuntimeProject(project: MvpProjectRuntime) {
+    await recoverCoordinatorProject(home, {
+      projectId: project.projectId,
+      projectRoot: project.projectRoot,
+      primaryRepoId: project.primaryRepoId,
+      repos: project.repos.map((repo) => ({
+        repoId: repo.repoId,
+        integrationRoot: repo.integrationRoot,
+        checkoutRoot: repo.repoPath,
+        deliveryBranch: repo.deliveryBranch,
+        primary: repo.primary,
+      })),
+      store: project.store,
+    })
   }
 
   async function rebindRepo(projectId: string, repoId: string, repoPath: string) {
@@ -305,6 +348,10 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     readAssistantCodingDefaults: readAssistantModelSettings,
     updateAssistantCodingDefaults: updateAssistantModelSettings,
   }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export function requireProject(

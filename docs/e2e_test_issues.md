@@ -13,15 +13,15 @@ The audit retained independent execution only where a model, browser, or hard pr
 change the outcome. All other rows are now explicitly composed from stronger existing evidence; no
 catalog row remains ambiguously `Planned` or `Partial`. OpenCode is the sole intentional exclusion.
 
-| Risk | Result | Retained Test Run |
-| --- | --- | --- |
-| `011` concurrent Projects | Real Assistant and both responsibility chains completed; the source Run's old shared browser audit failed, then immutable inspection passed | `test-artifacts/concurrent-project-instructions-2026-07-14T17-20-56-699Z-6f16798d`; `test-artifacts/concurrent-projects-inspection-2026-07-14T17-34-26-879Z-418779f6` |
-| `016` hard restart | Passed after killing the Coordinator PID namespace during a real Generator and recovering with a replacement process | `test-artifacts/process-restart-during-generator-2026-07-14T18-08-50-707Z-cf026b5c` |
-| `017/027` multi-Repo/bootstrap | Passed with two Repos, real responsibilities, one C1, and silent `AGENTS.md`/prepare bootstrap | `test-artifacts/multi-repo-bootstrap-delivery-2026-07-14T17-02-15-209Z-60e51845` |
-| `020` configuration | Passed through Browser Harness with multi-Repo link, model settings, safe rebind, reload, and Server restart | `test-artifacts/configuration-rebind-2026-07-14T16-37-29-146Z-42775605` |
-| `021` Preview | Passed through Browser Harness for ready, stop, release invalidation, and ordinary Assistant repair admission | `test-artifacts/preview-lifecycle-browser-2026-07-14T16-56-48-479Z-26c1f1c5` |
-| `022` multimodal | Real image upload, Assistant adoption, Planner/Generator/Reviewer delivery, C1, and completion all succeeded; corrected terminal assertions passed immutable inspection | `test-artifacts/multimodal-reference-delivery-2026-07-14T18-24-44-699Z-0b9d3971`; `test-artifacts/multimodal-delivery-inspection-2026-07-14T18-33-36-132Z-74326d2f` |
-| `024/026` provider/session | Current adapter generation passed the same lost-session canary on Codex and Claude; Codex also passed the real image chain | `test-artifacts/long-conversation-session-recovery-2026-07-14T14-13-17-516Z-cd3efc41`; `test-artifacts/long-conversation-session-recovery-2026-07-14T14-14-33-926Z-44810d87` |
+| Risk                           | Result                                                                                                                                                                  | Retained Test Run                                                                                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `011` concurrent Projects      | Real Assistant and both responsibility chains completed; the source Run's old shared browser audit failed, then immutable inspection passed                             | `test-artifacts/concurrent-project-instructions-2026-07-14T17-20-56-699Z-6f16798d`; `test-artifacts/concurrent-projects-inspection-2026-07-14T17-34-26-879Z-418779f6`        |
+| `016` hard restart             | Passed after killing the Coordinator PID namespace during a real Generator and recovering with a replacement process                                                    | `test-artifacts/process-restart-during-generator-2026-07-14T18-08-50-707Z-cf026b5c`                                                                                          |
+| `017/027` multi-Repo/bootstrap | Passed with two Repos, real responsibilities, one C1, and silent `AGENTS.md`/prepare bootstrap                                                                          | `test-artifacts/multi-repo-bootstrap-delivery-2026-07-14T17-02-15-209Z-60e51845`                                                                                             |
+| `020` configuration            | Passed through Browser Harness with multi-Repo link, model settings, safe rebind, reload, and Server restart                                                            | `test-artifacts/configuration-rebind-2026-07-14T16-37-29-146Z-42775605`                                                                                                      |
+| `021` Preview                  | Passed through Browser Harness for ready, stop, release invalidation, and ordinary Assistant repair admission                                                           | `test-artifacts/preview-lifecycle-browser-2026-07-14T16-56-48-479Z-26c1f1c5`                                                                                                 |
+| `022` multimodal               | Real image upload, Assistant adoption, Planner/Generator/Reviewer delivery, C1, and completion all succeeded; corrected terminal assertions passed immutable inspection | `test-artifacts/multimodal-reference-delivery-2026-07-14T18-24-44-699Z-0b9d3971`; `test-artifacts/multimodal-delivery-inspection-2026-07-14T18-33-36-132Z-74326d2f`          |
+| `024/026` provider/session     | Current adapter generation passed the same lost-session canary on Codex and Claude; Codex also passed the real image chain                                              | `test-artifacts/long-conversation-session-recovery-2026-07-14T14-13-17-516Z-cd3efc41`; `test-artifacts/long-conversation-session-recovery-2026-07-14T14-14-33-926Z-44810d87` |
 
 The final zero-provider Regression passed all 14 children with no mixed code provenance and no model
 usage at
@@ -523,10 +523,10 @@ No product or Harness failure occurred in these gates.
 
 ## 2026-07-14: Planner Sparse-Proposal Regression Gates
 
-| Gate                   | Result | Evidence                                                              |
-| ---------------------- | ------ | --------------------------------------------------------------------- |
+| Gate                   | Result | Evidence                                                                 |
+| ---------------------- | ------ | ------------------------------------------------------------------------ |
 | `bun run check`        | Passed | Backend 284 tests, frontend 43 tests, typecheck, lint, and build passed. |
-| `bun run e2e:contract` | Passed | 162 tests across 18 files; 801 assertions; zero provider calls.         |
+| `bun run e2e:contract` | Passed | 162 tests across 18 files; 801 assertions; zero provider calls.          |
 
 The regression reproduces both retained Claude Planner failures without a provider call: Planner no
 longer writes its owning Planning Work, Coordinator preserves the current body, attempts, and prior
@@ -549,10 +549,10 @@ Parser, runner, Coordinator, and message-feed regressions also cover the same bo
 provider call. Raw runtime events remain durable even though the ordinary conversation coalesces or
 hides transport telemetry.
 
-| Gate                   | Result | Evidence                                                               |
-| ---------------------- | ------ | ---------------------------------------------------------------------- |
+| Gate                   | Result | Evidence                                                                 |
+| ---------------------- | ------ | ------------------------------------------------------------------------ |
 | `bun run check`        | Passed | Backend 288 tests, frontend 48 tests, typecheck, lint, and build passed. |
-| `bun run e2e:contract` | Passed | 164 tests across 18 files; 809 assertions; zero provider calls.         |
+| `bun run e2e:contract` | Passed | 164 tests across 18 files; 809 assertions; zero provider calls.          |
 
 ## Current Execution Boundary
 
@@ -708,3 +708,136 @@ The Live Regression profile was not executed because this change affects only te
 aggregation, and visual-review infrastructure. Contract, real Browser, immutable Inspection, and
 zero-provider execution cover that boundary; invoking production models would add cost without
 testing another changed behavior.
+
+## 2026-07-15: Test Run Lifecycle And Owned Browser Resources
+
+The Harness now makes one Test Run responsible for every disposable resource created by its
+scenario. Registered cleanup is idempotent, runs in reverse order, and completes before terminal
+evidence is hashed. Cleanup failure or timeout prevents a requested pass and remains in `run.json`;
+an available force action is attempted without retrying scenario behavior. Regression children now
+stream their real output and have a deterministic command deadline.
+
+Deterministic lifecycle, timeout, progress, and command-termination tests passed: 13 tests and 47
+expectations across `testRunArtifact.test.ts` and `liveHarness.test.ts`. The command-deadline case
+started a real Bun child, retained its pre-hang checkpoint, and terminated it after the configured
+100 ms deadline.
+
+The upgraded real Browser contract passed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/global-assistant-browser-2026-07-15T15-31-48-130Z-38fe7ac8`.
+Its two Browser invocations each created and closed exactly one target, retained no leaked target,
+and sealed the Server cleanup before the terminal report. The Projects and handled Assistant reply
+screenshots were visually inspected and contained the expected states.
+
+The complete zero-provider Regression then passed all 15 children at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/regression-preflight-2026-07-15T15-34-23-331Z-ad33c933`.
+All child Test Runs passed, all registered cleanups passed, and all 26 retained Browser resource
+records satisfied `created = closed` with `leaked = []`. The parent recorded zero logical model Runs,
+zero provider tokens, and no mixed code provenance. Repository verification inside that Regression
+passed 307 Backend tests with 1,217 expectations and 48 Frontend tests with 161 expectations.
+
+After the final progress-output normalization, the affected two-Server restart case passed again at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/restart-during-generator-2026-07-15T15-43-26-056Z-84723031`;
+both early cleanup boundaries emitted matching start/completion records.
+
+## 2026-07-16: Current-Code Live Regression Found Non-Idempotent Process Cleanup
+
+The current-code Live Regression passed `002`, its immutable `003` inspection, `010`, `011`, and
+`013`, then stopped at `016` as designed. The retained parent is
+`test-artifacts/regression-live-2026-07-15T15-49-41-293Z-f880b945`; the failing child is
+`test-artifacts/regression-live-2026-07-15T15-49-41-293Z-f880b945/children/HOPI-E2E-016/process-restart-during-generator-2026-07-15T16-16-48-930Z-ef17d0b6`.
+
+The product had not started a real responsibility Run yet. The scenario deliberately killed its
+first detached Coordinator, then the registered cleanup signalled that same process group again.
+Bun still exposed a null `exitCode`, while the operating system correctly returned `ESRCH` because
+the group no longer existed. Treating that absence as failure violated the Harness's documented
+idempotent-cleanup contract. The fix belongs in the shared process-group signal boundary: an absent
+group is already released, while non-absence signal errors remain failures. The expensive scenarios
+that passed before this Harness-only failure are not rerun; execution resumes from `016` after a
+deterministic regression proves the boundary.
+
+The first focused `016` rerun crossed both already-absent Coordinator cleanup boundaries, proving
+the `ESRCH` fix, and completed the replacement Generator, Reviewer, C1, and final Planner. It then
+exposed a separate scheduler loop while waiting for post-completion quiescence. The focused speaking
+fixture rejected the legitimate `internal` tool mode. Its pending Reflection Inbox turn received an
+event-target Workspace Attention, but each resulting semantic digest woke another Reflection and
+created another internal turn instead of treating the existing pending turn as the durable recovery
+state.
+
+The general correction adds no status or retry mechanism: any pending Reflection-sourced Inbox turn,
+including one blocked by event Attention, suppresses another Reflection assessment until it is
+handled. Attention-blocked public input remains Reflection-eligible because it has no existing
+internal assessment. A Coordinator regression covers that distinction, and the restart fixture now
+implements the `internal` mode that completion delivery legitimately requires.
+
+## 2026-07-16: Current-Code Live Coverage Completed
+
+The corrected `016` rerun passed at
+`test-artifacts/process-restart-during-generator-2026-07-15T16-49-56-376Z-ec6e9d83`.
+It retained both intentional process-loss boundaries, replacement Generator execution, Reviewer,
+C1, final Planning, and completion delivery in 10 logical Runs. No unresolved Workspace Attention
+remained. This proves both shared corrections: signalling an already-absent owned process is a
+successful cleanup no-op, and a pending Reflection-sourced Inbox turn is the one durable ownership
+boundary that suppresses duplicate Reflection.
+
+The remaining selected Live boundaries then passed independently:
+
+- `017` and its folded `027` bootstrap proof:
+  `test-artifacts/multi-repo-bootstrap-delivery-2026-07-15T16-56-27-745Z-33510afa`;
+- `019`:
+  `test-artifacts/reflection-notification-schema-canary-2026-07-15T17-12-10-046Z-e72f674f`;
+- `022`:
+  `test-artifacts/multimodal-reference-delivery-2026-07-15T17-12-44-148Z-08dcb252`;
+- `026`:
+  `test-artifacts/long-conversation-session-recovery-2026-07-15T17-21-12-263Z-f41c9ddf`; and
+- `028`:
+  `test-artifacts/project-attention-agent-recovery-2026-07-15T17-21-59-640Z-6f2e34e9`.
+
+`017` also exercised the intended correction loop rather than a perfect first attempt. Its first
+Planner-authored prepare adapter contained an invalid Repo path. Final Planning refused to claim
+completion, published one dependent Engineering Work, and the existing Generator/Reviewer path
+repaired and reverified the adapter. This was a model-authored Project adaptation error recovered by
+the general workflow, so it does not justify a prepare-specific runtime rule.
+
+The stopped Live Regression parent had already passed `002`, immutable inspection `003`, `010`,
+`011`, and `013`; those expensive children were not repeated after a Harness-only failure. Every
+terminal child and focused Run was audited as `passed`, every registered cleanup completed, and all
+owned Browser records retained an empty leaked-target set. The failed parent remains failed and is
+not presented as a successful aggregate; the focused artifacts are the authoritative continuation
+evidence.
+
+`022` proved the real image path rather than only multipart admission: one uploaded screenshot was
+adopted into Goal assets, cited by durable design and Work documents, exposed to every relevant
+responsibility, implemented by Generator, independently checked by Reviewer, and verified again in
+a Browser presentation phase. `026` rebuilt a deleted vendor session from bounded public history.
+`028` used a real Reflection and speaking Assistant to resolve repaired Project Attention and wake
+Planner. OpenCode remains intentionally excluded by operator decision; prior Codex and Claude
+session canaries plus deterministic adapter tests retain the supported evidence.
+
+The final repository gate passed with `bun run check`: 322 Backend tests with 1,271 assertions and
+50 Frontend tests with 166 assertions, together with runtime verification, typechecks, Biome, and the
+Frontend build.
+
+## 2026-07-16: Derived Artifact Summary And Live Runaway Guard
+
+The Harness now derives one concise diagnostic view from terminal Test Run evidence without writing
+another artifact or fact model. It reports the execution boundary, cleanup, invariants, evidence,
+model usage, and, when HOPI evidence exists, public state plus pending Inbox counts. The source Run
+remains immutable and the full logs remain the drill-down authority.
+
+The summary was exercised against both sides of a real failure boundary. The passed `022` artifact
+reported eight logical model Runs, zero Active Runs, zero unresolved Attention, zero pending Inbox,
+and one done Goal. The earlier failed `016` artifact exposed 339 logical Runs and 183 pending Inbox
+events while reducing its timeout message to one line and preserving the full last value in
+`run.json`. These reads used no provider calls and did not change either source artifact.
+
+Live execution also has one default ceiling of 50 durable logical Runs. The guard checks at existing
+semantic wait boundaries, emits one action when exceeded, and fails through the ordinary Test Run
+cleanup path. It adds no watchdog process, heartbeat, product state, exact role-count assertion, or
+scenario retry. A deterministic regression proved that it tolerates an in-progress partial manifest,
+stops before another semantic read, records the violation once, and seals successful cleanup.
+
+The focused Harness tests passed 15 tests with 59 assertions. The final `bun run check` passed 325
+Backend tests with 1,298 assertions and 50 Frontend tests with 166 assertions, together with runtime
+verification, typechecks, Biome, and the Frontend build. A Live rerun was not performed because the
+changed boundary is test observation and runaway termination; retained real Live artifacts plus the
+deterministic lifecycle tests exercise it without spending another model turn.

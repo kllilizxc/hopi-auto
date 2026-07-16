@@ -8,6 +8,7 @@ import {
   errorMessage,
   finishTestRun,
   gitOutput,
+  ownTestRunServer,
   requestJson,
   startTestRun,
 } from '../live/liveHarness'
@@ -23,6 +24,8 @@ const secondaryRoot = join(artifactRoot, 'api')
 const movedSecondaryRoot = join(artifactRoot, 'api-moved')
 let server: MvpServer | null = null
 let restarted: MvpServer | null = null
+let serverCleanup: ReturnType<typeof ownTestRunServer> | null = null
+let restartedCleanup: ReturnType<typeof ownTestRunServer> | null = null
 
 try {
   await initializeRepo(primaryRoot)
@@ -43,6 +46,7 @@ try {
     port: 0,
     directoryPicker: async () => selections.shift() ?? null,
   })
+  serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   await gitOutput(secondaryRoot, [
     'worktree',
@@ -70,9 +74,10 @@ try {
   assertState(rebound)
   assert.deepEqual(await checkoutSnapshot(primaryRoot), primaryBefore)
   assert.deepEqual(await checkoutSnapshot(secondaryRoot), secondaryBefore)
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
   restarted = createServer({ rootDir: homeRoot, port: 0 })
+  restartedCleanup = ownTestRunServer(testRun, restarted)
   const durable = await requestJson<StateView>(`http://127.0.0.1:${restarted.port}`, '/api/state')
   assertState(durable)
   await Bun.write(
@@ -100,8 +105,8 @@ try {
   console.error(`Retained evidence: ${artifactRoot}`)
   process.exitCode = 1
 } finally {
-  await restarted?.shutdown()
-  await server?.shutdown()
+  await restartedCleanup?.run()
+  await serverCleanup?.run()
 }
 
 function assertState(state: StateView) {

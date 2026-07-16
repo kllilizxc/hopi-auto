@@ -28,7 +28,7 @@ if (mode !== 'reflection') {
     'hopi_create_goal',
     {
       description:
-        'Create a new HOPI Goal, record the current user turn, and start its initial Planning when the user actually requests a new autonomous outcome. When a durable public Inbox image is relevant, include its exact attachmentRef and a free-form purpose in references so it is atomically adopted before Planning. A same-turn hopi_request_planning call is unnecessary. After success, reply immediately without sleeping or polling for workflow progress. Do not call this tool for questions or casual conversation.',
+        'Create a new HOPI Goal, record the current user turn, and start its initial Planning when the user actually requests a new autonomous outcome. When a durable public Inbox image is relevant, include its exact attachmentRef and a free-form purpose in references so it is atomically adopted before Planning. A same-turn hopi_request_planning call is unnecessary. After success, reply immediately without sleeping or polling for workflow progress, and include the exact returned goalId so the operator can find the new Goal. Do not call this tool for questions or casual conversation.',
       inputSchema: assistantToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
@@ -48,7 +48,7 @@ if (mode !== 'reflection') {
     'hopi_request_planning',
     {
       description:
-        'Record a later user instruction against an existing Goal and ensure Planning. When durable public Inbox images matter to the requested work, select them by exact attachmentRef and state their purpose in references; unrelated images must be omitted. A same-instruction call after hopi_create_goal is unnecessary and idempotent. After success, reply immediately without sleeping or polling for workflow progress. Set materialContractChange only when objective, scope, constraints, non-goals, success criteria, or expected behavior changes.',
+        'Adopt the current durable Inbox turn as Goal Input for an existing Goal and ensure Planning. This may invalidate an active Planner, so do not call it for an optional suggestion, future idea, or reference-only comment that should not change current delivery; those turns are already retained in conversation. When durable public Inbox images matter to the requested work, select them by exact attachmentRef and state their purpose in references; unrelated images must be omitted. A same-instruction call after hopi_create_goal is unnecessary and idempotent. After success, reply immediately without sleeping or polling for workflow progress. Set materialContractChange only when objective, scope, constraints, non-goals, success criteria, or expected behavior changes.',
       inputSchema: assistantToolSchemas.hopi_request_planning,
     },
     (args) => callTool('hopi_request_planning', args),

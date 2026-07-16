@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  AlertTriangle,
   ArrowRight,
   Cpu,
   FolderGit2,
   FolderPlus,
+  GitBranch,
   Link2,
   Plus,
   Radio,
@@ -12,13 +14,14 @@ import {
   Star,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   AppAlert,
   AppButton,
   AppCard,
   AppForm,
   AppInput,
+  AppModal,
   AppRouterLink,
   AppScrollShadow,
   AppSpinner,
@@ -32,8 +35,10 @@ import {
   type CodingAgentTransport,
   type CodingReasoningEffort,
   type ProjectCodingDefaults,
+  type ProjectDirectorySelection,
   type ProjectSummary,
   createProject,
+  initializeProjectDirectory,
   linkProjectRepo,
   readState,
   rebindProjectRepo,
@@ -48,6 +53,10 @@ export function ProjectHomePage() {
   const queryClient = useQueryClient()
   const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
   const [projectId, setProjectId] = useState('')
+  const [pendingInitialization, setPendingInitialization] =
+    useState<EmptyProjectDirectorySelection | null>(null)
+  const [directoryNotice, setDirectoryNotice] = useState<string | null>(null)
+  const pickerRequestActive = useRef(false)
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
     queryFn: readState,
@@ -58,25 +67,44 @@ export function ProjectHomePage() {
     onSuccess: async () => {
       setRepoDrafts([])
       setProjectId('')
+      setDirectoryNotice(null)
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
   const pickerMutation = useMutation({
     mutationFn: selectProjectDirectory,
-    onSuccess: ({ path }) => {
-      if (!path) return
-      setRepoDrafts((current) => {
-        if (current.some((repo) => repo.repoPath === path)) return current
-        return [
-          ...current,
-          {
-            key: crypto.randomUUID(),
-            repoId: suggestedRepoId(path, current),
-            repoPath: path,
-            primary: current.length === 0,
-          },
-        ]
-      })
+    onSuccess: ({ selection }) => {
+      if (!selection) return
+      if (selection.kind === 'git_repository') {
+        if (repoDrafts.some((repo) => repo.repoPath === selection.repoPath)) {
+          setDirectoryNotice(
+            `That Git repository is already selected. Remove it first if you want to use ${selection.path} as this Project's scope.`,
+          )
+          return
+        }
+        setDirectoryNotice(null)
+        setRepoDrafts((current) => addRepoDraft(current, selection))
+        return
+      }
+      if (selection.kind === 'empty_directory') {
+        setDirectoryNotice(null)
+        setPendingInitialization(selection)
+        return
+      }
+      setDirectoryNotice(
+        `${selection.path} is not a Git repository and contains ${selection.entryCount} ${selection.entryCount === 1 ? 'item' : 'items'}. HOPI left it unchanged. Choose an empty folder or a folder inside an existing Git repository.`,
+      )
+    },
+    onSettled: () => {
+      pickerRequestActive.current = false
+    },
+  })
+  const initializeMutation = useMutation({
+    mutationFn: initializeProjectDirectory,
+    onSuccess: ({ selection }) => {
+      setRepoDrafts((current) => addRepoDraft(current, selection))
+      setPendingInitialization(null)
+      setDirectoryNotice(null)
     },
   })
   const primaryRepo = repoDrafts.find((repo) => repo.primary)
@@ -86,180 +114,271 @@ export function ProjectHomePage() {
     repoDrafts.every((repo) => Boolean(repo.repoId.trim()))
 
   return (
-    <AppScrollShadow className="page-scroll">
-      <div className="projects-page page-content">
-        <header className="page-heading">
-          <div>
-            <span className="eyebrow">Workspace</span>
-            <h1>Projects</h1>
-            <p>Stable product context, managed release roots, and the Goals HOPI keeps moving.</p>
-          </div>
-          <StatusChip className="home-chip" size="sm">
-            <Radio /> {snapshotQuery.data?.home.homeId ?? 'Loading home'}
-          </StatusChip>
-        </header>
-
-        {(snapshotQuery.error || createMutation.error || pickerMutation.error) && (
-          <AppAlert className="error-banner">
-            {(snapshotQuery.error as Error | null)?.message ??
-              createMutation.error?.message ??
-              pickerMutation.error?.message}
-          </AppAlert>
-        )}
-
-        <section className="projects-grid">
-          <AppSurface className="project-list-panel panel-card">
-            <div className="panel-title">
-              <span>
-                <FolderGit2 /> Linked projects
-              </span>
-              <CountBadge>{snapshotQuery.data?.projects.length ?? 0}</CountBadge>
+    <>
+      <AppScrollShadow className="page-scroll">
+        <div className="projects-page page-content">
+          <header className="page-heading">
+            <div>
+              <span className="eyebrow">Workspace</span>
+              <h1>Projects</h1>
+              <p>Stable product context, managed release roots, and the Goals HOPI keeps moving.</p>
             </div>
-            <div className="project-cards">
-              {snapshotQuery.isLoading ? (
-                <div className="loading-state">
-                  <AppSpinner size="sm" /> Reading project documents
-                </div>
-              ) : snapshotQuery.data?.projects.length ? (
-                snapshotQuery.data.projects.map((project) => (
-                  <ProjectCard key={project.projectId} project={project} />
-                ))
-              ) : (
-                <div className="empty-state">
-                  <FolderGit2 />
-                  <strong>No Project bound</strong>
-                  <p>
-                    Link a Git repository. HOPI creates a managed release worktree without touching
-                    your checkout.
-                  </p>
-                </div>
-              )}
-            </div>
-          </AppSurface>
+            <StatusChip className="home-chip" size="sm">
+              <Radio /> {snapshotQuery.data?.home.homeId ?? 'Loading home'}
+            </StatusChip>
+          </header>
 
-          <div className="projects-side-column">
-            {snapshotQuery.data && (
-              <AssistantSettingsPanel
-                defaults={snapshotQuery.data.home.assistantCodingDefaults}
-                inherited={snapshotQuery.data.home.assistantCodingDefaultsInherited}
-              />
-            )}
+          {(snapshotQuery.error || createMutation.error || pickerMutation.error) && (
+            <AppAlert className="error-banner">
+              {(snapshotQuery.error as Error | null)?.message ??
+                createMutation.error?.message ??
+                pickerMutation.error?.message}
+            </AppAlert>
+          )}
 
-            <AppForm
-              className="link-project-panel panel-card"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (!primaryRepo || !canCreate) return
-                createMutation.mutate({
-                  primaryRepoId: primaryRepo.repoId.trim(),
-                  repos: repoDrafts.map((repo) => ({
-                    repoId: repo.repoId.trim(),
-                    repoPath: repo.repoPath,
-                  })),
-                  ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
-                })
-              }}
-            >
+          {directoryNotice && (
+            <AppAlert className="directory-notice" status="warning">
+              <AlertTriangle />
+              <span>{directoryNotice}</span>
+            </AppAlert>
+          )}
+
+          <section className="projects-grid">
+            <AppSurface className="project-list-panel panel-card">
               <div className="panel-title">
                 <span>
-                  <Link2 /> Link project
+                  <FolderGit2 /> Linked projects
                 </span>
+                <CountBadge>{snapshotQuery.data?.projects.length ?? 0}</CountBadge>
               </div>
-              <p className="panel-intro">
-                Select every Git repository in this Project, then choose the primary control Repo.
-                HOPI keeps your checkouts untouched.
-              </p>
-              <div className="project-create-repos">
-                {repoDrafts.length === 0 ? (
-                  <div className="project-create-repos-empty">
-                    <FolderGit2 />
-                    <span>No repositories selected</span>
+              <div className="project-cards">
+                {snapshotQuery.isLoading ? (
+                  <div className="loading-state">
+                    <AppSpinner size="sm" /> Reading project documents
                   </div>
+                ) : snapshotQuery.data?.projects.length ? (
+                  snapshotQuery.data.projects.map((project) => (
+                    <ProjectCard key={project.projectId} project={project} />
+                  ))
                 ) : (
-                  repoDrafts.map((repo) => (
-                    <div className="project-create-repo" key={repo.key}>
-                      <AppButton
-                        aria-label={`Use ${repo.repoId || 'repository'} as primary`}
-                        aria-pressed={repo.primary}
-                        className={repo.primary ? 'project-primary active' : 'project-primary'}
-                        type="button"
-                        variant="ghost"
-                        onClick={() =>
-                          setRepoDrafts((current) =>
-                            current.map((candidate) => ({
-                              ...candidate,
-                              primary: candidate.key === repo.key,
-                            })),
-                          )
-                        }
-                      >
-                        <Star />
-                      </AppButton>
-                      <span className="project-create-repo-copy">
-                        <AppInput
-                          aria-label={`Repository ID for ${repo.repoPath}`}
-                          value={repo.repoId}
-                          onChange={(event) =>
+                  <div className="empty-state">
+                    <FolderGit2 />
+                    <strong>No Project bound</strong>
+                    <p>
+                      Choose a Git repository, one of its subfolders, or an empty folder for a new
+                      project. HOPI keeps your checkout untouched.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </AppSurface>
+
+            <div className="projects-side-column">
+              {snapshotQuery.data && (
+                <AssistantSettingsPanel
+                  defaults={snapshotQuery.data.home.assistantCodingDefaults}
+                  inherited={snapshotQuery.data.home.assistantCodingDefaultsInherited}
+                />
+              )}
+
+              <AppForm
+                className="link-project-panel panel-card"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (!primaryRepo || !canCreate) return
+                  createMutation.mutate({
+                    primaryRepoId: primaryRepo.repoId.trim(),
+                    repos: repoDrafts.map((repo) => ({
+                      repoId: repo.repoId.trim(),
+                      repoPath: repo.repoPath,
+                      projectPath: repo.projectPath,
+                    })),
+                    ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
+                  })
+                }}
+              >
+                <div className="panel-title">
+                  <span>
+                    <Link2 /> Link project
+                  </span>
+                </div>
+                <p className="panel-intro">
+                  Select each project folder, then choose its primary repository. A folder inside an
+                  existing repository stays scoped to that subfolder.
+                </p>
+                <div className="project-create-repos">
+                  {repoDrafts.length === 0 ? (
+                    <div className="project-create-repos-empty">
+                      <FolderGit2 />
+                      <span>No repositories selected</span>
+                    </div>
+                  ) : (
+                    repoDrafts.map((repo) => (
+                      <div className="project-create-repo" key={repo.key}>
+                        <AppButton
+                          aria-label={`Use ${repo.repoId || 'repository'} as primary`}
+                          aria-pressed={repo.primary}
+                          className={repo.primary ? 'project-primary active' : 'project-primary'}
+                          type="button"
+                          variant="ghost"
+                          onClick={() =>
                             setRepoDrafts((current) =>
-                              current.map((candidate) =>
-                                candidate.key === repo.key
-                                  ? { ...candidate, repoId: event.target.value }
-                                  : candidate,
-                              ),
+                              current.map((candidate) => ({
+                                ...candidate,
+                                primary: candidate.key === repo.key,
+                              })),
                             )
                           }
-                        />
-                        <small title={repo.repoPath}>{repo.repoPath}</small>
-                      </span>
-                      {repo.primary && <small className="project-primary-label">Primary</small>}
-                      <AppButton
-                        aria-label={`Remove ${repo.repoId || 'repository'}`}
-                        type="button"
-                        variant="ghost"
-                        onClick={() =>
-                          setRepoDrafts((current) => removeRepoDraft(current, repo.key))
-                        }
-                      >
-                        <X />
-                      </AppButton>
-                    </div>
-                  ))
-                )}
+                        >
+                          <Star />
+                        </AppButton>
+                        <span className="project-create-repo-copy">
+                          <AppInput
+                            aria-label={`Repository ID for ${repo.displayPath}`}
+                            value={repo.repoId}
+                            onChange={(event) =>
+                              setRepoDrafts((current) =>
+                                current.map((candidate) =>
+                                  candidate.key === repo.key
+                                    ? { ...candidate, repoId: event.target.value }
+                                    : candidate,
+                                ),
+                              )
+                            }
+                          />
+                          <small title={repo.displayPath}>{repo.displayPath}</small>
+                        </span>
+                        <span className="project-create-repo-badges">
+                          {repo.projectPath !== '.' && (
+                            <small className="project-scope-label">Subfolder</small>
+                          )}
+                          {repo.primary && <small className="project-primary-label">Primary</small>}
+                        </span>
+                        <AppButton
+                          aria-label={`Remove ${repo.repoId || 'repository'}`}
+                          type="button"
+                          variant="ghost"
+                          onClick={() =>
+                            setRepoDrafts((current) => removeRepoDraft(current, repo.key))
+                          }
+                        >
+                          <X />
+                        </AppButton>
+                      </div>
+                    ))
+                  )}
+                  <AppButton
+                    className="project-directory-picker"
+                    type="button"
+                    variant="ghost"
+                    disabled={pickerMutation.isPending || initializeMutation.isPending}
+                    onClick={() => {
+                      if (pickerRequestActive.current) return
+                      pickerRequestActive.current = true
+                      pickerMutation.reset()
+                      initializeMutation.reset()
+                      setDirectoryNotice(null)
+                      pickerMutation.mutate()
+                    }}
+                  >
+                    {pickerMutation.isPending ? <AppSpinner size="sm" /> : <FolderPlus />}
+                    {pickerMutation.isPending
+                      ? 'Waiting for folder selection'
+                      : 'Choose project folder'}
+                  </AppButton>
+                  <small className="project-path-help">
+                    Choose a Git subfolder, or select an empty folder to initialize a new project.
+                  </small>
+                </div>
+                <AppTextField
+                  className="field"
+                  label={
+                    <>
+                      Project ID <small>optional</small>
+                    </>
+                  }
+                  onValueChange={setProjectId}
+                  placeholder="Derived when omitted"
+                  value={projectId}
+                />
                 <AppButton
-                  className="project-directory-picker"
-                  type="button"
-                  variant="ghost"
-                  disabled={pickerMutation.isPending}
-                  onClick={() => pickerMutation.mutate()}
+                  className="primary-button"
+                  type="submit"
+                  disabled={
+                    !canCreate ||
+                    createMutation.isPending ||
+                    pickerMutation.isPending ||
+                    initializeMutation.isPending
+                  }
                 >
-                  {pickerMutation.isPending ? <AppSpinner size="sm" /> : <FolderPlus />}
-                  Select repository
+                  {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
+                  Link Project
                 </AppButton>
-              </div>
-              <AppTextField
-                className="field"
-                label={
-                  <>
-                    Project ID <small>optional</small>
-                  </>
-                }
-                onValueChange={setProjectId}
-                placeholder="Derived when omitted"
-                value={projectId}
-              />
-              <AppButton
-                className="primary-button"
-                type="submit"
-                disabled={!canCreate || createMutation.isPending || pickerMutation.isPending}
-              >
-                {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
-                Link Project
-              </AppButton>
-            </AppForm>
-          </div>
-        </section>
-      </div>
-    </AppScrollShadow>
+              </AppForm>
+            </div>
+          </section>
+        </div>
+      </AppScrollShadow>
+
+      {pendingInitialization && (
+        <AppModal
+          isOpen
+          onOpenChange={(open) => {
+            if (!open && !initializeMutation.isPending) setPendingInitialization(null)
+          }}
+        >
+          <AppModal.Backdrop
+            className="modal-backdrop"
+            isDismissable={!initializeMutation.isPending}
+            variant="blur"
+          >
+            <AppModal.Container className="repo-init-modal-container" placement="center">
+              <AppModal.Dialog className="repo-init-modal" aria-label="Initialize a Git repository">
+                <div className="repo-init-modal-icon">
+                  <GitBranch />
+                </div>
+                <div className="repo-init-modal-copy">
+                  <span className="eyebrow">Empty folder</span>
+                  <AppModal.Heading>Initialize Git here?</AppModal.Heading>
+                  <p>
+                    HOPI will initialize this folder on <strong>main</strong> and create one empty
+                    bootstrap commit. It will not add project files.
+                  </p>
+                  <code title={pendingInitialization.path}>{pendingInitialization.path}</code>
+                </div>
+                {initializeMutation.error && (
+                  <AppAlert className="inline-error repo-init-error">
+                    {initializeMutation.error.message}
+                  </AppAlert>
+                )}
+                <div className="repo-init-modal-actions">
+                  <AppButton
+                    type="button"
+                    variant="ghost"
+                    disabled={initializeMutation.isPending}
+                    onClick={() => {
+                      initializeMutation.reset()
+                      setPendingInitialization(null)
+                    }}
+                  >
+                    Cancel
+                  </AppButton>
+                  <AppButton
+                    className="primary-button"
+                    type="button"
+                    disabled={initializeMutation.isPending}
+                    onClick={() => initializeMutation.mutate(pendingInitialization.path)}
+                  >
+                    {initializeMutation.isPending ? <AppSpinner size="sm" /> : <GitBranch />}
+                    Initialize and use folder
+                  </AppButton>
+                </div>
+              </AppModal.Dialog>
+            </AppModal.Container>
+          </AppModal.Backdrop>
+        </AppModal>
+      )}
+    </>
   )
 }
 
@@ -267,7 +386,34 @@ interface ProjectRepoDraft {
   key: string
   repoId: string
   repoPath: string
+  projectPath: string
+  displayPath: string
   primary: boolean
+}
+
+type GitProjectDirectorySelection = Extract<ProjectDirectorySelection, { kind: 'git_repository' }>
+
+type EmptyProjectDirectorySelection = Extract<
+  ProjectDirectorySelection,
+  { kind: 'empty_directory' }
+>
+
+function addRepoDraft(
+  current: ProjectRepoDraft[],
+  selection: GitProjectDirectorySelection,
+): ProjectRepoDraft[] {
+  if (current.some((repo) => repo.repoPath === selection.repoPath)) return current
+  return [
+    ...current,
+    {
+      key: crypto.randomUUID(),
+      repoId: suggestedRepoId(selection.path, current),
+      repoPath: selection.repoPath,
+      projectPath: selection.projectPath,
+      displayPath: selection.path,
+      primary: current.length === 0,
+    },
+  ]
 }
 
 function suggestedRepoId(path: string, current: ProjectRepoDraft[]) {
@@ -329,9 +475,7 @@ function AssistantSettingsPanel({
         <SelectField
           label="Agent"
           onValueChange={(transport) =>
-            setDraft((current) =>
-              changeDraftTransport(current, transport as CodingAgentTransport),
-            )
+            setDraft((current) => changeDraftTransport(current, transport as CodingAgentTransport))
           }
           options={[
             { label: 'Codex', value: 'codex' },
@@ -439,7 +583,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <div>
           <h2>{project.projectId}</h2>
           <p>
-            {project.primaryRepoId} · {project.repoPath}
+            {project.primaryRepoId} · {scopedRepoPath(project.repoPath, project.projectPath)}
           </p>
         </div>
         <StatusChip className={`preview-status ${project.preview?.status ?? 'stopped'}`} size="sm">
@@ -478,9 +622,13 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           <div key={repo.repoId} className="project-repo-entry">
             <div className="project-repo-row">
               <span className="project-repo-id">{repo.repoId}</span>
-              <span className="project-repo-path" title={repo.repoPath}>
-                {repo.repoPath}
+              <span
+                className="project-repo-path"
+                title={scopedRepoPath(repo.repoPath, repo.projectPath)}
+              >
+                {scopedRepoPath(repo.repoPath, repo.projectPath)}
               </span>
+              {repo.projectPath !== '.' && <small className="project-scope-label">subfolder</small>}
               {repo.primary && <small>primary</small>}
               {showRepoManager && (
                 <AppButton
@@ -708,11 +856,24 @@ interface CodingDefaultsDraft {
   reasoningEffort: CodingReasoningEffort
 }
 
-function codingDefaultsToDraft(defaults: ProjectCodingDefaults): CodingDefaultsDraft {
+const FALLBACK_CODING_DEFAULTS: ProjectCodingDefaults = {
+  transport: 'codex',
+  model: 'gpt-5.4',
+  reasoningEffort: 'xhigh',
+}
+
+export function resolveCodingDefaults(defaults: ProjectCodingDefaults | undefined) {
+  return defaults ?? FALLBACK_CODING_DEFAULTS
+}
+
+export function codingDefaultsToDraft(
+  defaults: ProjectCodingDefaults | undefined,
+): CodingDefaultsDraft {
+  const resolved = resolveCodingDefaults(defaults)
   return {
-    transport: defaults.transport,
-    model: defaults.model ?? '',
-    reasoningEffort: defaults.transport === 'codex' ? defaults.reasoningEffort : 'xhigh',
+    transport: resolved.transport,
+    model: resolved.model ?? '',
+    reasoningEffort: resolved.transport === 'codex' ? resolved.reasoningEffort : 'xhigh',
   }
 }
 
@@ -738,15 +899,21 @@ function changeDraftTransport(
   return draft.transport === transport ? draft : { ...draft, transport, model: '' }
 }
 
-function formatCodingDefaults(defaults: ProjectCodingDefaults) {
-  const model = defaults.model ?? 'provider default'
-  return defaults.transport === 'codex'
-    ? `${model} · ${defaults.reasoningEffort}`
-    : `${defaults.transport} · ${model}`
+export function formatCodingDefaults(defaults: ProjectCodingDefaults | undefined) {
+  const resolved = resolveCodingDefaults(defaults)
+  const model = resolved.model ?? 'provider default'
+  return resolved.transport === 'codex'
+    ? `${model} · ${resolved.reasoningEffort}`
+    : `${resolved.transport} · ${model}`
 }
 
 function assistantModelPlaceholder(transport: CodingAgentTransport) {
   if (transport === 'codex') return 'gpt-5.4'
   if (transport === 'opencode') return 'provider/model'
   return 'Provider default'
+}
+
+export function scopedRepoPath(repoPath: string, projectPath?: string) {
+  if (!projectPath || projectPath === '.') return repoPath
+  return `${repoPath.replace(/[\\/]+$/, '')}/${projectPath}`
 }

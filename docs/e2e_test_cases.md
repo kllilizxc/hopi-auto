@@ -1,7 +1,7 @@
 # HOPI E2E Test Cases
 
 Status: executable runbook and coverage catalog
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 This document is the operating entry point for running, diagnosing, and extending HOPI E2E tests.
 It assumes the reader has no prior conversation context. The Harness design and evidence boundary
@@ -24,7 +24,7 @@ git status --short --branch
 ```
 
 Do not reset, clean, stash, or overwrite existing work. HOPI tests create ignored, isolated roots
-under `test-artifacts/`; they must not require a clean user checkout. Never edit a terminal artifact
+under `test-artifacts/`; they must not require a clean HOPI development checkout. Never edit a terminal artifact
 to make a failed run pass.
 
 Read these files before changing a scenario:
@@ -87,6 +87,7 @@ HOPI_E2E_TRANSPORT=codex|claude|opencode
 HOPI_E2E_MODEL=<optional vendor model>
 HOPI_E2E_REASONING_EFFORT=low|medium|high
 HOPI_E2E_ARTIFACT_ROOT=<optional absolute artifact directory>
+HOPI_E2E_MAX_LOGICAL_RUNS=<optional positive integer; default 50>
 ```
 
 `HOPI_E2E_REASONING_EFFORT` applies only to Codex. Transport and model names are expected provenance;
@@ -105,6 +106,7 @@ non-interactively, report the environment blocker before starting an expensive r
 | `bun run e2e:live`                   | Yes          | Yes        | The configured production Agents completed the current live scenario                        |
 | `bun run e2e`                        | Yes          | Yes        | Preflight passed, then the live scenario passed                                             |
 | `bun run artifact:inspect -- <root>` | Yes          | No         | Retained live truth is still readable, valid, immutable, and presentable                    |
+| `bun run artifact:summary -- <root>` | No           | No         | Existing Test Run facts are projected into one concise diagnostic view                      |
 
 `bun run artifact:review -- <root> --result=passed --note=<summary>` uses no new Browser interaction
 or model call. It records a testing Agent's visual conclusion as a separate Inspection Test Run.
@@ -186,24 +188,25 @@ Assign the exact printed directory before using the diagnostic commands below:
 ```sh
 RUN=/absolute/path/printed/by/the/test
 test -d "$RUN"
+bun run artifact:summary -- "$RUN"
 ```
 
 The important files are:
 
-| Path                            | Meaning                                                                    |
-| ------------------------------- | -------------------------------------------------------------------------- |
+| Path                            | Meaning                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------- |
 | `run.json`                      | Universal Test Run claim, status, provenance, usage, evidence, and children |
 | `evidence.html`                 | Regenerable visual gallery; never authority or an automatic visual pass     |
 | `browser-contract.json`         | Scenario-specific Browser detail referenced by `run.json`                   |
 | `inspection.json`               | Scenario-specific inspection detail referenced by `run.json`                |
-| `actions.jsonl`                 | External actions and semantic checkpoints in time order                    |
-| `states.jsonl`                  | Changed public state observations, not timer samples                       |
-| `invariants.jsonl`              | First observation of each invariant violation; absent or empty is expected |
-| `screenshots/`                  | Required UI evidence captured at semantic checkpoints                      |
-| `home/.hopi/runtime/assistant/` | Speaking and Reflection prompts, raw streams, and normalized events        |
-| `home/.hopi/runtime/runs/`      | Planner, Generator, and Reviewer Attempt evidence                          |
-| `home/.hopi/projects/`          | Managed integration roots and release truth                                |
-| `repo/`                         | Original fixture checkout that must remain unchanged                       |
+| `actions.jsonl`                 | External actions and semantic checkpoints in time order                     |
+| `states.jsonl`                  | Changed public state observations, not timer samples                        |
+| `invariants.jsonl`              | First observation of each invariant violation; absent or empty is expected  |
+| `screenshots/`                  | Required UI evidence captured at semantic checkpoints                       |
+| `home/.hopi/runtime/assistant/` | Speaking and Reflection prompts, raw streams, and normalized events         |
+| `home/.hopi/runtime/runs/`      | Planner, Generator, and Reviewer Attempt evidence                           |
+| `home/.hopi/projects/`          | Managed integration roots and release truth                                 |
+| `repo/`                         | Original fixture checkout that must remain unchanged                        |
 
 Read the report and action order before opening raw logs:
 
@@ -225,7 +228,12 @@ another workflow state.
 
 ### 6. Diagnose A Failure Without Rerunning
 
-Use `failedAt` and `lastCheckpoint` in `run.json` first:
+Start with the read-only summary, then use `failedAt` and `lastCheckpoint` in `run.json` for exact
+source detail:
+
+```sh
+bun run artifact:summary -- "$RUN"
+```
 
 | Failure phase                | First evidence to inspect                                | Likely boundary                           |
 | ---------------------------- | -------------------------------------------------------- | ----------------------------------------- |
@@ -320,7 +328,7 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-02` | No object has duplicate active Runs, and active Work never precedes an incomplete dependency.                                 |
 | `INV-03` | A `done` Goal has no nonterminal Work, active Goal Run, unresolved targeted Attention, or inconsistent completion gate.       |
 | `INV-04` | Targeted Attention is the only durable unattended-progress blocker; a silent spinner is never a blocker state.                |
-| `INV-05` | User checkouts retain their original branch, HEAD, source, and clean status.                                                  |
+| `INV-05` | Delivery checkouts stay on their recorded branch and change only by a clean, exact accepted-release fast-forward.             |
 | `INV-06` | Generator changes remain isolated until successful Reviewer evidence and C1 publication.                                      |
 | `INV-07` | Reviewer is read-only across every Repo in its assigned workspace.                                                            |
 | `INV-08` | Public Assistant turns remain FIFO; internal Reflection never speaks or mutates directly.                                     |
@@ -348,24 +356,26 @@ other retained Runs jointly prove the exact risk; the catalog may close it by ci
 OpenCode execution is excluded by operator decision. The remaining gaps are reduced by independent
 risk rather than mechanically adding one Live runner per row:
 
-| ID | Decision | Required new execution |
-| --- | -------- | ---------------------- |
-| `011` | Keep | Real Assistant plus responsibilities must accept FIFO cross-Project instructions while one Goal runs. |
-| `012` | Compose | Existing active-revision Run proves stale-result safety; existing Live delivery proves model design and planning. No duplicate canary. |
-| `015` | Compose | Browser lifecycle Run plus real process-group contract proves Pause/Resume; model wording cannot affect the guard. |
-| `016` | Keep | Kill and replace an independently launched Coordinator while a real responsibility process is active. |
-| `017` | Keep | Real Planner must choose a multi-Repo workspace and deliver one compatible cross-Repo release. |
-| `018` | Compose | Real multi-Repo Git contracts prove every C1 boundary; Project Attention Browser Runs already prove unavailable/recovery presentation. |
+| ID    | Decision         | Required new execution                                                                                                                                      |
+| ----- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `011` | Keep             | Real Assistant plus responsibilities must accept FIFO cross-Project instructions while one Goal runs.                                                       |
+| `012` | Compose          | Existing active-revision Run proves stale-result safety; existing Live delivery proves model design and planning. No duplicate canary.                      |
+| `015` | Compose          | Browser lifecycle Run plus real process-group contract proves Pause/Resume; model wording cannot affect the guard.                                          |
+| `016` | Keep             | Kill and replace an independently launched Coordinator while a real responsibility process is active.                                                       |
+| `017` | Keep             | Real Planner must choose a multi-Repo workspace and deliver one compatible cross-Repo release.                                                              |
+| `018` | Compose          | Real multi-Repo Git contracts prove every C1 boundary; Project Attention Browser Runs already prove unavailable/recovery presentation.                      |
 | `019` | Compose + canary | Deterministic reconciliation proves priority, preemption, and stale-handoff rejection; one focused configured-provider turn proves the notification schema. |
-| `020` | Keep Browser | Visible multi-Repo linking, settings, and rebind persistence remain unproved; vendor command construction is already Contract evidence. |
-| `021` | Keep Browser | Preview readiness, stop, invalidation, and repair prompt need visible product proof; ordinary Agent repair needs no duplicate delivery canary. |
-| `022` | Keep | A real multimodal Assistant and responsibility chain must preserve one relevant image through delivery. |
-| `023` | Compose | Browser lifecycle and Assistant-tool contracts prove Cancel/Reopen; a model merely choosing the same validated tool adds no independent safety proof. |
-| `024` | Rotate | Re-run one small Codex and Claude session canary; do not multiply full delivery by vendor. OpenCode remains skipped. |
-| `027` | Fold into `017` | The multi-Repo Live fixture starts without root `AGENTS.md` or `scripts/hopi/prepare`, proving silent bootstrap in the same Run. |
+| `020` | Keep Browser     | Visible multi-Repo linking, settings, and rebind persistence remain unproved; vendor command construction is already Contract evidence.                     |
+| `021` | Keep Browser     | Preview readiness, stop, invalidation, and repair prompt need visible product proof; ordinary Agent repair needs no duplicate delivery canary.              |
+| `022` | Keep             | A real multimodal Assistant and responsibility chain must preserve one relevant image through delivery.                                                     |
+| `023` | Compose          | Browser lifecycle and Assistant-tool contracts prove Cancel/Reopen; a model merely choosing the same validated tool adds no independent safety proof.       |
+| `024` | Rotate           | Re-run one small Codex and Claude session canary; do not multiply full delivery by vendor. OpenCode remains skipped.                                        |
+| `027` | Fold into `017`  | The multi-Repo Live fixture starts without root `AGENTS.md` or `scripts/hopi/prepare`, proving silent bootstrap in the same Run.                            |
 
-The selected runners now cover every previously unproved execution boundary. `024` reuses the
-existing session-recovery runner; OpenCode remains the only operator-approved exclusion.
+The selected runners cover every execution boundary accepted in the 2026-07-15 audit. `024` reuses
+the existing session-recovery runner; OpenCode remains the only operator-approved exclusion. The
+2026-07-16 next-risk audit below adds one newly designed Project-source scenario and reopens only the
+unproved conversation-only judgment variant of `022`; earlier terminal evidence remains valid.
 
 | ID             | Scenario                                                  | Priority | Layer                      | Status                                                           |
 | -------------- | --------------------------------------------------------- | -------- | -------------------------- | ---------------------------------------------------------------- |
@@ -384,7 +394,7 @@ existing session-recovery runner; OpenCode remains the only operator-approved ex
 | `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered by deterministic races plus a real notification canary   |
 | `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered; native-picker boundary and nine UI checkpoints passed   |
 | `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
-| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Covered; real chain completed and terminal artifact inspected    |
+| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Relevant delivery covered; conversation-only variant planned     |
 | `HOPI-E2E-023` | Cancel, archive, and Reopen                               | P1       | Browser and Contract       | Covered; model choice adds no boundary beyond the validated tool |
 | `HOPI-E2E-024` | Vendor, model, and session compatibility matrix           | P1       | Contract and rotating Live | Covered for Codex and Claude; OpenCode intentionally skipped     |
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Covered                                                          |
@@ -392,39 +402,41 @@ existing session-recovery runner; OpenCode remains the only operator-approved ex
 | `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
 | `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
-| `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                      |
+| `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
+| `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Planned                                                          |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
 support the scenario designs but are not themselves implementations of the catalogued Browser or Live
 scenarios. Dedicated commands exist for the independent Browser and Live boundaries selected by the
 completion audit; composed rows deliberately reuse the listed evidence instead of adding a model
-call whose output cannot affect the asserted boundary. There are no remaining `Planned` or `Partial`
-rows. OpenCode is the only intentional execution exclusion.
+call whose output cannot affect the asserted boundary. The only forward work is the explicitly
+planned `031` and the focused `022` judgment variant. OpenCode is the only intentional execution
+exclusion.
 
-| ID             | Deterministic scenario binding                                             |
-| -------------- | -------------------------------------------------------------------------- |
-| `HOPI-E2E-010` | `tests/workspaceAssistant.test.ts`                                         |
-| `HOPI-E2E-011` | `tests/coordinatorReconciler.test.ts`                                      |
-| `HOPI-E2E-012` | `tests/assistantTools.test.ts`, `tests/passOutcomeCoordinator.test.ts`     |
-| `HOPI-E2E-013` | `tests/workspaceAssistant.test.ts`, `tests/assistantAttentionE2E.test.ts`  |
-| `HOPI-E2E-014` | `tests/projectReconciler.test.ts`                                          |
-| `HOPI-E2E-015` | `tests/e2e/pauseResume.browser.ts`                                         |
-| `HOPI-E2E-016` | `tests/e2e/restartDuringGenerator.e2e.ts`                                  |
-| `HOPI-E2E-017` | `tests/projectReconciler.test.ts`, `tests/multiRepoC1.test.ts`             |
-| `HOPI-E2E-018` | `tests/multiRepoC1.test.ts`, `tests/mvpServer.test.ts`                     |
-| `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts` |
-| `HOPI-E2E-020` | `tests/e2e/configurationRebind.e2e.ts`                                     |
-| `HOPI-E2E-021` | `tests/previewManager.test.ts`, `tests/projectReconciler.test.ts`          |
-| `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`          |
-| `HOPI-E2E-023` | `tests/e2e/cancelReopen.browser.ts`                                        |
-| `HOPI-E2E-024` | `tests/workspaceAssistant.test.ts`, `tests/vendorTransport.test.ts`        |
-| `HOPI-E2E-025` | `tests/attentionDelivery.test.ts`                                          |
-| `HOPI-E2E-026` | `tests/workspaceAssistant.test.ts`                                         |
-| `HOPI-E2E-027` | `tests/roleContextStager.test.ts`, `tests/projectReconciler.test.ts`       |
-| `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts` |
+| ID             | Deterministic scenario binding                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `HOPI-E2E-010` | `tests/workspaceAssistant.test.ts`                                                                                           |
+| `HOPI-E2E-011` | `tests/coordinatorReconciler.test.ts`                                                                                        |
+| `HOPI-E2E-012` | `tests/assistantTools.test.ts`, `tests/passOutcomeCoordinator.test.ts`                                                       |
+| `HOPI-E2E-013` | `tests/workspaceAssistant.test.ts`, `tests/assistantAttentionE2E.test.ts`                                                    |
+| `HOPI-E2E-014` | `tests/projectReconciler.test.ts`                                                                                            |
+| `HOPI-E2E-015` | `tests/e2e/pauseResume.browser.ts`                                                                                           |
+| `HOPI-E2E-016` | `tests/e2e/restartDuringGenerator.e2e.ts`                                                                                    |
+| `HOPI-E2E-017` | `tests/projectReconciler.test.ts`, `tests/multiRepoC1.test.ts`                                                               |
+| `HOPI-E2E-018` | `tests/multiRepoC1.test.ts`, `tests/mvpServer.test.ts`                                                                       |
+| `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts`                                                   |
+| `HOPI-E2E-020` | `tests/e2e/configurationRebind.e2e.ts`                                                                                       |
+| `HOPI-E2E-021` | `tests/previewManager.test.ts`, `tests/projectReconciler.test.ts`                                                            |
+| `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`                                                            |
+| `HOPI-E2E-023` | `tests/e2e/cancelReopen.browser.ts`                                                                                          |
+| `HOPI-E2E-024` | `tests/workspaceAssistant.test.ts`, `tests/vendorTransport.test.ts`                                                          |
+| `HOPI-E2E-025` | `tests/attentionDelivery.test.ts`                                                                                            |
+| `HOPI-E2E-026` | `tests/workspaceAssistant.test.ts`                                                                                           |
+| `HOPI-E2E-027` | `tests/roleContextStager.test.ts`, `tests/projectReconciler.test.ts`                                                         |
+| `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts`                                   |
 | `HOPI-E2E-029` | `tests/browser/assistantProviderError.browser.ts`, `tests/workspaceAssistant.test.ts`, `tests/coordinatorReconciler.test.ts` |
-| `HOPI-E2E-030` | `tests/e2e/projectMigration.e2e.ts`                                      |
+| `HOPI-E2E-030` | `tests/e2e/projectMigration.e2e.ts`                                                                                          |
 
 ## Detailed Cases
 
@@ -517,15 +529,16 @@ Current implementation: `packages/backend/tests/live/inspectGoalDeliveryArtifact
 | Risk    | A greeting or question creates unintended Goal effects, or Goal page context behaves like hidden authority. |
 | Reality | Real speaking Assistant and vendor session; no responsibility Run should be needed.                         |
 | Fixture | One linked Project with one existing Goal and stable canonical documents.                                   |
-| Cost    | Low relative to delivery; two or three Assistant turns only.                                                |
+| Cost    | Low relative to delivery; four Assistant turns only.                                                       |
 
 Actions:
 
 1. Open the Goal board so the UI supplies page context.
 2. Send a greeting.
 3. Ask a factual question about the displayed Goal.
-4. Send a follow-up that relies on the same conversation session but requests no mutation.
-5. Compare Home, Goal package, refs, and Kanban before and after every turn.
+4. Offer an explicitly non-blocking future suggestion that should not change current delivery.
+5. Send a follow-up that relies on the same conversation session but requests no mutation.
+6. Compare Home, Goal package, refs, and Kanban before and after every turn.
 
 Pass conditions:
 
@@ -533,6 +546,8 @@ Pass conditions:
 - Factual replies contain the fixture's actual Goal title, lifecycle, and blocking reason; a
   non-empty error or invented state is not success.
 - Read-only state tools are allowed, but no Goal, Input, Work, design, Attention, or ref changes.
+- The non-blocking suggestion remains durable conversation only; it neither restarts Planner nor
+  creates a separate Note state.
 - Page context scopes the first read without authorizing mutation.
 - A compatible vendor session resumes, and current-turn anchoring prevents an older request from winning.
 - No loading or error activity remains after the durable reply.
@@ -565,15 +580,15 @@ Pass conditions:
 - Each instruction produces effects only in its named Project.
 - Both Goals either complete or expose a precise targeted Attention; neither silently stalls.
 - Global capacity is respected without encoding an exact incidental Run order in the test.
-- Both user checkouts remain unchanged.
+- Both delivery checkouts remain clean on their recorded branches and reach their accepted releases.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-08`.
 
 Current implementation: `packages/backend/tests/e2e/multipleInstructions.e2e.ts`
 (`bun run e2e:instructions:011`). It runs a production Server with two real Git Projects, keeps
 Project A's Generator active while two public Inbox turns arrive, verifies FIFO handling of a status
-turn followed by a Project B Goal creation, then completes both scoped deliveries without modifying
-either user checkout. Assistant tool selection and role output are deterministic; a real-model
+turn followed by a Project B Goal creation, then completes both scoped deliveries and verifies each
+guarded checkout fast-forward. Assistant tool selection and role output are deterministic; a real-model
 concurrent canary remains pending.
 
 ### HOPI-E2E-012: Design Revision During Active Delivery
@@ -718,12 +733,12 @@ and replacement are proven by `016` rather than repeating that boundary here.
 
 ### HOPI-E2E-016: Process Lifecycle, Exclusion, And Restart Recovery
 
-| Field   | Value                                                                                                                 |
-| ------- | --------------------------------------------------------------------------------------------------------------------- |
+| Field   | Value                                                                                                                               |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Risk    | Concurrent Coordinators or a crash around an Assistant/tool or Agent boundary duplicates effects or leaves permanent running state. |
-| Reality | Production Coordinators and real responsibility processes started as replaceable OS processes against one retained Home.          |
-| Fixture | One paused Goal for an idempotent Assistant design effect, then one delivery with a long-running Generator.                       |
-| Cost    | High. Preserve the first failure artifact rather than repeating blindly.                                              |
+| Reality | Production Coordinators and real responsibility processes started as replaceable OS processes against one retained Home.            |
+| Fixture | One paused Goal for an idempotent Assistant design effect, then one delivery with a long-running Generator.                         |
+| Cost    | High. Preserve the first failure artifact rather than repeating blindly.                                                            |
 
 Actions:
 
@@ -783,7 +798,7 @@ Pass conditions:
 - No Repo ref moves before the combined candidate is accepted.
 - One primary C1 records reviewed Repo heads, then every secondary release projects to its recorded head.
 - Cross-Repo native verification and the user-visible feature pass.
-- Neither user checkout changes.
+- Every delivery checkout reaches its Repo release by clean fast-forward.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-07`, `INV-11`, `INV-14`.
 
@@ -836,6 +851,7 @@ Pass conditions:
 
 - Raw log appends and automatic intermediate progress do not create one Reflection per event.
 - Reflection is read-only and either ends silently or creates one internal brief.
+- A pending or event-blocked internal brief suppresses duplicate Reflection handoffs.
 - Public input receives speaking priority without cancelling the read-only Reflection model process.
 - A stale handoff is discarded before publication.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
@@ -872,7 +888,7 @@ Pass conditions:
 - Project and Repo identities remain stable and one Repo is primary.
 - Assistant uses Home settings while Planner, Generator, and Reviewer use Project settings.
 - The actual adapter command, not only the label, contains the selected transport/model.
-- Rebind updates only the selected Repo after validation and preserves both user checkouts.
+- Rebind updates only the selected Repo after validation and preserves both checkout branches and content.
 - Reload presents the same links and settings from durable documents.
 - Invalid or duplicate Repo identity fails closed with actionable UI feedback.
 - Repository paths enter the create form only through the Coordinator-host chooser boundary.
@@ -889,12 +905,12 @@ because repeating the same choice through a model would not add another executio
 
 ### HOPI-E2E-030: Project And Assistant-Home Migration
 
-| Field   | Value                                                                                                            |
-| ------- | ---------------------------------------------------------------------------------------------------------------- |
+| Field   | Value                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------ |
 | Risk    | Moving Home and several Repos loses portable state, resumes against stale paths, or repairs only half the Project. |
-| Reality | Production stores, server bootstrap, real Git worktree administration, and an isolated destination root.         |
-| Fixture | Two-Repo Project with Goal Input/design/image provenance, Inbox history, session, and open Project Attention.     |
-| Cost    | Zero provider calls; real Git and filesystem moves.                                                               |
+| Reality | Production stores, server bootstrap, real Git worktree administration, and an isolated destination root.           |
+| Fixture | Two-Repo Project with Goal Input/design/image provenance, Inbox history, session, and open Project Attention.      |
+| Cost    | Zero provider calls; real Git and filesystem moves.                                                                |
 
 Actions:
 
@@ -910,7 +926,8 @@ Pass conditions:
   session, Attention identity, Project manifest, and release refs survive.
 - A partial or mismatched Repo set is rejected without changing `projects.yml`.
 - Complete rebind repairs every managed worktree and publishes all local paths together.
-- Old paths are absent, no Agent Run begins before valid bindings, and user checkouts stay unchanged.
+- Old managed paths are absent, adjacent managed roots follow the rebound Repos, and no Agent Run
+  begins before valid bindings.
 - Restart after rebind is clean and idempotent; a missing primary managed root still fails closed.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
@@ -919,7 +936,7 @@ Current implementation: `packages/backend/tests/e2e/projectMigration.e2e.ts`
 (`bun run e2e:migration:030`) moves one complete Home plus two Repos, proves stale startup dispatches
 no Agent, rejects partial rebind without changing `projects.yml`, and repairs the exact stable Repo-ID
 set in one operation. It then restarts and byte-checks identity, Goal documents, image provenance,
-Inbox reply, session, Attention, release refs, and unchanged user checkouts.
+Inbox reply, session, Attention, release refs, delivery bindings, and relocated managed roots.
 
 ### HOPI-E2E-021: Preview Creation, Readiness, Invalidation, And Repair
 
@@ -944,7 +961,9 @@ Pass conditions:
 - `starting` becomes `running` only after the ready signal, not merely a live PID.
 - Startup failure preserves logs and leaves no running session.
 - New release stops Preview with `release_updated` and does not auto-restart it.
-- Missing adapter creates one ordinary repair instruction; Assistant reuses an existing repair Goal/Work.
+- Missing adapter creates one ordinary repair instruction carrying the viewed Goal context; Assistant
+  reuses an existing repair Goal/Work when appropriate, otherwise its reply names the new or reopened
+  Goal ID so the operator can find its Kanban.
 - Multi-Repo runtime manifest names every managed Repo root.
 
 Primary invariants: `INV-05`, `INV-10`, `INV-12`, `INV-14`.
@@ -975,6 +994,16 @@ Pass conditions:
 - Final UI passes semantic checks and retains before/reference/after screenshots for human inspection.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-13`, `INV-14`.
+
+Current implementation: `packages/backend/tests/live/multimodalDelivery.live.ts`
+(`bun run e2e:live:022`) proves variant 1 through real Assistant, Planner, Generator, Reviewer, C1,
+and Browser presentation. Deterministic Assistant-tool coverage proves byte safety, explicit
+adoption, design-only reuse, and portable paths. It does not prove that the configured Assistant
+leaves an unrelated image conversation-only. The next `022` runner is therefore a focused
+Assistant-only Live canary: upload one unrelated image with an explicit read-only request, keep
+Reflection deterministic, and require a handled reply with byte-identical receipt but no Goal,
+Input, design, Work, Attention, responsibility Run, or Git effect. It must not repeat the expensive
+delivery chain already proven by variant 1.
 
 ### HOPI-E2E-023: Cancel, Archive, And Reopen
 
@@ -1109,12 +1138,12 @@ Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-11`, `INV-14`.
 
 ### HOPI-E2E-028: Agent-Led Project Attention Recovery And Reblocking
 
-| Field   | Value                                                                                                      |
-| ------- | ---------------------------------------------------------------------------------------------------------- |
-| Risk    | Assistant claims recovery but Project remains ineligible, or a wrong judgment leaves Kanban silently stuck. |
+| Field   | Value                                                                                                             |
+| ------- | ----------------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant claims recovery but Project remains ineligible, or a wrong judgment leaves Kanban silently stuck.       |
 | Reality | Production Server, Coordinator, Assistant tool boundary, real Browser Harness, Git worktree, and task checkpoint. |
-| Fixture | One active Goal covered by Project Attention; the post-resolve Generator reaches a failing checkpoint boundary. |
-| Cost    | Zero provider calls for Browser coverage; low for the separate real-Assistant canary.                       |
+| Fixture | One active Goal covered by Project Attention; the post-resolve Generator reaches a failing checkpoint boundary.   |
+| Cost    | Zero provider calls for Browser coverage; low for the separate real-Assistant canary.                             |
 
 Actions:
 
@@ -1134,7 +1163,7 @@ Pass conditions:
 - While Planner runs, the Project banner is absent and the Planning card is visibly working.
 - A later execution-boundary failure creates a new Project Attention with a different identity and
   current reason; the original remains resolved as history.
-- Reblocking does not create Goal- or Work-target Attention and does not mutate the user checkout.
+- Reblocking does not create Goal- or Work-target Attention or perform destructive checkout mutation.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-05`, `INV-10`, `INV-14`.
 
@@ -1149,12 +1178,12 @@ the external repair itself or that the Goal completed. Both layers passed in the
 
 ### HOPI-E2E-029: Terminal Assistant Provider Error
 
-| Field   | Value                                                                                         |
-| ------- | --------------------------------------------------------------------------------------------- |
-| Risk    | A terminal provider failure appears as repeated generic status, false success, or endless work. |
-| Reality | Production Server, Coordinator, durable Assistant runtime, Browser Harness, and conversation UI. |
+| Field   | Value                                                                                                 |
+| ------- | ----------------------------------------------------------------------------------------------------- |
+| Risk    | A terminal provider failure appears as repeated generic status, false success, or endless work.       |
+| Reality | Production Server, Coordinator, durable Assistant runtime, Browser Harness, and conversation UI.      |
 | Fixture | One deterministic speaking turn emits Claude init, retry, synthetic reply, and terminal error events. |
-| Cost    | Zero provider calls.                                                                          |
+| Cost    | Zero provider calls.                                                                                  |
 
 Actions:
 
@@ -1180,23 +1209,80 @@ Primary invariants: `INV-01`, `INV-05`, `INV-10`.
 Current Browser implementation: `packages/backend/tests/browser/assistantProviderError.browser.ts`
 (`bun run e2e:browser:029`).
 
-## Implementation Order
+### HOPI-E2E-031: Safe Project Source Selection And Scoped Execution
 
-Implement scenarios in this order unless a production incident changes the risk:
+| Field   | Value                                                                                                                        |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Risk    | A selected subdirectory is widened to its Git root, or empty/non-Git selection initializes or captures source without consent. |
+| Reality | Production host-chooser boundary, Browser UI, Server, durable Project links, real Git/worktrees, preparation, and Preview.      |
+| Fixture | One empty directory, one non-empty non-Git directory, and one monorepo with a selected app plus an out-of-scope sibling sentinel. |
+| Cost    | Zero provider calls; role outcomes are deterministic because model wording cannot change path or Git safety.                    |
 
-1. `HOPI-E2E-010` because it is cheap and directly covers the prior endless-loading and unintended-context risk.
-2. `HOPI-E2E-013` because proactive blocker notification and answer continuation are core product promises.
-3. `HOPI-E2E-011` because accepting new instructions while work continues is the central operator workflow.
-4. `HOPI-E2E-016` because unattended operation is not credible without restart recovery.
-5. `HOPI-E2E-017` because multi-Repo support needs one real full-stack proof beyond deterministic Git tests.
-6. `HOPI-E2E-012` and `HOPI-E2E-015` for mid-flight change and lifecycle guards.
-7. `HOPI-E2E-021` and `HOPI-E2E-022` after core delivery is stable.
-8. Rotate `HOPI-E2E-024` vendors rather than multiplying every expensive delivery scenario by three.
-9. Add `HOPI-E2E-027` when extending the Project adapter beyond the current fixture.
+Actions:
+
+1. Return a non-empty non-Git directory from the chooser and verify rejection without filesystem or Project effects.
+2. Return an empty directory, require explicit UI confirmation, then initialize it as one `main` Repo and create the Project.
+3. Select `apps/storefront` inside an existing monorepo and create a separate Project from that source scope.
+4. Reload Coordinator and UI, then run one deterministic Planning/Engineering/Review/C1 path inside the selected app.
+5. Run Project preparation and Preview from the reviewed scoped integration and attempt one out-of-scope task mutation.
+
+Pass conditions:
+
+- Empty initialization occurs only after confirmation and a second emptiness check; failure removes only Git metadata created by that attempt.
+- A non-empty non-Git directory and `.git`/`.hopi` metadata scopes are rejected without mutation or a partial Project link.
+- `projects.yml` stores the canonical Git `repoPath` plus portable `projectPath`, and reload renders the selected source scope.
+- Project `AGENTS.md`, `scripts/hopi/prepare`, responsibility cwd, and Preview resolve beneath `projectPath` while Git/worktree ownership remains at the Repo root.
+- C1 accepts scoped source, fast-forwards the selected delivery checkout, and deterministically
+  rejects a task commit that changes the sibling sentinel; the sibling remains unchanged.
+- The complete link remains one publication gate and creates no Init Goal, Work, model Run, or extra workflow state.
+
+Primary invariants: `INV-01`, `INV-04`, `INV-05`, `INV-06`, `INV-10`, `INV-12`, `INV-14`.
+
+Implementation should extend the existing Project-link Browser fixture rather than create a second
+chooser abstraction. Backend directory classification and scoped C1 tests remain the exact Contract
+oracles; Browser evidence proves confirmation, error presentation, reload, and visible scope. A Live
+model canary is not required unless implementation exposes a later decision that genuinely depends
+on model interpretation.
+
+## Harness Self-Verification
+
+Harness mechanics are deterministic repository tests, not HOPI product scenarios, so they do not
+receive `HOPI-E2E-*` IDs or coverage rows. The repository test suite must prove:
+
+- the read-only artifact summary derives status, execution, cleanup, invariant, usage, and optional
+  HOPI state facts without writing into its source Run;
+- registered resources clean up once in reverse order before terminal evidence is hashed;
+- cleanup accepts an already-released owned process as success while preserving real signal errors;
+- a generous logical-Run ceiling stops a runaway through the normal failure and cleanup path without
+  imposing exact responsibility counts on passing scenarios;
+- a cleanup failure or timeout prevents a requested pass, retains diagnostics, and invokes an
+  available force action without retrying scenario behavior;
+- phases and semantic checkpoints are append-only action evidence;
+- a Regression child streams output, is terminated at its execution deadline, and retains the
+  output emitted before termination; and
+- each real Browser invocation retains created and closed target IDs with an empty leaked set.
+
+Run the deterministic lifecycle and deadline cases with:
+
+```sh
+bun test packages/backend/tests/testRunArtifact.test.ts packages/backend/tests/liveHarness.test.ts
+```
+
+Run the owned-browser-resource proof with `bun run test:browser`. Its terminal `run.json` must index
+`browser-resources.jsonl`, and every record must satisfy `created = closed` and `leaked = []`.
+
+## Next Implementation Order
 
 Do not run `e2e:regression:live` on each edit. Keep `e2e:preflight` cheap, retain `HOPI-E2E-002` as
 the blank-to-completion smoke, and use the explicit Live Regression only for a release, scheduled
 suite, or a change whose execution boundary requires its configured-provider canaries.
+
+1. Implement `031` first because it is zero-provider, covers newly added Project-source behavior,
+   and can fail before any expensive Agent path.
+2. Add the focused conversation-only `022` canary after `031`; it should use one real Assistant turn
+   and no responsibility model Runs.
+3. Add no separate Live case for design revision, Pause, Preview repair, or checkout isolation unless
+   a future change introduces a model-dependent boundary not already composed above.
 
 ## New Scenario Checklist
 

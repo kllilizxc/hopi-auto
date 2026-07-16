@@ -1,7 +1,7 @@
 # HOPI MVP Design
 
 Status: forward product and architecture authority
-Last updated: 2026-07-13
+Last updated: 2026-07-16
 
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
@@ -141,8 +141,11 @@ inspection, and Coordinator integration reuse it. Goal worktrees are too coarse 
 worktrees are too short-lived.
 
 Each Project also owns the fixed HOPI-managed integration branch `hopi/release` and one stable
-integration worktree. Task worktrees branch from that target and C1 moves only that target. A user
-checkout is never a HOPI publication or materialization root.
+integration worktree. Task worktrees branch from that target and C1 moves only that target. Managed
+worktrees live together under a Repo-adjacent `.hopi-worktrees/<repo-name>/` root, never inside the
+selected checkout or Assistant-home state. The selected checkout remains non-canonical, but its
+branch recorded at link time is the delivery projection: after C1 and every managed Repo projection
+are verified, Coordinator may advance that clean branch by fast-forward only.
 
 ### 6. Prefer one publisher over a lock hierarchy
 
@@ -186,7 +189,8 @@ meaningful after runtime cleanup.
 owns one or more Repos with stable `repoId` values and exactly one `primaryRepoId`. The primary Repo
 contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md`, preparation,
 and Preview entrypoints. Every Repo has a HOPI-owned `hopi/release` ref and managed integration
-worktree; no user checkout is a publication or materialization root.
+worktree. The selected checkout is never a canonical publication root; it is a guarded delivery
+projection of the accepted release.
 
 Engineering Work explicitly names the Repos in its source workspace. Goal, Work, Kanban, and the
 fixed responsibility passes remain Project-scoped rather than multiplying per Repo. The primary
@@ -300,7 +304,8 @@ The MVP does not include:
 - per-project, per-Goal, or target-aware publication locks
 - switching or removing the primary Repo after Project creation
 - a general cross-root transaction layer outside the fixed primary-C1 Repo projection protocol
-- automatic import from or publication into a user checkout or user-owned branch
+- importing uncommitted checkout content, rewriting a delivery branch, or delivering by merge,
+  rebase, reset, force update, or conflict resolution
 - one writable project attached to multiple active HOPI homes
 - child-process reattachment
 - kernel compatibility judgments for stale output
@@ -345,8 +350,8 @@ adapter-config schema migration; neither can write an old authority.
 
 ## Completed Delivery Order
 
-1. Establish `{ projectId, repoPath }` linking, the HOPI-owned `hopi/release` branch, and the stable
-   managed integration worktree without touching the user checkout.
+1. Establish `{ projectId, repoPath, deliveryBranch }` linking, the HOPI-owned `hopi/release` branch,
+   the Repo-adjacent stable integration worktree, and guarded delivery fast-forward.
 2. Implement the single Coordinator instance lock, global publication mutex, single-gate
    `publish(bundle)` contract, and startup validation against that managed root.
 3. Add the fixed three-pass profile, canonical context bundles, root `AGENTS.md` bootstrap,
@@ -417,8 +422,9 @@ published attempt count. Its runtime Attempt is marked interrupted for UI histor
 a Work gate remains unconsumed and a later attempt uses a new Run, so a process crash may undercount
 one canonical recovery attempt. An Attention-producing outcome leaves Work
 unchanged by design until a new Run follows resolution. Any inconsistency after the C1 ref boundary
-creates workspace project Attention. No user checkout is inspected or repaired, and managed-root
-ownership does not authorize destructive reconstruction of newer canonical documents.
+creates workspace project Attention. Delivery recovery may reattempt the one recorded clean
+fast-forward, but it never repairs checkout content or changes branches. Managed-root ownership does
+not authorize destructive reconstruction of newer canonical documents.
 Invalid Assistant-home state requires supervisor intervention. Inbox turn state, qualified Goal
 Input path and digest, qualified Work integration trailers, Work references to
 immutable Evidence, Attention identity and `notifiedAt`, and current semantic state prevent

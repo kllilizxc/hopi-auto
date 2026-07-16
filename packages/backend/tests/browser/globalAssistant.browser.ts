@@ -6,6 +6,7 @@ import {
   captureAssistantReply,
   errorMessage,
   finishTestRun,
+  ownTestRunServer,
   requestJson,
   sendAssistantMessage,
   startTestRun,
@@ -32,6 +33,7 @@ const runner: AssistantModelRunner = {
   },
 }
 const server = createServer({ rootDir: homeRoot, port: 0, assistantRunner: runner })
+ownTestRunServer(testRun, server)
 const context = {
   scenario: SCENARIO,
   artifactRoot,
@@ -55,9 +57,22 @@ try {
   assert.ok(event, 'Browser-submitted event must exist in the canonical feed')
   assert.ok(modes.includes('main'), 'The Coordinator must schedule the Assistant speaking turn')
   const replyBrowser = await captureAssistantReply(context, REPLY)
+  const browserResources = (await Bun.file(join(artifactRoot, 'browser-resources.jsonl')).text())
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { created: string[]; closed: string[]; leaked: string[] })
+  assert.ok(browserResources.length >= 2, 'Each Browser invocation must retain resource evidence')
+  assert.ok(
+    browserResources.every(
+      (resources) =>
+        resources.leaked.length === 0 &&
+        resources.created.toSorted().join('\n') === resources.closed.toSorted().join('\n'),
+    ),
+    'Every Browser invocation must close exactly the targets it created',
+  )
   await Bun.write(
     join(artifactRoot, 'browser-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, event, modes, browser, replyBrowser }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, event, modes, browser, replyBrowser, browserResources }, null, 2)}\n`,
   )
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot },

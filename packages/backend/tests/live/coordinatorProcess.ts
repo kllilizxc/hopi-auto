@@ -60,45 +60,76 @@ function createRestartAssistantRunner(
 ): AssistantModelRunner {
   return {
     async run(input, observer) {
-      if (input.toolMode !== 'main') {
-        throw new Error('Focused restart speaking runner received an internal turn')
+      const useTool = async (
+        name: string,
+        toolArguments: Record<string, unknown>,
+        callSummary: string,
+        resultSummary: string,
+      ) => {
+        await observer?.onEvent?.({
+          kind: 'transcript',
+          transport: 'process',
+          entryKind: 'tool_call',
+          summary: callSummary,
+          toolName: name,
+        })
+        const response = await fetch(input.toolUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: input.toolToken,
+            name,
+            arguments: toolArguments,
+          }),
+        })
+        const result = (await response.json()) as { error?: string }
+        if (!response.ok) {
+          throw new Error(result.error ?? `Assistant tool failed (${response.status})`)
+        }
+        await observer?.onEvent?.({
+          kind: 'transcript',
+          transport: 'process',
+          entryKind: 'tool_result',
+          summary: resultSummary,
+          toolName: name,
+        })
       }
-      await observer?.onEvent?.({
-        kind: 'transcript',
-        transport: 'process',
-        entryKind: 'tool_call',
-        summary: 'Write the idempotent Assistant restart design marker.',
-        toolName: 'hopi_write_design',
-      })
-      const response = await fetch(input.toolUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          token: input.toolToken,
-          name: 'hopi_write_design',
-          arguments: {
-            projectId: 'P-process-restart',
-            goalId: 'G-assistant-restart',
-            writes: [
-              {
-                path: 'assistant-restart.md',
-                content:
-                  '# Assistant restart\n\nThe durable tool effect survived the pre-reply process crash.\n',
-              },
-            ],
+
+      if (input.toolMode === 'internal') {
+        const message = 'The recovered delivery completed successfully.'
+        await useTool(
+          'hopi_notify_user',
+          { message },
+          'Publish the recovered delivery completion update.',
+          'The completion update is durable.',
+        )
+        return {
+          reply: message,
+          session: {
+            transport: assistantTransport,
+            sessionId: `restart-assistant-${input.eventId}`,
           },
-        }),
-      })
-      const result = (await response.json()) as { error?: string }
-      if (!response.ok)
-        throw new Error(result.error ?? `Assistant tool failed (${response.status})`)
-      await observer?.onEvent?.({
-        kind: 'transcript',
-        transport: 'process',
-        entryKind: 'tool_result',
-        summary: 'The Assistant restart design marker is durable.',
-        toolName: 'hopi_write_design',
-      })
+        }
+      }
+      if (input.toolMode !== 'main') {
+        throw new Error(`Focused restart speaking runner received ${input.toolMode} mode`)
+      }
+      await useTool(
+        'hopi_write_design',
+        {
+          projectId: 'P-process-restart',
+          goalId: 'G-assistant-restart',
+          writes: [
+            {
+              path: 'assistant-restart.md',
+              content:
+                '# Assistant restart\n\nThe durable tool effect survived the pre-reply process crash.\n',
+            },
+          ],
+        },
+        'Write the idempotent Assistant restart design marker.',
+        'The Assistant restart design marker is durable.',
+      )
 
       if (coordinatorInstance === 'assistant-first') {
         await Bun.write(

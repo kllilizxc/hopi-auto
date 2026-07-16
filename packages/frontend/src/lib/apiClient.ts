@@ -4,6 +4,7 @@ import type {
   CursorPage,
   GoalDetail,
   PreviewStartResult,
+  ProjectDirectorySelection,
   ProjectCodingDefaults,
   ReflectionRunSummary,
   RunAttemptDetail,
@@ -92,33 +93,58 @@ export function readWorkAttemptEvents(
 export function createProject(input: {
   projectId?: string
   primaryRepoId: string
-  repos: Array<{ repoId: string; repoPath: string }>
+  repos: Array<{ repoId: string; repoPath: string; projectPath?: string }>
 }) {
   return apiRequest<AppSnapshot>('/api/projects', { method: 'POST', body: input })
 }
 
 export function selectProjectDirectory() {
-  return apiRequest<{ path: string | null }>('/api/system/select-directory', { method: 'POST' })
+  return apiRequest<{ selection: ProjectDirectorySelection | null }>(
+    '/api/system/select-directory',
+    { method: 'POST' },
+  ).catch((error: unknown) => {
+    if (error instanceof Error && /404|not found/i.test(error.message)) {
+      throw new Error(
+        'The running backend does not provide directory selection. Stop stale HOPI backend processes, restart the backend, then retry.',
+      )
+    }
+    throw error
+  })
 }
 
-export function linkProjectRepo(projectId: string, input: { repoId: string; repoPath: string }) {
+export function initializeProjectDirectory(path: string) {
+  return apiRequest<{ selection: Extract<ProjectDirectorySelection, { kind: 'git_repository' }> }>(
+    '/api/system/initialize-repository',
+    { method: 'POST', body: { path } },
+  )
+}
+
+export function linkProjectRepo(
+  projectId: string,
+  input: { repoId: string; repoPath: string; projectPath?: string },
+) {
   return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/repos`, {
     method: 'POST',
     body: input,
   })
 }
 
-export function rebindProject(projectId: string, repoPath: string) {
+export function rebindProject(projectId: string, repoPath: string, projectPath?: string) {
   return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/rebind`, {
     method: 'POST',
-    body: { repoPath },
+    body: { repoPath, ...(projectPath ? { projectPath } : {}) },
   })
 }
 
-export function rebindProjectRepo(projectId: string, repoId: string, repoPath: string) {
+export function rebindProjectRepo(
+  projectId: string,
+  repoId: string,
+  repoPath: string,
+  projectPath?: string,
+) {
   return apiRequest<AppSnapshot>(
     `/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}/rebind`,
-    { method: 'POST', body: { repoPath } },
+    { method: 'POST', body: { repoPath, ...(projectPath ? { projectPath } : {}) } },
   )
 }
 
@@ -134,7 +160,7 @@ export function updateProjectSettings(
 
 export function rebindProjectRepos(
   projectId: string,
-  repos: Array<{ repoId: string; repoPath: string }>,
+  repos: Array<{ repoId: string; repoPath: string; projectPath?: string }>,
 ) {
   return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/rebind`, {
     method: 'POST',
@@ -203,10 +229,13 @@ export function stopPreview(projectId: string) {
   )
 }
 
-export function requestPreviewRepair(prompt: string) {
+export function requestPreviewRepair(
+  prompt: string,
+  context: { projectId: string; goalId: string },
+) {
   return apiRequest<{ eventId: string }>('/api/preview/repair', {
     method: 'POST',
-    body: { prompt },
+    body: { prompt, context },
   })
 }
 

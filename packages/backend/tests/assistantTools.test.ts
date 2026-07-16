@@ -271,7 +271,7 @@ describe('Assistant HOPI tools', () => {
     expect(openPlanning[0]?.body).toContain('/EV-2.md')
   })
 
-  test('interrupts obsolete Goal Runs only after a material contract revision', async () => {
+  test('interrupts every obsolete Goal Run only after a material contract revision', async () => {
     const fixture = await setup({ trackInterrupts: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -299,6 +299,45 @@ describe('Assistant HOPI tools', () => {
 
     expect((await fixture.goalStore.readGoal('G-1'))?.attributes.contractRevision).toBe(2)
     expect(fixture.interruptedGoalIds).toEqual(['G-1'])
+  })
+
+  test('interrupts only the current Planner when same-revision input changes Planning authority', async () => {
+    const fixture = await setup({ trackInterrupts: true })
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Plan the current delivery.' })
+    await fixture.tools.executeForEvent('EV-1', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: false,
+    })
+    const planning = [...(await fixture.goalStore.readPackage('G-1')).works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+    if (!planning) throw new Error('Expected an active Planning Work')
+    expect(fixture.interruptedWorkTargets).toEqual([])
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-2',
+      content: 'Include the compact layout in this plan.',
+    })
+    await fixture.tools.executeForEvent('EV-2', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: false,
+    })
+
+    expect(fixture.interruptedGoalIds).toEqual([])
+    expect(fixture.interruptedWorkTargets).toEqual([
+      { goalId: 'G-1', workId: planning.attributes.id },
+    ])
+
+    await fixture.tools.executeForEvent('EV-2', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: false,
+    })
+    expect(fixture.interruptedWorkTargets).toHaveLength(1)
   })
 
   test('normalizes an exact canonical design path without creating a nested control root', async () => {
@@ -767,6 +806,7 @@ async function setup(
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
   const controller = createGoalController(goalStore, { verifyCompletion: () => false })
   const interruptedGoalIds: string[] = []
+  const interruptedWorkTargets: Array<{ goalId: string; workId: string }> = []
   const restoredProjectIds: string[] = []
   const projects = new Map([
     [
@@ -779,8 +819,9 @@ async function setup(
         ...(options.trackInterrupts
           ? {
               reconciler: {
-                interruptRuns(goalId?: string) {
-                  if (goalId) interruptedGoalIds.push(goalId)
+                interruptRuns(goalId?: string, workId?: string) {
+                  if (goalId && workId) interruptedWorkTargets.push({ goalId, workId })
+                  else if (goalId) interruptedGoalIds.push(goalId)
                 },
                 operationallyDeferredWorkIds() {
                   return new Set<string>()
@@ -816,6 +857,7 @@ async function setup(
     attempts,
     tools,
     interruptedGoalIds,
+    interruptedWorkTargets,
     restoredProjectIds,
   }
 }

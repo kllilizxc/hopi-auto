@@ -146,6 +146,7 @@ export function createAssistantStateReader(options: {
                     const key = `${prefix}${work.attributes.id}`
                     const runtime = await readWorkRuntime({
                       homeRoot,
+                      projectRoot: project.projectRoot,
                       projectId: project.projectId,
                       goalId,
                       workId: work.attributes.id,
@@ -245,6 +246,7 @@ export function createAssistantStateReader(options: {
 
 async function readWorkRuntime(input: {
   homeRoot: string
+  projectRoot: string
   projectId: string
   goalId: string
   workId: string
@@ -279,15 +281,7 @@ async function readWorkRuntime(input: {
       lastActivityAt &&
       input.observedAt.getTime() - new Date(lastActivityAt).getTime() >= input.staleAfterMs,
   )
-  const worktreePath = join(
-    input.homeRoot,
-    '.hopi',
-    'runtime',
-    'worktrees',
-    input.projectId,
-    input.goalId,
-    input.workId,
-  )
+  const worktreePath = join(resolve(input.projectRoot, '..'), 'work', input.goalId, input.workId)
 
   return {
     activeResponsibility: input.activeResponsibility,

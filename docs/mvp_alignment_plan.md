@@ -17,7 +17,8 @@ Alignment is complete only when:
 - the fixed Planner, Generator, Reviewer, and C1 flow advances active Goals automatically
 - retry, revision, Attention, completion, notification, and crash boundaries match the authority
   documents
-- HOPI never uses a user checkout as publication, integration, Preview, or repair state
+- HOPI never uses a selected checkout as canonical publication, integration, Preview, or repair
+  state; it may only receive the guarded accepted-release fast-forward
 - a Project may bind multiple Repos while retaining one Work, one review, and one primary C1
 - the UI is Assistant-first and its Kanban is a read-only Work projection
 - the workspace Assistant is one persistent Home-configured vendor conversation whose only canonical mutation path
@@ -132,7 +133,8 @@ Alignment is complete only when:
 ## Implemented Slices
 
 1. Assistant home initializes a stable `homeId`, links one or more Repos per Project, creates each
-   `hopi/release`, and keeps user checkouts untouched. Explicit per-Repo rebind repairs moved Git
+   `hopi/release`, records each delivery branch, and keeps selected checkouts non-canonical. Explicit
+   per-Repo rebind repairs moved Git
    worktree administration but refuses to reconstruct a missing canonical primary root.
 2. `PublicationCoordinator` serializes snapshots and publications, validates the complete candidate,
    writes support before one gate, durably acknowledges Inbox receipt, and delegates C1 to a guarded

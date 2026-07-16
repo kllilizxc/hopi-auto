@@ -15,6 +15,7 @@ import {
   errorMessage,
   finishTestRun,
   gitOutput,
+  ownTestRunServer,
   requestJson,
   startTestRun,
 } from '../live/liveHarness'
@@ -34,6 +35,8 @@ const movedApi = join(destinationMachine, 'api')
 const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
 let server: MvpServer | null = null
 let restarted: MvpServer | null = null
+let serverCleanup: ReturnType<typeof ownTestRunServer> | null = null
+let restartedCleanup: ReturnType<typeof ownTestRunServer> | null = null
 
 try {
   await initializeRepo(sourceWeb, 'web')
@@ -138,6 +141,7 @@ try {
     assistantRunner: silentAssistant,
     reflectionRunner: silentAssistant,
   })
+  serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   const blocked = await requestJson<StateView>(baseUrl, '/api/state')
   assert.equal(blocked.activeRuns.length, 0)
@@ -177,7 +181,7 @@ try {
   )
   await Bun.sleep(1_200)
   assert.equal(responsibilityRuns, 0)
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
 
   const migratedWorkspace = createAssistantWorkspaceStore(movedHome, new PublicationCoordinator())
@@ -186,6 +190,7 @@ try {
     'All stable Repo IDs were rebound and validated together.',
   )
   restarted = createServer({ rootDir: movedHome, port: 0, startCoordinator: false })
+  restartedCleanup = ownTestRunServer(testRun, restarted)
   const durable = await requestJson<StateView>(`http://127.0.0.1:${restarted.port}`, '/api/state')
   const migratedHomeStore = createAssistantHomeStore(movedHome)
   const migratedHomeDocument = await migratedHomeStore.readHome()
@@ -287,8 +292,8 @@ try {
   console.error(`Retained evidence: ${testRun.artifactRoot}`)
   process.exitCode = 1
 } finally {
-  await restarted?.shutdown()
-  await server?.shutdown()
+  await restartedCleanup?.run()
+  await serverCleanup?.run()
 }
 
 async function initializeRepo(root: string, name: string) {

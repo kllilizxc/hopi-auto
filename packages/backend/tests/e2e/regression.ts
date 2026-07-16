@@ -6,6 +6,7 @@ import {
   type TestRunContext,
   type TestRunReport,
   readTestRun,
+  recordTestRunAction,
   writeEvidenceGallery,
   writeTestRunReport,
 } from '../testRunArtifact'
@@ -134,18 +135,20 @@ async function runStep(parent: TestRunContext, current: RegressionStep): Promise
       }
   if (wrapper) await writeTestRunReport(wrapper, 'running', { command: current.command })
 
-  console.log(`[${current.id}] ${current.command.join(' ')}`)
-  const child = Bun.spawn(current.command, {
+  await recordTestRunAction(
+    parent,
+    'regression_step_started',
+    { id: current.id, command: current.command },
+    true,
+  )
+  const execution = await runCommandWithDeadline({
+    command: current.command,
     cwd: REPOSITORY_ROOT,
     env: { ...process.env, HOPI_E2E_ARTIFACT_ROOT: stepRoot },
-    stdout: 'pipe',
-    stderr: 'pipe',
+    timeoutMs: regressionStepTimeoutMs(current.claim),
+    forwardOutput: true,
   })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ])
+  const { stdout, stderr, exitCode } = execution
   const log = `$ ${current.command.join(' ')}\n\n[stdout]\n${stdout}\n[stderr]\n${stderr}`
   await Bun.write(join(logsRoot, `${safeSegment(current.id)}.log`), log)
 
@@ -166,19 +169,29 @@ async function runStep(parent: TestRunContext, current: RegressionStep): Promise
     }
   } else if (wrapper) {
     await Bun.write(join(stepRoot, 'command.log'), log)
-    report = await writeTestRunReport(wrapper, exitCode === 0 ? 'passed' : 'failed', {
-      command: current.command,
-      exitCode,
-      providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
-    })
+    report = await writeTestRunReport(
+      wrapper,
+      !execution.timedOut && exitCode === 0 ? 'passed' : 'failed',
+      {
+        command: current.command,
+        exitCode,
+        timedOut: execution.timedOut,
+        timeoutMs: execution.timeoutMs,
+        providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
+      },
+    )
   }
 
-  if (exitCode !== 0) error ??= `${current.id} exited with ${exitCode}`
+  if (execution.timedOut) {
+    error ??= `${current.id} exceeded ${execution.timeoutMs}ms and was terminated`
+  } else if (exitCode !== 0) {
+    error ??= `${current.id} exited with ${exitCode}`
+  }
   if (exitCode === 0 && report?.status !== 'passed') {
     error ??= `${current.id} exited successfully without a passed terminal Test Run`
   }
   const status = error ? 'failed' : 'passed'
-  return {
+  const result: RegressionChild = {
     id: current.id,
     claim: current.claim,
     command: current.command,
@@ -190,6 +203,55 @@ async function runStep(parent: TestRunContext, current: RegressionStep): Promise
     artifactRoot,
     run: report ? join(artifactRoot, 'run.json') : null,
     ...(error ? { error } : {}),
+  }
+  await recordTestRunAction(
+    parent,
+    'regression_step_completed',
+    { id: current.id, status, exitCode, durationMs: result.durationMs },
+    true,
+  )
+  return result
+}
+
+export async function runCommandWithDeadline(options: {
+  command: string[]
+  cwd: string
+  env?: Record<string, string | undefined>
+  timeoutMs: number
+  forwardOutput?: boolean
+}) {
+  const timeoutMs = positiveTimeout(options.timeoutMs)
+  const child = Bun.spawn(options.command, {
+    cwd: options.cwd,
+    env: options.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const stdout = readAndForward(child.stdout, options.forwardOutput ? process.stdout : null)
+  const stderr = readAndForward(child.stderr, options.forwardOutput ? process.stderr : null)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const exit = await Promise.race([
+    child.exited.then((exitCode) => ({ timedOut: false as const, exitCode })),
+    new Promise<{ timedOut: true; exitCode: null }>((resolveTimeout) => {
+      timeout = setTimeout(() => resolveTimeout({ timedOut: true, exitCode: null }), timeoutMs)
+    }),
+  ])
+  if (timeout) clearTimeout(timeout)
+  if (exit.timedOut) {
+    child.kill('SIGTERM')
+    const stopped = await Promise.race([
+      child.exited.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ])
+    if (!stopped) child.kill('SIGKILL')
+  }
+  const [stdoutText, stderrText, exitCode] = await Promise.all([stdout, stderr, child.exited])
+  return {
+    stdout: stdoutText,
+    stderr: stderrText,
+    exitCode,
+    timedOut: exit.timedOut,
+    timeoutMs,
   }
 }
 
@@ -211,6 +273,37 @@ function artifactStep(id: string, claim: TestRunClaim, script: string): Regressi
 
 function safeSegment(value: string) {
   return value.replaceAll(/[^A-Za-z0-9._-]+/g, '-').replaceAll(/^-+|-+$/g, '') || 'step'
+}
+
+function regressionStepTimeoutMs(claim: TestRunClaim) {
+  const configured = Number(process.env.HOPI_E2E_STEP_TIMEOUT_MS)
+  if (Number.isFinite(configured) && configured > 0) return configured
+  return claim === 'live' ? 45 * 60_000 : 15 * 60_000
+}
+
+async function readAndForward(
+  stream: ReadableStream<Uint8Array>,
+  target: { write(chunk: string): unknown } | null,
+) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let content = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const text = decoder.decode(value, { stream: true })
+    content += text
+    target?.write(text)
+  }
+  const tail = decoder.decode()
+  content += tail
+  target?.write(tail)
+  return content
+}
+
+function positiveTimeout(value: number) {
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Command timeout must be positive')
+  return value
 }
 
 export function aggregateUsage(reports: Array<TestRunReport | null>) {

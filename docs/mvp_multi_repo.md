@@ -1,7 +1,7 @@
 # HOPI MVP Multi-Repo Design
 
 Status: implemented MVP protocol
-Last updated: 2026-07-12
+Last updated: 2026-07-16
 
 This document owns the Repo membership, multi-root execution, integration, and recovery rules for
 one Project spanning multiple Git Repos. Product concepts and lifecycle remain defined by
@@ -85,12 +85,25 @@ The create form collects one or more Repos before it creates a Project. Each cli
 Coordinator to open the host directory chooser and returns either one absolute directory or cancel;
 the chooser result is transient UI input, not a new document or browser filesystem authority. The
 operator gives every selected Repo a stable ID and chooses exactly one primary Repo. macOS, Linux,
-and WSL use small host adapters behind this same boundary. Browser automation injects deterministic
-chooser results rather than pretending that a text field proves the native boundary.
+and WSL use small host adapters behind this same boundary. WSL opens the modern Windows Explorer
+folder chooser at the operator's WSL Home, then normalizes either a Windows drive path or a
+`\\wsl.localhost` path back to one WSL absolute path. A directory inside a Git worktree yields the
+canonical Git `repoPath` plus its relative `projectPath`; managed Git operations stay rooted at the
+Repo while responsibility processes, Project `AGENTS.md`, preparation, and Preview use the selected
+Project scope. Linking records that checkout's symbolic delivery branch. HOPI never treats `.git` or
+its own root `.hopi` authority as a selectable source scope.
+
+An empty directory outside every Git worktree is an explicit new-project candidate. The UI asks for
+confirmation, then Coordinator revalidates that it is still empty, initializes `main`, creates one
+HOPI-owned empty bootstrap commit, and returns the new Repo. Failure removes only the `.git` directory
+created by that attempt. HOPI never initializes a nested Repo inside an existing worktree. A non-empty
+non-Git directory is reported without mutation because automatically staging its contents could
+capture secrets or generated files. Browser automation injects deterministic chooser results rather
+than pretending that a text field proves the native boundary.
 
 Create submits the complete `{ primaryRepoId, repos[] }` set once. Coordinator resolves every Git
-root and common directory, rejects duplicate IDs or Git identities before changing the Project
-link, creates or validates the managed roots, then publishes `project.yml` and finally the one
+root, Project-relative path, and common directory, then rejects duplicate IDs or Git identities
+before changing the Project link, creates or validates the managed roots, publishes `project.yml`, and finally the one
 `projects.yml` link gate. A failure before that gate may leave retryable managed Git preparation but
 cannot expose a partially linked Project. Repeating the exact request is idempotent. A later Repo
 addition uses the same validation rules; Repo ID is immutable and a moved checkout uses rebind.
@@ -118,8 +131,8 @@ one runtime manifest:
 {
   "primaryRepoId": "web",
   "repos": {
-    "web": "/runtime/worktrees/P-1/G-1/W-1",
-    "api": "/runtime/worktrees/P-1/G-1/W-1.repos/api"
+    "web": "/code/.hopi-worktrees/product-web/work/G-1/W-1",
+    "api": "/code/.hopi-worktrees/product-api/work/G-1/W-1"
   }
 }
 ```
@@ -171,6 +184,7 @@ Reviewer success is integrated as one logical operation:
    This guarded ref move is the single irreversible logical boundary.
 6. It materializes the primary integration worktree, then advances and materializes each secondary
    `hopi/release` to the commit recorded by C1.
+7. It fast-forwards each Repo's recorded clean delivery checkout to that Repo's accepted release.
 
 Primary history contains exactly one qualified C1 per completed Engineering Work, including a Work
 that changed only secondary Repos. Goal completion verification therefore retains the current exact
@@ -190,6 +204,11 @@ The previous release comes from the parent C1 manifest; for a newly added Repo, 
 candidate's first parent. Recovery never rolls back the primary C1, never re-runs Generator or
 Reviewer, and never invents a Work state. Until all projections match, the Project is ineligible even
 though the Work document inside the durable C1 is already `done`.
+
+Delivery checkouts follow the same durable manifest but are more restrictive projections: recovery
+may only repeat a same-Repo, same-branch, clean, ancestry-proven fast-forward. One checkout that is
+dirty, detached, switched, or divergent blocks the Project without rolling back already projected
+Repos or the primary C1.
 
 This is a fixed Project release projection protocol, not a promise of simultaneous physical Git ref
 updates or deployment atomicity. External deployment remains outside HOPI unless a reviewed Project
@@ -213,12 +232,14 @@ The implementation is complete only when automated tests cover:
 - version 1 single-Repo Projects and Work run without behavioral migration regressions
 - the host chooser can be cancelled without an effect and one create request atomically links two Repos
 - two selected checkouts of one Git common directory fail before a durable Project link exists
-- a secondary Repo can be added and rebound without touching either user checkout
+- a secondary Repo can be added and rebound while preserving both delivery checkouts
 - a moved Assistant home and complete Repo set can be rebound together without losing portable state
 - one Work modifies primary and secondary Repos, receives one review, and produces one primary C1
 - one Work modifies only a secondary Repo while its Work and Evidence remain canonical in primary
 - a target advance or merge conflict in any Repo rejects before the primary boundary
 - a crash after primary C1 but before zero, one, or all secondary projections converges on restart
 - an unexpected secondary ref value blocks the Project without rollback
+- dirty, switched, detached, or divergent delivery checkouts block without destructive repair, and a
+  later safe state converges by fast-forward
 - Project prepare and Preview receive the correct multi-Repo runtime manifest
 - the UI manages Repo links and shows Work Repo scope without a Repo workflow

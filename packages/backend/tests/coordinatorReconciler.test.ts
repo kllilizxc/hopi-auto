@@ -148,6 +148,42 @@ describe('CoordinatorReconciler', () => {
     expect(observations).toEqual([true])
   })
 
+  test('does not duplicate Reflection while an internal handoff is Attention-blocked', async () => {
+    const fixture = await workspaceFixture()
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-internal',
+      content: 'Revalidate one Attention.',
+    })
+    await fixture.attentions.ensureEventAttention('EV-internal', 'Assistant transport failed.')
+    const observations: boolean[] = []
+    const reflection = {
+      async observe(input) {
+        observations.push(input.settled)
+        return 'running' as const
+      },
+      isActive: () => false,
+      listRuns: async () => [],
+      listRunSummaries: async () => [],
+      readRunEvents: async () => null,
+      waitForIdle: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AssistantReflection
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process() {
+          throw new Error('Blocked internal event must not be processed')
+        },
+      },
+      reflection,
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(observations).toEqual([])
+  })
+
   test('prioritizes public user turns over older internal Reflection handoffs', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
@@ -694,6 +730,59 @@ describe('CoordinatorReconciler', () => {
     expect(openProjectAttentions).toHaveLength(1)
     expect(openProjectAttentions[0]?.attributes.id).not.toBe(original.attributes.id)
     expect(openProjectAttentions[0]?.body).toContain('still fails C1 publication')
+  })
+
+  test('retries a blocked Project projection and resolves Attention only after validation succeeds', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+    )
+    const attention = await fixture.attentions.ensureProjectAttention(
+      'P-1',
+      'Delivery checkout is not ready.',
+    )
+    let observedAt = new Date('2026-07-11T00:00:00Z').getTime()
+    let ready = false
+    let recoveries = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      now: () => new Date(observedAt),
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => [],
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+          } as unknown as ProjectReconciler,
+          async recover() {
+            recoveries += 1
+            if (!ready) throw new Error('delivery checkout remains dirty')
+          },
+        },
+      ],
+    })
+    coordinator.setProjectEligible('P-1', false)
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(
+      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
+        .resolvedAt,
+    ).toBeNull()
+
+    ready = true
+    observedAt += 5_001
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
+    expect(
+      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
+        .resolvedAt,
+    ).not.toBeNull()
+    expect(recoveries).toBe(2)
   })
 })
 

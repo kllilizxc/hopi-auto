@@ -14,6 +14,7 @@ import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './domain/projectCodingDefaults'
+import { isNormalizedProjectPath, resolveProjectPath } from './domain/projectPath'
 import { deriveGoalWorkProjections } from './domain/workProjection'
 import { CursorPageError, type CursorPageRequest, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
@@ -30,6 +31,11 @@ import {
   createMvpRuntime,
   requireProject,
 } from './runtime/mvpRuntime'
+import {
+  ProjectDirectoryError,
+  classifyProjectDirectory,
+  initializeEmptyGitRepository,
+} from './runtime/projectDirectory'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 
@@ -57,8 +63,15 @@ const projectIdentitySchema = z.object({
 const projectRepoSchema = z.object({
   repoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   repoPath: z.string().min(1),
+  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
 })
-const repoPathSchema = z.object({ repoPath: z.string().min(1) }).strict()
+const repoPathSchema = z
+  .object({
+    repoPath: z.string().min(1),
+    projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+  })
+  .strict()
+const initializeRepositorySchema = z.object({ path: z.string().min(1) }).strict()
 const projectSchema = z.union([
   projectIdentitySchema
     .extend({
@@ -69,6 +82,7 @@ const projectSchema = z.union([
   projectIdentitySchema
     .extend({
       repoPath: z.string().min(1),
+      projectPath: z.string().refine(isNormalizedProjectPath).optional(),
       repoId: z
         .string()
         .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
@@ -80,7 +94,7 @@ const projectSchema = z.union([
       return {
         projectId: input.projectId,
         primaryRepoId: repoId,
-        repos: [{ repoId, repoPath: input.repoPath }],
+        repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
       }
     }),
 ])
@@ -132,6 +146,17 @@ const inboxSchema = z
       .optional(),
   })
   .strict()
+const previewRepairSchema = z
+  .object({
+    prompt: z.string().min(1),
+    context: z
+      .object({
+        projectId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+        goalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+      })
+      .strict(),
+  })
+  .strict()
 
 export function createServer(options: ServerOptions = {}): MvpServer {
   assertSupportedPlatform(process.platform)
@@ -155,6 +180,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   }
   let runtimePromise = createMvpRuntime(runtimeOptions)
   let reloadTail: Promise<void> = Promise.resolve()
+  const pickDirectory = createSingleFlight(options.directoryPicker ?? selectHostDirectory)
 
   async function reloadRuntime(mutate: (runtime: MvpRuntime) => Promise<void>) {
     const operation = reloadTail.then(async () => {
@@ -177,6 +203,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   }
 
   const server = Bun.serve({
+    reusePort: false,
     routes: {
       '/': indexPage,
       '/projects': indexPage,
@@ -198,13 +225,18 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (request.method === 'POST' && url.pathname === '/api/system/select-directory') {
           try {
-            return json({ path: await (options.directoryPicker ?? selectHostDirectory)() })
+            const path = await pickDirectory()
+            return json({ selection: path ? await classifyProjectDirectory(path) : null })
           } catch (error) {
             if (error instanceof HostDirectoryPickerError) {
               throw new ApiError(503, error.message)
             }
             throw error
           }
+        }
+        if (request.method === 'POST' && url.pathname === '/api/system/initialize-repository') {
+          const body = await parseBody(request, initializeRepositorySchema)
+          return json({ selection: await initializeEmptyGitRepository(body.path) })
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
@@ -555,11 +587,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(
             await runtime.preview.start({
               projectId: project.projectId,
-              projectRoot: project.projectRoot,
+              projectRoot: project.sourceRoot,
               primaryRepoId: project.primaryRepoId,
               repoRoots: project.repos.map((repo) => ({
                 repoId: repo.repoId,
-                path: repo.integrationRoot,
+                path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
               })),
             }),
           )
@@ -571,8 +603,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json({ session: runtime.preview.inspect(previewRoute.projectId) })
         }
         if (request.method === 'POST' && url.pathname === '/api/preview/repair') {
-          const body = await parseBody(request, z.object({ prompt: z.string().min(1) }))
-          const event = await receiveUserEvent(runtime, { content: body.prompt })
+          const body = await parseBody(request, previewRepairSchema)
+          const project = requireProject(runtime.projects, body.context.projectId)
+          if (!(await project.store.readGoal(body.context.goalId))) {
+            throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
+          }
+          const event = await receiveUserEvent(runtime, {
+            content: body.prompt,
+            context: body.context,
+          })
           runtime.coordinator.wake()
           return json({ eventId: event.attributes.id }, 202)
         }
@@ -581,6 +620,12 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (error instanceof ApiError) return json({ error: error.message }, error.status)
         if (error instanceof AssistantImageAttachmentError) {
           return json({ error: error.message }, 400)
+        }
+        if (error instanceof ProjectDirectoryError) {
+          return json(
+            { error: error.message },
+            error.code === 'not_empty' || error.code === 'initialization_failed' ? 409 : 400,
+          )
         }
         if (error instanceof CursorPageError) return json({ error: error.message }, 400)
         if (error instanceof AssistantHomeStoreError) {
@@ -684,11 +729,14 @@ async function presentState(runtime: MvpRuntime) {
       repos: project.repos.map((repo) => ({
         repoId: repo.repoId,
         repoPath: repo.repoPath,
+        projectPath: repo.projectPath,
+        deliveryBranch: repo.deliveryBranch,
         integrationRoot: repo.integrationRoot,
         primary: repo.primary,
       })),
       repoPath: project.repoPath,
-      guidance: await readProjectGuidance(project.projectRoot),
+      projectPath: project.projectPath,
+      guidance: await readProjectGuidance(project.sourceRoot),
       codingDefaults: modelSettings.codingDefaults,
       codingDefaultsInherited: modelSettings.inherited,
       preview: runtime.preview.inspect(project.projectId),
@@ -1107,7 +1155,10 @@ function readPageRequest(url: URL, defaultLimit: number, maxLimit: number): Curs
   }
 }
 
-async function parseBody<T>(request: Request, schema: z.ZodType<T>) {
+async function parseBody<T extends z.ZodTypeAny>(
+  request: Request,
+  schema: T,
+): Promise<z.output<T>> {
   return schema.parse(await request.json())
 }
 
@@ -1170,6 +1221,22 @@ function requirePart(parts: string[], index: number) {
 
 function json(value: unknown, status = 200) {
   return Response.json(value, { status })
+}
+
+function createSingleFlight<T>(operation: () => Promise<T>) {
+  let activeOperation: Promise<T> | null = null
+
+  return async () => {
+    if (activeOperation) return activeOperation
+
+    const nextOperation = Promise.resolve().then(operation)
+    activeOperation = nextOperation
+    try {
+      return await nextOperation
+    } finally {
+      if (activeOperation === nextOperation) activeOperation = null
+    }
+  }
 }
 
 class ApiError extends Error {

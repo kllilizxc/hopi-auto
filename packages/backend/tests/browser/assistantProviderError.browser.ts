@@ -10,6 +10,7 @@ import {
   captureAssistantReply,
   errorMessage,
   finishTestRun,
+  ownTestRunServer,
   requestJson,
   sendAssistantMessage,
   startTestRun,
@@ -67,6 +68,7 @@ const runner: AssistantModelRunner = {
   },
 }
 const server = createServer({ rootDir: homeRoot, port: 0, assistantRunner: runner })
+ownTestRunServer(testRun, server)
 const context = {
   scenario: SCENARIO,
   artifactRoot,

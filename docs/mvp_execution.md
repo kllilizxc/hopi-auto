@@ -1,7 +1,7 @@
 # HOPI MVP Execution
 
 Status: forward execution authority
-Last updated: 2026-07-13
+Last updated: 2026-07-16
 
 This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
 recovery, completion assessment, notification, and Preview behavior for
@@ -29,7 +29,8 @@ Canonical documents are not shared model scratch space.
 - Source and ordinary project docs are edited only in the owning task worktree, except that Planner
   may create a missing root `AGENTS.md` as its context-bootstrap supporting write.
 - Every canonical publication targets the managed integration worktree. HOPI ignores uncommitted
-  user-checkout content and never materializes source or documents into that checkout.
+  delivery-checkout content; only the post-C1 guarded fast-forward may materialize an accepted
+  release there.
 - Direct mutation of canonical files while Coordinator runs is unsupported; changes enter through
   staged publication or an explicit offline import and validation path.
 
@@ -252,6 +253,11 @@ Work, and let current canonical state determine the next reconciliation. It neve
 Attention merely because Goal lifecycle, revision, Work ownership, dependency truth, or another
 guard changed while the Run was active.
 
+When a durable mutation changes the immutable authority staged for a live Run, Coordinator interrupts
+that exact Run as soon as the mutation commits. This avoids knowingly spending tokens on obsolete
+work; the content-hash stale guard remains the correctness boundary for races, crashes, and mutations
+from paths that cannot signal the live process. Authority changes do not interrupt unrelated Runs.
+
 A pass that needs Assistant management returns `attention` with one staged targeted Attention.
 Coordinator publishes Evidence plus Attention, does not publish a Work gate or increment attempts,
 and starts a fresh Run only after speaking Assistant resolves the request. Speaking may answer from
@@ -443,8 +449,11 @@ Coordinator replaces it with publication time.
 The Planner process starts in its Run root because `context.md`, `repos.json`, `result.json`, and the
 sparse overlay are siblings there. A canonical proposal path is written exactly once beneath the
 `proposal/` child, for example `proposal/.hopi/docs/...`; Planner never treats the proposal directory
-itself as cwd and then adds a second `proposal/` prefix. Engineering processes continue to start in
-their assigned task worktree. This is one fixed path convention, not role-configurable behavior.
+itself as cwd and then adds a second `proposal/` prefix. Engineering processes start at the assigned
+Repo's `projectPath` inside their task worktree. Git checkpointing and integration still own the
+complete task worktree, but C1 deterministically rejects a task commit that changes a path outside
+that Repo's selected Project scope. This is one fixed path convention, not role-configurable
+behavior.
 
 Planner never consumes an unconsumed or stale responsibility result, reconstructs Evidence from Run
 directories, or advances Engineering Work to `review` or `done`. Runtime files remain diagnostics;
@@ -503,7 +512,7 @@ Work lease.
 Before Reviewer starts, Coordinator rematerializes any dirty HOPI-managed task checkout from its
 stable task-branch checkpoint. "Clean" means `git status` is empty at the exact task HEAD; the Work's
 committed delta from `hopi/release` remains present. This makes review proof describe exactly the
-candidate C1 can integrate. The checkout is disposable and no user checkout is touched. A Reviewer
+candidate C1 can integrate. The task checkout is disposable and the delivery checkout is untouched. A Reviewer
 that writes source produces an invalid Run: Coordinator discards that Run's checkout delta and
 retries Reviewer without returning Work to Generator or consuming a business recovery attempt.
 
@@ -550,8 +559,8 @@ references. Qualified Work and producer Run trailers make the integration commit
 copying its hash into Work.
 
 The target is the HOPI-owned `hopi/release` branch, and C1's tree snapshots the complete validated
-managed integration root plus the accepted task changes. No user checkout, user branch, index, or
-uncommitted file participates in construction or materialization.
+managed integration root plus the accepted task changes. No delivery checkout, delivery branch,
+index, or uncommitted file participates in C1 construction or managed materialization.
 
 The guarded ref move to C1 is the one irreversible integration boundary and is independent of
 `publish(bundle)`; success is reported only after Git confirms ref durability. A conflict, failed
@@ -559,9 +568,10 @@ check, or ref-update error verified to have left the old target may record Evide
 `attempts`; rebuilding on a clean target advance does not. If an uncertain update leaves the ref at C1, source
 is treated as integrated and the project blocks rather than publishing Work failure or retrying.
 After the boundary, source is never integrated again, rolled back, or counted as Work recovery. Any
-ref, commit, Work, Evidence, or managed-worktree inconsistency creates workspace project Attention
-and keeps the project out of scheduling. Coordinator never repairs individual paths, resets the
-managed root, or touches `repoPath` or another user checkout automatically. Since ordinary
+ref, commit, Work, Evidence, managed-worktree, or delivery inconsistency creates workspace project
+Attention and keeps the project out of scheduling. Coordinator never repairs individual paths or
+resets the managed root. It may only fast-forward the recorded clean delivery branch after verifying
+Repo identity, current branch, ancestry, and exact result. Since ordinary
 canonical publications may be newer than the last Git checkpoint, ownership alone does not make
 the managed root disposable. There is no metadata follow-up commit, integration-pending state, or
 merge stage. Mechanical guarantees belong to the publish ADR.
@@ -573,12 +583,14 @@ C1 critical section, not a new resource lock, retry state, or reduction in paral
 ## Worktrees and Parallelism
 
 Each linked Repo has a stable managed integration worktree materializing its `hopi/release`. The
-primary root remains the base for canonical publication and Project entrypoint scripts; all managed
-roots are distinct from user checkouts.
+primary Git root remains the base for canonical `.hopi` publication; Project `AGENTS.md`, entrypoint
+scripts, and Preview resolve beneath its portable `projectPath`. Integration and task roots live
+under `<repo-parent>/.hopi-worktrees/<repo-name>/`, distinct from the selected checkout.
 
 An engineering Work deterministically maps to one stable task branch and worktree in each Repo named
-by its `repos` field. Retries reuse those branches. Task worktrees live under Assistant-home runtime
-storage and start from their Repo's current `hopi/release`. A responsibility receives one logical
+by its `repos` field. Retries reuse those branches. Task worktrees live at
+`.hopi-worktrees/<repo-name>/work/<goalId>/<workId>` beside their Repo and start from its current
+`hopi/release`. A responsibility receives one logical
 workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
 
@@ -699,7 +711,10 @@ Concurrency rules:
 - a same-Goal Planning trigger queues immediately but its Planner Run waits for admitted Engineering
   Runs to drain; once queued, it blocks admission of new Engineering Runs
 - a material contract revision interrupts already admitted Runs for that Goal after the revision is
-  durable; an ordinary same-revision Planning request does not
+  durable
+- a same-revision request that changes an existing Planning Work interrupts only that Work's active
+  Planner after publication; creating a new Planning guard does not interrupt already admitted
+  Engineering Runs
 - possible overlap is serialized with `dependsOn`
 - deterministic source integration is idempotent by the qualified project/Goal/Work trailer
 
@@ -809,6 +824,12 @@ than allowing a model omission to strand the target. A handoff durably creates o
 internal Inbox turn, after which the speaking thread revalidates current state and owns every action
 and optional operator notification.
 
+One pending Reflection-sourced Inbox turn suppresses another Reflection assessment until that turn
+is handled. This includes an internal turn blocked by its own event-target Attention: the durable
+turn already represents the outstanding assessment, so its failure may be recovered or escalated
+but must not recursively create more handoffs. An Attention-blocked public user turn remains
+Reflection-eligible because no internal assessment exists for it yet.
+
 Receiving a public user turn aborts an active Reflection-sourced speaking turn but not the independent
 read-only Reflection process. Source priority selects public input next. Reflection may finish its
 immutable snapshot, but Coordinator publishes its prepared brief only when the semantic digest is
@@ -823,8 +844,9 @@ consume unbounded calls.
 
 Before Reconciler starts, Coordinator fully validates the Assistant home and every linked project.
 It validates the Repo binding and release ref, then validates the stable managed integration
-worktree and its Project package. Missing or inconsistent managed truth creates workspace project
-Attention. A dirty user checkout does not affect eligibility. Invalid Assistant-home truth still
+worktree, delivery checkout, and Project package. Missing or inconsistent projection truth creates
+workspace project Attention. A dirty delivery checkout blocks automatic release projection rather
+than being reset or overwritten. Invalid Assistant-home truth still
 fails closed to supervisor intervention.
 Reconciliation, dispatch, integration, and delivery never race this startup scan or proceed from
 missing original intent.
@@ -1009,7 +1031,9 @@ repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
 On Start, Coordinator first checks for the reviewed adapter. If it is missing or startup fails, the
 current UI shows the condition and asks whether Assistant should establish or repair Preview. A
 positive answer submits an ordinary durable message with the adapter path and available failure
-logs, telling Assistant to first reuse any current Goal or Work already establishing Preview and,
+logs plus the immutable Project/Goal page context from which the operator confirmed repair. Context
+helps Assistant judge reuse, reopen, or creation but does not force that Goal to receive the repair.
+The message tells Assistant to first reuse any current Goal or Work already establishing Preview and,
 only if none exists, call its Planning tool for creation or repair. A terminal setup Work whose
 adapter still fails in a clean managed worktree is evidence to reopen or plan repair, not a reason
 to declare the failure already accepted. The model judges equivalence from current documents;

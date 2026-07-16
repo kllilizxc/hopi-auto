@@ -72,8 +72,9 @@ export function createGoalPackageStore(
   projectRoot: string,
   projectId: string,
   publisher: PublicationCoordinator,
+  projectPath?: string,
 ): GoalPackageStore {
-  const paths = createGoalPackagePaths(projectRoot, projectId)
+  const paths = createGoalPackagePaths(projectRoot, projectId, projectPath)
 
   return {
     paths,
@@ -217,10 +218,12 @@ export function createGoalPackageStore(
       }
       if (
         publication.bootstrapAgentsWrite &&
-        (publication.bootstrapAgentsWrite.path !== 'AGENTS.md' ||
+        (publication.bootstrapAgentsWrite.path !== paths.agentsPath ||
           publication.bootstrapAgentsWrite.expectedHash !== null)
       ) {
-        throw new Error('Planner bootstrap may only create a previously missing root AGENTS.md')
+        throw new Error(
+          `Planner bootstrap may only create the missing Project AGENTS.md at ${paths.agentsPath}`,
+        )
       }
       for (const write of publication.projectContextWrites ?? []) {
         if (write.path !== '.hopi/docs/repos.md') {

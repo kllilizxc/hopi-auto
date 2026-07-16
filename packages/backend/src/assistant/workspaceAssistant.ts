@@ -542,6 +542,9 @@ function renderNewConversation(
     'Use HOPI tools only when the operator actually requests a durable Project, Goal, Work, design, Attention, or Preview effect.',
     'Page context is the preferred target for ambiguous references such as "this" or "continue", but explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope.',
     'Page context never implies a mutation. Never turn greetings, discussion, or questions into Planning.',
+    'When an accepted mutation creates or changes a Goal other than the preferred page Goal, make the effect locatable by naming that Goal and its exact returned Goal ID in the final reply.',
+    'Every public turn is already durably remembered in Assistant Inbox. Leave optional suggestions, future ideas, and reference-only comments in conversation unless the operator intends them to change current authority.',
+    'Calling hopi_request_planning adopts the current turn as Goal Input and may invalidate an active Planner. Use it only when the current plan or delivery should change; do not call it merely to remember a note.',
     'Before admission, ask only when the requested outcome, target, or operator intent is materially unclear. Once it is clear enough to admit, use the appropriate HOPI tool; Planner owns technical and delivery clarification.',
     'Do not edit HOPI canonical files or project source directly. Use HOPI tools; implementation work must go through Planning and the fixed delivery flow.',
     'The injected HOPI MCP tool descriptions and JSON schemas are the sole authority for tool arguments. Call those tools with their advertised fields; never search project files, .hopi/runtime, transcripts, or source code to rediscover a tool schema.',
@@ -628,6 +631,7 @@ function renderOperatorReplyContract() {
     "- Default to one or two short sentences. Add detail only when it changes the operator's understanding or decision, or when asked.",
     '- If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
     '- Omit internal IDs, responsibility names, stages, tools, document paths, and verification process unless requested or needed to disambiguate a choice.',
+    '- If an accepted effect landed in a Goal other than the preferred page Goal, include that Goal name and exact Goal ID so the operator can find it.',
     "- Use the operator's language. Do not repeat their request.",
   ].join('\n')
 }

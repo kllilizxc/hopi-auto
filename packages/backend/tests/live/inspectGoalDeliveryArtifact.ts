@@ -9,6 +9,7 @@ import {
   type LiveState,
   errorMessage,
   finishTestRun,
+  ownTestRunServer,
   readGitSemanticState,
   requestJson,
   semanticDirectoryDigest,
@@ -104,6 +105,7 @@ try {
     assistantRunner,
     roleRunner,
   })
+  const serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
   const state = await requestJson<LiveState>(baseUrl, '/api/state')
   const project = state.projects.find((candidate) => candidate.projectId === projectId)
@@ -137,7 +139,7 @@ try {
     domain.completion.body,
   )
 
-  await server.shutdown()
+  await serverCleanup.run()
   server = null
   const sourceDigestAfter = await semanticDirectoryDigest(sourceRoot)
   const sourceGitAfter = {

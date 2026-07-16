@@ -29,6 +29,13 @@ No Project or Goal effect occurs unless the Assistant chooses and successfully c
 HOPI does not add keyword routing, prose parsing, an `actions[]` result, or a second model call to
 classify the message.
 
+Every public turn is already a durable **receipt** in Assistant Inbox. It becomes Goal authority only
+when Assistant deliberately **adopts** it through an existing mutation tool. An optional suggestion,
+future idea, or reference that should not change current delivery remains ordinary conversation: it
+is still available in conversation history, but creates no Goal Input, Planning Work, or separate
+`Note` state. The model judges the requested effect from meaning; HOPI adds no suggestion classifier
+or trigger vocabulary.
+
 The MVP has one operator-facing, workspace-wide Assistant thread per HOPI Home. The operator may
 submit more messages while a turn is running; durable pending turns wait in receipt order. One
 Assistant turn runs at a time so vendor conversation order remains coherent. Goal responsibility
@@ -50,6 +57,10 @@ do anything?
 - Do not repeat the request or expose Goal, Work, Attention, Run, or event IDs; responsibility names;
   tool calls; document paths; internal stages; or verification process unless the operator asks or
   the detail is necessary to disambiguate a choice.
+- An accepted effect must remain locatable from the operator's current view. When Assistant creates
+  or changes a Goal other than the preferred page Goal, its final reply names that Goal and includes
+  the exact Goal ID. This is a discoverability exception to hiding internal identifiers, not a new
+  delivery notification or UI state.
 - A recoverable internal problem remains silent unless its user-visible delay or consequence is
   itself useful information. HOPI reports exhausted recovery as a direct blocker and action.
 
@@ -108,6 +119,12 @@ snapshot. Reflection follows one small protocol:
    decides whether to call normal HOPI tools, remain silent, or publish one explicit notification
    rewritten under the operator-facing communication policy. Internal IDs and diagnostics from the
    brief are not copied into that reply by default.
+
+The pending internal Inbox item is the durable ownership boundary for that assessment. Coordinator
+does not start another Reflection while any such item remains pending, including when an
+event-target Attention blocks its speaking attempt. The existing item is retried or recovered after
+that blocker is resolved; Reflection does not create a parallel brief for the resulting diagnostic
+state. This bounds failure without adding a Reflection queue or another workflow status.
 
 The semantic digest covers Goal lifecycle and revision, Work stage, dependency and recovery facts,
 Attention lifecycle, Attempt completion/interruption, project availability, and C1 integration. It
@@ -313,12 +330,22 @@ design change that should now be implemented. If Assistant repeats the idempoten
 must not create another Input or Planning Work. HOPI does not add tool-order state just to forbid a
 harmless model retry.
 
+`Request planning` is an authority boundary, not a general way to remember conversation. Calling it
+adopts the current turn as Goal Input and may invalidate an active Planner. Assistant therefore leaves
+a non-blocking suggestion conversation-only unless the operator intends it to change the current plan
+or delivery. `Write design` is the corresponding explicit adoption when the requested durable effect
+is documentation rather than implementation; it does not mechanically request Planning.
+
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
 that result. It does not sleep, poll state, or wait for Planner, Generator, Reviewer, C1, Preview, or
 Reflection in the same speaking turn. Later completion, blocking, or decision-worthy state is
 reported through the existing read-only Reflection path. This keeps one rule for every
 long-running effect and avoids a second progress-watching workflow inside conversation.
+
+The acceptance reply also identifies where the effect landed when that target is not the preferred
+page Goal. Durable publication proves the effect happened; naming the returned Goal ID lets the
+operator find its scoped Kanban without adding auto-navigation, prose parsing, or an effect ledger.
 
 `Write design` addresses files relative to the selected Goal's `design/` root. If Assistant repeats that
 Goal's exact canonical design prefix, the tool strips it instead of creating a nested `.hopi` tree;

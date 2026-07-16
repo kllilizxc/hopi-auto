@@ -12,6 +12,7 @@ import {
   errorMessage,
   finishLiveHarness,
   markHarnessCheckpoint,
+  ownTestRunServer,
   recordAction,
   requestJson,
   semanticDirectoryDigest,
@@ -60,9 +61,10 @@ try {
     ?.repos.find((repo) => repo.primary)?.integrationRoot
   assert.ok(integrationRoot, 'Fixture Project must expose its managed integration root')
 
-  await harness.server.shutdown()
+  await ownTestRunServer(harness, harness.server).run()
   await seedPausedGoal(integrationRoot)
   harness.server = createServer({ rootDir: harness.homeRoot, port: 0 })
+  ownTestRunServer(harness, harness.server)
   harness.baseUrl = `http://127.0.0.1:${harness.server.port}`
   await recordAction(harness, 'server_restarted_after_fixture_seed', {
     projectId: PROJECT_ID,
@@ -78,6 +80,7 @@ try {
   const messages = [
     '你好。请只简短问候；不要创建或修改任何 Goal、Input、Work、设计、Attention 或代码。',
     '当前页面显示一个已有 Goal。请只读说明它的标题和当前状态；不要进行任何修改。',
+    '如果未来继续这个 Goal，可以考虑像素风；这只是一个不影响当前交付的备选建议，请留在对话中，不要修改规划或任何项目文档。',
     '继续当前对话：这个 Goal 目前为什么不会开始执行？只解释，不要修改任何内容。',
   ]
   const events: FeedEvent[] = []
@@ -102,7 +105,7 @@ try {
         `Factual reply must report the paused lifecycle, received: ${event.reply}`,
       )
     }
-    if (index === 2) {
+    if (index === 3) {
       assert.ok(
         hasAny(reply, ['paused', '暂停']),
         `Follow-up must explain that pause blocks execution, received: ${event.reply}`,

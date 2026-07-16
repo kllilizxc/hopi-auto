@@ -12,6 +12,8 @@ export interface AssistantHomeDocument {
 export interface ProjectRepoLink {
   repoId: string
   repoPath: string
+  projectPath?: string
+  deliveryBranch?: string
 }
 
 export interface ProjectLink {
@@ -22,12 +24,13 @@ export interface ProjectLink {
 }
 
 export interface ProjectLinksDocument {
-  version: 2
+  version: 3
   projects: ProjectLink[]
 }
 
 export interface ProjectRepoDocument {
   repoId: string
+  projectPath?: string
   releaseCommit?: string
 }
 
@@ -39,6 +42,8 @@ export interface ProjectDocument {
 }
 
 export interface LinkedProjectRepo extends ProjectRepoLink {
+  projectPath: string
+  deliveryBranch: string
   integrationRoot: string
   primary: boolean
 }
@@ -47,6 +52,8 @@ export interface LinkedProject extends ProjectLink {
   repos: LinkedProjectRepo[]
   /** Primary Repo compatibility alias. */
   repoPath: string
+  /** Primary Repo portable source-scope compatibility alias. */
+  projectPath: string
   /** Primary Repo compatibility alias and canonical document root. */
   integrationRoot: string
 }

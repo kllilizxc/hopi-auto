@@ -1,12 +1,14 @@
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { DEFAULT_PRIMARY_REPO_ID, type ProjectDocument, type ProjectRepoDocument } from './project'
+import { isNormalizedProjectPath, normalizeProjectPath } from './projectPath'
 
 const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 
 export const projectRepoDocumentSchema = z
   .object({
     repoId: stableIdSchema,
+    projectPath: z.string().refine(isNormalizedProjectPath).optional(),
     releaseCommit: z
       .string()
       .regex(/^[a-f0-9]{40,64}$/)
@@ -71,6 +73,13 @@ export function renderProjectDocument(document: ProjectDocument) {
 export function validateProjectDocument(document: ProjectDocument) {
   const repoIds = new Set<string>()
   for (const repo of document.repos) {
+    try {
+      normalizeProjectPath(repo.projectPath)
+    } catch (error) {
+      throw new ProjectDocumentError(
+        `project.yml contains invalid projectPath for ${repo.repoId}: ${errorMessage(error)}`,
+      )
+    }
     if (repoIds.has(repo.repoId)) {
       throw new ProjectDocumentError(`project.yml contains duplicate Repo ${repo.repoId}`)
     }

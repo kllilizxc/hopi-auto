@@ -2,13 +2,22 @@ import { expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LIVE_STEPS, PREFLIGHT_STEPS, aggregateUsage } from './e2e/regression'
+import {
+  LIVE_STEPS,
+  PREFLIGHT_STEPS,
+  aggregateUsage,
+  runCommandWithDeadline,
+} from './e2e/regression'
 import {
   type TestRunCodeProvenance,
   type TestRunContext,
   type TestRunReport,
   collectScreenshotEvidence,
+  enterTestRunPhase,
+  finishTestRun,
+  markTestRunCheckpoint,
   readTestRun,
+  registerTestRunCleanup,
   writeTestRunReport,
 } from './testRunArtifact'
 
@@ -53,6 +62,124 @@ test('one Test Run indexes evidence, derives a gallery, and becomes immutable', 
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('Test Run cleans owned resources in reverse order before sealing evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hopi-test-run-lifecycle-'))
+  const context = runContext(root, 'owned-resource-lifecycle', 'contract')
+  const order: string[] = []
+  try {
+    await writeTestRunReport(context, 'running')
+    const first = registerTestRunCleanup(context, {
+      name: 'first-server',
+      cleanup: async () => {
+        order.push('first-server')
+        await Bun.write(join(root, 'first-cleanup.txt'), 'closed\n')
+      },
+    })
+    registerTestRunCleanup(context, {
+      name: 'second-recorder',
+      cleanup: async () => {
+        order.push('second-recorder')
+        await Bun.write(join(root, 'second-cleanup.txt'), 'closed\n')
+      },
+    })
+    await enterTestRunPhase(context, 'verification')
+    await markTestRunCheckpoint(context, 'domain_verified')
+
+    const report = await finishTestRun(context, 'passed', () => ({
+      cleanupObservedBeforeSeal: [...order],
+    }))
+    expect(order).toEqual(['second-recorder', 'first-server'])
+    expect(report).toMatchObject({
+      status: 'passed',
+      cleanupObservedBeforeSeal: ['second-recorder', 'first-server'],
+      cleanup: {
+        status: 'passed',
+        resources: [
+          { name: 'first-server', status: 'completed' },
+          { name: 'second-recorder', status: 'completed' },
+        ],
+      },
+    })
+    expect(report.evidence.map((entry) => entry.path)).toContain('first-cleanup.txt')
+    expect(report.evidence.map((entry) => entry.path)).toContain('second-cleanup.txt')
+    const actions = await Bun.file(join(root, 'actions.jsonl')).text()
+    expect(actions).toContain('"action":"phase_started","phase":"verification"')
+    expect(actions).toContain('"action":"checkpoint_reached","checkpoint":"domain_verified"')
+    expect(actions.indexOf('second-recorder')).toBeLessThan(actions.indexOf('first-server'))
+
+    await first.run()
+    expect(order).toEqual(['second-recorder', 'first-server'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('cleanup failure and timeout prevent a requested pass without retrying behavior', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hopi-test-run-cleanup-failure-'))
+  const context = runContext(root, 'cleanup-failure', 'contract')
+  let failedCalls = 0
+  let timedOutCalls = 0
+  let forceCalls = 0
+  try {
+    await writeTestRunReport(context, 'running')
+    registerTestRunCleanup(context, {
+      name: 'failing-resource',
+      cleanup: () => {
+        failedCalls += 1
+        throw new Error('close failed')
+      },
+    })
+    registerTestRunCleanup(context, {
+      name: 'hanging-resource',
+      timeoutMs: 20,
+      cleanup: () => {
+        timedOutCalls += 1
+        return new Promise<void>(() => undefined)
+      },
+      force: () => {
+        forceCalls += 1
+      },
+    })
+
+    const report = await finishTestRun(context, 'passed')
+    expect(report).toMatchObject({
+      status: 'failed',
+      intendedStatus: 'passed',
+      failedAt: 'cleanup',
+      cleanup: {
+        status: 'failed',
+        resources: [
+          { name: 'failing-resource', status: 'failed', error: 'close failed' },
+          { name: 'hanging-resource', status: 'timed_out', forced: true },
+        ],
+      },
+    })
+    expect({ failedCalls, timedOutCalls, forceCalls }).toEqual({
+      failedCalls: 1,
+      timedOutCalls: 1,
+      forceCalls: 1,
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Regression command deadline retains output emitted before termination', async () => {
+  const result = await runCommandWithDeadline({
+    command: [
+      'bun',
+      '-e',
+      'console.log("checkpoint-before-hang"); setInterval(() => undefined, 1_000)',
+    ],
+    cwd: resolve(import.meta.dir, '..', '..'),
+    timeoutMs: 100,
+  })
+
+  expect(result.timedOut).toBe(true)
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stdout).toContain('checkpoint-before-hang')
 })
 
 test('visual review creates a separate Inspection Test Run without mutating its source', async () => {

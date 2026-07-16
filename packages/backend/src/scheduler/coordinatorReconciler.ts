@@ -14,6 +14,7 @@ export interface CoordinatorProjectRuntime {
   projectId: string
   store: GoalPackageStore
   reconciler: ProjectReconciler
+  recover?(): Promise<void>
 }
 
 export interface CoordinatorReconcilerOptions {
@@ -70,6 +71,7 @@ export function createCoordinatorReconciler(
   let reconcileEpoch = 0
   let reconciling: Promise<CoordinatorReconcileTick> | null = null
   let directAssistantCommands = 0
+  const projectRecoveryAfter = new Map<string, number>()
 
   const coordinator: CoordinatorReconciler = {
     activeRuns() {
@@ -140,7 +142,11 @@ export function createCoordinatorReconciler(
             const publicPending = eligiblePendingEvents(workspace, assistantActive).some(
               (event) => event.attributes.source === 'user',
             )
-            if (!publicPending) {
+            const internalHandoffPending = [...workspace.events.values()].some(
+              (event) =>
+                event.attributes.status === 'pending' && event.attributes.source === 'reflection',
+            )
+            if (!publicPending && !internalHandoffPending) {
               await options.reflection.observe({
                 settled:
                   result.kind === 'idle' && !startedWithActiveResponsibility && active.size === 0,
@@ -202,6 +208,10 @@ export function createCoordinatorReconciler(
 
     const refreshedWorkspace = await options.workspace.readWorkspace()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
+    const recoveredProjects = await recoverBlockedProjects(refreshedWorkspace)
+    if (recoveredProjects > 0) {
+      return { kind: 'deterministic_action', count: recoveredProjects }
+    }
     const projectBlocks = blockedProjects(refreshedWorkspace)
     const passCounts = activePassCounts(active)
     const candidates: GoalCandidate[] = []
@@ -333,6 +343,34 @@ export function createCoordinatorReconciler(
       if (delivered > 0) return { kind: 'delivery', count: delivered }
     }
     return { kind: 'idle' }
+  }
+
+  async function recoverBlockedProjects(workspace: AssistantWorkspace) {
+    let recovered = 0
+    for (const attention of workspace.attentions.values()) {
+      if (attention.attributes.resolvedAt !== null) continue
+      const prefix = 'project:'
+      if (!attention.attributes.target.startsWith(prefix)) continue
+      const projectId = attention.attributes.target.slice(prefix.length)
+      const project = options.projects.find((candidate) => candidate.projectId === projectId)
+      if (!project?.recover) continue
+      if ([...active.keys()].some((key) => key.startsWith(`${projectId}/`))) continue
+      if ((projectRecoveryAfter.get(projectId) ?? 0) > now().getTime()) continue
+      try {
+        await project.recover()
+        await options.workspace.resolveAttention(
+          attention.attributes.id,
+          'Coordinator revalidated the managed release and delivery projections.',
+          now(),
+        )
+        projectRecoveryAfter.delete(projectId)
+        eligibleProjects.add(projectId)
+        recovered += 1
+      } catch {
+        projectRecoveryAfter.set(projectId, now().getTime() + 5_000)
+      }
+    }
+    return recovered
   }
 
   return coordinator

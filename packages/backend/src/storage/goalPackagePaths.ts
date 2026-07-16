@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path'
+import { normalizeProjectPath, scopedProjectPath } from '../domain/projectPath'
 import type { PublicationRoot } from '../publication/types'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -6,6 +7,9 @@ const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 export interface GoalPackagePaths {
   projectId: string
   projectRoot: string
+  projectPath: string
+  agentsPath: string
+  preparePath: string
   publicationRoot: PublicationRoot
   goalsRoot: string
   goalRoot(goalId: string): string
@@ -25,14 +29,22 @@ export interface GoalPackagePaths {
   absolute(relativePath: string): string
 }
 
-export function createGoalPackagePaths(projectRoot: string, projectId: string): GoalPackagePaths {
+export function createGoalPackagePaths(
+  projectRoot: string,
+  projectId: string,
+  projectPath?: string,
+): GoalPackagePaths {
   assertStableId(projectId, 'projectId')
   const absoluteProjectRoot = resolve(projectRoot)
+  const normalizedProjectPath = normalizeProjectPath(projectPath)
   const goalsRoot = '.hopi/docs/goals'
 
   return {
     projectId,
     projectRoot: absoluteProjectRoot,
+    projectPath: normalizedProjectPath,
+    agentsPath: scopedProjectPath(normalizedProjectPath, 'AGENTS.md'),
+    preparePath: scopedProjectPath(normalizedProjectPath, 'scripts/hopi/prepare'),
     publicationRoot: { id: `project:${projectId}`, path: absoluteProjectRoot },
     goalsRoot,
     goalRoot(goalId) {

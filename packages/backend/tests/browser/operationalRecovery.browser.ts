@@ -22,6 +22,7 @@ import {
   finishTestRun,
   gitOutput,
   inspectKanban,
+  ownTestRunServer,
   recordAction,
   requestJson,
   sendAssistantMessage,
@@ -54,6 +55,7 @@ const processRunner = new ConfiguredRoleRunner({
 })
 let attentionToResolve: string | null = null
 let server: MvpServer | null = null
+let serverCleanup: ReturnType<typeof ownTestRunServer> | null = null
 let restartCount = 0
 
 const roleRunner: RoleRunner = {
@@ -276,6 +278,7 @@ try {
 
 function startServer() {
   server = createServer({ rootDir: homeRoot, port: 0, roleRunner, assistantRunner })
+  serverCleanup = ownTestRunServer(testRun, server)
   context.baseUrl = `http://127.0.0.1:${server.port}`
 }
 
@@ -290,9 +293,10 @@ async function restartServer() {
 }
 
 async function shutdownServer() {
-  const current = server
+  const cleanup = serverCleanup
   server = null
-  if (current) await current.shutdown()
+  serverCleanup = null
+  if (cleanup) await cleanup.run()
 }
 
 async function waitForOperationalFailures(expected: number) {

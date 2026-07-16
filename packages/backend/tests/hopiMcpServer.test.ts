@@ -48,9 +48,15 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'reply immediately without sleeping or polling',
     )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'include the exact returned goalId',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
     ).toContain('same-instruction call after hopi_create_goal is unnecessary and idempotent')
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
+    ).toContain('do not call it for an optional suggestion')
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
       'writes: [{ path, content }]',
     )

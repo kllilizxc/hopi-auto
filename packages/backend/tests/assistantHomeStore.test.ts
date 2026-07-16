@@ -30,7 +30,7 @@ describe('createAssistantHomeStore', () => {
     expect(first).toEqual(second)
     expect(first.homeId).toMatch(/^H-/)
     expect(await readYaml(store.paths.homeDocumentPath)).toEqual(first)
-    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 2, projects: [] })
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 3, projects: [] })
   })
 
   test('links a Repo through hopi/release without changing the user checkout', async () => {
@@ -49,25 +49,54 @@ describe('createAssistantHomeStore', () => {
         {
           repoId: 'primary',
           repoPath: await realpath(repoPath),
-          integrationRoot: store.paths.integrationRoot('P-1'),
+          projectPath: '.',
+          deliveryBranch: 'main',
+          integrationRoot: store.paths.managedIntegrationRoot(repoPath),
           primary: true,
         },
       ],
       repoPath: await realpath(repoPath),
-      integrationRoot: store.paths.integrationRoot('P-1'),
+      projectPath: '.',
+      integrationRoot: store.paths.managedIntegrationRoot(repoPath),
     })
     expect(await snapshotUserCheckout(repoPath)).toEqual(before)
     expect(await git(project.integrationRoot, ['branch', '--show-current'])).toBe(
       HOPI_RELEASE_BRANCH,
     )
     expect(await git(project.integrationRoot, ['rev-parse', 'HEAD'])).toBe(before.head)
-    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toEqual({
+    expect(await readYaml(join(project.integrationRoot, '.hopi', 'project.yml'))).toEqual({
       version: 2,
       projectId: 'P-1',
       primaryRepoId: 'primary',
       repos: [{ repoId: 'primary' }],
     })
     expect(await store.validateProject('P-1')).toEqual(project)
+  })
+
+  test('persists a selected Git subdirectory as the portable Project scope', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const selectedPath = join(repoPath, 'apps', 'new-product')
+    await mkdir(selectedPath, { recursive: true })
+    const store = createAssistantHomeStore(homeRoot)
+
+    const project = await store.linkProject({ projectId: 'P-scoped', repoPath: selectedPath })
+
+    expect(project.repoPath).toBe(repoPath)
+    expect(project.projectPath).toBe('apps/new-product')
+    expect(project.repos[0]).toMatchObject({
+      repoPath,
+      projectPath: 'apps/new-product',
+    })
+    expect(await readYaml(join(project.integrationRoot, '.hopi', 'project.yml'))).toEqual({
+      version: 2,
+      projectId: 'P-scoped',
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', projectPath: 'apps/new-product' }],
+    })
+    await expect(createAssistantHomeStore(homeRoot).readProject('P-scoped')).resolves.toEqual(
+      project,
+    )
   })
 
   test('materializes managed roots without inheriting user autocrlf conversion', async () => {
@@ -98,15 +127,74 @@ describe('createAssistantHomeStore', () => {
     await store.initialize()
 
     expect(await readYaml(store.paths.projectLinksPath)).toEqual({
-      version: 2,
+      version: 3,
       projects: [
         {
           projectId: 'P-1',
           primaryRepoId: 'primary',
-          repos: [{ repoId: 'primary', repoPath: await realpath(repoPath) }],
+          repos: [
+            { repoId: 'primary', repoPath: await realpath(repoPath), deliveryBranch: 'main' },
+          ],
         },
       ],
     })
+  })
+
+  test('relocates legacy integration and task worktrees without losing dirty state', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const store = createAssistantHomeStore(homeRoot)
+    await store.initialize()
+    await Bun.write(
+      store.paths.projectLinksPath,
+      [
+        'version: 2',
+        'projects:',
+        '  - projectId: P-1',
+        '    primaryRepoId: primary',
+        '    repos:',
+        '      - repoId: primary',
+        `        repoPath: ${repoPath}`,
+        '',
+      ].join('\n'),
+    )
+    const legacyIntegration = store.paths.integrationRoot('P-1')
+    const legacyTask = join(homeRoot, '.hopi', 'runtime', 'worktrees', 'P-1', 'G-1', 'W-1')
+    await mkdir(dirname(legacyIntegration), { recursive: true })
+    await git(repoPath, ['worktree', 'add', '-b', HOPI_RELEASE_BRANCH, legacyIntegration, 'HEAD'])
+    await mkdir(join(legacyIntegration, '.hopi', 'docs'), { recursive: true })
+    await Bun.write(
+      join(legacyIntegration, '.hopi', 'project.yml'),
+      'version: 2\nprojectId: P-1\nprimaryRepoId: primary\nrepos:\n  - repoId: primary\n',
+    )
+    await Bun.write(join(legacyIntegration, '.hopi', 'docs', 'preserved.md'), '# Preserved\n')
+    await mkdir(dirname(legacyTask), { recursive: true })
+    await git(repoPath, ['worktree', 'add', '-b', 'hopi/work/P-1/G-1/W-1', legacyTask, 'HEAD'])
+    await Bun.write(join(legacyTask, 'unfinished.txt'), 'unfinished task state\n')
+    const integrationStatus = await git(legacyIntegration, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+    ])
+    const taskStatus = await git(legacyTask, ['status', '--porcelain=v1', '--untracked-files=all'])
+
+    await store.initialize()
+
+    const project = await store.readProject('P-1')
+    const taskRoot = join(store.paths.managedRepoRoot(repoPath), 'work', 'G-1', 'W-1')
+    expect(project.integrationRoot).toBe(store.paths.managedIntegrationRoot(repoPath))
+    expect(await Bun.file(legacyIntegration).exists()).toBe(false)
+    expect(await Bun.file(legacyTask).exists()).toBe(false)
+    expect(
+      await Bun.file(join(project.integrationRoot, '.hopi', 'docs', 'preserved.md')).text(),
+    ).toBe('# Preserved\n')
+    expect(await Bun.file(join(taskRoot, 'unfinished.txt')).text()).toBe('unfinished task state\n')
+    expect(
+      await git(project.integrationRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
+    ).toBe(integrationStatus)
+    expect(await git(taskRoot, ['status', '--porcelain=v1', '--untracked-files=all'])).toBe(
+      taskStatus,
+    )
   })
 
   test('links and validates a secondary Repo without changing either user checkout', async () => {
@@ -124,11 +212,13 @@ describe('createAssistantHomeStore', () => {
     expect(api).toEqual({
       repoId: 'api',
       repoPath: await realpath(apiPath),
-      integrationRoot: store.paths.repoIntegrationRoot('P-1', 'api', 'primary'),
+      projectPath: '.',
+      deliveryBranch: 'main',
+      integrationRoot: store.paths.managedIntegrationRoot(apiPath),
       primary: false,
     })
     expect(await git(api.integrationRoot, ['branch', '--show-current'])).toBe(HOPI_RELEASE_BRANCH)
-    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toEqual({
+    expect(await readYaml(join(project.integrationRoot, '.hopi', 'project.yml'))).toEqual({
       version: 2,
       projectId: 'P-1',
       primaryRepoId: 'primary',
@@ -162,8 +252,8 @@ describe('createAssistantHomeStore', () => {
         ],
       }),
     ).rejects.toThrow('same Git Repo')
-    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 2, projects: [] })
-    expect(await Bun.file(store.paths.integrationRoot('P-1')).exists()).toBe(false)
+    expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 3, projects: [] })
+    expect(await Bun.file(store.paths.managedIntegrationRoot(webPath)).exists()).toBe(false)
 
     const linked = await store.linkProject({
       projectId: 'P-1',
@@ -181,7 +271,7 @@ describe('createAssistantHomeStore', () => {
         { projectId: 'P-1', primaryRepoId: 'web', repos: [{ repoId: 'web' }, { repoId: 'api' }] },
       ],
     })
-    expect(await readYaml(store.paths.projectDocumentPath('P-1'))).toMatchObject({
+    expect(await readYaml(join(linked.integrationRoot, '.hopi', 'project.yml'))).toMatchObject({
       projectId: 'P-1',
       primaryRepoId: 'web',
       repos: [{ repoId: 'web' }, { repoId: 'api', releaseCommit: beforeApi.head }],
@@ -383,11 +473,12 @@ describe('createAssistantHomeStore', () => {
     const store = createAssistantHomeStore(homeRoot)
     await store.initialize()
 
-    const integrationRoot = store.paths.integrationRoot('P-1')
+    const integrationRoot = store.paths.managedIntegrationRoot(repoPath)
     await mkdir(join(integrationRoot, '..'), { recursive: true })
     await git(repoPath, ['worktree', 'add', '-b', HOPI_RELEASE_BRANCH, integrationRoot, 'HEAD'])
-    await mkdir(dirname(store.paths.projectDocumentPath('P-1')), { recursive: true })
-    await Bun.write(store.paths.projectDocumentPath('P-1'), 'version: 1\nprojectId: P-1\n')
+    const projectDocumentPath = join(integrationRoot, '.hopi', 'project.yml')
+    await mkdir(dirname(projectDocumentPath), { recursive: true })
+    await Bun.write(projectDocumentPath, 'version: 1\nprojectId: P-1\n')
 
     const project = await store.linkProject({ projectId: 'P-1', repoPath })
 
@@ -399,7 +490,11 @@ describe('createAssistantHomeStore', () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     await store.linkProject({ projectId: 'P-1', repoPath })
-    await Bun.write(store.paths.projectDocumentPath('P-1'), 'version: 1\nprojectId: P-other\n')
+    const project = await store.readProject('P-1')
+    await Bun.write(
+      join(project.integrationRoot, '.hopi', 'project.yml'),
+      'version: 1\nprojectId: P-other\n',
+    )
 
     const validation = store.validateProject('P-1')
 
@@ -422,7 +517,9 @@ describe('createAssistantHomeStore', () => {
 
     expect(rebound.repoPath).toBe(await realpath(movedRepo))
     expect(await store.validateProject('P-1')).toEqual(rebound)
-    expect(await Bun.file(canonicalPath).text()).toBe('# Preserved canonical state\n')
+    expect(await Bun.file(join(rebound.integrationRoot, '.hopi/docs/preserved.md')).text()).toBe(
+      '# Preserved canonical state\n',
+    )
     expect(await snapshotUserCheckout(movedRepo)).toEqual(before)
   })
 
@@ -437,7 +534,11 @@ describe('createAssistantHomeStore', () => {
     await expect(store.rebindProject({ projectId: 'P-1', repoPath: movedRepo })).rejects.toThrow(
       'refusing to reconstruct',
     )
-    expect(await Bun.file(store.paths.projectDocumentPath('P-1')).exists()).toBe(false)
+    expect(
+      await Bun.file(
+        join(store.paths.managedIntegrationRoot(movedRepo), '.hopi', 'project.yml'),
+      ).exists(),
+    ).toBe(false)
   })
 })
 

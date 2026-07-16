@@ -49,6 +49,8 @@ export interface GoalSummary {
 export interface ProjectRepoSummary {
   repoId: string
   repoPath: string
+  projectPath: string
+  deliveryBranch: string
   integrationRoot: string
   primary: boolean
 }
@@ -58,6 +60,7 @@ export interface ProjectSummary {
   primaryRepoId: string
   repos: ProjectRepoSummary[]
   repoPath: string
+  projectPath: string
   guidance: string | null
   codingDefaults: ProjectCodingDefaults
   codingDefaultsInherited: boolean
@@ -65,6 +68,23 @@ export interface ProjectSummary {
   openAttentionCount: number
   goals: GoalSummary[]
 }
+
+export type ProjectDirectorySelection =
+  | {
+      kind: 'git_repository'
+      path: string
+      repoPath: string
+      projectPath: string
+    }
+  | {
+      kind: 'empty_directory'
+      path: string
+    }
+  | {
+      kind: 'non_git_directory'
+      path: string
+      entryCount: number
+    }
 
 export interface InboxEventView {
   id: string

@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -8,9 +9,11 @@ import {
 import type { GoalPackage } from '../domain/goalPackage'
 import {
   DEFAULT_PRIMARY_REPO_ID,
+  HOPI_RELEASE_BRANCH,
   type LinkedProjectRepo,
   requireProjectRepo,
 } from '../domain/project'
+import { resolveProjectPath } from '../domain/projectPath'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
@@ -94,7 +97,7 @@ export interface ProjectReconciler {
   ): Promise<ProjectReconcileResult>
   liveWorkIds(): ReadonlySet<string>
   operationallyDeferredWorkIds?(goalId: string, observedAt?: Date): ReadonlySet<string>
-  interruptRuns(goalId?: string): void
+  interruptRuns(goalId?: string, workId?: string): void
 }
 
 export function createProjectReconciler(options: ProjectReconcilerOptions): ProjectReconciler {
@@ -111,15 +114,21 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     {
       repoId: primaryRepoId,
       repoPath: options.projectRoot,
+      projectPath: '.',
+      deliveryBranch: HOPI_RELEASE_BRANCH,
       integrationRoot: options.projectRoot,
       primary: true,
     },
   ]
+  const primaryProjectRepo = requireProjectRepo({ repos: projectRepos }, primaryRepoId)
   const c1Layout = {
     primaryRepoId,
     repos: projectRepos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
+      checkoutRoot: repo.repoPath,
+      deliveryBranch: repo.deliveryBranch,
+      projectPath: repo.projectPath,
       primary: repo.primary,
     })),
   }
@@ -144,6 +153,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const runControllers = new Map<string, AbortController>()
   let projectInterruptionGeneration = 0
   const goalInterruptionGenerations = new Map<string, number>()
+  let workInterruptionSequence = 0
+  const workInterruptionGenerations = new Map<string, number>()
   const operationalRetries = new Map<string, { failures: number; retryAt: number }>()
   const operationalRetryBaseMs = options.operationalRetryBaseMs ?? 30_000
   const maxOperationalFailures = options.maxOperationalFailures ?? 3
@@ -159,7 +170,15 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   }
 
   return {
-    interruptRuns(goalId) {
+    interruptRuns(goalId, workId) {
+      if (workId) {
+        if (!goalId) throw new Error('A Work interruption requires its Goal ID')
+        const liveKey = `${goalId}/${workId}`
+        workInterruptionSequence += 1
+        workInterruptionGenerations.set(liveKey, workInterruptionSequence)
+        runControllers.get(liveKey)?.abort()
+        return
+      }
       const goalPrefix = goalId ? `${goalId}/` : null
       if (goalId) {
         goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
@@ -180,6 +199,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const interruptionGeneration = {
         project: projectInterruptionGeneration,
         goal: goalInterruptionGenerations.get(goalId) ?? 0,
+        work: workInterruptionSequence,
       }
       await readSoftwareDeliveryProfile()
       const goalPackage = await options.store.readPackage(goalId)
@@ -250,12 +270,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
 
       const { workId, responsibility } = decision
-      if (
-        interruptionGeneration.project !== projectInterruptionGeneration ||
-        interruptionGeneration.goal !== (goalInterruptionGenerations.get(goalId) ?? 0)
-      ) {
-        return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
-      }
       const liveKey = `${goalId}/${workId}`
       if (live.has(liveKey)) return { kind: 'wait', decision }
       live.add(liveKey)
@@ -264,6 +278,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const runId = createRunId()
       let attempt: RunAttemptRecorder | null = null
       try {
+        if (
+          interruptionGeneration.project !== projectInterruptionGeneration ||
+          interruptionGeneration.goal !== (goalInterruptionGenerations.get(goalId) ?? 0) ||
+          (workInterruptionGenerations.get(liveKey) ?? 0) > interruptionGeneration.work
+        ) {
+          return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+        }
         const owningWork = goalPackage.works.get(workId)
         if (!owningWork) throw new Error(`Work is missing: ${workId}`)
         const selectedRepos =
@@ -299,20 +320,28 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                   }
                 }),
               )
-        const roleRepoRoots =
+        const scopedWorktrees = await Promise.all(
+          worktreeEntries.map(async (entry) => ({
+            ...entry,
+            projectRoot: await ensureProjectScope(entry.worktree.path, entry.repo.projectPath),
+          })),
+        )
+        const roleRepoRoots = await Promise.all(
           responsibility === 'planner'
-            ? selectedRepos.map((repo) => ({
+            ? selectedRepos.map(async (repo) => ({
                 repoId: repo.repoId,
-                path: repo.integrationRoot,
+                path: await ensureProjectScope(repo.integrationRoot, repo.projectPath),
                 primary: repo.primary,
               }))
-            : worktreeEntries.map(({ repo, worktree }) => ({
+            : scopedWorktrees.map(async ({ repo, projectRoot }) => ({
                 repoId: repo.repoId,
-                path: worktree.path,
+                path: projectRoot,
                 primary: repo.primary,
-              }))
+              })),
+        )
         const context = await contextStager.prepare({
           projectRoot: options.projectRoot,
+          projectPath: primaryProjectRepo.projectPath,
           projectId: options.projectId,
           goalId,
           workId,
@@ -332,19 +361,19 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runRoot: context.runRoot,
           })
           .catch(() => null)
-        if (worktreeEntries.length > 0) {
-          const primaryTaskRoot = worktreeEntries.find(({ repo }) => repo.primary)?.worktree.path
+        if (scopedWorktrees.length > 0) {
+          const primaryTaskRoot = scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot
           const preparationProjectRoot =
             primaryTaskRoot ??
-            requireProjectRepo({ repos: projectRepos }, primaryRepoId).integrationRoot
+            resolveProjectPath(primaryProjectRepo.integrationRoot, primaryProjectRepo.projectPath)
           const preparation = await preparer.prepare({
             projectRoot: preparationProjectRoot,
             runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
             timeoutMs: options.preparationTimeoutMs,
             primaryRepoId,
-            repoRoots: worktreeEntries.map(({ repo, worktree }) => ({
+            repoRoots: scopedWorktrees.map(({ repo, projectRoot }) => ({
               repoId: repo.repoId,
-              path: worktree.path,
+              path: projectRoot,
             })),
           })
           await attempt?.record(preparationEvent(responsibility, preparation))
@@ -390,6 +419,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             await appendPreparationDiagnostic(context.promptFile, preparation)
           }
         }
+        if (runController.signal.aborted) {
+          await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
+          return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+        }
         let outcome = await options.roleRunner.run(
           {
             projectId: options.projectId,
@@ -398,8 +431,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             responsibility,
             cwd:
-              worktreeEntries.find(({ repo }) => repo.primary)?.worktree.path ??
-              worktreeEntries[0]?.worktree.path ??
+              scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot ??
+              scopedWorktrees[0]?.projectRoot ??
               context.runRoot,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
@@ -619,6 +652,14 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           }
         }
 
+        try {
+          await options.onReleaseUpdated?.({
+            projectId: options.projectId,
+            commit: integration.commit,
+          })
+        } catch {
+          // Disposable Preview cleanup cannot change an already durable C1 outcome.
+        }
         await options.onProjectBlocked?.({
           projectId: options.projectId,
           reason: integration.reason,
@@ -639,6 +680,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
       } catch (error) {
         await attempt?.interrupt(error)
+        if (runController.signal.aborted) {
+          return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+        }
         throw error
       } finally {
         live.delete(liveKey)
@@ -646,6 +690,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
     },
   }
+}
+
+async function ensureProjectScope(repoRoot: string, projectPath: string) {
+  const projectRoot = resolveProjectPath(repoRoot, projectPath)
+  await mkdir(projectRoot, { recursive: true })
+  return projectRoot
 }
 
 function preparationEvent(responsibility: string, preparation: ProjectPreparationResult) {

@@ -3,6 +3,8 @@ import { chmod, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import { signalProcessGroup } from '../../src/runtime/processGroup'
+import { type TestRunCleanupRegistration, registerTestRunCleanup } from '../testRunArtifact'
 import {
   type LiveGoalDetail,
   type LiveState,
@@ -12,9 +14,11 @@ import {
   gitOutput,
   inspectKanban,
   liveCodingDefaults,
+  ownTestRunServer,
   readModelUsage,
   readPendingInboxEvents,
   recordAction,
+  registerLogicalRunSafety,
   requestJson,
   runCommand,
   startTestRun,
@@ -29,7 +33,12 @@ const ASSISTANT_GOAL_ID = 'G-assistant-restart'
 const testRun = await startTestRun(SCENARIO, 'live')
 const homeRoot = join(testRun.artifactRoot, 'home')
 const repoRoot = join(testRun.artifactRoot, 'repo')
-const artifactContext = { scenario: SCENARIO, artifactRoot: testRun.artifactRoot, baseUrl: '' }
+const logicalRunSafety = registerLogicalRunSafety(testRun, homeRoot)
+const artifactContext = {
+  scenario: SCENARIO,
+  artifactRoot: testRun.artifactRoot,
+  baseUrl: '',
+}
 let setupServer: MvpServer | null = null
 let assistantFirst: CoordinatorBoundary | null = null
 let generatorFirst: CoordinatorBoundary | null = null
@@ -40,9 +49,17 @@ try {
   const checkout = await checkoutSnapshot(repoRoot)
   const codingDefaults = liveCodingDefaults()
   await ensureDefaultAgentAdapterConfig(homeRoot, codingDefaults)
-  await recordAction(artifactContext, 'fixture_created', { checkout, codingDefaults })
+  await recordAction(artifactContext, 'fixture_created', {
+    checkout,
+    codingDefaults,
+  })
 
-  setupServer = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+  setupServer = createServer({
+    rootDir: homeRoot,
+    port: 0,
+    startCoordinator: false,
+  })
+  const setupServerCleanup = ownTestRunServer(testRun, setupServer, 'setup-server')
   const setupOrigin = `http://127.0.0.1:${setupServer.port}`
   const linked = await requestJson<LiveState>(setupOrigin, '/api/projects', {
     method: 'POST',
@@ -62,7 +79,7 @@ try {
   await requestJson(setupOrigin, `/api/projects/${PROJECT_ID}/goals/${ASSISTANT_GOAL_ID}/pause`, {
     method: 'POST',
   })
-  await setupServer.shutdown()
+  await setupServerCleanup.run()
   setupServer = null
 
   assistantFirst = await launchCoordinator('assistant-first')
@@ -109,7 +126,10 @@ try {
   const assistantRecovered = await waitForValue(
     () => readAssistantFeedEvent(generatorFirst?.origin ?? '', admitted.eventId),
     (event) => event?.status === 'handled' && event.runtimeStatus === 'completed',
-    { timeoutMs: 60_000, description: 'Assistant turn to recover after its durable tool effect' },
+    {
+      timeoutMs: 60_000,
+      description: 'Assistant turn to recover after its durable tool effect',
+    },
   )
   assert.equal(assistantRecovered?.reply, 'The requested design update was recorded once.')
   const assistantTurn = (await Bun.file(
@@ -196,7 +216,10 @@ try {
   await waitForValue(
     () => readAttempt(homeRoot, checkpoint.workId, checkpoint.runId),
     (attempt) => attempt?.status === 'interrupted',
-    { timeoutMs: 60_000, description: 'old Generator Attempt to become interrupted' },
+    {
+      timeoutMs: 60_000,
+      description: 'old Generator Attempt to become interrupted',
+    },
   )
   const terminal = await waitForValue(
     async () => {
@@ -217,12 +240,23 @@ try {
       value.state.activeRuns.length === 0 &&
       value.pending.length === 0 &&
       !value.unresolvedTargeted,
-    { timeoutMs: 20 * 60_000, description: 'replacement Coordinator to finish delivery' },
+    {
+      timeoutMs: 20 * 60_000,
+      description: 'replacement Coordinator to finish delivery',
+    },
   )
   assert.ok(terminal.goal)
   await waitForGoalQuiescence({ baseUrl: replacement.origin, homeRoot }, PROJECT_ID, GOAL_ID, {
     timeoutMs: 10 * 60_000,
   })
+  const settledState = await requestJson<LiveState>(replacement.origin, '/api/state')
+  assert.equal(
+    settledState.attentions.some(
+      (attention) => attention.projectId === undefined && attention.resolvedAt === null,
+    ),
+    false,
+    'An internal completion turn must not create unresolved Workspace Attention',
+  )
 
   const goal = await requestJson<LiveGoalDetail>(
     replacement.origin,
@@ -272,7 +306,11 @@ try {
   assert.equal((await runCommand(['bun', 'test'], integrationRoot)).exitCode, 0)
   assert.deepEqual(await checkoutSnapshot(repoRoot), checkout)
   const browser = await inspectKanban(
-    { scenario: SCENARIO, artifactRoot: testRun.artifactRoot, baseUrl: replacement.origin },
+    {
+      scenario: SCENARIO,
+      artifactRoot: testRun.artifactRoot,
+      baseUrl: replacement.origin,
+    },
     PROJECT_ID,
     GOAL_ID,
     { evidencePrefix: 'restart-terminal' },
@@ -296,6 +334,7 @@ try {
     attempts,
     browser,
     usage,
+    logicalRunSafety: { limit: logicalRunSafety.limit },
   })
   console.log(`HOPI-E2E-016 process restart Live passed: ${testRun.artifactRoot}`)
   console.log(`Model usage: ${JSON.stringify(usage)}`)
@@ -310,6 +349,7 @@ try {
     modelBoundaries: { reflection: 'deterministic' },
     error: errorMessage(error),
     usage,
+    logicalRunSafety: { limit: logicalRunSafety.limit },
   }).catch(() => undefined)
   console.error(`HOPI-E2E-016 process restart Live failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${testRun.artifactRoot}`)
@@ -321,6 +361,7 @@ interface CoordinatorBoundary {
   child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>
   origin: string
   output: Promise<CoordinatorOutput>
+  cleanup: TestRunCleanupRegistration
 }
 
 interface CoordinatorOutput {
@@ -363,7 +404,11 @@ async function launchCoordinator(instance: string): Promise<CoordinatorBoundary>
       }
     },
     Boolean,
-    { timeoutMs: 30_000, intervalMs: 100, description: `${instance} Coordinator startup` },
+    {
+      timeoutMs: 30_000,
+      intervalMs: 100,
+      description: `${instance} Coordinator startup`,
+    },
   )
   return boundary
 }
@@ -373,10 +418,16 @@ async function launchRejectedCoordinator(instance: string) {
   const exitCode = await waitForValue(
     async () => boundary.child.exitCode,
     (value) => value !== null,
-    { timeoutMs: 30_000, intervalMs: 100, description: `${instance} Coordinator rejection` },
+    {
+      timeoutMs: 30_000,
+      intervalMs: 100,
+      description: `${instance} Coordinator rejection`,
+    },
   )
   assert.notEqual(exitCode, 0, 'A second Coordinator must fail while the instance lock is held')
-  return { exitCode, output: await boundary.output }
+  const output = await boundary.output
+  await boundary.cleanup.run()
+  return { exitCode, output }
 }
 
 function spawnCoordinator(instance: string): CoordinatorBoundary {
@@ -410,7 +461,14 @@ function spawnCoordinator(instance: string): CoordinatorBoundary {
   )
   const output = retainProcessOutput(child, instance)
   const origin = `http://127.0.0.1:${port}`
-  return { child, origin, output }
+  const boundary = { child, origin, output }
+  const cleanup = registerTestRunCleanup(testRun, {
+    name: `coordinator-${instance}`,
+    timeoutMs: 30_000,
+    cleanup: () => stopCoordinatorProcess(boundary),
+    force: () => crashCoordinatorProcess(boundary),
+  })
+  return { ...boundary, cleanup }
 }
 
 function reservePort() {
@@ -436,14 +494,25 @@ async function retainProcessOutput(
 }
 
 async function crashCoordinator(boundary: CoordinatorBoundary) {
-  process.kill(-boundary.child.pid, 'SIGKILL')
+  await crashCoordinatorProcess(boundary)
+  const result = await boundary.cleanup.run()
+  if (result.status !== 'completed') throw new Error(result.error ?? 'Coordinator cleanup failed')
+}
+
+async function stopCoordinator(boundary: CoordinatorBoundary) {
+  const result = await boundary.cleanup.run()
+  if (result.status !== 'completed') throw new Error(result.error ?? 'Coordinator cleanup failed')
+}
+
+async function crashCoordinatorProcess(boundary: Pick<CoordinatorBoundary, 'child' | 'output'>) {
+  if (boundary.child.exitCode === null) signalProcessGroup(boundary.child.pid, 'SIGKILL')
   await boundary.child.exited
   await boundary.output
 }
 
-async function stopCoordinator(boundary: CoordinatorBoundary) {
+async function stopCoordinatorProcess(boundary: Pick<CoordinatorBoundary, 'child' | 'output'>) {
   if (boundary.child.exitCode === null) {
-    process.kill(-boundary.child.pid, 'SIGTERM')
+    signalProcessGroup(boundary.child.pid, 'SIGTERM')
   }
   await boundary.child.exited
   await boundary.output
@@ -455,11 +524,18 @@ async function waitForAssistantToolCheckpoint(eventId: string) {
     async () => {
       const file = Bun.file(path)
       if (!(await file.exists())) return null
-      const checkpoint = (await file.json()) as { eventId?: string; applied?: boolean }
+      const checkpoint = (await file.json()) as {
+        eventId?: string
+        applied?: boolean
+      }
       return checkpoint.eventId === eventId && checkpoint.applied ? { ...checkpoint, path } : null
     },
     (checkpoint) => checkpoint !== null,
-    { timeoutMs: 60_000, intervalMs: 100, description: 'durable Assistant tool checkpoint' },
+    {
+      timeoutMs: 60_000,
+      intervalMs: 100,
+      description: 'durable Assistant tool checkpoint',
+    },
   ).then((checkpoint) => {
     assert.ok(checkpoint)
     return checkpoint
@@ -528,7 +604,11 @@ async function waitForGeneratorCheckpoint(origin: string) {
       }
     },
     (value) => value !== null,
-    { timeoutMs: 12 * 60_000, intervalMs: 100, description: 'real Generator source checkpoint' },
+    {
+      timeoutMs: 12 * 60_000,
+      intervalMs: 100,
+      description: 'real Generator source checkpoint',
+    },
   ).then((value) => {
     assert.ok(value)
     return value
@@ -580,7 +660,11 @@ async function waitForProcessesToExit(pids: number[]) {
   await waitForValue(
     async () => pids.filter(isProcessAlive),
     (alive) => alive.length === 0,
-    { timeoutMs: 15_000, intervalMs: 100, description: 'crashed Coordinator descendants to exit' },
+    {
+      timeoutMs: 15_000,
+      intervalMs: 100,
+      description: 'crashed Coordinator descendants to exit',
+    },
   )
 }
 

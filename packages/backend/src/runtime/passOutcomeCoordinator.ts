@@ -254,6 +254,7 @@ async function readPassProposal(
   const newAttentions: NewAttentionProposal[] = []
   const projectContextWrites: PublicationWrite[] = []
   let bootstrapAgentsWrite: PublicationWrite | undefined
+  const agentsPath = input.context.agentsPath ?? 'AGENTS.md'
 
   for (const file of snapshot.files) {
     if (!file.content || !file.hash) continue
@@ -272,10 +273,10 @@ async function readPassProposal(
     }
 
     if (file.path === 'AGENTS.md') {
-      if (input.responsibility !== 'planner' || baseline.get('AGENTS.md') !== null) {
-        throw new PassProposalError('Only Planner may bootstrap a missing root AGENTS.md')
+      if (input.responsibility !== 'planner' || baseline.get(agentsPath) !== null) {
+        throw new PassProposalError('Only Planner may bootstrap a missing Project AGENTS.md')
       }
-      bootstrapAgentsWrite = { path: file.path, expectedHash: null, content: file.content }
+      bootstrapAgentsWrite = { path: agentsPath, expectedHash: null, content: file.content }
       continue
     }
     if (file.path === '.hopi/docs/repos.md') {
@@ -511,11 +512,14 @@ async function plannerBootstrapWrite(input: ApplyPassOutcomeInput) {
   const path = `${input.context.proposalRoot}/AGENTS.md`
   const file = Bun.file(path)
   if (!(await file.exists())) return undefined
-  if (input.context.guardFiles['AGENTS.md'] !== null) {
-    throw new PassProposalError('Existing AGENTS.md cannot be replaced by Planner bootstrap')
+  const agentsPath = input.context.agentsPath ?? 'AGENTS.md'
+  if (input.context.guardFiles[agentsPath] !== null) {
+    throw new PassProposalError(
+      'Existing Project AGENTS.md cannot be replaced by Planner bootstrap',
+    )
   }
   return {
-    path: 'AGENTS.md',
+    path: agentsPath,
     expectedHash: null,
     content: new Uint8Array(await file.arrayBuffer()),
   }

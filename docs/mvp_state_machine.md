@@ -1,7 +1,7 @@
 # HOPI MVP State Machine
 
 Status: accepted derived reference
-Last updated: 2026-07-13
+Last updated: 2026-07-16
 
 This document visualizes the lifecycle rules accepted in [the MVP design](./mvp_design.md). It is
 not a second source of truth. Schemas belong to [the document model](./mvp_document_model.md),
@@ -57,9 +57,10 @@ Attention `(projectId, goalId, attentionId)`, and workspace Attention `(homeId, 
 Each Assistant-home project link retains expected `{ projectId, primaryRepoId, repos,
 codingDefaults? }`, where every Repo owns a stable ID and local path.
 `codingDefaults` selects defaults for future responsibility Runs but is not lifecycle state. The
-selected user checkout locates the Repo but is never a canonical root. Coordinator derives a stable
-managed integration worktree on `hopi/release` for every Repo; a missing, corrupt, or divergent
-Project release projection is blocked under the expected identity.
+selected checkout locates the Repo but is never a canonical root. Its symbolic branch at link time
+is retained as the delivery branch. Coordinator derives Repo-adjacent stable integration and task
+worktrees; a missing, corrupt, or divergent managed or delivery projection is blocked under the
+expected identity.
 
 ## Publication Boundary
 
@@ -102,10 +103,11 @@ than attaching old processes. An ambiguous or unwritable project gets one open p
 Attention in Assistant home and remains unscheduled. If Assistant home itself cannot be validated
 or written, startup fails closed and an external supervisor alerts the operator.
 
-If a durable C1 ref exists but the HOPI-managed integration projection is missing, partial, or
+If a durable C1 ref exists but a managed integration or delivery projection is missing, partial, or
 inconsistent, HOPI creates or reuses project-target Attention and keeps the Project unscheduled.
 Managed ownership does not make canonical documents disposable, so the MVP performs no destructive
-repair. The user checkout is outside this validation and is never touched.
+repair. Delivery recovery performs only the same verified fast-forward of the linked clean checkout;
+all other checkout states remain untouched.
 
 ## Internal Attention
 
@@ -226,6 +228,12 @@ HOPI tool separately validates its named target, publishes operation-specific pr
 uses qualified Goal Input as the effect receipt. A single turn may call tools for multiple Goals;
 selected page context creates no transition.
 
+The durable Inbox turn is receipt; a successful mutation tool call is adoption. A suggestion that is
+useful as conversation context but is not intended to change current authority stays in Inbox and
+causes no state transition. HOPI does not add a Note entity, suggestion status, classifier, or
+keyword-triggered route. Calling Request Planning explicitly adopts the turn as Goal Input and may
+invalidate the current Planner; merely discussing a possible change does not.
+
 A Goal-local answer tool publishes Project effects and Goal Input before resolving Attention, then
 Assistant continues the same conversation turn. An answer to event-target Workspace Attention resolves
 that guard and handles only the answer turn; the original turn remains pending and runs again with
@@ -263,6 +271,7 @@ stateDiagram-v2
     Assessed --> Running : later eligible digest
     HandedOff --> Deferred : later automatic progress
     HandedOff --> Running : later eligible digest after speaking-thread effects
+    HandedOff --> HandedOff : internal Inbox turn remains pending or blocked
     Backoff --> Running : retry delay elapsed
     Exhausted --> Running : semantic digest changed
     Running --> Running : newer state coalesces
@@ -276,7 +285,8 @@ settle Reflection. Deferred means only that HOPI can still make deterministic pr
 timer, queue record, or canonical field. User input has speaking priority but does not cancel the
 read-only snapshot; a stale prepared handoff is discarded by digest comparison. Successful
 assessments suppress repetition for that digest, failure retries are bounded, and bounded internal
-handoffs prevent self-triggering loops.
+handoffs prevent self-triggering loops. `HandedOff` remains the explanatory state while its one
+durable internal Inbox turn is pending; the resulting state changes do not start another Reflection.
 
 ## Goal Lifecycle
 
@@ -364,7 +374,8 @@ without a Work gate. Speaking Assistant decides whether current authority answer
 needed, or the operator must decide. There is no direct responsibility-to-responsibility handoff.
 
 Planning triggers include Goal creation, material contract change, resume, reopen, stale output,
-explicit Assistant-requested planning and an active Goal with neither nonterminal Work nor a
+explicit Assistant-requested planning that adopts the current turn and an active Goal with neither
+nonterminal Work nor a
 current completion proposal. An interrupted Planner simply runs again while its Planning Work
 remains at `plan`.
 
@@ -448,9 +459,9 @@ completion gate on HOPI-owned `hopi/release`; success is reported only after dur
 confirmed. Work stores no integration-commit field. An update error may return Work to `generate`
 or increment `attempts` only when the ref is verified at its old value. A ref at C1 means Work is
 done and never retries. A missing or inconsistent managed integration worktree blocks the Project;
-the MVP does not reconstruct it or repair paths automatically. User checkouts are never
-materialized, validated, or repaired. Detailed Git mechanics belong only to the publish protocol
-ADR.
+the MVP does not reconstruct newer canonical content or repair individual paths automatically. A
+delivery checkout is validated and fast-forwarded only under the recorded branch, clean-tree,
+same-Repo, and ancestry guards. Detailed Git mechanics belong only to the publish protocol ADR.
 
 If another independently ordered C1 advances `hopi/release` after Reviewer staging, Coordinator
 rebuilds the candidate on that target. A clean merge completes directly; a mechanical conflict is a
@@ -508,8 +519,8 @@ runnable.
 - Startup validates every root before enabling control loops. Ambiguous project truth creates or
   reuses project-target Attention; invalid Assistant-home truth fails closed to the supervisor.
 - Ordinary documents provide process-crash recovery. Durable Inbox acknowledgement and the `C1`
-  ref are the two stronger persistence boundaries. Any inconsistent managed projection blocks the
-  Project without touching a user checkout.
+  ref are the two stronger persistence boundaries. Any inconsistent managed or delivery projection
+  blocks the Project without destructive checkout mutation.
 
 ## Derived Goal Kanban
 
@@ -547,8 +558,10 @@ P2 Preview adds no canonical state. Coordinator starts the reviewed primary Proj
 the complete managed `hopi/release` Repo projection and keeps its process, logs, health, and endpoint
 in disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
-Assistant turn. Assistant reuses current Preview setup Work when it exists or calls its Planning tool
-for a repair; it does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
+Assistant turn carrying the current Project/Goal page context. Assistant reuses current Preview setup
+Work when it exists or calls its Planning tool for a repair; page context informs that choice without
+forcing the repair into the viewed Goal. If the effect lands elsewhere, the reply names its Goal ID
+so its scoped Kanban is locatable. Assistant does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
 prerequisites from a clean managed integration worktree and `scripts/hopi/preview` owns startup, so
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
 one readiness transition: `starting -> running` only when the Preview adapter emits
@@ -603,7 +616,8 @@ outcome. Other state and document changes do not participate in this runtime tra
 - `work.attempts >= profile.maxAttempts` is never ready and gains targeted Attention.
 - An Engineering Work's integration commit is the unique reachable durable-ref `C1` carrying its
   qualified Work trailer; the same tree contains Work `done` and its Evidence references.
-- Any post-C1 managed projection anomaly creates project-target Attention and keeps the Project
-  unscheduled. HOPI never repairs individual paths or touches a user checkout.
+- Any post-C1 managed or delivery projection anomaly creates project-target Attention and keeps the
+  Project unscheduled. HOPI retries only safe managed materialization and the guarded delivery
+  fast-forward; it never repairs individual checkout paths.
 - Goal Kanban columns, the cancelled archive filter, and the single primary badge are read-only
   projections and own no transition.

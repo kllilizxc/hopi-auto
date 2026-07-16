@@ -21,7 +21,7 @@ afterEach(async () => {
 })
 
 describe('bootstrapCoordinator', () => {
-  test('enables a valid managed project without inspecting a dirty user checkout', async () => {
+  test('blocks a dirty delivery checkout without changing it', async () => {
     const fixture = await setup()
     await Bun.write(join(fixture.repoRoot, 'local.txt'), 'dirty user checkout\n')
     const legitimate = join(fixture.projectRoot, '.hopi', 'notes.tmp.keep')
@@ -35,16 +35,28 @@ describe('bootstrapCoordinator', () => {
 
     const result = await fixture.bootstrap()
 
-    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
-    expect([...result.blockedProjectIds]).toEqual([])
+    expect([...result.eligibleProjectIds]).toEqual([])
+    expect([...result.blockedProjectIds]).toEqual(['P-1'])
     expect(await Bun.file(legitimate).exists()).toBe(true)
     expect(await Bun.file(abandoned).exists()).toBe(false)
+  })
+
+  test('allows only the scoped Planner AGENTS bootstrap before its first C1', async () => {
+    const fixture = await setup(false, 'apps/new project')
+    const agentsPath = join(fixture.projectRoot, 'apps', 'new project', 'AGENTS.md')
+    await mkdir(join(agentsPath, '..'), { recursive: true })
+    await Bun.write(agentsPath, '# Scoped project guidance\n')
+
+    const result = await fixture.bootstrap()
+
+    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
+    expect([...result.blockedProjectIds]).toEqual([])
   })
 
   test('creates and reuses one project Attention for invalid canonical identity', async () => {
     const fixture = await setup()
     await Bun.write(
-      fixture.home.paths.projectDocumentPath('P-1'),
+      join(fixture.projectRoot, '.hopi', 'project.yml'),
       'version: 1\nprojectId: another\n',
     )
 
@@ -83,13 +95,18 @@ describe('bootstrapCoordinator', () => {
   })
 })
 
-async function setup(twoCommits = false) {
+async function setup(twoCommits = false, projectPath?: string) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
   await git(repoRoot, ['init', '-b', 'main'])
   await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
   await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
   await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
+  const selectedPath = projectPath ? join(repoRoot, ...projectPath.split('/')) : repoRoot
+  if (projectPath) {
+    await mkdir(selectedPath, { recursive: true })
+    await Bun.write(join(selectedPath, 'README.md'), '# Scoped project\n')
+  }
   await git(repoRoot, ['add', '.'])
   await git(repoRoot, ['commit', '-m', 'initial'])
   if (twoCommits) {
@@ -99,10 +116,10 @@ async function setup(twoCommits = false) {
   }
   const homeRoot = join(temporaryRoot, 'home')
   const home = createAssistantHomeStore(homeRoot)
-  const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+  const linked = await home.linkProject({ projectId: 'P-1', repoPath: selectedPath })
   const publisher = new PublicationCoordinator()
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-  const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+  const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher, linked.projectPath)
   const attentions = createWorkspaceAttentionController(
     workspace,
     () => new Date('2026-07-11T00:00:00Z'),

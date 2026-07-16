@@ -79,7 +79,10 @@ tab the script created, including on failure. This keeps browser-process resourc
 repeated regressions without making scenarios manage infrastructure. A script may contain several
 ordered actions and is never retried after failure because a missing response cannot prove whether a
 consequential click already happened. Browser Test Runs remain serial across processes as well as
-within one Run.
+within one Run. Each invocation retains its created, closed, and leaked target IDs in an
+artifact-local append-only resource log. A Run fails immediately when one of its owned targets
+remains open; the host browser's unrelated target count is diagnostic only and is never treated as
+owned state.
 
 ## Live Execution And Artifact Inspection
 
@@ -115,6 +118,48 @@ existing scenario commands. It introduces no scenario DSL, dependency graph, wor
 database, or alternate result schema. Commands that do not normally retain an artifact, such as the
 Contract suite, receive the same envelope from the thin Regression runner.
 
+One read-only artifact summary is derived directly from that envelope and its retained evidence. It
+does not write a summary file, alter a terminal Run, or become another fact model. The generic part
+reports status, duration, failure phase, last checkpoint and action, cleanup, invariant violations,
+evidence counts, and model usage. The HOPI adapter adds the latest public Active Run, unresolved
+Attention, Goal lifecycle, and pending Inbox counts when those retained sources exist. Full paths
+remain available for drill-down, while the first diagnostic view stays small enough for an Agent to
+read without loading every transcript.
+
+### Test Run Lifecycle
+
+A Test Run owns every disposable resource that its scenario creates, such as a HOPI server, child
+process, recorder, or browser tab. Ordinary scenario code registers cleanup on that same Test Run;
+there is no fixture manager or second lifecycle model. Cleanup is idempotent, runs in reverse
+registration order, and may be invoked early when a scenario no longer needs its resources. Final
+completion runs any remaining cleanup before collecting evidence and sealing `run.json`.
+
+An owned resource that was deliberately released by scenario behavior is already clean. In
+particular, signalling an absent process group is a successful no-op rather than a cleanup failure;
+permission errors and a process that remains alive after the bounded stop are still failures. This
+keeps crash and restart scenarios on the same ownership model instead of adding a second "crashed"
+resource state.
+
+`passed` means execution, verification, and cleanup all succeeded. If the intended outcome passed
+but cleanup fails or exceeds its deterministic deadline, the Test Run is `failed` at `cleanup`,
+retains the intended status and cleanup diagnostics, and must not claim a clean pass. A cleanup may
+provide a bounded force action for resources with a real cancellation primitive. The Harness does
+not pretend that a timed-out arbitrary Promise was cancelled; the containing Regression process
+boundary remains responsible for terminating a child command that never exits.
+
+Phases, semantic checkpoints, and cleanup boundaries are appended to `actions.jsonl` and emitted as
+short console lines while the Run is active. A Regression forwards child output while retaining the
+same bytes in its command log. Progress is event-driven rather than a timer heartbeat: silence after
+a named checkpoint is useful diagnostic evidence, while periodic noise is not.
+
+Live execution also has one generous logical-Run safety ceiling. The default is 50, above the
+current ordinary maximum of 16, and may be raised explicitly for a known experiment. The Harness
+counts durable Assistant, Reflection, Planner, Generator, and Reviewer Run manifests while waiting
+for semantic outcomes. Crossing the ceiling appends one action and fails through the ordinary
+scenario cleanup path before a recursive failure can consume the full wall-clock timeout. This is a
+cost and runaway guard, not a required responsibility count, token assertion, retry policy, or
+product limit.
+
 `evidence.html` is a generated view over referenced screenshots. It is not authority and may be
 recreated from retained files. A visual conclusion belongs to a separate Inspection Test Run that
 references the source Run and exact screenshot hashes; it never edits a terminal source artifact.
@@ -133,7 +178,8 @@ of the fixture's source files or test command.
 
 The Project adapter creates one committed Git fixture and verifies its integrated release with the
 Project's own command. The initial adapter contains a failing `bun test` for a small TypeScript bug.
-It also verifies that the user checkout retains its original branch, HEAD, content, and clean status.
+It also verifies that the delivery checkout retains its recorded branch and clean status while its
+HEAD and content fast-forward exactly to the accepted release.
 
 ## First Live Scenario
 
@@ -147,7 +193,8 @@ The final assertions require:
 - one created Goal reaches `done` without unresolved targeted Attention or active Runs;
 - real Planner, Generator, and Reviewer Attempts exist, and integration follows successful Review;
 - dependencies are complete whenever their dependent Work is active;
-- the managed integration passes the Project adapter while the user checkout is unchanged;
+- the managed integration passes the Project adapter and the delivery checkout cleanly fast-forwards
+  to the same accepted release;
 - the completed Goal renders through the production Kanban UI; and
 - the completed speaking turn does not leave a misleading failure activity in the Assistant UI.
 
@@ -162,10 +209,11 @@ enabled so the run measures its real cost and exposes unnecessary wakeups.
 
 Each execution receives a local artifact root containing `run.json`, the isolated Home and fixture
 Repo when applicable, action log, changed state snapshots, retained Browser screenshots, and Browser
-Harness audit reference. The active execution may extend its action log and replace its `running` report with one
-terminal report. Runtime cleanup that changes retained evidence, including stopping the Live server,
-must finish before that terminal write; repeated cleanup is a no-op. After the terminal boundary,
-retained evidence is immutable. Existing Assistant,
+Harness audit reference. The active execution may extend its action log and replace its `running`
+report with one terminal report. Runtime cleanup that changes retained evidence, including stopping
+the Live server, must finish before that terminal write; repeated cleanup is a no-op. Cleanup
+failures and timeouts are retained in the terminal report rather than hidden by a successful domain
+assertion. After the terminal boundary, retained evidence is immutable. Existing Assistant,
 Reflection, Attempt, prompt, raw transcript, proposal, and Git records remain in their normal
 locations under that root rather than being copied into a second fact model. The report records
 current code provenance plus the last successful scenario checkpoint. A caught failure also records
