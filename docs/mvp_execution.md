@@ -344,10 +344,11 @@ and not canonical state. RoleRunner owns the child process group and terminates 
 when the Run completes, fails, is interrupted, or the Coordinator stops. Termination is one idempotent
 bounded operation per Run: an OS denial falls back to the process-group leader, remains a visible
 operational cleanup failure when descendant cleanup cannot be guaranteed, and never escapes as an
-unobserved rejection that can terminate Coordinator. Each Run also receives one
-disposable writable scratch root; temporary files and tool caches are redirected there so runtime
-verification does not depend on writable global temp or user-home directories and does not expand
-the task worktree's source surface.
+unobserved rejection that can terminate Coordinator. Each Run also receives one disposable writable
+scratch root for temporary files. Reusable package and tool caches are redirected to the
+Assistant-home cache, so verification neither expands the task worktree's source surface nor downloads
+the same immutable dependencies into every Run. Coordinator promotes only explicitly declared proof
+files from either location into the Run artifact store and then removes Run scratch.
 
 ### Planner
 
@@ -544,7 +545,12 @@ focused tests; an operator-reported visual or interaction path receives one dire
 Reviewer may return `success`, `reject`, `attention`, or `fail`: reject identifies an implementation
 defect against accepted criteria, attention identifies an invalid design or missing authority, and fail means
 the Run could not produce a valid review. Every role's result may list Run-local logs, screenshots, or
-other proof paths in `artifacts`; omit artifacts when no preserved file adds evidence.
+other proof paths in `artifacts`; omit artifacts when no preserved file adds evidence. These are
+model-supplied source paths only. Before publication Coordinator must verify each path. A
+Project-relative source path remains portable as-is; a Run-local file is copied into the owning
+Run's durable `artifacts/` directory and replaced with `artifact:<runId>/<artifactName>`. Missing or
+unreadable declared proof invalidates the result rather than publishing a dangling Evidence
+reference.
 
 A Reviewer `reject` or deterministic pre-C1 integration rejection increments `attempts`. After
 either returns Work to `generate`, Generator repairs the same task branch and Reviewer checks it
@@ -827,11 +833,19 @@ than allowing a model omission to strand the target. A handoff durably creates o
 internal Inbox turn, after which the speaking thread revalidates current state and owns every action
 and optional operator notification.
 
-One pending Reflection-sourced Inbox turn suppresses another Reflection assessment until that turn
-is handled. This includes an internal turn blocked by its own event-target Attention: the durable
-turn already represents the outstanding assessment, so its failure may be recovered or escalated
-but must not recursively create more handoffs. An Attention-blocked public user turn remains
-Reflection-eligible because no internal assessment exists for it yet.
+One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
+that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
+remains pending for revalidation after resolution, but cannot suppress assessment of the unnotified
+blocker or newer Goal state. This does not rerun the blocked turn; it allows a new digest to hand off
+the exact Attention that requires speaking-Assistant management. Canonical Attention references and
+`notifiedAt` prevent recursive notification. An Attention-blocked public user turn is likewise
+Reflection-eligible because no executable internal assessment currently owns that state.
+
+The bounded-handoff guard counts only an unhandled failure chain. Once the speaking Assistant handles
+the preceding handoff, that handling is convergence and the next semantic handoff starts a fresh
+chain. A predecessor that remains pending because of event-target Attention extends the chain. This
+keeps the loop ceiling local to the failing delivery path instead of penalizing unrelated Goal
+Attention or normal speaking-thread effects.
 
 Receiving a public user turn aborts an active Reflection-sourced speaking turn but not the independent
 read-only Reflection process. Source priority selects public input next. Reflection may finish its

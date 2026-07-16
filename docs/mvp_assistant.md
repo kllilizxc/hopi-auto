@@ -120,11 +120,17 @@ snapshot. Reflection follows one small protocol:
    rewritten under the operator-facing communication policy. Internal IDs and diagnostics from the
    brief are not copied into that reply by default.
 
-The pending internal Inbox item is the durable ownership boundary for that assessment. Coordinator
-does not start another Reflection while any such item remains pending, including when an
-event-target Attention blocks its speaking attempt. The existing item is retried or recovered after
-that blocker is resolved; Reflection does not create a parallel brief for the resulting diagnostic
-state. This bounds failure without adding a Reflection queue or another workflow status.
+An eligible pending internal Inbox item is the durable ownership boundary for that assessment, so
+Coordinator does not start another Reflection while that item can still run. Event-target Attention
+instead makes the item ineligible: the original item remains pending for revalidation after the
+blocker is resolved, but it must not suppress Reflection of newer semantic state. Reflection may
+therefore hand off the unnotified blocker or an unrelated new Goal Attention without retrying the
+blocked item. Exact Attention references and `notifiedAt` prevent repeated operator notification.
+This bounds failure without allowing one blocked internal item to stop workspace-wide observation.
+The consecutive-handoff guard follows the same ownership boundary: a handled speaking turn is
+observable progress and resets the chain. Only a later handoff whose immediate predecessor is still
+pending or Attention-blocked extends the chain. This catches recursive delivery failure without
+mistaking several successfully handled state changes for a loop.
 
 The semantic digest covers Goal lifecycle and revision, Work stage, dependency and recovery facts,
 Attention lifecycle, Attempt completion/interruption, project availability, and C1 integration. It
@@ -396,6 +402,13 @@ Mutation tools follow these rules:
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 - create or reuse targeted Attention when safe automatic recovery is exhausted
 
+An expected domain precondition failure, such as requesting Planning for a terminal Goal before
+reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response
+with the concise domain message; the MCP adapter exposes it to the model as `isError`, and the same
+turn may reread state and issue the valid corrective tool sequence. It does not stop the server,
+fail the conversation transport, or print an unexpected-error stack. Unknown implementation faults
+remain server errors and retain their full diagnostic log.
+
 Project Attention deliberately uses optimistic Agent recovery. Assistant inspects and repairs the
 reported Project condition, then resolves that exact workspace Attention when it judges the repair
 complete. Successful resolution restores Project eligibility and wakes Coordinator without adding
@@ -433,15 +446,23 @@ an indefinite loading indicator.
 The Assistant drawer shows one chronological conversation:
 
 - a submitted user message appears immediately
-- queued and currently running turns are distinguishable
+- `Working` is one rebuildable speaking-conversation projection, never an Inbox message, runtime
+  event, or durable status row. It is rendered at most once and only after the newest conversation
+  row. `Waiting to start` is used when public work is queued but no speaking turn is running; both
+  disappear when no resumable or running public turn remains
+- live activity synchronization is independent of chronological pagination. The Server projects a
+  change cursor from existing Inbox handling timestamps, turn manifests, and runtime events; the
+  client applies changed entries and removals by stable identity. It does not assume that only the
+  newest received message can still change, nor retain a standalone completion after that completion
+  is absorbed into its public reply
 - normalized model messages and useful tool activity appear while a turn runs
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking
   turn itself fails
-- a tool activity aggregate is expanded by default only while it is the final conversation row,
-  and the stream initially anchors that expanded row to the bottom; historical and non-tool
-  aggregates are collapsed, and individual tool calls remain collapsed diagnostics, not chat
-  commands the user must understand
+- a trailing tool stream is rendered directly without an aggregate summary. It becomes one
+  collapsed historical Activity row only after a later non-tool conversation row establishes the
+  boundary. The conversation-level `Working` projection is not such a boundary. Individual tool
+  calls remain compact diagnostics rather than chat commands the operator must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
 - internal Reflection turns and their diagnostics are hidden

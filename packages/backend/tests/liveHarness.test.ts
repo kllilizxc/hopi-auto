@@ -16,6 +16,7 @@ import {
   registerLogicalRunSafety,
   resolveBrowserAuditMode,
   semanticDirectoryDigest,
+  settledAttentionLivenessViolations,
   shutdownLiveHarness,
   waitForValue,
 } from './live/liveHarness'
@@ -32,11 +33,50 @@ test('browser audit degradation is explicit and never fabricates verification', 
   )
 })
 
+test('settled Attention liveness rejects only unresolved unnotified targeted blockers', () => {
+  expect(
+    settledAttentionLivenessViolations({
+      attentions: [
+        {
+          id: 'A-orphaned',
+          target: 'project:P-1/goal:G-1',
+          body: 'Needs delivery.',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        {
+          id: 'A-notified',
+          target: 'project:P-1/goal:G-2',
+          body: 'Already delivered.',
+          resolvedAt: null,
+          notifiedAt: '2026-07-16T00:00:00.000Z',
+        },
+        {
+          id: 'A-resolved',
+          target: 'project:P-1/goal:G-3',
+          body: 'Already resolved.',
+          resolvedAt: '2026-07-16T00:00:00.000Z',
+          notifiedAt: null,
+        },
+        {
+          id: 'A-targetless',
+          target: null,
+          body: 'Completion projection.',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+      ],
+    }),
+  ).toEqual([
+    'settled boundary retains unnotified targeted Attention A-orphaned at project:P-1/goal:G-1',
+  ])
+})
+
 test('reads hidden runtime usage and pending canonical Inbox events', async () => {
   const homeRoot = await mkdtemp(join(tmpdir(), 'hopi-live-harness-'))
   try {
     const assistantRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', 'EV-1')
-    const plannerRoot = join(homeRoot, '.hopi', 'runtime', 'runs', 'P-1', 'G-1', 'W-1', 'R-1')
+    const plannerRoot = join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1')
     const inboxRoot = join(homeRoot, '.hopi', 'docs', 'assistant', 'inbox')
     await Promise.all([
       mkdir(assistantRoot, { recursive: true }),
@@ -107,17 +147,7 @@ test('logical Run safety stops a runaway once and cleans up through the Test Run
       await mkdir(reflectionRoot, { recursive: true })
       await Bun.write(join(reflectionRoot, 'reflection.json'), '{}\n')
     }
-    const partialAttempt = join(
-      homeRoot,
-      '.hopi',
-      'runtime',
-      'runs',
-      'P-1',
-      'G-1',
-      'W-1',
-      'R-writing',
-      'attempt.json',
-    )
+    const partialAttempt = join(homeRoot, '.hopi', 'runtime', 'runs', 'R-writing', 'attempt.json')
     await mkdir(dirname(partialAttempt), { recursive: true })
     await Bun.write(partialAttempt, '{"responsibility":')
     expect(await countLogicalRuns(homeRoot, { tolerateUnreadable: true })).toMatchObject({

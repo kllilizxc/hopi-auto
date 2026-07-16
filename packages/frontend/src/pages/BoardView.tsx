@@ -430,7 +430,11 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
   const badge = work.projection.primaryBadge ?? (work.stage === 'done' ? 'Done' : null)
   return (
     <AppButton
-      className={cn('work-card', work.kind)}
+      className={cn(
+        'work-card',
+        work.kind,
+        badge === 'working' && 'work-card--working',
+      )}
       data-work-id={work.id}
       variant="ghost"
       type="button"
@@ -786,24 +790,11 @@ function AttemptHistory({
   const messages = useMemo(() => {
     if (!selectedAttempt) return []
     const groupId = `attempt:${selectedAttempt.runId}`
-    const next = runEventsToMessageFeed(eventStream.items, {
+    return runEventsToMessageFeed(eventStream.items, {
       namespace: groupId,
       groupId,
       active: selectedAttempt.status === 'running',
     })
-    if (selectedAttempt.status === 'running') {
-      next.push({
-        id: `${groupId}:runtime-status`,
-        createdAt: next.at(-1)?.createdAt ?? selectedAttempt.startedAt,
-        kind: 'status',
-        role: 'system',
-        text: 'Agent is working',
-        label: selectedAttempt.responsibility,
-        groupId,
-        pending: true,
-      })
-    }
-    return next
   }, [eventStream.items, selectedAttempt])
   const streamError = error ?? eventStream.error
   const streamLoading = loading || eventStream.isLoading
@@ -882,6 +873,7 @@ function AttemptHistory({
             <UnifiedMessageFeed
               feedKey={`attempt:${selectedAttempt.runId}`}
               items={messages}
+              tailActivity={selectedAttempt.status === 'running' ? 'working' : null}
               density="compact"
               className="attempt-message-feed"
               ariaLabel={`Attempt ${selectedAttempt.runId} message stream`}

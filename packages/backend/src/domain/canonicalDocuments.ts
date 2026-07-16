@@ -4,13 +4,13 @@ import {
   parseMarkdownDocument,
   renderMarkdownDocument,
 } from './markdownDocument'
+import { stableIdSchema } from './stableId'
 
 export const GOAL_LIFECYCLES = ['active', 'paused', 'done', 'cancelled'] as const
 export const WORK_KINDS = ['planning', 'engineering'] as const
 export const PLANNING_STAGES = ['plan', 'done', 'cancelled'] as const
 export const ENGINEERING_STAGES = ['generate', 'review', 'done', 'cancelled'] as const
 
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const timestampSchema = z.string().datetime({ offset: true })
 const canonicalRefSchema = z.string().min(1)
 const uniqueStableIdsSchema = z

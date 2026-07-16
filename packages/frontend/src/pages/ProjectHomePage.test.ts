@@ -26,3 +26,20 @@ test('Project paths display the selected Git subdirectory without changing the R
   )
   expect(scopedRepoPath('/home/me/Code/mono/', '.')).toBe('/home/me/Code/mono/')
 })
+
+test('Project linking leaves identity generation to the backend', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+
+  expect(source).not.toContain('Project ID')
+  expect(source).not.toContain('setProjectId')
+  expect(source).not.toContain('Derived when omitted')
+  expect(source).toContain('Its primary folder also names it.')
+})
+
+test('Goal creation leaves readable identity generation to the backend', async () => {
+  const source = await Bun.file(new URL('./GoalCreatePage.tsx', import.meta.url)).text()
+
+  expect(source).not.toContain('Goal ID')
+  expect(source).not.toContain('setGoalId')
+  expect(source).not.toContain('Generated when omitted')
+})

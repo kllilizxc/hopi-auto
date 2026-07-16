@@ -32,6 +32,25 @@ afterEach(async () => {
 })
 
 describe('Assistant HOPI tools', () => {
+  test('derives a readable Goal ID when the Assistant omits it', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({ eventId: 'EV-readable', content: '优化整体前端样式。' })
+
+    const result = await fixture.tools.executeForEvent('EV-readable', 'hopi_create_goal', {
+      projectId: 'P-1',
+      title: '优化整体前端样式',
+      objective: '统一并优化整个前端界面。',
+    })
+
+    expect(result).toMatchObject({
+      changed: true,
+      value: { projectId: 'P-1', goalId: 'G-优化整体前端样式' },
+    })
+    expect((await fixture.goalStore.readGoal('G-优化整体前端样式'))?.attributes.title).toBe(
+      '优化整体前端样式',
+    )
+  })
+
   test('creates a Goal and preserves the source turn as Goal Input', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Create the launch Goal.' })
@@ -299,6 +318,57 @@ describe('Assistant HOPI tools', () => {
 
     expect((await fixture.goalStore.readGoal('G-1'))?.attributes.contractRevision).toBe(2)
     expect(fixture.interruptedGoalIds).toEqual(['G-1'])
+  })
+
+  test('recovers a terminal Goal planning conflict within the same Assistant turn', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.controller.cancelGoal('G-1')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-revise',
+      content: 'Change the accepted outcome.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    await expect(
+      fixture.tools.executeForEvent('EV-revise', 'hopi_request_planning', {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        materialContractChange: true,
+      }),
+    ).rejects.toThrow('Terminal Goal must be explicitly reopened')
+
+    const current = await fixture.tools.executeForEvent('EV-revise', 'hopi_read_state', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+    })
+    expect(current.value).toMatchObject({
+      projects: [
+        {
+          goals: [
+            {
+              goal: { attributes: { id: 'G-1', lifecycle: 'cancelled' } },
+            },
+          ],
+        },
+      ],
+    })
+
+    await fixture.tools.executeForEvent('EV-revise', 'hopi_control_goal', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      operation: 'reopen',
+    })
+    const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: true,
+    })
+
+    expect(planned.changed).toBe(true)
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
+    expect(goalPackage.inputs).toHaveLength(1)
   })
 
   test('interrupts only the current Planner when same-revision input changes Planning authority', async () => {
@@ -633,16 +703,7 @@ describe('Assistant HOPI tools', () => {
     const active = new Map<string, Responsibility>()
     const fixture = await setup({ activeRuns: () => active })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const runRoot = join(
-      fixture.homeRoot,
-      '.hopi',
-      'runtime',
-      'runs',
-      'P-1',
-      'G-1',
-      'plan-initial',
-      'R-live',
-    )
+    const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-live')
     const attempt = await fixture.attempts.start({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -722,16 +783,7 @@ describe('Assistant HOPI tools', () => {
   test('reads bounded Attempt diagnostics and stable local log paths', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const runRoot = join(
-      fixture.homeRoot,
-      '.hopi',
-      'runtime',
-      'runs',
-      'P-1',
-      'G-1',
-      'plan-initial',
-      'R-1',
-    )
+    const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-1')
     await mkdir(runRoot, { recursive: true })
     const attempt = await fixture.attempts.start({
       projectId: 'P-1',

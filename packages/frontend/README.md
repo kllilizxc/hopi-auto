@@ -16,11 +16,16 @@ and visual language while presenting only the current MVP model.
 ## Product Surfaces
 
 - `ProjectHomePage`: bind or rebind Repos, configure Project responsibility models, and enter Goals.
-- `GoalCreatePage`: capture an outcome and create the initial Planning Work.
+- `GoalCreatePage`: capture an outcome and create the initial Planning Work; Coordinator derives the
+  readable Goal identity from its title.
 - `BoardView`: read-only four-column Work projection, Goal controls, Attention, per-Work Attempt
   message streams, and Preview.
 - `GoalDocsPage`: Goal contract, design documents, and Evidence.
 - `AssistantPanel`: one workspace conversation with optional Goal context and Attention replies.
+
+Project and Goal switchers are local navigation state. The browser remembers the last valid Goal
+visited in each Project and restores it when that Project is selected; if it no longer exists, the
+first projected Goal (or New Goal for an empty Project) remains the fallback.
 
 The UI deliberately has no task drag-and-drop, direct Work mutation, manual reconcile, Assistant
 Action editor, decision graph, planning-request graph, or session-authority screen.

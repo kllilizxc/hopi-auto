@@ -5,17 +5,20 @@ import {
   parseMarkdownDocument,
   renderMarkdownDocument,
 } from './markdownDocument'
+import { STABLE_ID_SOURCE, stableIdSchema } from './stableId'
 
 export const INBOX_STATUSES = ['pending', 'handled'] as const
 export const INBOX_SOURCES = ['user', 'reflection'] as const
 export const INBOX_VISIBILITIES = ['public', 'internal'] as const
 export const ROUTE_MODES = ['existing', 'create'] as const
 
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const attentionReferenceSchema = z
   .string()
   .regex(
-    /^(?:project:[A-Za-z0-9][A-Za-z0-9._-]*\/goal:[A-Za-z0-9][A-Za-z0-9._-]*\/attention:[A-Za-z0-9][A-Za-z0-9._-]*|home:[A-Za-z0-9][A-Za-z0-9._-]*\/attention:[A-Za-z0-9][A-Za-z0-9._-]*)$/,
+    new RegExp(
+      `^(?:project:${STABLE_ID_SOURCE}/goal:${STABLE_ID_SOURCE}/attention:${STABLE_ID_SOURCE}|home:${STABLE_ID_SOURCE}/attention:${STABLE_ID_SOURCE})$`,
+      'u',
+    ),
   )
 const timestampSchema = z.string().datetime({ offset: true })
 

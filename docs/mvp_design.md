@@ -65,7 +65,10 @@ The three operator surfaces have distinct jobs: Assistant shows the latest outco
 the operator must take, Kanban shows current progress, and Attempt details show execution evidence
 and diagnostics. Assistant does not duplicate the board or narrate the internal delivery process.
 Provider progress messages, tool calls, and recoverable tool errors remain in the raw turn record and
-one collapsed Activity row; only the turn's final durable reply is rendered as Assistant speech.
+become one collapsed Activity row after the next non-tool boundary; only the turn's final durable
+reply is rendered as Assistant speech. While tools are still the conversation tail, their stream is
+shown directly. A single rebuildable conversation-level activity projection renders `Working` only
+at the tail and never becomes historical conversation state.
 
 Internally:
 
@@ -175,6 +178,17 @@ are:
 - producer Run reference: `(projectId, goalId, workId, runId)`
 - Goal-local Attention: `(projectId, goalId, attentionId)`
 - workspace Attention: `(homeId, attentionId)`
+
+The ordinary linking UI does not expose `projectId`. The first durable link derives a readable,
+Home-unique identity from the primary selected Project folder; that identity is then persisted and
+never re-derived from a later path or folder rename. Explicit IDs remain available at the API
+boundary for migration and deterministic automation.
+
+The ordinary Goal form likewise does not expose `goalId`. New Goals derive a Project-local,
+readable `G-<title>` identity from the Goal title. Unicode letters and numbers remain readable,
+spacing and punctuation normalize to `-`, and a same-name collision receives the smallest free
+numeric suffix (`-2`, `-3`, ...). Existing identities are never renamed; explicit IDs remain an API
+compatibility boundary.
 
 Local IDs may repeat outside their owning package. Integration, delivery, receipts, references,
 and migration use the complete canonical identity rather than a bare local ID.

@@ -1,9 +1,12 @@
-const stableIdPattern = '[A-Za-z0-9][A-Za-z0-9._-]*'
+import { STABLE_ID_SOURCE } from './stableId'
+
 const goalReferencePattern = new RegExp(
-  `^project:(${stableIdPattern})/goal:(${stableIdPattern})/attention:(${stableIdPattern})$`,
+  `^project:(${STABLE_ID_SOURCE})/goal:(${STABLE_ID_SOURCE})/attention:(${STABLE_ID_SOURCE})$`,
+  'u',
 )
 const workspaceReferencePattern = new RegExp(
-  `^home:(${stableIdPattern})/attention:(${stableIdPattern})$`,
+  `^home:(${STABLE_ID_SOURCE})/attention:(${STABLE_ID_SOURCE})$`,
+  'u',
 )
 
 export type AttentionReference =

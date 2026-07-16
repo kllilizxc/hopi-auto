@@ -202,6 +202,12 @@ Quiescence includes canonical Assistant Inbox events. A done Goal, no active res
 and an idle Reflection are insufficient while a Reflection handoff is still pending or its speaking
 turn is running.
 
+Blocked settlement also has a liveness boundary. An unresolved targeted Attention with
+`notifiedAt: null` is not a settled operator wait: it must still be owned by a running Reflection or
+an eligible pending/running speaking turn. An event-target Attention makes only its referenced Inbox
+turn ineligible and cannot satisfy ownership for another Attention. Harness waits and failure
+diagnostics use this derived fact; HOPI adds no product watchdog, timer state, or notification queue.
+
 Exact responsibility counts and ordering are diagnostic facts, not assertions. Reflection remains
 enabled so the run measures its real cost and exposes unnecessary wakeups.
 

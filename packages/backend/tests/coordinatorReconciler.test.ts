@@ -148,7 +148,7 @@ describe('CoordinatorReconciler', () => {
     expect(observations).toEqual([true])
   })
 
-  test('does not duplicate Reflection while an internal handoff is Attention-blocked', async () => {
+  test('does not let an Attention-blocked internal handoff suppress newer Reflection state', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-internal',
@@ -181,7 +181,7 @@ describe('CoordinatorReconciler', () => {
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect(observations).toEqual([])
+    expect(observations).toEqual([true])
   })
 
   test('prioritizes public user turns over older internal Reflection handoffs', async () => {

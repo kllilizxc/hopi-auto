@@ -73,6 +73,43 @@ describe('createAssistantHomeStore', () => {
     expect(await store.validateProject('P-1')).toEqual(project)
   })
 
+  test('derives a readable Project ID from the primary selected folder', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const firstRepo = await createRepo(join(temporaryRoot, 'first-monorepo'))
+    const firstScope = join(firstRepo, 'apps', 'customer-portal')
+    await mkdir(firstScope, { recursive: true })
+    const firstInput = {
+      primaryRepoId: 'web',
+      repos: [{ repoId: 'web', repoPath: firstRepo, projectPath: 'apps/customer-portal' }],
+    }
+
+    const first = await store.linkProject(firstInput)
+    const repeated = await store.linkProject(firstInput)
+
+    expect(first.projectId).toBe('P-customer-portal')
+    expect(repeated).toEqual(first)
+
+    const secondRepo = await createRepo(join(temporaryRoot, 'second-monorepo'))
+    const secondScope = join(secondRepo, 'products', 'customer-portal')
+    await mkdir(secondScope, { recursive: true })
+    const second = await store.linkProject({
+      primaryRepoId: 'web',
+      repos: [{ repoId: 'web', repoPath: secondRepo, projectPath: 'products/customer-portal' }],
+    })
+
+    expect(second.projectId).toBe('P-customer-portal-2')
+
+    const localizedRepo = await createRepo(join(temporaryRoot, 'localized-monorepo'))
+    const localizedScope = join(localizedRepo, 'products', '像素游戏')
+    await mkdir(localizedScope, { recursive: true })
+    const localized = await store.linkProject({
+      primaryRepoId: 'game',
+      repos: [{ repoId: 'game', repoPath: localizedRepo, projectPath: 'products/像素游戏' }],
+    })
+
+    expect(localized.projectId).toBe('P-像素游戏')
+  })
+
   test('persists a selected Git subdirectory as the portable Project scope', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))

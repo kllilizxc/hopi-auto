@@ -11,13 +11,13 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { readAndValidateGoalPackage } from '../domain/goalPackage'
+import { stableIdSchema } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { hashBytes } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type { PublicationFaultHooks, PublicationWrite } from '../publication/types'
 import type { GoalPackagePaths } from './goalPackagePaths'
 
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const legacyItemSchema = z
   .object({
     ref: stableIdSchema,

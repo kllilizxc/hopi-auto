@@ -15,14 +15,20 @@ import {
   projectCodingDefaultsInputSchema,
 } from './domain/projectCodingDefaults'
 import { isNormalizedProjectPath, resolveProjectPath } from './domain/projectPath'
+import { deriveReadableId, stableIdSchema } from './domain/stableId'
 import { deriveGoalWorkProjections } from './domain/workProjection'
 import { CursorPageError, type CursorPageRequest, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
 import {
+  defaultAssistantHomeRoot,
+  migrateRepositoryAssistantHome,
+} from './runtime/assistantHomeMigration'
+import {
   type AttentionTransport,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
+import { GoalControllerError } from './runtime/goalController'
 import { HostDirectoryPickerError, selectHostDirectory } from './runtime/hostDirectoryPicker'
 import { assertSupportedPlatform } from './runtime/hostPlatform'
 import {
@@ -55,13 +61,10 @@ export type MvpServer = Bun.Server<undefined> & {
 }
 
 const projectIdentitySchema = z.object({
-  projectId: z
-    .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-    .optional(),
+  projectId: stableIdSchema.optional(),
 })
 const projectRepoSchema = z.object({
-  repoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  repoId: stableIdSchema,
   repoPath: z.string().min(1),
   projectPath: z.string().refine(isNormalizedProjectPath).optional(),
 })
@@ -75,7 +78,7 @@ const initializeRepositorySchema = z.object({ path: z.string().min(1) }).strict(
 const projectSchema = z.union([
   projectIdentitySchema
     .extend({
-      primaryRepoId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+      primaryRepoId: stableIdSchema,
       repos: z.array(projectRepoSchema).min(1),
     })
     .strict(),
@@ -83,10 +86,7 @@ const projectSchema = z.union([
     .extend({
       repoPath: z.string().min(1),
       projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-      repoId: z
-        .string()
-        .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-        .optional(),
+      repoId: stableIdSchema.optional(),
     })
     .strict()
     .transform((input) => {
@@ -109,10 +109,7 @@ const assistantSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
 const goalSchema = z.object({
-  goalId: z
-    .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
-    .optional(),
+  goalId: stableIdSchema.optional(),
   title: z.string().trim().min(1),
   objective: z.string().trim().min(1),
   priority: z.number().int().optional(),
@@ -151,8 +148,8 @@ const previewRepairSchema = z
     prompt: z.string().min(1),
     context: z
       .object({
-        projectId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-        goalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+        projectId: stableIdSchema,
+        goalId: stableIdSchema,
       })
       .strict(),
   })
@@ -237,6 +234,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'POST' && url.pathname === '/api/system/initialize-repository') {
           const body = await parseBody(request, initializeRepositorySchema)
           return json({ selection: await initializeEmptyGitRepository(body.path) })
+        }
+        if (request.method === 'GET' && url.pathname === '/api/assistant/feed/changes') {
+          return json(await presentAssistantFeedChanges(runtime, readAssistantChangeCursor(url)))
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
@@ -388,7 +388,8 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const project = requireProject(runtime.projects, requirePart(parts, 2))
           const body = await parseBody(request, goalSchema)
-          const goalId = body.goalId ?? `G-${crypto.randomUUID()}`
+          const goalId =
+            body.goalId ?? deriveReadableId('G', body.title, await project.store.listGoalIds())
           await executeDirectUserCommand(runtime, {
             content: `Create Goal ${goalId}: ${body.title}\n\n${body.objective}`,
             tool: 'hopi_create_goal',
@@ -627,6 +628,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             error.code === 'not_empty' || error.code === 'initialization_failed' ? 409 : 400,
           )
         }
+        if (error instanceof GoalControllerError) {
+          return json({ error: error.message }, 409)
+        }
         if (error instanceof CursorPageError) return json({ error: error.message }, 400)
         if (error instanceof AssistantHomeStoreError) {
           const status =
@@ -767,6 +771,39 @@ async function presentState(runtime: MvpRuntime) {
 }
 
 async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequest) {
+  const projection = await readAssistantFeedProjection(runtime)
+  const page = paginateItems(projection.entries, request, {
+    scope: 'assistant-feed',
+    getId: (entry) => entry.id,
+  })
+
+  return {
+    ...page,
+    items: await Promise.all(page.items.map((entry) => presentAssistantFeedEntry(runtime, entry))),
+    activity: projection.activity,
+    syncCursor: projection.syncCursor,
+  }
+}
+
+async function presentAssistantFeedChanges(runtime: MvpRuntime, cursor: string | null) {
+  const projection = await readAssistantFeedProjection(runtime)
+  const replayFrom = cursor ? Date.parse(cursor) - 1 : null
+  const changed =
+    replayFrom !== null
+      ? projection.entries.filter((entry) => Date.parse(entry.updatedAt) >= replayFrom)
+      : projection.entries
+  const removedIds = projection.removals
+    .filter((removal) => replayFrom === null || Date.parse(removal.updatedAt) >= replayFrom)
+    .map((removal) => removal.id)
+  return {
+    items: await Promise.all(changed.map((entry) => presentAssistantFeedEntry(runtime, entry))),
+    removedIds,
+    activity: projection.activity,
+    syncCursor: projection.syncCursor,
+  }
+}
+
+async function readAssistantFeedProjection(runtime: MvpRuntime) {
   const workspace = await runtime.workspace.readWorkspace()
   const goalCompletions = await readGoalCompletionAttentions(runtime)
   const completions = [
@@ -790,6 +827,29 @@ async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequ
   const publicEvents = [...workspace.events.values()].filter(
     (event) => event.attributes.visibility === 'public',
   )
+  const eventStates = await Promise.all(
+    publicEvents.map(async (event) => {
+      if (event.attributes.status === 'handled') {
+        return {
+          event,
+          turn: null,
+          runtimeStatus: 'completed' as const,
+          updatedAt: maxTimestamp(event.attributes.receivedAt, event.attributes.handledAt),
+        }
+      }
+      const turn = await runtime.assistantConversation.readTurn(event.attributes.id)
+      return {
+        event,
+        turn,
+        runtimeStatus: turn?.manifest.status ?? ('queued' as const),
+        updatedAt: maxTimestamp(
+          event.attributes.receivedAt,
+          turn?.manifest.updatedAt,
+          turn?.events.at(-1)?.createdAt,
+        ),
+      }
+    }),
+  )
   const linkedCompletionReferences = new Set<string>()
   const eventCompletionReferences = new Map<string, string>()
   for (const event of publicEvents.toSorted(
@@ -808,15 +868,33 @@ async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequ
     linkedCompletionReferences.add(reference)
     eventCompletionReferences.set(event.attributes.id, reference)
   }
-  const entries = [
-    ...publicEvents.map((event) => ({
+  const eventEntries = eventStates.map((state) => {
+    const completion =
+      completionByReference.get(eventCompletionReferences.get(state.event.attributes.id) ?? '') ??
+      null
+    return {
       kind: 'event' as const,
-      id: `event:${event.attributes.id}`,
-      occurredAt: event.attributes.receivedAt,
-      event,
-      completion:
-        completionByReference.get(eventCompletionReferences.get(event.attributes.id) ?? '') ?? null,
-    })),
+      id: `event:${state.event.attributes.id}`,
+      occurredAt: state.event.attributes.receivedAt,
+      updatedAt: maxTimestamp(
+        state.updatedAt,
+        completion?.createdAt,
+        completion?.resolvedAt,
+        completion?.notifiedAt,
+      ),
+      event: state.event,
+      turn: state.turn,
+      runtimeStatus: state.runtimeStatus,
+      completion,
+    }
+  })
+  const removals = eventEntries.flatMap((entry) => {
+    if (!entry.completion) return []
+    const reference = eventCompletionReferences.get(entry.event.attributes.id)
+    return reference ? [{ id: `completion:${reference}`, updatedAt: entry.updatedAt }] : []
+  })
+  const entries = [
+    ...eventEntries,
     ...completions
       .filter((attention) => {
         const reference =
@@ -832,45 +910,69 @@ async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequ
             ? `completion:${goalAttentionReference(attention.projectId, attention.goalId, attention.id)}`
             : `completion:${workspaceAttentionReference(workspace.homeId, attention.id)}`,
         occurredAt: attention.notifiedAt ?? attention.resolvedAt ?? attention.createdAt,
+        updatedAt: maxTimestamp(attention.createdAt, attention.resolvedAt, attention.notifiedAt),
         attention,
       })),
   ].sort(
     (left, right) =>
       left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
   )
-  const page = paginateItems(entries, request, {
-    scope: 'assistant-feed',
-    getId: (entry) => entry.id,
-  })
-
+  const statuses = eventStates.map((state) => state.runtimeStatus)
   return {
-    ...page,
-    items: await Promise.all(
-      page.items.map(async (entry) => {
-        if (entry.kind === 'completion') return entry
-        const turn = await runtime.assistantConversation.readTurn(entry.event.attributes.id)
-        return {
-          kind: entry.kind,
-          id: entry.id,
-          occurredAt: entry.occurredAt,
-          completion: entry.completion,
-          event: {
-            ...entry.event.attributes,
-            attachments: await presentInboxAttachments(runtime, entry.event.attributes.attachments),
-            context: entry.event.attributes.context ?? null,
-            routeClaim: entry.event.attributes.routeClaim ?? null,
-            body: entry.event.body,
-            runtimeStatus:
-              entry.event.attributes.status === 'handled'
-                ? 'completed'
-                : (turn?.manifest.status ?? 'queued'),
-            runtimeEvents: turn?.events ?? [],
-            runtimeError: turn?.manifest.error ?? null,
-          },
-        }
-      }),
+    entries,
+    removals,
+    activity: statuses.includes('running')
+      ? ({ phase: 'working' } as const)
+      : statuses.some((status) => status === 'queued' || status === 'interrupted')
+        ? ({ phase: 'waiting' } as const)
+        : null,
+    syncCursor: entries.reduce<string | null>(
+      (latest, entry) =>
+        !latest || Date.parse(entry.updatedAt) > Date.parse(latest) ? entry.updatedAt : latest,
+      null,
     ),
   }
+}
+
+type AssistantFeedProjectionEntry = Awaited<
+  ReturnType<typeof readAssistantFeedProjection>
+>['entries'][number]
+
+async function presentAssistantFeedEntry(runtime: MvpRuntime, entry: AssistantFeedProjectionEntry) {
+  if (entry.kind === 'completion') {
+    return {
+      kind: entry.kind,
+      id: entry.id,
+      occurredAt: entry.occurredAt,
+      attention: entry.attention,
+    }
+  }
+  const turn =
+    entry.turn ?? (await runtime.assistantConversation.readTurn(entry.event.attributes.id))
+  return {
+    kind: entry.kind,
+    id: entry.id,
+    occurredAt: entry.occurredAt,
+    completion: entry.completion,
+    event: {
+      ...entry.event.attributes,
+      attachments: await presentInboxAttachments(runtime, entry.event.attributes.attachments),
+      context: entry.event.attributes.context ?? null,
+      routeClaim: entry.event.attributes.routeClaim ?? null,
+      body: entry.event.body,
+      runtimeStatus: entry.runtimeStatus,
+      runtimeEvents: turn?.events ?? [],
+      runtimeError: turn?.manifest.error ?? null,
+    },
+  }
+}
+
+function maxTimestamp(...values: Array<string | null | undefined>) {
+  const present = values.filter((value): value is string => Boolean(value))
+  if (present.length === 0) throw new Error('Assistant feed entry has no timestamp')
+  return present.reduce((latest, value) =>
+    Date.parse(value) > Date.parse(latest) ? value : latest,
+  )
 }
 
 async function readGoalCompletionAttentions(runtime: MvpRuntime) {
@@ -1155,6 +1257,15 @@ function readPageRequest(url: URL, defaultLimit: number, maxLimit: number): Curs
   }
 }
 
+function readAssistantChangeCursor(url: URL) {
+  const cursor = url.searchParams.get('cursor')
+  if (cursor === null) return null
+  if (!z.string().datetime({ offset: true }).safeParse(cursor).success) {
+    throw new ApiError(400, 'Assistant change cursor must be an ISO timestamp')
+  }
+  return cursor
+}
+
 async function parseBody<T extends z.ZodTypeAny>(
   request: Request,
   schema: T,
@@ -1253,7 +1364,19 @@ function errorMessage(error: unknown) {
 }
 
 if (import.meta.main) {
-  const homeRoot = process.env.HOPI_HOME ?? join(import.meta.dir, '..', '..', '..')
+  const sourceRoot = join(import.meta.dir, '..', '..', '..')
+  const configuredHome = process.env.HOPI_HOME?.trim()
+  const homeRoot = configuredHome || defaultAssistantHomeRoot()
+  if (!configuredHome) {
+    const migration = await migrateRepositoryAssistantHome({ legacyRoot: sourceRoot, homeRoot })
+    if (migration.relocated || migration.flattenedRuns > 0) {
+      console.log(
+        `HOPI Home migrated to ${homeRoot}: ${migration.flattenedRuns} Runs flattened, ${migration.preservedArtifacts} artifacts preserved, ${migration.removedScratchRoots} scratch roots removed.`,
+      )
+    }
+    for (const warning of migration.warnings)
+      console.warn(`HOPI Home migration warning: ${warning}`)
+  }
   const instanceLock = await acquireCoordinatorInstanceLock(
     join(homeRoot, '.hopi', 'runtime', 'coordinator.lock'),
   )

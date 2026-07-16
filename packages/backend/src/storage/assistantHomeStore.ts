@@ -30,6 +30,7 @@ import {
   normalizeProjectPath,
   storedProjectPath,
 } from '../domain/projectPath'
+import { STABLE_ID_PATTERN, deriveReadableId } from '../domain/stableId'
 import { PublicationCoordinator, hashBytes } from '../publication/publisher'
 import { managedRepoWorktreePaths, managedTaskWorktreePath } from '../runtime/managedWorktreePaths'
 import {
@@ -39,8 +40,6 @@ import {
 } from '../runtime/projectDirectory'
 import { relocateRegisteredWorktree } from '../runtime/worktreeRelocator'
 import { withFileLock } from './lock'
-
-const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 const assistantHomeDocumentSchema = z
   .object({
@@ -306,9 +305,8 @@ export function createAssistantHomeStore(
 
       return withFileLock(paths.mutationLockPath, async () => {
         const requested = normalizeLinkProjectInput(input)
-        const projectId = requested.projectId ?? `P-${crypto.randomUUID()}`
         const { primaryRepoId, repos } = requested
-        assertStableId(projectId, 'projectId')
+        if (requested.projectId) assertStableId(requested.projectId, 'projectId')
         assertStableId(primaryRepoId, 'primaryRepoId')
         for (const repo of repos) assertStableId(repo.repoId, 'repoId')
         const inspected = await Promise.all(
@@ -317,14 +315,35 @@ export function createAssistantHomeStore(
             inspection: await inspectRepo(repo.repoPath, repo.projectPath),
           })),
         )
-        assertUniqueRequestedRepos(projectId, primaryRepoId, inspected)
+        const primary = inspected.find((repo) => repo.repoId === primaryRepoId)
+        if (!primary) {
+          throw new AssistantHomeStoreError(
+            'project_conflict',
+            `Primary Repo is missing: ${primaryRepoId}`,
+          )
+        }
         const links = await readProjectLinks(paths.projectLinksPath)
         assertUniqueProjectLinks(links.projects)
-
-        const byId = links.projects.find((entry) => entry.projectId === projectId)
         const byRepos = await Promise.all(
           inspected.map((repo) => findLinkForRepo(links.projects, repo.inspection)),
         )
+
+        if (!requested.projectId) {
+          const existingLinks = [
+            ...new Set(byRepos.filter((link): link is ProjectLink => Boolean(link))),
+          ]
+          if (
+            existingLinks.length === 1 &&
+            existingLinks[0] &&
+            exactProjectLink(existingLinks[0], primaryRepoId, inspected)
+          ) {
+            return this.validateProject(existingLinks[0].projectId)
+          }
+        }
+
+        const projectId = requested.projectId ?? deriveProjectId(primary.inspection, links.projects)
+        assertUniqueRequestedRepos(projectId, primaryRepoId, inspected)
+        const byId = links.projects.find((entry) => entry.projectId === projectId)
         if (byId || byRepos.some(Boolean)) {
           if (byId && exactProjectLink(byId, primaryRepoId, inspected)) {
             return this.validateProject(projectId)
@@ -345,8 +364,6 @@ export function createAssistantHomeStore(
             .map((repo) => repoLink(repo.repoId, repo.inspection))
             .sort((left, right) => repoLinkOrder(primaryRepoId, left, right)),
         }
-        const primary = inspected.find((repo) => repo.repoId === primaryRepoId)
-        if (!primary) throw invalidProject(projectId, 'primary Repo is missing')
         await ensureManagedPrimaryRoot(
           paths,
           projectId,
@@ -707,6 +724,16 @@ function normalizeLinkProjectInput(input: LinkProjectInput) {
     primaryRepoId: repoId,
     repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
   }
+}
+
+function deriveProjectId(primary: RepoInspection, links: ProjectLink[]) {
+  const selectedFolder =
+    primary.projectPath === '.' ? basename(primary.repoPath) : basename(primary.projectPath)
+  return deriveReadableId(
+    'P',
+    selectedFolder,
+    links.map((link) => link.projectId),
+  )
 }
 
 function assertUniqueRequestedRepos(

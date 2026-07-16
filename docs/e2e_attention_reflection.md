@@ -37,6 +37,8 @@ The design depends on several assumptions that must be tested rather than inferr
    Resolution atomically.
 6. “Skip” is ordinary user input, not a separate UI or state-machine path.
 7. Restart recovery is based on durable canonical state and inbox events, not process memory.
+8. A failed historical internal handoff is local to its event and cannot suppress notification of
+   later Attention in the same Goal, another Goal, or another Project.
 
 ## 3. Required deterministic test harness
 
@@ -322,6 +324,25 @@ targeted Attention.
 - No partial Attention, handoff or public question is created.
 - Stage and attempts do not silently advance.
 - A diagnosable internal failure is retained without leaking raw protocol details to the user.
+
+### E2E-13 — A blocked historical handoff does not silence later Attention
+
+**Fixture:** one Reflection-sourced Inbox turn with unresolved event-target Attention, followed by
+one independent unnotified Goal Attention.
+
+**Steps:**
+
+1. Persist the blocked internal turn and its event-target Attention.
+2. Create the new Goal Attention in the same Goal, another Goal, and another Project variants.
+3. Repeat one variant after restarting from the same Home.
+4. Let Coordinator, Reflection, and Speaking Assistant converge, then resolve the old event Attention.
+
+**Expected:**
+
+- The blocked event is not retried before its own Attention resolves.
+- The new Attention is handed to Speaking Assistant, exposed once, and records `notifiedAt`.
+- Resolving the old event allows one current-state revalidation without a duplicate public message.
+- The workspace settles without a new loop-exhaustion Attention.
 
 ## 7. Cross-case assertions
 

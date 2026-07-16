@@ -7,6 +7,7 @@ import {
 
 const bundle = {
   runtimeScratchDir: '/tmp/run/scratch',
+  runtimeCacheDir: '/tmp/hopi/cache',
   goalFile: '/tmp/goal.md',
   designFile: '/tmp/design.md',
   contextFile: '/tmp/context.md',
@@ -344,6 +345,7 @@ describe('resolveConfiguredTransportCommand', () => {
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       env: {
         HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
+        HOPI_CACHE_DIR: bundle.runtimeCacheDir,
         HOPI_CONTEXT_FILE: bundle.contextFile,
         HOPI_OUTCOME_FILE: bundle.outcomeFile,
         HOPI_GOAL_FILE: bundle.goalFile,

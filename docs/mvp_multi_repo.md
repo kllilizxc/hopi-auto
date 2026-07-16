@@ -1,7 +1,7 @@
 # HOPI MVP Multi-Repo Design
 
 Status: implemented MVP protocol
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This document owns the Repo membership, multi-root execution, integration, and recovery rules for
 one Project spanning multiple Git Repos. Product concepts and lifecycle remain defined by
@@ -84,14 +84,24 @@ remain ordinary Markdown.
 The create form collects one or more Repos before it creates a Project. Each click asks the local
 Coordinator to open the host directory chooser and returns either one absolute directory or cancel;
 the chooser result is transient UI input, not a new document or browser filesystem authority. The
-operator gives every selected Repo a stable ID and chooses exactly one primary Repo. macOS, Linux,
-and WSL use small host adapters behind this same boundary. WSL opens the modern Windows Explorer
-folder chooser at the operator's WSL Home, then normalizes either a Windows drive path or a
+first selection is primary by default, and the operator changes primary only when more than one Repo
+is selected. The UI derives each stable `repoId` from its selected folder name and resolves local
+collisions with a numeric suffix instead of exposing identity fields in the ordinary linking flow.
+macOS, Linux, and WSL use small host adapters behind this same boundary. WSL opens the modern Windows
+Explorer folder chooser at the operator's WSL Home, then normalizes either a Windows drive path or a
 `\\wsl.localhost` path back to one WSL absolute path. A directory inside a Git worktree yields the
 canonical Git `repoPath` plus its relative `projectPath`; managed Git operations stay rooted at the
 Repo while responsibility processes, Project `AGENTS.md`, preparation, and Preview use the selected
 Project scope. Linking records that checkout's symbolic delivery branch. HOPI never treats `.git` or
 its own root `.hopi` authority as a selectable source scope.
+
+The ordinary UI never asks for `projectId`. On the first link, Coordinator derives it from the
+primary selected Project folder as `P-<folder>` after stable-ID normalization. Unicode letters and
+numbers remain readable while unsafe separators normalize to `-`. If that identity is already owned
+by another Project in the same Assistant Home, Coordinator appends the smallest free numeric suffix
+(`-2`, `-3`, ...). Selecting an already linked exact Repo set reuses its durable identity. Explicit
+`projectId` remains an API compatibility boundary for migrations, fixtures, and automation, but is
+not a product-form decision.
 
 An empty directory outside every Git worktree is an explicit new-project candidate. The UI asks for
 confirmation, then Coordinator revalidates that it is still empty, initializes `main`, creates one

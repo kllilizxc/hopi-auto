@@ -66,3 +66,15 @@ test('the unified stream no longer carries its own overlay shadows', async () =>
   expect(styles).not.toContain('unified-message-feed__top-shadow')
   expect(styles).not.toContain('unified-message-feed__bottom-shadow')
 })
+
+test('the unified stream keeps its final row clear of the bottom scroll shadow', async () => {
+  const component = await Bun.file(new URL('../UnifiedMessageFeed.tsx', import.meta.url)).text()
+  const styles = await Bun.file(new URL('../../index.css', import.meta.url)).text()
+  const clearanceRule =
+    styles.match(/\.unified-message-feed__bottom-clearance\s*\{([^}]*)\}/)?.[1] ?? ''
+
+  expect(component).toContain('Footer: FeedBottomClearance')
+  expect(clearanceRule).toContain(
+    'block-size: calc(var(--scroll-shadow-size, 22px) + 12px)',
+  )
+})

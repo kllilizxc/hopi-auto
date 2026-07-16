@@ -260,23 +260,29 @@ the canonical project target for workspace Attention; it never guesses or replac
             <evidenceId>.md
 ```
 
-Runs, leases, generated projections, and Preview sessions live under Assistant-home runtime
-storage. Integration and task worktrees live under the Repo-adjacent root above. The managed
+Assistant-home state and runtime data live outside every linked Repo and outside the HOPI source
+checkout. `HOPI_HOME` selects their owner directory; when it is unset the production server uses
+`$XDG_DATA_HOME/hopi`, or `~/.local/share/hopi` when `XDG_DATA_HOME` is unset. Integration and task
+worktrees live under the Repo-adjacent root above. The managed
 integration worktree is stable rather than disposable
 because ordinary canonical document publications may precede their next Git checkpoint. Canonical
 documents, preferences, `project.yml`, the `hopi/release` ref, and task branch refs travel with a
 lossless Project migration.
 
-Each responsibility dispatch uses one runtime directory:
+Each responsibility dispatch uses one globally identified runtime directory. Project, Goal, Work,
+and responsibility already belong in `attempt.json`; repeating them as filesystem ancestry adds no
+identity or isolation:
 
 ```text
-<hopi-home>/.hopi/runtime/runs/<projectId>/<goalId>/<workId>/<runId>/
+<hopi-home>/.hopi/runtime/runs/<runId>/
   context.md
   prompt.md
   result.json
   attempt.json
   events.jsonl
   transcript.log
+  artifacts.json
+  artifacts/
   scratch/
 ```
 
@@ -284,14 +290,22 @@ Each responsibility dispatch uses one runtime directory:
 that one Run. `events.jsonl` is an append-only stream of normalized model messages and tool events
 used by the Work-detail UI. `transcript.log` preserves each raw stdout/stderr line before vendor
 normalization or display truncation. These files are runtime observability, not canonical authority.
-`scratch/` is a disposable writable temp/cache root exposed to the responsibility process. It lets
-package managers, build tools, and short-lived local services operate inside the existing Run
-capability without granting another filesystem root; it is never source, Evidence, or Preview state.
+`scratch/` is a disposable writable temp root exposed to the responsibility process. It lets build
+tools and short-lived local services operate inside the existing Run capability without granting
+another source root; it is never source, Evidence, or Preview state. Reusable tool caches live at
+`<hopi-home>/.hopi/cache/`, outside every Run. Before applying a valid result, Coordinator keeps a
+verified Project-relative source path portable as-is; every declared Run-local proof file is copied
+into the Run's `artifacts/`, its original diagnostic location is recorded in `artifacts.json`, and
+the model-supplied path is replaced with `artifact:<runId>/<artifactName>`. Evidence may contain
+either portable form but never an absolute local path. Once the responsibility process is gone and
+its declared proof is preserved, Coordinator
+removes `scratch/`; terminal scratch left by a process crash is removed during restart recovery.
 On restart, a manifest still marked `running` becomes `interrupted`; Coordinator never reattaches its
-child. Older Run directories without these files remain readable as legacy Attempts but may have no
-message stream or raw transcript. Work front matter `attempts` remains the authoritative count of
-published unsuccessful outcomes in the current recovery episode; it is not the number of runtime
-Attempt records.
+child. The former `<projectId>/<goalId>/<workId>/<runId>` layout remains read-only compatible during
+migration, but all new writes use the flat layout. Older Run directories without these files remain
+readable as legacy Attempts but may have no message stream or raw transcript. Work front matter
+`attempts` remains the authoritative count of published unsuccessful outcomes in the current
+recovery episode; it is not the number of runtime Attempt records.
 
 Operational recovery uses these existing Attempt records without making them canonical Work
 semantics. For one Work, the current operational episode is the consecutive newest finished Attempts
@@ -300,8 +314,9 @@ failure ensures one ordinary open Work-target Attention. No operational counter 
 Attention IDs, or UI projection, and no new Attention field or kind is introduced.
 
 `project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership and
-`projectPath` values, and the current secondary release commits. Absolute local filesystem paths
-remain solely in Assistant-home `projects.yml`.
+`projectPath` values, and the current secondary release commits. Canonical absolute local filesystem
+paths remain solely in Assistant-home `projects.yml`; runtime diagnostics may record the machine-
+local source from which a portable artifact was preserved.
 The primary Repo's release commit is the `project.yml`-containing C1 itself and is therefore implicit;
 embedding its own hash would be self-referential. The integration target remains the kernel
 convention `hopi/release`, not editable Project configuration. Goal completion means the primary C1

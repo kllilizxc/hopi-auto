@@ -286,7 +286,7 @@ async function executeProcess(
   transcriptFile: string,
 ) {
   const tempDir = join(input.context.runtimeScratchDir, 'tmp')
-  const cacheDir = join(input.context.runtimeScratchDir, 'cache')
+  const cacheDir = input.context.runtimeCacheDir
   await Promise.all([mkdir(tempDir, { recursive: true }), mkdir(cacheDir, { recursive: true })])
   const child = Bun.spawn(command.cmd, {
     cwd: input.cwd,

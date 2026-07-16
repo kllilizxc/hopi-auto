@@ -1,6 +1,6 @@
 import { z } from 'zod'
+import { stableIdSchema } from '../domain/stableId'
 
-const stableId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const goalReferences = z
   .array(
     z
@@ -36,12 +36,12 @@ export type ReflectionAssistantToolName = (typeof reflectionAssistantToolNames)[
 export const assistantToolSchemas = {
   hopi_read_state: z
     .object({
-      projectId: stableId
+      projectId: stableIdSchema
         .describe(
           'Exact canonical Project ID, including its P- prefix. Omit to use current page context.',
         )
         .optional(),
-      goalId: stableId
+      goalId: stableIdSchema
         .describe(
           'Exact canonical Goal ID, including its G- prefix. Omit to use current page context.',
         )
@@ -50,8 +50,12 @@ export const assistantToolSchemas = {
     .strict(),
   hopi_create_goal: z
     .object({
-      projectId: stableId,
-      goalId: stableId.optional(),
+      projectId: stableIdSchema,
+      goalId: stableIdSchema
+        .describe(
+          'Explicit canonical Goal ID for compatibility or deterministic automation. Omit during ordinary creation so Coordinator derives a readable ID from title.',
+        )
+        .optional(),
       title: z.string().trim().min(1),
       objective: z.string().trim().min(1),
       priority: z.number().int().optional(),
@@ -60,8 +64,8 @@ export const assistantToolSchemas = {
     .strict(),
   hopi_write_design: z
     .object({
-      projectId: stableId,
-      goalId: stableId,
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
       writes: z
         .array(
           z
@@ -85,16 +89,16 @@ export const assistantToolSchemas = {
     }),
   hopi_request_planning: z
     .object({
-      projectId: stableId,
-      goalId: stableId,
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
       materialContractChange: z.boolean().default(false),
       references: goalReferences,
     })
     .strict(),
   hopi_control_goal: z
     .object({
-      projectId: stableId,
-      goalId: stableId,
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
       operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority']),
       priority: z.number().int().optional(),
     })
@@ -106,9 +110,9 @@ export const assistantToolSchemas = {
     }),
   hopi_control_work: z
     .object({
-      projectId: stableId,
-      goalId: stableId,
-      workId: stableId,
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
+      workId: stableIdSchema,
       operation: z.enum(['retry', 'cancel', 'set_not_before']),
       notBefore: z.string().datetime({ offset: true }).nullable().optional(),
     })
@@ -116,9 +120,9 @@ export const assistantToolSchemas = {
   hopi_resolve_attention: z
     .object({
       scope: z.enum(['workspace', 'goal']),
-      attentionId: stableId,
-      projectId: stableId.optional(),
-      goalId: stableId.optional(),
+      attentionId: stableIdSchema,
+      projectId: stableIdSchema.optional(),
+      goalId: stableIdSchema.optional(),
       resolution: z.string().trim().min(1),
     })
     .strict()
@@ -132,7 +136,7 @@ export const assistantToolSchemas = {
     }),
   hopi_control_preview: z
     .object({
-      projectId: stableId,
+      projectId: stableIdSchema,
       operation: z.enum(['start', 'stop', 'request_repair']),
       failure: z.string().optional(),
     })
@@ -143,8 +147,8 @@ export const assistantToolSchemas = {
       brief: z.string().trim().min(1).max(12_000),
       context: z
         .object({
-          projectId: stableId,
-          goalId: stableId,
+          projectId: stableIdSchema,
+          goalId: stableIdSchema,
         })
         .strict()
         .optional(),

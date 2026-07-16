@@ -30,6 +30,7 @@ import {
   createProjectPreparer,
 } from '../runtime/projectPreparation'
 import { type RoleContextStager, createRoleContextStager } from '../runtime/roleContextStager'
+import { cleanupRunScratch, preserveRunArtifacts } from '../runtime/runArtifacts'
 import {
   type RunAttemptRecorder,
   type RunAttemptStore,
@@ -277,6 +278,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       runControllers.set(liveKey, runController)
       const runId = createRunId()
       let attempt: RunAttemptRecorder | null = null
+      let runtimeScratchDir: string | null = null
+      let keepScratchForDiagnostics = false
       try {
         if (
           interruptionGeneration.project !== projectInterruptionGeneration ||
@@ -351,6 +354,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
         })
+        runtimeScratchDir = context.runtimeScratchDir
         attempt = await attempts
           .start({
             projectId: options.projectId,
@@ -393,11 +397,23 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               )
             }
             if (responsibility === 'reviewer') {
-              const outcome: RoleRunResult = {
+              let outcome: RoleRunResult = {
                 result: 'reject',
                 summary: preparationFailureSummary(preparation),
                 artifacts: [preparation.logPath],
                 exitCode: preparation.exitCode,
+              }
+              try {
+                outcome = await preserveOutcomeArtifacts(
+                  outcome,
+                  runId,
+                  context.runRoot,
+                  context.resultFile,
+                  roleRepoRoots.map((repo) => repo.path),
+                )
+              } catch (error) {
+                keepScratchForDiagnostics = true
+                outcome = artifactFailureOutcome(error, outcome.exitCode)
               }
               const application = await outcomes.apply({
                 goalId,
@@ -522,6 +538,19 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               exitCode: outcome.exitCode,
             }
           }
+        }
+
+        try {
+          outcome = await preserveOutcomeArtifacts(
+            outcome,
+            runId,
+            context.runRoot,
+            context.resultFile,
+            roleRepoRoots.map((repo) => repo.path),
+          )
+        } catch (error) {
+          keepScratchForDiagnostics = true
+          outcome = artifactFailureOutcome(error, outcome.exitCode)
         }
 
         if (outcome.failureKind === 'operational') {
@@ -685,10 +714,40 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         throw error
       } finally {
+        if (runtimeScratchDir && !keepScratchForDiagnostics) {
+          await cleanupRunScratch(runtimeScratchDir).catch(() => undefined)
+        }
         live.delete(liveKey)
         runControllers.delete(liveKey)
       }
     },
+  }
+}
+
+async function preserveOutcomeArtifacts(
+  outcome: RoleRunResult,
+  runId: string,
+  runRoot: string,
+  resultFile: string,
+  sourceRoots: readonly string[],
+): Promise<RoleRunResult> {
+  const preserved = await preserveRunArtifacts({
+    runId,
+    runRoot,
+    artifacts: outcome.artifacts,
+    sourceRoots,
+    resultFile,
+  })
+  return { ...outcome, artifacts: preserved.references }
+}
+
+function artifactFailureOutcome(error: unknown, exitCode: number | null): RoleRunResult {
+  return {
+    result: 'fail',
+    summary: `Run artifact preservation failed: ${errorMessage(error)}`,
+    artifacts: [],
+    exitCode,
+    failureKind: 'operational',
   }
 }
 

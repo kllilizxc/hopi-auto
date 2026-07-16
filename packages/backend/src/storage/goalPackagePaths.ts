@@ -1,8 +1,7 @@
 import { join, resolve } from 'node:path'
 import { normalizeProjectPath, scopedProjectPath } from '../domain/projectPath'
+import { assertStableId } from '../domain/stableId'
 import type { PublicationRoot } from '../publication/types'
-
-const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export interface GoalPackagePaths {
   projectId: string
@@ -102,11 +101,5 @@ export function createGoalPackagePaths(
     absolute(relativePath) {
       return join(absoluteProjectRoot, ...relativePath.split('/'))
     },
-  }
-}
-
-function assertStableId(value: string, label: string) {
-  if (!STABLE_ID_PATTERN.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`)
   }
 }

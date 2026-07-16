@@ -20,6 +20,7 @@ export interface TransportCommand {
 
 export interface TransportContextBundle {
   runtimeScratchDir: string
+  runtimeCacheDir: string
   goalFile: string
   designFile: string
   extraWritableRoots?: string[]
@@ -257,6 +258,7 @@ export async function resolveConfiguredTransportCommand(options: {
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
   return {
     HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
+    HOPI_CACHE_DIR: bundle.runtimeCacheDir,
     HOPI_CONTEXT_FILE: bundle.contextFile,
     HOPI_OUTCOME_FILE: bundle.outcomeFile,
     HOPI_GOAL_FILE: bundle.goalFile,

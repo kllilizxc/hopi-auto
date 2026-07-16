@@ -1,7 +1,9 @@
-const stableId = '[A-Za-z0-9][A-Za-z0-9._-]*'
-const projectTargetPattern = new RegExp(`^project:(${stableId})$`)
+import { STABLE_ID_SOURCE } from './stableId'
+
+const projectTargetPattern = new RegExp(`^project:(${STABLE_ID_SOURCE})$`, 'u')
 const workTargetPattern = new RegExp(
-  `^project:(${stableId})/goal:(${stableId})/work:(${stableId})$`,
+  `^project:(${STABLE_ID_SOURCE})/goal:(${STABLE_ID_SOURCE})/work:(${STABLE_ID_SOURCE})$`,
+  'u',
 )
 
 export type GoalAttentionTargetMatch = { scope: 'goal' } | { scope: 'work'; workId: string }

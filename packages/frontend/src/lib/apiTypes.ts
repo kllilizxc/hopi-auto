@@ -161,6 +161,10 @@ export type AssistantFeedEntry =
       attention: AttentionView
     }
 
+export interface AssistantFeedActivity {
+  phase: 'waiting' | 'working'
+}
+
 export interface CursorPageInfo {
   oldestCursor: string | null
   newestCursor: string | null
@@ -172,6 +176,18 @@ export interface CursorPageInfo {
 export interface CursorPage<T> {
   items: T[]
   pageInfo: CursorPageInfo
+}
+
+export interface AssistantFeedPage extends CursorPage<AssistantFeedEntry> {
+  activity: AssistantFeedActivity | null
+  syncCursor: string | null
+}
+
+export interface AssistantFeedChanges {
+  items: AssistantFeedEntry[]
+  removedIds: string[]
+  activity: AssistantFeedActivity | null
+  syncCursor: string | null
 }
 
 export interface AppSnapshot {

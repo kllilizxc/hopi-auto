@@ -5,6 +5,7 @@ import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { Responsibility } from '../runtime/roleContextStager'
 import type { RunAttemptStore, RunAttemptSummary } from '../runtime/runAttemptStore'
+import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 
@@ -257,11 +258,8 @@ async function readWorkRuntime(input: {
 }) {
   const latest = (await input.attempts.list(input.projectId, input.goalId, input.workId))[0] ?? null
   const runRoot = latest
-    ? join(
+    ? await existingRunRoot(
         input.homeRoot,
-        '.hopi',
-        'runtime',
-        'runs',
         input.projectId,
         input.goalId,
         input.workId,
@@ -314,6 +312,19 @@ async function existingRunPaths(runRoot: string) {
   return Object.fromEntries(
     entries.filter(([, , exists]) => exists).map(([key, path]) => [key, path]),
   ) as Partial<Record<keyof typeof candidates, string>>
+}
+
+async function existingRunRoot(
+  homeRoot: string,
+  projectId: string,
+  goalId: string,
+  workId: string,
+  runId: string,
+) {
+  const flat = runStoragePath(homeRoot, runId)
+  if (await pathExists(flat)) return flat
+  const legacy = legacyRunStoragePath(homeRoot, projectId, goalId, workId, runId)
+  return (await pathExists(legacy)) ? legacy : null
 }
 
 async function latestActivity(

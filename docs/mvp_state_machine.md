@@ -271,7 +271,8 @@ stateDiagram-v2
     Assessed --> Running : later eligible digest
     HandedOff --> Deferred : later automatic progress
     HandedOff --> Running : later eligible digest after speaking-thread effects
-    HandedOff --> HandedOff : internal Inbox turn remains pending or blocked
+    HandedOff --> Running : prior turn is Attention-blocked; newer state still needs assessment
+    HandedOff --> HandedOff : eligible internal Inbox turn remains pending
     Backoff --> Running : retry delay elapsed
     Exhausted --> Running : semantic digest changed
     Running --> Running : newer state coalesces
@@ -286,7 +287,10 @@ timer, queue record, or canonical field. User input has speaking priority but do
 read-only snapshot; a stale prepared handoff is discarded by digest comparison. Successful
 assessments suppress repetition for that digest, failure retries are bounded, and bounded internal
 handoffs prevent self-triggering loops. `HandedOff` remains the explanatory state while its one
-durable internal Inbox turn is pending; the resulting state changes do not start another Reflection.
+durable internal Inbox turn is eligible and pending. Event-target Attention makes that turn
+ineligible: it remains durable for later revalidation but cannot suppress a newer semantic state.
+A handled speaking turn resets the consecutive-handoff chain; only a new handoff whose immediate
+predecessor is still pending or Attention-blocked extends it.
 
 ## Goal Lifecycle
 

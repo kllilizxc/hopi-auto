@@ -15,8 +15,8 @@ import {
   projectCodingDefaultsInputSchema,
 } from './projectCodingDefaults'
 import { isNormalizedProjectPath } from './projectPath'
+import { STABLE_ID_PATTERN, stableIdSchema } from './stableId'
 
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const homeSchema = z.object({ version: z.literal(1), homeId: stableIdSchema }).strict()
 const legacyLinksSchema = z
   .object({
@@ -402,7 +402,7 @@ function parseYaml<T>(source: string, schema: z.ZodType<T, z.ZodTypeDef, unknown
 }
 
 function assertStableId(value: string, label: string) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) throw invalid(`Invalid ${label}: ${value}`)
+  if (!STABLE_ID_PATTERN.test(value)) throw invalid(`Invalid ${label}: ${value}`)
 }
 
 function invalid(message: string) {

@@ -11,13 +11,15 @@ import {
   AGENT_TRANSCRIPT_TRANSPORTS,
   type AgentRuntimeEvent,
 } from '../agent/runtimeEvents'
+import { stableIdSchema } from '../domain/stableId'
 import { readDurableJsonLines } from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
+import { cleanupRunScratch } from './runArtifacts'
+import { legacyRunStoragePath, runStoragePath, runStorageRoot } from './runPaths'
 
 export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 const nullableResultSchema = z.enum(STORED_PASS_RESULTS).nullable()
 const attemptManifestSchema = z
   .object({
@@ -133,19 +135,13 @@ export function createRunAttemptStore(
   homeRoot: string,
   options: { now?: () => Date } = {},
 ): RunAttemptStore {
-  const attemptsRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'runs')
+  const attemptsRoot = runStorageRoot(homeRoot)
   const now = options.now ?? (() => new Date())
 
   return {
     async start(input) {
       assertIds(input.projectId, input.goalId, input.workId, input.runId)
-      const expectedRoot = runRoot(
-        attemptsRoot,
-        input.projectId,
-        input.goalId,
-        input.workId,
-        input.runId,
-      )
+      const expectedRoot = runStoragePath(homeRoot, input.runId)
       if (resolve(input.runRoot) !== expectedRoot) {
         throw new Error(`Run root does not match Attempt identity: ${input.runRoot}`)
       }
@@ -241,17 +237,25 @@ export function createRunAttemptStore(
 
     async list(projectId, goalId, workId) {
       assertIds(projectId, goalId, workId)
-      const root = join(attemptsRoot, projectId, goalId, workId)
-      const entries = await readDirectories(root)
-      const attempts = await Promise.all(
-        entries.map((entry) => readSummary(join(root, entry), projectId, goalId, workId, entry)),
+      const flatEntries = await readDirectories(attemptsRoot)
+      const legacyRoot = join(attemptsRoot, projectId, goalId, workId)
+      const legacyEntries = await readDirectories(legacyRoot)
+      const attempts = await Promise.all([
+        ...flatEntries.map((entry) =>
+          readSummary(join(attemptsRoot, entry), projectId, goalId, workId, entry),
+        ),
+        ...legacyEntries.map((entry) =>
+          readSummary(join(legacyRoot, entry), projectId, goalId, workId, entry),
+        ),
+      ])
+      const unique = new Map<string, RunAttemptSummary>()
+      for (const attempt of attempts) {
+        if (attempt && !unique.has(attempt.runId)) unique.set(attempt.runId, attempt)
+      }
+      return [...unique.values()].sort(
+        (left, right) =>
+          right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
       )
-      return attempts
-        .filter((attempt): attempt is RunAttemptSummary => attempt !== null)
-        .sort(
-          (left, right) =>
-            right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
-        )
     },
 
     async read(projectId, goalId, workId, runId) {
@@ -265,7 +269,8 @@ export function createRunAttemptStore(
 
     async readMetadata(projectId, goalId, workId, runId) {
       assertIds(projectId, goalId, workId, runId)
-      const root = runRoot(attemptsRoot, projectId, goalId, workId, runId)
+      const root = await locateRunRoot(homeRoot, projectId, goalId, workId, runId)
+      if (!root) return null
       const summary = await readSummary(root, projectId, goalId, workId, runId)
       if (!summary) return null
       return {
@@ -276,7 +281,8 @@ export function createRunAttemptStore(
 
     async readEvents(projectId, goalId, workId, runId) {
       assertIds(projectId, goalId, workId, runId)
-      const root = runRoot(attemptsRoot, projectId, goalId, workId, runId)
+      const root = await locateRunRoot(homeRoot, projectId, goalId, workId, runId)
+      if (!root) return null
       const summary = await readSummary(root, projectId, goalId, workId, runId)
       if (!summary) return null
       return readEvents(join(root, 'events.jsonl'))
@@ -284,10 +290,17 @@ export function createRunAttemptStore(
 
     async interruptRunningAttempts() {
       await mkdir(attemptsRoot, { recursive: true })
-      const glob = new Bun.Glob('*/*/*/*/attempt.json')
       let count = 0
-      for await (const relativePath of glob.scan({ cwd: attemptsRoot, onlyFiles: true })) {
-        const path = join(attemptsRoot, relativePath)
+      const manifestPaths = new Set<string>()
+      for (const pattern of ['*/attempt.json', '*/*/*/*/attempt.json']) {
+        for await (const relativePath of new Bun.Glob(pattern).scan({
+          cwd: attemptsRoot,
+          onlyFiles: true,
+        })) {
+          manifestPaths.add(join(attemptsRoot, relativePath))
+        }
+      }
+      for (const path of manifestPaths) {
         const manifest = await readStoredManifest(path).catch(() => null)
         if (!manifest || manifest.status !== 'running') continue
         const endedAt = now().toISOString()
@@ -312,6 +325,7 @@ export function createRunAttemptStore(
           status: 'interrupted',
           summary,
         })
+        await cleanupRunScratch(join(resolve(path, '..'), 'scratch')).catch(() => undefined)
         count += 1
       }
       return count
@@ -327,7 +341,14 @@ async function readSummary(
   runId: string,
 ) {
   const manifest = await readStoredManifest(join(root, 'attempt.json')).catch(() => null)
-  if (manifest) return manifest
+  if (manifest) {
+    return manifest.projectId === projectId &&
+      manifest.goalId === goalId &&
+      manifest.workId === workId &&
+      manifest.runId === runId
+      ? manifest
+      : null
+  }
   return readLegacySummary(root, projectId, goalId, workId, runId)
 }
 
@@ -341,6 +362,20 @@ async function readLegacySummary(
   const contextFile = Bun.file(join(root, 'context.md'))
   if (!(await contextFile.exists())) return null
   const context = await contextFile.text()
+  const contextIdentity = {
+    projectId: context.match(/^- Project: (.+)$/m)?.[1],
+    goalId: context.match(/^- Goal: (.+)$/m)?.[1],
+    workId: context.match(/^- Work: (.+)$/m)?.[1],
+    runId: context.match(/^- Run: (.+)$/m)?.[1],
+  }
+  if (
+    (contextIdentity.projectId && contextIdentity.projectId !== projectId) ||
+    (contextIdentity.goalId && contextIdentity.goalId !== goalId) ||
+    (contextIdentity.workId && contextIdentity.workId !== workId) ||
+    (contextIdentity.runId && contextIdentity.runId !== runId)
+  ) {
+    return null
+  }
   const responsibility = z
     .enum(RESPONSIBILITIES)
     .safeParse(context.match(/^- Responsibility: (.+)$/m)?.[1]).data
@@ -424,14 +459,21 @@ function storeEvent(event: AgentRuntimeEvent, createdAt: Date): StoredRunAttempt
   })
 }
 
-function runRoot(
-  attemptsRoot: string,
+async function locateRunRoot(
+  homeRoot: string,
   projectId: string,
   goalId: string,
   workId: string,
   runId: string,
 ) {
-  return join(attemptsRoot, projectId, goalId, workId, runId)
+  const candidates = [
+    runStoragePath(homeRoot, runId),
+    legacyRunStoragePath(homeRoot, projectId, goalId, workId, runId),
+  ]
+  for (const candidate of candidates) {
+    if (await readSummary(candidate, projectId, goalId, workId, runId)) return candidate
+  }
+  return null
 }
 
 function assertIds(projectId: string, goalId: string, workId: string, runId?: string) {

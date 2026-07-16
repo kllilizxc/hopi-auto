@@ -237,6 +237,86 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
   })
 
+  test('bounds a consecutive handoff chain while its predecessors remain unhandled', async () => {
+    let digest = 'a'.repeat(64)
+    const exhausted: Array<{ eventId: string; message: string }> = []
+    const fixture = await setup(
+      () => ({
+        digest,
+        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
+      }),
+      (tools) => ({
+        async run(input) {
+          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: `Assessment for ${digest.slice(0, 1)}.`,
+          })
+          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${digest[0]}`) }
+        },
+      }),
+      {
+        maxConsecutiveHandoffs: 3,
+        onLoopExhausted: async (eventId, message) => {
+          exhausted.push({ eventId, message })
+        },
+      },
+    )
+
+    for (const marker of ['a', 'b', 'c']) {
+      digest = marker.repeat(64)
+      expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+      await fixture.reflection.waitForIdle()
+    }
+
+    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
+    expect(events).toHaveLength(3)
+    expect(exhausted).toHaveLength(1)
+    expect(events.map((event) => event.attributes.id)).toContain(exhausted[0]?.eventId ?? '')
+    expect(exhausted[0]?.message).toBe(
+      'Background Reflection handed off 3 consecutive state changes without converging.',
+    )
+  })
+
+  test('treats each handled speaking handoff as convergence for loop detection', async () => {
+    let digest = 'a'.repeat(64)
+    const exhausted: string[] = []
+    const fixture = await setup(
+      () => ({
+        digest,
+        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
+      }),
+      (tools) => ({
+        async run(input) {
+          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: `Assessment for ${digest.slice(0, 1)}.`,
+          })
+          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${digest[0]}`) }
+        },
+      }),
+      {
+        maxConsecutiveHandoffs: 3,
+        onLoopExhausted: async (eventId) => {
+          exhausted.push(eventId)
+        },
+      },
+    )
+
+    for (const marker of ['a', 'b', 'c', 'd']) {
+      digest = marker.repeat(64)
+      expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+      await fixture.reflection.waitForIdle()
+      const event = [...(await fixture.workspace.readWorkspace()).events.values()].find(
+        (candidate) => candidate.attributes.status === 'pending',
+      )
+      expect(event).toBeDefined()
+      await fixture.workspace.handleEvent(event?.attributes.id ?? 'missing-event', {
+        reply: 'Speaking Assistant revalidated the current state.',
+        disposition: 'answered',
+      })
+    }
+
+    expect(exhausted).toEqual([])
+  })
+
   test('creates a Goal-scoped fallback with exact Attention references when the model omits handoff', async () => {
     const fixture = await setup(
       () => ({
@@ -360,6 +440,8 @@ async function setup(
     failureRetryBaseMs?: number
     failureRetryMaxMs?: number
     maxFailuresPerDigest?: number
+    maxConsecutiveHandoffs?: number
+    onLoopExhausted?(eventId: string, message: string): Promise<void> | void
     linkProject?: boolean
   } = {},
 ) {
@@ -414,6 +496,12 @@ async function setup(
       : {}),
     ...(reflectionOptions.maxFailuresPerDigest !== undefined
       ? { maxFailuresPerDigest: reflectionOptions.maxFailuresPerDigest }
+      : {}),
+    ...(reflectionOptions.maxConsecutiveHandoffs !== undefined
+      ? { maxConsecutiveHandoffs: reflectionOptions.maxConsecutiveHandoffs }
+      : {}),
+    ...(reflectionOptions.onLoopExhausted
+      ? { onLoopExhausted: reflectionOptions.onLoopExhausted }
       : {}),
   })
   return { workspace, tools, reflection }

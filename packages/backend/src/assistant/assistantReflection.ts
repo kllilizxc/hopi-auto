@@ -93,6 +93,7 @@ export function createAssistantReflection(options: {
     | { digest: string; failures: number; retryNotBefore: number; exhausted: boolean }
     | undefined
   let consecutiveHandoffs = 0
+  let previousHandoffEventId: string | null = null
   let nextObserveAt = 0
 
   const reflection: AssistantReflection = {
@@ -129,9 +130,15 @@ export function createAssistantReflection(options: {
           lastAssessedSnapshot = snapshot
           if (!handoffEventId) {
             consecutiveHandoffs = 0
+            previousHandoffEventId = null
             return
           }
+          if (previousHandoffEventId) {
+            const previous = await options.workspace.readEvent(previousHandoffEventId)
+            if (previous?.attributes.status === 'handled') consecutiveHandoffs = 0
+          }
           consecutiveHandoffs += 1
+          previousHandoffEventId = handoffEventId
           if (consecutiveHandoffs >= maxConsecutiveHandoffs) {
             await options.onLoopExhausted?.(
               handoffEventId,

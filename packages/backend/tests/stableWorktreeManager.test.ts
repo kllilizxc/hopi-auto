@@ -42,6 +42,25 @@ describe('createStableWorktreeManager', () => {
     expect(await git(first.path, ['branch', '--show-current'])).toBe(first.branch)
   })
 
+  test('keeps readable Unicode identity valid through Git branches and worktree paths', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-unicode'))
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-产品工作台',
+      repoPath,
+    })
+
+    const prepared = await createStableWorktreeManager(homeRoot).prepare({
+      projectRoot: project.integrationRoot,
+      projectId: project.projectId,
+      goalId: 'G-优化前端样式',
+      workId: 'W-theme',
+    })
+
+    expect(prepared.branch).toBe('hopi/work/P-产品工作台/G-优化前端样式/W-theme')
+    expect(await git(prepared.path, ['branch', '--show-current'])).toBe(prepared.branch)
+  })
+
   test('branches from hopi/release without linking canonical .hopi into the task checkout', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))

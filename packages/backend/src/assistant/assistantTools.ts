@@ -14,6 +14,7 @@ import {
 } from '../domain/canonicalDocuments'
 import type { LinkedProjectRepo } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
+import { deriveReadableId } from '../domain/stableId'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import { acknowledgeGoalAttention } from '../runtime/attentionDelivery'
@@ -285,7 +286,8 @@ export function createAssistantTools(options: {
           assertPortableGoalText('Goal title', args.title)
           assertPortableGoalText('Goal objective', args.objective)
           const project = requireProject(options.projects, args.projectId)
-          const goalId = args.goalId ?? `G-${crypto.randomUUID()}`
+          const goalId =
+            args.goalId ?? deriveReadableId('G', args.title, await project.store.listGoalIds())
           const existing = await project.store.readGoal(goalId)
           const admission = await goalInputAdmission(
             options.workspace,

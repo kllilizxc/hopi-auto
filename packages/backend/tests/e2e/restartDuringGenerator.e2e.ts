@@ -309,20 +309,31 @@ async function initializeFixture(root: string) {
 }
 
 async function readAttempts(root: string) {
-  const attemptsRoot = join(root, '.hopi', 'runtime', 'runs', PROJECT_ID, GOAL_ID, WORK_ID)
+  const attemptsRoot = join(root, '.hopi', 'runtime', 'runs')
   const runIds = await Array.fromAsync(
     new Bun.Glob('*').scan({ cwd: attemptsRoot, onlyFiles: false }),
   )
-  return Promise.all(
-    runIds.map(
-      async (runId) =>
-        JSON.parse(await Bun.file(join(attemptsRoot, runId, 'attempt.json')).text()) as {
-          responsibility: string
-          status: string
-          application: string | null
-          runId: string
-        },
-    ),
+  const attempts = await Promise.all(
+    runIds.map(async (runId) => {
+      const file = Bun.file(join(attemptsRoot, runId, 'attempt.json'))
+      if (!(await file.exists())) return null
+      return JSON.parse(await file.text()) as {
+        responsibility: string
+        status: string
+        application: string | null
+        runId: string
+        projectId: string
+        goalId: string
+        workId: string
+      }
+    }),
+  )
+  return attempts.filter(
+    (attempt): attempt is NonNullable<typeof attempt> =>
+      attempt !== null &&
+      attempt.projectId === PROJECT_ID &&
+      attempt.goalId === GOAL_ID &&
+      attempt.workId === WORK_ID,
   )
 }
 

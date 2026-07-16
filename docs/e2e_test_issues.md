@@ -841,3 +841,62 @@ Backend tests with 1,298 assertions and 50 Frontend tests with 166 assertions, t
 verification, typechecks, Biome, and the Frontend build. A Live rerun was not performed because the
 changed boundary is test observation and runaway termination; retained real Live artifacts plus the
 deterministic lifecycle tests exercise it without spending another model turn.
+
+## 2026-07-16: Historical Handoff Isolation And Notification Liveness
+
+A real Goal exposed the inverse of the earlier Reflection runaway. The previous correction treated
+every pending Reflection-sourced Inbox turn as a global assessment owner. An old turn blocked by its
+own event-target Attention therefore silenced Reflection for an unrelated, unnotified Goal
+Attention. The Kanban correctly showed `Needs you`, but the speaking Assistant never told the user.
+
+The correction narrows ownership instead of adding another status or retry loop. Only an eligible
+pending handoff owns the current assessment. Once a handoff has event-target Attention, that failure
+is local to the handoff: the Coordinator may reassess newer state while the old turn remains durable
+and blocked. Consecutive-handoff protection still bounds a truly unhandled chain, but a handled
+speaking turn resets the chain because its effect is convergence, not another failed recovery.
+
+The missing test boundary was composition. Clean notification, terminal speaking failure, restart,
+and Reflection loop protection had each been checked independently, but no scenario retained a
+poisoned historical handoff while introducing a new unnotified Attention. Deterministic
+production-runtime regressions now cover the same Goal, another Goal, another Project, and restart.
+The Live Harness also rejects a settled result when an unresolved, unnotified targeted Attention has
+no active owner; this is a test oracle only, not a product watchdog or timer.
+
+The four deterministic variants and the complete contract suite passed. The focused real-model
+`019` canary passed at
+`test-artifacts/reflection-notification-schema-canary-2026-07-16T14-27-00-954Z-f3a5a2a1`
+with one speaking Assistant Run and no Reflection model Run. Browser verification first retained an
+infrastructure failure at
+`test-artifacts/global-assistant-browser-2026-07-16T14-25-00-642Z-80058eb5` when the isolated
+automation Chrome stopped answering CDP. Restarting only that owned browser recovered the boundary;
+the passing artifact is
+`test-artifacts/global-assistant-browser-2026-07-16T14-26-38-636Z-79a57a9a`.
+
+Activation against the existing development Home then exercised the same boundary without a fixture.
+Reflection `RF-46969cfe-cbbd-4084-a5da-d4c0298b22e9` found an unresolved, unnotified operational
+Attention, handed it to the speaking Assistant, and the Assistant inspected the latest Attempt,
+consumed one retry, resolved that exact Attention, and restarted Generator without operator input.
+This is the intended liveness result: notify when user action remains necessary, but continue
+silently when the Assistant can apply and verify the recovery itself.
+
+The final `bun run check` passed 346 Backend tests with 1,427 assertions and 61 Frontend tests with
+194 assertions, together with runtime verification, typechecks, Biome, and the Frontend build.
+
+## 2026-07-16: Recoverable Assistant Tool Conflict Looked Like A Server Crash
+
+An Assistant called `hopi_request_planning` for a terminal Goal before reopening it. The canonical
+guard correctly rejected the mutation, and the MCP adapter correctly returned the error to the
+model; the same historical turn then reopened the Goal and retried Planning successfully. However,
+the internal HTTP boundary classified `GoalControllerError` as an unknown `500` and printed its full
+stack under `[mvp api error]`. This looked like a backend crash even though the original PID kept its
+port and `/api/state` continued returning `200`.
+
+Expected Goal lifecycle conflicts now return `409` with the concise domain message and bypass the
+unexpected-error stack. No new error state or retry mechanism was added. A production-server
+contract issues a valid per-turn capability, receives the terminal-Goal conflict from
+`/api/internal/assistant-tool`, calls `hopi_read_state` successfully in the same turn, handles the
+Inbox event, and verifies the server remains available. A lower-level contract verifies the full
+`conflict -> read -> reopen -> request Planning` correction sequence and one durable Goal Input.
+
+The final `bun run check` passed 348 Backend tests with 1,437 assertions and 65 Frontend tests with
+211 assertions, together with runtime verification, typechecks, Biome, and the Frontend build.

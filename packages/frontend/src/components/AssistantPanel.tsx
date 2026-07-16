@@ -4,11 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import {
   type AppSnapshot,
-  type AssistantFeedEntry,
   type AttentionView,
   type ReflectionRunSummary,
   type RunAttemptEvent,
-  readAssistantFeed,
   readReflectionRunEvents,
   readReflectionRuns,
   sendInboxMessage,
@@ -16,6 +14,7 @@ import {
 import { resolveAssistantInboxContext } from '../lib/assistantContext'
 import type { GoalScope } from '../lib/goalScope'
 import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
+import { useAssistantFeedStream } from '../lib/useAssistantFeedStream'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
 import { cn, formatTime } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
@@ -88,12 +87,7 @@ export function AssistantPanel({
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [focusRequest, initialReply])
 
-  const assistantStream = useInfiniteMessageStream({
-    streamKey: 'workspace-assistant',
-    queryKey: ['assistant-feed'],
-    readPage: readAssistantFeed,
-    getItemId: assistantFeedEntryId,
-    compareItems: compareAssistantFeedEntries,
+  const assistantStream = useAssistantFeedStream({
     enabled: isOpen && !showReflectionDebug,
     refetchInterval: isOpen && !showReflectionDebug && !assistantScrolling ? 1_000 : false,
     historyPageSize: 10,
@@ -235,6 +229,7 @@ export function AssistantPanel({
         <UnifiedMessageFeed
           feedKey="workspace-assistant"
           items={messages}
+          tailActivity={assistantStream.activity?.phase ?? null}
           className="assistant-conversation-feed"
           ariaLabel="Workspace Assistant conversation"
           isLoading={assistantStream.isLoading}
@@ -537,14 +532,6 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
         </AppDisclosure>
     </AppDisclosure>
   )
-}
-
-function assistantFeedEntryId(entry: AssistantFeedEntry) {
-  return entry.id
-}
-
-function compareAssistantFeedEntries(left: AssistantFeedEntry, right: AssistantFeedEntry) {
-  return left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id)
 }
 
 function reflectionRunId(run: ReflectionRunSummary) {

@@ -1,6 +1,7 @@
 import type {
   AppSnapshot,
-  AssistantFeedEntry,
+  AssistantFeedChanges,
+  AssistantFeedPage,
   CursorPage,
   GoalDetail,
   PreviewStartResult,
@@ -48,7 +49,16 @@ export function readState() {
 }
 
 export function readAssistantFeed(input: CursorPageRequest = {}) {
-  return apiRequest<CursorPage<AssistantFeedEntry>>(withPage('/api/assistant/feed', input))
+  return apiRequest<AssistantFeedPage>(withPage('/api/assistant/feed', input))
+}
+
+export function readAssistantFeedChanges(cursor: string | null) {
+  const query = new URLSearchParams()
+  if (cursor) query.set('cursor', cursor)
+  const suffix = query.toString()
+  return apiRequest<AssistantFeedChanges>(
+    `/api/assistant/feed/changes${suffix ? `?${suffix}` : ''}`,
+  )
 }
 
 export function readReflectionRuns(input: CursorPageRequest = {}) {

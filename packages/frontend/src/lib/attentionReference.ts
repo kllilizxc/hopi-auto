@@ -1,6 +1,7 @@
-const stableIdPattern = '[A-Za-z0-9][A-Za-z0-9._-]*'
+const stableIdPattern = String.raw`[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]*`
 const canonicalPattern = new RegExp(
   `^(?:project:${stableIdPattern}/goal:${stableIdPattern}/attention:${stableIdPattern}|home:${stableIdPattern}/attention:${stableIdPattern})$`,
+  'u',
 )
 
 export function goalAttentionReference(projectId: string, goalId: string, attentionId: string) {

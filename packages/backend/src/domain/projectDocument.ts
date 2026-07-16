@@ -2,8 +2,7 @@ import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { DEFAULT_PRIMARY_REPO_ID, type ProjectDocument, type ProjectRepoDocument } from './project'
 import { isNormalizedProjectPath, normalizeProjectPath } from './projectPath'
-
-const stableIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+import { stableIdSchema } from './stableId'
 
 export const projectRepoDocumentSchema = z
   .object({

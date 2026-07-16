@@ -214,7 +214,7 @@ try {
     origin: replacement.origin,
   })
   await waitForValue(
-    () => readAttempt(homeRoot, checkpoint.workId, checkpoint.runId),
+    () => readAttempt(homeRoot, checkpoint.runId),
     (attempt) => attempt?.status === 'interrupted',
     {
       timeoutMs: 60_000,
@@ -615,10 +615,8 @@ async function waitForGeneratorCheckpoint(origin: string) {
   })
 }
 
-async function readAttempt(root: string, workId: string, runId: string) {
-  const file = Bun.file(
-    join(root, '.hopi', 'runtime', 'runs', PROJECT_ID, GOAL_ID, workId, runId, 'attempt.json'),
-  )
+async function readAttempt(root: string, runId: string) {
+  const file = Bun.file(join(root, '.hopi', 'runtime', 'runs', runId, 'attempt.json'))
   return (await file.exists()) ? ((await file.json()) as AttemptView) : null
 }
 

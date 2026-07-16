@@ -1,9 +1,8 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../domain/project'
+import { STABLE_ID_PATTERN } from '../domain/stableId'
 import { relocateRegisteredWorktree } from './worktreeRelocator'
-
-const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export interface StableWorktreeInput {
   projectRoot: string

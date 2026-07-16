@@ -52,7 +52,6 @@ import { excerpt } from '../lib/utils'
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
   const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
-  const [projectId, setProjectId] = useState('')
   const [pendingInitialization, setPendingInitialization] =
     useState<EmptyProjectDirectorySelection | null>(null)
   const [directoryNotice, setDirectoryNotice] = useState<string | null>(null)
@@ -66,7 +65,6 @@ export function ProjectHomePage() {
     mutationFn: createProject,
     onSuccess: async () => {
       setRepoDrafts([])
-      setProjectId('')
       setDirectoryNotice(null)
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
@@ -193,7 +191,6 @@ export function ProjectHomePage() {
                       repoPath: repo.repoPath,
                       projectPath: repo.projectPath,
                     })),
-                    ...(projectId.trim() ? { projectId: projectId.trim() } : {}),
                   })
                 }}
               >
@@ -203,70 +200,50 @@ export function ProjectHomePage() {
                   </span>
                 </div>
                 <p className="panel-intro">
-                  Select each project folder, then choose its primary repository. A folder inside an
-                  existing repository stays scoped to that subfolder.
+                  Choose the folders this Project uses. Its primary folder also names it.
                 </p>
                 <div className="project-create-repos">
-                  {repoDrafts.length === 0 ? (
-                    <div className="project-create-repos-empty">
-                      <FolderGit2 />
-                      <span>No repositories selected</span>
+                  {repoDrafts.map((repo) => (
+                    <div className="project-create-repo" key={repo.key}>
+                      <AppButton
+                        aria-label={`Use ${repo.repoId || 'repository'} as primary`}
+                        aria-pressed={repo.primary}
+                        className={repo.primary ? 'project-primary active' : 'project-primary'}
+                        type="button"
+                        variant="ghost"
+                        onClick={() =>
+                          setRepoDrafts((current) =>
+                            current.map((candidate) => ({
+                              ...candidate,
+                              primary: candidate.key === repo.key,
+                            })),
+                          )
+                        }
+                      >
+                        <Star />
+                      </AppButton>
+                      <span className="project-create-repo-copy">
+                        <strong>{repo.repoId}</strong>
+                        <small title={repo.displayPath}>{repo.displayPath}</small>
+                      </span>
+                      <span className="project-create-repo-badges">
+                        {repo.projectPath !== '.' && (
+                          <small className="project-scope-label">Subfolder</small>
+                        )}
+                        {repo.primary && <small className="project-primary-label">Primary</small>}
+                      </span>
+                      <AppButton
+                        aria-label={`Remove ${repo.repoId || 'repository'}`}
+                        type="button"
+                        variant="ghost"
+                        onClick={() =>
+                          setRepoDrafts((current) => removeRepoDraft(current, repo.key))
+                        }
+                      >
+                        <X />
+                      </AppButton>
                     </div>
-                  ) : (
-                    repoDrafts.map((repo) => (
-                      <div className="project-create-repo" key={repo.key}>
-                        <AppButton
-                          aria-label={`Use ${repo.repoId || 'repository'} as primary`}
-                          aria-pressed={repo.primary}
-                          className={repo.primary ? 'project-primary active' : 'project-primary'}
-                          type="button"
-                          variant="ghost"
-                          onClick={() =>
-                            setRepoDrafts((current) =>
-                              current.map((candidate) => ({
-                                ...candidate,
-                                primary: candidate.key === repo.key,
-                              })),
-                            )
-                          }
-                        >
-                          <Star />
-                        </AppButton>
-                        <span className="project-create-repo-copy">
-                          <AppInput
-                            aria-label={`Repository ID for ${repo.displayPath}`}
-                            value={repo.repoId}
-                            onChange={(event) =>
-                              setRepoDrafts((current) =>
-                                current.map((candidate) =>
-                                  candidate.key === repo.key
-                                    ? { ...candidate, repoId: event.target.value }
-                                    : candidate,
-                                ),
-                              )
-                            }
-                          />
-                          <small title={repo.displayPath}>{repo.displayPath}</small>
-                        </span>
-                        <span className="project-create-repo-badges">
-                          {repo.projectPath !== '.' && (
-                            <small className="project-scope-label">Subfolder</small>
-                          )}
-                          {repo.primary && <small className="project-primary-label">Primary</small>}
-                        </span>
-                        <AppButton
-                          aria-label={`Remove ${repo.repoId || 'repository'}`}
-                          type="button"
-                          variant="ghost"
-                          onClick={() =>
-                            setRepoDrafts((current) => removeRepoDraft(current, repo.key))
-                          }
-                        >
-                          <X />
-                        </AppButton>
-                      </div>
-                    ))
-                  )}
+                  ))}
                   <AppButton
                     className="project-directory-picker"
                     type="button"
@@ -284,23 +261,11 @@ export function ProjectHomePage() {
                     {pickerMutation.isPending ? <AppSpinner size="sm" /> : <FolderPlus />}
                     {pickerMutation.isPending
                       ? 'Waiting for folder selection'
-                      : 'Choose project folder'}
+                      : repoDrafts.length > 0
+                        ? 'Add another folder'
+                        : 'Choose project folder'}
                   </AppButton>
-                  <small className="project-path-help">
-                    Choose a Git subfolder, or select an empty folder to initialize a new project.
-                  </small>
                 </div>
-                <AppTextField
-                  className="field"
-                  label={
-                    <>
-                      Project ID <small>optional</small>
-                    </>
-                  }
-                  onValueChange={setProjectId}
-                  placeholder="Derived when omitted"
-                  value={projectId}
-                />
                 <AppButton
                   className="primary-button"
                   type="submit"
@@ -312,7 +277,7 @@ export function ProjectHomePage() {
                   }
                 >
                   {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
-                  Link Project
+                  Link project
                 </AppButton>
               </AppForm>
             </div>

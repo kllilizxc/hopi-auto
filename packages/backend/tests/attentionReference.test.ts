@@ -25,6 +25,20 @@ describe('canonical Attention references', () => {
     })
   })
 
+  test('round-trips readable Unicode Project and Goal identities', () => {
+    const reference = goalAttentionReference('P-产品工作台', 'G-优化前端样式', 'A-review')
+
+    expect(parseAttentionReference(reference)).toEqual({
+      scope: 'goal',
+      projectId: 'P-产品工作台',
+      goalId: 'G-优化前端样式',
+      attentionId: 'A-review',
+    })
+    expect(inboxContextSchema.parse({ attentionRefs: [reference] })).toEqual({
+      attentionRefs: [reference],
+    })
+  })
+
   test('normalizes legacy local IDs only inside their stored Goal context', () => {
     expect(
       normalizeInboxAttentionReferences({

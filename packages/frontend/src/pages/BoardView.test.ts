@@ -33,3 +33,13 @@ describe('Board Attempt status', () => {
     ).toBe('working')
   })
 })
+
+test('Work Attempt messages reuse the shared breathing tail activity', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+
+  expect(source).toContain(
+    "tailActivity={selectedAttempt.status === 'running' ? 'working' : null}",
+  )
+  expect(source).not.toContain('Agent is working')
+  expect(source).not.toContain(':runtime-status')
+})

@@ -406,7 +406,7 @@ describe('unified message feed adapters', () => {
     })
   })
 
-  test('folds a live tool call and turn state into one pending activity group', () => {
+  test('marks the active tool call without leaking live state into its historical summary', () => {
     const items = inboxEventsToMessageFeed([
       inboxEvent({
         runtimeStatus: 'running',
@@ -421,12 +421,12 @@ describe('unified message feed adapters', () => {
     const rows = buildMessageFeedRows(items)
     const activity = rows[1]
 
-    expect(items.at(-1)).toMatchObject({ kind: 'status', pending: true, text: 'Working' })
+    expect(items.map((item) => item.text)).not.toContain('Working')
     expect(items.find((item) => item.kind === 'tool_call')).toMatchObject({ pending: true })
     expect(activity?.type).toBe('activity_group')
     if (activity?.type !== 'activity_group') throw new Error('Expected activity group')
-    expect(activity.entries).toHaveLength(2)
-    expect(summarizeActivityGroup(activity.entries)).toBe('Working')
+    expect(activity.entries).toHaveLength(1)
+    expect(summarizeActivityGroup(activity.entries)).toBe('Ran command')
   })
 
   test('does not present an unmatched tool call as running after a completed run', () => {

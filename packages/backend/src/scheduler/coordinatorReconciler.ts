@@ -139,12 +139,10 @@ export function createCoordinatorReconciler(
         .then(async (result) => {
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspace()
-            const publicPending = eligiblePendingEvents(workspace, assistantActive).some(
-              (event) => event.attributes.source === 'user',
-            )
-            const internalHandoffPending = [...workspace.events.values()].some(
-              (event) =>
-                event.attributes.status === 'pending' && event.attributes.source === 'reflection',
+            const pendingEvents = eligiblePendingEvents(workspace, assistantActive)
+            const publicPending = pendingEvents.some((event) => event.attributes.source === 'user')
+            const internalHandoffPending = pendingEvents.some(
+              (event) => event.attributes.source === 'reflection',
             )
             if (!publicPending && !internalHandoffPending) {
               await options.reflection.observe({

@@ -38,10 +38,10 @@ describe('ConfiguredRoleRunner', () => {
     expect(transcript).toContain('stderr: raw-error-detail')
   })
 
-  test('provides one Run-scoped temp and cache environment', async () => {
+  test('provides Run-scoped temp and Home-scoped cache environments', async () => {
     const fixture = await createFixture()
     const runner = processRunner(
-      'const scratch=process.env.HOPI_RUN_SCRATCH; if(!scratch || process.env.BUN_TMPDIR!==scratch+"/tmp" || process.env.XDG_CACHE_HOME!==scratch+"/cache") throw new Error("missing run scratch"); await Bun.write(process.env.BUN_TMPDIR+"/probe", "ok"); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"scratch ready",artifacts:[]}))',
+      'const scratch=process.env.HOPI_RUN_SCRATCH; const cache=process.env.HOPI_CACHE_DIR; if(!scratch || !cache || process.env.BUN_TMPDIR!==scratch+"/tmp" || process.env.XDG_CACHE_HOME!==cache) throw new Error("missing runtime storage"); await Bun.write(process.env.BUN_TMPDIR+"/probe", "ok"); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"scratch ready",artifacts:[]}))',
     )
 
     const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
@@ -174,6 +174,7 @@ async function createFixture() {
   const runRoot = join(root, 'run')
   const proposalRoot = join(runRoot, 'proposal')
   const runtimeScratchDir = join(runRoot, 'scratch')
+  const runtimeCacheDir = join(root, 'cache')
   await mkdir(proposalRoot, { recursive: true })
   await mkdir(join(repoRoot, '.hopi'), { recursive: true })
   await Bun.write(join(repoRoot, 'source.ts'), 'original\n')
@@ -188,6 +189,7 @@ async function createFixture() {
   const context: RoleContextBundle = {
     runRoot,
     runtimeScratchDir,
+    runtimeCacheDir,
     contextRoot: join(runRoot, 'context'),
     proposalRoot,
     resultFile,

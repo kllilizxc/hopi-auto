@@ -338,6 +338,7 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-12` | Preview reads only the managed reviewed integration and never the user checkout or unreviewed task worktree.                  |
 | `INV-13` | Accepted images remain byte-identical, and Project truth cites only adopted Goal-local assets.                                |
 | `INV-14` | Every model process retains its raw stream even when parsing, publication, or presentation fails.                             |
+| `INV-15` | At a settled boundary, every unresolved unnotified targeted Attention has an active Reflection or eligible speaking owner; an ineligible event cannot block unrelated notification. |
 
 ## Coverage Catalog
 
@@ -391,7 +392,7 @@ unproved conversation-only judgment variant of `022`; earlier terminal evidence 
 | `HOPI-E2E-016` | Process lifecycle, exclusion, and restart recovery        | P0       | Contract and Live          | Covered; real Coordinator and Agent process replacement passed   |
 | `HOPI-E2E-017` | Multi-Repo full-stack delivery                            | P0       | Contract and Live          | Covered                                                          |
 | `HOPI-E2E-018` | Multi-Repo conflict and post-C1 projection recovery       | P0       | Contract and Browser       | Covered by multi-Repo C1 and Project Attention evidence          |
-| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered by deterministic races plus a real notification canary   |
+| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered; clean Live canary and four poisoned-history variants passed              |
 | `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered; native-picker boundary and nine UI checkpoints passed   |
 | `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
 | `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Relevant delivery covered; conversation-only variant planned     |
@@ -425,7 +426,7 @@ exclusion.
 | `HOPI-E2E-016` | `tests/e2e/restartDuringGenerator.e2e.ts`                                                                                    |
 | `HOPI-E2E-017` | `tests/projectReconciler.test.ts`, `tests/multiRepoC1.test.ts`                                                               |
 | `HOPI-E2E-018` | `tests/multiRepoC1.test.ts`, `tests/mvpServer.test.ts`                                                                       |
-| `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts`                                                   |
+| `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantAttentionE2E.test.ts`            |
 | `HOPI-E2E-020` | `tests/e2e/configurationRebind.e2e.ts`                                                                                       |
 | `HOPI-E2E-021` | `tests/previewManager.test.ts`, `tests/projectReconciler.test.ts`                                                            |
 | `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`                                                            |
@@ -833,9 +834,9 @@ Primary invariants: `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
 
 | Field   | Value                                                                                                 |
 | ------- | ----------------------------------------------------------------------------------------------------- |
-| Risk    | Reflection wakes on noise, speaks directly, duplicates handoffs, or delays a new public user message. |
+| Risk    | Reflection wakes on noise, speaks directly, duplicates handoffs, delays a new public user message, or lets one failed historical handoff silence later Attention. |
 | Reality | Real Reflection and persistent speaking Assistant with controlled semantic state transitions.         |
-| Fixture | One normal progressing Goal and one deterministic transition to unnotified targeted Attention.        |
+| Fixture | One normal progressing Goal, one deterministic transition to unnotified targeted Attention, and a variant with an older Reflection turn blocked by event-target Attention. |
 | Cost    | Medium to high depending on the number of semantic digests.                                           |
 
 Actions:
@@ -846,25 +847,33 @@ Actions:
 4. While its internal speaking handoff is running, submit a new public user message.
 5. Let the public turn finish, then allow current-state revalidation and Attention notification.
 6. Run one focused configured-provider turn that must call `hopi_notify_user({ message })`.
+7. In the poisoned-history variant, retain one older blocked internal turn, create an independent
+   unnotified Goal Attention, restart at one boundary, and let the system converge.
 
 Pass conditions:
 
 - Raw log appends and automatic intermediate progress do not create one Reflection per event.
 - Reflection is read-only and either ends silently or creates one internal brief.
-- A pending or event-blocked internal brief suppresses duplicate Reflection handoffs.
+- An eligible pending internal brief suppresses duplicate Reflection handoffs; an event-blocked
+  brief suppresses only its own retry and does not silence newer Goal or Project Attention.
 - Public input receives speaking priority without cancelling the read-only Reflection model process.
 - A stale handoff is discarded before publication.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
 - The configured speaking model accepts the current notification schema; only its supplied message is public.
 - Debug UI distinguishes `Completed: sent` from `Completed: no action`.
+- Same-Goal, another-Goal, another-Project, and restart variants all notify the new Attention once
+  while preserving the old blocked turn until its own Attention is resolved.
+- Handling a handoff resets loop detection. Recovery settles without creating a new loop-exhaustion
+  Workspace Attention merely because several speaking effects changed the digest.
 
-Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`.
+Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`, `INV-15`.
 
-Current implementation composes the exact scheduler and Reflection contracts with
-`packages/backend/tests/live/reflectionNotification.live.ts` (`bun run e2e:live:019`). The focused
-Live canary creates one legal internal handoff, uses the configured speaking model once, requires
-exactly one successful `hopi_notify_user` call, and retains the raw turn stream plus a verified
-Assistant-panel screenshot. It does not repeat a full Goal merely to exercise the same schema.
+The focused Live canary in `packages/backend/tests/live/reflectionNotification.live.ts`
+(`bun run e2e:live:019`) proves the configured speaking model, notification schema, raw stream, and
+Assistant-panel presentation. Deterministic production-runtime compositions prove poisoned-history
+isolation for the same Goal, another Goal, another Project, and restart boundaries. Together these
+layers cover the semantic risk without repeating four costly model calls whose output cannot affect
+the asserted ownership boundary.
 
 ### HOPI-E2E-020: Project Linking, Repo Rebind, And Model Settings
 

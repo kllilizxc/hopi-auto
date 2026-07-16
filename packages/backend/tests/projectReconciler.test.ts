@@ -470,16 +470,7 @@ describe('ProjectReconciler', () => {
         workId: 'W-1',
         runId,
         responsibility: 'generator',
-        runRoot: join(
-          fixture.homeRoot,
-          '.hopi',
-          'runtime',
-          'runs',
-          'project-1',
-          'goal-1',
-          'W-1',
-          runId,
-        ),
+        runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', runId),
       })
       await recorder.finish({
         outcome: {

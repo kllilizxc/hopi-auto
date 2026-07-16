@@ -324,8 +324,8 @@ function inboxEventToMessageFeed(
   }
 
   if (event.runtimeStatus === 'failed' && event.runtimeError) return items
+  if (event.runtimeStatus !== 'failed' && event.runtimeStatus !== 'completed') return items
 
-  const pending = event.runtimeStatus === 'queued' || event.runtimeStatus === 'running'
   const statusText = assistantRuntimeStatus(event.runtimeStatus)
   items.push({
     id: `${groupId}:runtime-status`,
@@ -335,7 +335,6 @@ function inboxEventToMessageFeed(
     text: statusText,
     label: 'Assistant',
     groupId,
-    pending,
   })
 
   return items
@@ -389,11 +388,6 @@ export function buildMessageFeedRows(items: MessageFeedItem[]): MessageFeedDispl
 }
 
 export function summarizeActivityGroup(entries: MessageFeedActivityEntry[]) {
-  const pendingStatus = entries.find(
-    (entry) => entry.type === 'activity_message' && entry.item.pending,
-  )
-  if (pendingStatus?.type === 'activity_message') return pendingStatus.item.text
-
   const errors = entries.filter(
     (entry) => entry.type === 'activity_message' && entry.item.kind === 'error',
   )
@@ -419,10 +413,9 @@ export function summarizeActivityGroup(entries: MessageFeedActivityEntry[]) {
     if (tools.length === 1) {
       const tool = tools[0]
       const name = tool.call?.toolName ?? tool.result?.toolName
-      const pending = tool.call?.pending === true && !tool.result
-      if (name === 'command') return pending ? 'Running command' : 'Ran command'
-      if (name) return pending ? `Using ${name}` : `Used ${name}`
-      return pending ? 'Using tool' : 'Used tool'
+      if (name === 'command') return 'Ran command'
+      if (name) return `Used ${name}`
+      return 'Used tool'
     }
 
     const commandsOnly = tools.every(
@@ -517,14 +510,8 @@ function getToolRowId(item: MessageFeedItem) {
   return `tool:${item.groupId ?? ''}:${item.toolInvocationKey ?? item.id}`
 }
 
-function assistantRuntimeStatus(status: InboxEventView['runtimeStatus']) {
+function assistantRuntimeStatus(status: 'failed' | 'completed') {
   switch (status) {
-    case 'queued':
-      return 'Waiting to start'
-    case 'running':
-      return 'Working'
-    case 'interrupted':
-      return 'Waiting to resume'
     case 'failed':
       return 'Assistant stopped'
     case 'completed':

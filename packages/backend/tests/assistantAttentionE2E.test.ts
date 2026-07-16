@@ -216,7 +216,252 @@ describe('Reflection to operator Attention E2E', () => {
     })
     expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
   })
+
+  for (const scenario of [
+    {
+      name: 'in the same Goal',
+      slug: 'same-goal',
+      oldProjectId: 'P-target',
+      oldGoalId: 'G-target',
+      targetProjectId: 'P-target',
+      targetGoalId: 'G-target',
+      restart: false,
+    },
+    {
+      name: 'from another Goal',
+      slug: 'another-goal',
+      oldProjectId: 'P-target',
+      oldGoalId: 'G-old',
+      targetProjectId: 'P-target',
+      targetGoalId: 'G-target',
+      restart: false,
+    },
+    {
+      name: 'from another Project',
+      slug: 'another-project',
+      oldProjectId: 'P-old',
+      oldGoalId: 'G-old',
+      targetProjectId: 'P-target',
+      targetGoalId: 'G-target',
+      restart: false,
+    },
+    {
+      name: 'after restart',
+      slug: 'restart',
+      oldProjectId: 'P-target',
+      oldGoalId: 'G-target',
+      targetProjectId: 'P-target',
+      targetGoalId: 'G-target',
+      restart: true,
+    },
+  ] as const) {
+    test(`notifies a new Goal Attention when an older handoff is blocked ${scenario.name}`, async () => {
+      await verifyPoisonedHistoryIsolation(scenario)
+    })
+  }
 })
+
+async function verifyPoisonedHistoryIsolation(scenario: {
+  slug: string
+  oldProjectId: string
+  oldGoalId: string
+  targetProjectId: string
+  targetGoalId: string
+  restart: boolean
+}) {
+  const root = join(temporaryRoot, scenario.slug)
+  const homeRoot = join(root, 'home')
+  const publisher = new PublicationCoordinator()
+  const home = createAssistantHomeStore(homeRoot, publisher)
+  const goals = new Map<string, Set<string>>()
+  for (const [projectId, goalId] of [
+    [scenario.oldProjectId, scenario.oldGoalId],
+    [scenario.targetProjectId, scenario.targetGoalId],
+  ] as const) {
+    const projectGoals = goals.get(projectId) ?? new Set<string>()
+    projectGoals.add(goalId)
+    goals.set(projectId, projectGoals)
+  }
+
+  const stores = new Map<string, ReturnType<typeof createGoalPackageStore>>()
+  for (const [projectId, projectGoals] of goals) {
+    const repoRoot = join(root, `repo-${projectId}`)
+    await initializeGitRepo(repoRoot)
+    const linked = await home.linkProject({ projectId, repoPath: repoRoot })
+    const store = createGoalPackageStore(linked.integrationRoot, projectId, publisher)
+    stores.set(projectId, store)
+    for (const goalId of projectGoals) {
+      await store.createGoal({ goalId, title: goalId, objective: 'Exercise Attention delivery.' })
+    }
+  }
+
+  const targetAttentionId = 'A-new-blocker'
+  const targetStore = stores.get(scenario.targetProjectId)
+  if (!targetStore) throw new Error('Target project store was not created')
+  await targetStore.publishGoal(scenario.targetGoalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path: targetStore.paths.attentionDocument(scenario.targetGoalId, targetAttentionId),
+      expectedHash: null,
+      content: renderAttentionDocument({
+        attributes: {
+          id: targetAttentionId,
+          target: `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}`,
+          createdAt: '2026-07-16T00:00:00.000Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Needs you\n\nPrepare the external runtime.\n',
+      }),
+    },
+  })
+
+  const runtimeRef: { current: MvpRuntime | null } = { current: null }
+  let oldEventAttentionId = ''
+  let internalTurns = 0
+  let reflectionRuns = 0
+  const publicMessage = `Prepare the external runtime for ${scenario.targetProjectId}/${scenario.targetGoalId}.`
+  const runner: AssistantModelRunner = {
+    async run(input) {
+      if (input.toolMode === 'reflection') {
+        reflectionRuns += 1
+        return {
+          reply: 'No handoff; Coordinator may apply the unnotified-Attention fallback.',
+          session: codexSession(`reflection-${scenario.slug}-${reflectionRuns}`),
+        }
+      }
+      if (input.toolMode !== 'internal') {
+        throw new Error(`Unexpected speaking mode in poisoned-history fixture: ${input.toolMode}`)
+      }
+      const runtime = runtimeRef.current
+      if (!runtime) throw new Error('Runtime is not ready')
+      internalTurns += 1
+      if (internalTurns === 1) {
+        await runtime.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+          message: publicMessage,
+        })
+      }
+      return {
+        reply: internalTurns === 1 ? publicMessage : 'No additional operator update.',
+        session: codexSession(`internal-${scenario.slug}-${internalTurns}`),
+      }
+    },
+  }
+
+  let runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
+  runtimeRef.current = runtime
+  if (
+    scenario.oldProjectId !== scenario.targetProjectId ||
+    scenario.oldGoalId !== scenario.targetGoalId
+  ) {
+    await runtime.projects.get(scenario.oldProjectId)?.controller.pauseGoal(scenario.oldGoalId)
+  }
+  const oldEvent = await runtime.workspace.receiveReflectionEvent({
+    eventId: 'EV-old-blocked-handoff',
+    content: 'Revalidate an older state change.',
+    context: { projectId: scenario.oldProjectId, goalId: scenario.oldGoalId },
+  })
+  oldEventAttentionId = (
+    await runtime.attentions.ensureEventAttention(
+      oldEvent.attributes.id,
+      'The older speaking handoff failed.',
+    )
+  ).attributes.id
+
+  if (scenario.restart) {
+    await runtime.coordinator.stop()
+    runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
+    runtimeRef.current = runtime
+  }
+
+  let converged = false
+  let oldAttentionResolved = false
+  let lastDiagnostic: unknown = null
+  for (let step = 0; step < 20; step += 1) {
+    await runtime.coordinator.reconcileOnce()
+    await runtime.coordinator.waitForIdle()
+    const [workspace, target] = await Promise.all([
+      runtime.workspace.readWorkspace(),
+      runtime.projects.get(scenario.targetProjectId)?.store.readPackage(scenario.targetGoalId),
+    ])
+    const targetAttention = target?.attentions.get(targetAttentionId)
+    const oldAttention = workspace.attentions.get(oldEventAttentionId)
+    const pending = [...workspace.events.values()].filter(
+      (event) => event.attributes.status === 'pending',
+    )
+    lastDiagnostic = {
+      step,
+      targetAttention: targetAttention?.attributes,
+      oldAttention: oldAttention?.attributes,
+      pending: pending.map((event) => ({
+        id: event.attributes.id,
+        source: event.attributes.source,
+        visibility: event.attributes.visibility,
+      })),
+      internalTurns,
+      reflectionRuns,
+    }
+    if (
+      targetAttention?.attributes.notifiedAt &&
+      oldAttention?.attributes.resolvedAt === null &&
+      !oldAttentionResolved
+    ) {
+      await runtime.workspace.resolveAttention(
+        oldEventAttentionId,
+        'The later Goal Attention was delivered; revalidate the older event once.',
+      )
+      oldAttentionResolved = true
+      continue
+    }
+    if (
+      targetAttention?.attributes.notifiedAt &&
+      oldAttention?.attributes.resolvedAt &&
+      pending.length === 0 &&
+      !runtime.reflection.isActive()
+    ) {
+      converged = true
+      break
+    }
+  }
+
+  if (!converged) {
+    throw new Error(`Poisoned-history fixture did not converge: ${JSON.stringify(lastDiagnostic)}`)
+  }
+  const [workspace, target] = await Promise.all([
+    runtime.workspace.readWorkspace(),
+    runtime.projects.get(scenario.targetProjectId)?.store.readPackage(scenario.targetGoalId),
+  ])
+  const targetAttention = target?.attentions.get(targetAttentionId)
+  expect(targetAttention?.attributes).toMatchObject({
+    resolvedAt: null,
+    notifiedAt: expect.any(String),
+  })
+  expect(workspace.attentions.get(oldEventAttentionId)?.attributes.resolvedAt).toEqual(
+    expect.any(String),
+  )
+  expect(workspace.attentions.size).toBe(1)
+  expect(workspace.events.get(oldEvent.attributes.id)?.attributes.status).toBe('handled')
+  const publicReflectionEvents = [...workspace.events.values()].filter(
+    (event) => event.attributes.source === 'reflection' && event.attributes.visibility === 'public',
+  )
+  expect(publicReflectionEvents).toHaveLength(1)
+  expect(publicReflectionEvents[0]?.attributes).toMatchObject({
+    reply: publicMessage,
+    context: {
+      projectId: scenario.targetProjectId,
+      goalId: scenario.targetGoalId,
+      attentionRefs: [
+        `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}/attention:${targetAttentionId}`,
+      ],
+    },
+  })
+  expect(
+    [...workspace.events.values()].filter((event) => event.attributes.status === 'pending'),
+  ).toEqual([])
+  expect(internalTurns).toBeGreaterThanOrEqual(2)
+  expect(reflectionRuns).toBeGreaterThanOrEqual(1)
+  await runtime.coordinator.stop()
+}
 
 async function initializeGitRepo(repoRoot: string) {
   await mkdir(repoRoot, { recursive: true })

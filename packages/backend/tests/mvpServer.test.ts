@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
+import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import {
   parseWorkDocument,
   renderAttentionDocument,
@@ -174,6 +176,89 @@ describe('MVP server', () => {
     expect(await cancelled.json()).toEqual({ selection: null })
   })
 
+  test('keeps an Assistant lifecycle conflict request-local and the server available', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+    await goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await createGoalController(goalStore, { verifyCompletion: () => false }).cancelGoal('G-1')
+
+    const toolStatuses: number[] = []
+    const assistantRunner: AssistantModelRunner = {
+      async run(input) {
+        if (input.toolMode === 'reflection') {
+          return {
+            reply: '',
+            session: { transport: 'codex', sessionId: 'reflection-noop' },
+          }
+        }
+        const conflict = await fetch(input.toolUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: input.toolToken,
+            name: 'hopi_request_planning',
+            arguments: {
+              projectId: 'P-1',
+              goalId: 'G-1',
+              materialContractChange: true,
+            },
+          }),
+        })
+        toolStatuses.push(conflict.status)
+        expect(await conflict.json()).toEqual({
+          error: 'Terminal Goal must be explicitly reopened',
+        })
+
+        const state = await fetch(input.toolUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: input.toolToken,
+            name: 'hopi_read_state',
+            arguments: { projectId: 'P-1', goalId: 'G-1' },
+          }),
+        })
+        toolStatuses.push(state.status)
+        expect(await state.json()).toMatchObject({ summary: 'Read current HOPI state.' })
+        return {
+          reply: 'The Goal must be reopened before revising it.',
+          session: { transport: 'codex', sessionId: 'main-after-conflict' },
+        }
+      },
+    }
+    const server = createServer({ rootDir: homeRoot, port: 0, assistantRunner })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const submitted = await request(base, '/api/inbox', {
+      method: 'POST',
+      body: {
+        content: 'Revise the completed outcome.',
+        context: { projectId: 'P-1', goalId: 'G-1' },
+      },
+    })
+    let handled = false
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const feed = await request(base, '/api/assistant/feed?limit=20')
+      const event = (feed.items as Array<{ event?: { id: string; status: string } }>).find(
+        (item) => item.event?.id === submitted.eventId,
+      )?.event
+      if (event?.status === 'handled') {
+        handled = true
+        break
+      }
+      await Bun.sleep(20)
+    }
+
+    expect(handled).toBe(true)
+    expect(toolStatuses).toEqual([409, 200])
+    expect((await fetch(`${base}/api/state`)).status).toBe(200)
+  })
+
   test('shares one host directory chooser across concurrent requests', async () => {
     let attempts = 0
     const pickerRepo = await createRepo(join(temporaryRoot, 'single-flight-picker-repo'))
@@ -265,6 +350,59 @@ describe('MVP server', () => {
 
     expect(preview).toMatchObject({ kind: 'repair_required', reason: 'missing' })
     expect(preview.prompt).toContain('/apps/web/scripts/hopi/preview')
+  })
+
+  test('derives an omitted Project ID from the primary selected folder', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'monorepo'))
+    const selectedPath = join(repoRoot, 'apps', 'product-web')
+    await mkdir(selectedPath, { recursive: true })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const state = await request(base, '/api/projects', {
+      method: 'POST',
+      body: {
+        primaryRepoId: 'web',
+        repos: [{ repoId: 'web', repoPath: repoRoot, projectPath: 'apps/product-web' }],
+      },
+    })
+
+    expect(state).toMatchObject({ projects: [{ projectId: 'P-product-web' }] })
+  })
+
+  test('derives readable unique Goal IDs from titles without exposing identity input', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, '产品工作台'))
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const state = await request(base, '/api/projects', {
+      method: 'POST',
+      body: { primaryRepoId: 'primary', repos: [{ repoId: 'primary', repoPath: repoRoot }] },
+    })
+    expect(state).toMatchObject({ projects: [{ projectId: 'P-产品工作台' }] })
+
+    const projectPath = `/api/projects/${encodeURIComponent('P-产品工作台')}`
+    const first = await request(base, `${projectPath}/goals`, {
+      method: 'POST',
+      body: { title: '优化整体前端样式', objective: '统一页面颜色、间距与反馈。' },
+    })
+    const second = await request(base, `${projectPath}/goals`, {
+      method: 'POST',
+      body: { title: '优化整体前端样式', objective: '继续优化另一套界面。' },
+    })
+
+    expect(first).toMatchObject({
+      projectId: 'P-产品工作台',
+      goal: { id: 'G-优化整体前端样式', title: '优化整体前端样式' },
+    })
+    expect(second).toMatchObject({ goal: { id: 'G-优化整体前端样式-2' } })
+    expect(
+      await request(base, `${projectPath}/goals/${encodeURIComponent('G-优化整体前端样式')}`),
+    ).toMatchObject({ goal: { id: 'G-优化整体前端样式' } })
   })
 
   test('exposes canonical product APIs and Work Attempt streams', async () => {
@@ -379,10 +517,10 @@ describe('MVP server', () => {
       workId: 'plan-initial',
       runId: 'R-1',
       responsibility: 'planner',
-      runRoot: join(homeRoot, '.hopi', 'runtime', 'runs', 'P-1', 'G-1', 'plan-initial', 'R-1'),
+      runRoot: join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1'),
     })
     await Bun.write(
-      join(homeRoot, '.hopi', 'runtime', 'runs', 'P-1', 'G-1', 'plan-initial', 'R-1', 'prompt.md'),
+      join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'prompt.md'),
       '# Planner system prompt\n\nCreate the Engineering Work DAG.\n',
     )
     await attempt.record({
@@ -747,6 +885,109 @@ describe('MVP server', () => {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-complete'],
         },
       },
+    })
+    const changes = await request(base, '/api/assistant/feed/changes')
+    expect(changes.removedIds).toEqual(
+      expect.arrayContaining([
+        'completion:project:P-1/goal:G-1/attention:A-complete',
+        'completion:project:P-1/goal:G-2/attention:A-complete',
+      ]),
+    )
+  })
+
+  test('synchronizes an older mutable Assistant turn independently from chronological history', async () => {
+    const homeRoot = join(temporaryRoot, 'assistant-feed-home')
+    const publisher = new PublicationCoordinator()
+    await createAssistantHomeStore(homeRoot, publisher).initialize()
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    let clock = new Date('2026-07-16T09:00:01.000Z')
+    const conversation = createAssistantConversationStore(homeRoot, { now: () => clock })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    await request(base, '/api/state')
+
+    await workspace.receiveEvent({
+      eventId: 'EV-A',
+      content: 'Run the first task.',
+      receivedAt: new Date('2026-07-16T09:00:00.000Z'),
+    })
+    await conversation.begin('EV-A')
+    clock = new Date('2026-07-16T09:00:02.000Z')
+    await conversation.record('EV-A', {
+      kind: 'transcript',
+      transport: 'codex',
+      entryKind: 'tool_call',
+      summary: 'Tool call: command (bun test)',
+      toolName: 'command',
+      toolInvocationKey: 'call-A',
+    })
+
+    const initial = await request(base, '/api/assistant/feed')
+    expect(initial).toMatchObject({
+      activity: { phase: 'working' },
+      syncCursor: '2026-07-16T09:00:02.000Z',
+      items: [{ id: 'event:EV-A', event: { runtimeStatus: 'running' } }],
+    })
+
+    await workspace.receiveEvent({
+      eventId: 'EV-B',
+      content: 'Queue a newer task.',
+      receivedAt: new Date('2026-07-16T09:01:00.000Z'),
+    })
+    const afterQueued = await request(
+      base,
+      `/api/assistant/feed/changes?cursor=${encodeURIComponent(String(initial.syncCursor))}`,
+    )
+    expect(afterQueued).toMatchObject({
+      activity: { phase: 'working' },
+      syncCursor: '2026-07-16T09:01:00.000Z',
+    })
+    expect((afterQueued.items as Array<{ id: string }>).map((entry) => entry.id)).toContain(
+      'event:EV-B',
+    )
+
+    clock = new Date('2026-07-16T09:02:00.000Z')
+    await conversation.complete('EV-A')
+    await workspace.handleEvent('EV-A', {
+      reply: 'The first task is complete.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T09:02:01.000Z'),
+    })
+    const afterOlderTurnCompleted = await request(
+      base,
+      `/api/assistant/feed/changes?cursor=${encodeURIComponent(String(afterQueued.syncCursor))}`,
+    )
+    expect(afterOlderTurnCompleted).toMatchObject({
+      activity: { phase: 'waiting' },
+      syncCursor: '2026-07-16T09:02:01.000Z',
+    })
+    expect(
+      (afterOlderTurnCompleted.items as Array<{ id: string; event: unknown }>).find(
+        (entry) => entry.id === 'event:EV-A',
+      ),
+    ).toMatchObject({
+      event: {
+        runtimeStatus: 'completed',
+        reply: 'The first task is complete.',
+      },
+    })
+
+    await workspace.handleEvent('EV-B', {
+      reply: 'The queued task is complete.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T09:03:00.000Z'),
+    })
+    expect(
+      await request(
+        base,
+        `/api/assistant/feed/changes?cursor=${encodeURIComponent(
+          String(afterOlderTurnCompleted.syncCursor),
+        )}`,
+      ),
+    ).toMatchObject({
+      activity: null,
+      syncCursor: '2026-07-16T09:03:00.000Z',
     })
   })
 

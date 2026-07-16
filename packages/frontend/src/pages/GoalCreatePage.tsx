@@ -20,14 +20,12 @@ export function GoalCreatePage() {
   const { projectId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [goalId, setGoalId] = useState('')
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState('')
   const snapshotQuery = useQuery({ queryKey: ['mvp-state'], queryFn: readState })
   const mutation = useMutation({
     mutationFn: () =>
       createGoal(projectId ?? '', {
-        ...(goalId.trim() ? { goalId: goalId.trim() } : {}),
         title: title.trim(),
         objective: objective.trim(),
       }),
@@ -81,13 +79,6 @@ export function GoalCreatePage() {
               placeholder="What should be true when this Goal is complete? Include constraints or success criteria you already know."
               rows={8}
               value={objective}
-            />
-            <AppTextField
-              className="field"
-              label={<>Goal ID <small>optional</small></>}
-              onValueChange={setGoalId}
-              placeholder="Generated when omitted"
-              value={goalId}
             />
             <div className="form-actions">
               <AppRouterLink className="secondary-button" to="/projects">Cancel</AppRouterLink>

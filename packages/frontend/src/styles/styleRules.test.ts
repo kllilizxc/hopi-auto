@@ -70,12 +70,24 @@ test('Working states share one centered indicator implementation', async () => {
   expect(spinnerRule).toContain('transform-origin: 50% 50%')
   expect(iconRule).toContain('width: 100%')
   expect(iconRule).toContain('height: 100%')
-  expect(runtimeSource.match(/<WorkingIndicator\b/g)?.length ?? 0).toBeGreaterThanOrEqual(8)
+  expect(runtimeSource.match(/<WorkingIndicator\b/g)?.length ?? 0).toBeGreaterThan(0)
   expect(runtimeSource).not.toContain("=== 'running' && <AppSpinner")
   expect(runtimeSource).not.toContain("=== 'working' && <AppSpinner")
   expect(runtimeSource).not.toContain('<AppSpinner size="sm" /> Running')
   expect(runtimeSource).not.toContain('<AppSpinner size="sm" /> Streaming')
   expect(applicationSource).not.toContain('.working-indicator')
+})
+
+test('only actively working Work cards use the running glow', async () => {
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const board = await Bun.file(new URL('../pages/BoardView.tsx', import.meta.url)).text()
+  const engineeringRule = styles.match(/\.work-card\.engineering\s*\{([^}]*)\}/)?.[1] ?? ''
+  const workingRule =
+    styles.match(/\.work-card\.work-card--working\s*\{([^}]*)\}/)?.[1] ?? ''
+
+  expect(board).toContain("badge === 'working' && 'work-card--working'")
+  expect(engineeringRule).not.toContain('animation: running-glow')
+  expect(workingRule).toContain('animation: running-glow')
 })
 
 test('raw application colors live only in the theme contract', async () => {

@@ -1,9 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, FileText, FolderOpen, LayoutDashboard } from 'lucide-react'
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { readState, type AttentionView } from '../lib/api'
-import { buildGoalRoute, readGoalRouteState, type GoalSurface } from '../lib/goalScope'
+import {
+  buildGoalRoute,
+  readGoalRouteState,
+  readRecentGoalId,
+  rememberRecentGoal,
+  resolveProjectGoalId,
+  type GoalSurface,
+} from '../lib/goalScope'
 import { cn } from '../lib/utils'
 import { AssistantPanel } from './AssistantPanel'
 import { AppAlert, AppRouterLink, IconButton, SelectField } from './ui'
@@ -33,6 +40,16 @@ export function Layout() {
     refetchInterval: 2_000,
   })
   const snapshot = snapshotQuery.data
+  const routeProjectId = routeScope?.projectId
+  const routeGoalId = routeScope?.goalId
+  const project = snapshot?.projects.find((item) => item.projectId === routeProjectId)
+  const routeGoalExists = Boolean(project?.goals.some((goal) => goal.id === routeGoalId))
+
+  useEffect(() => {
+    if (routeProjectId && routeGoalId && routeGoalExists) {
+      rememberRecentGoal(routeProjectId, routeGoalId)
+    }
+  }, [routeGoalExists, routeGoalId, routeProjectId])
 
   const openAssistant = (attention?: AttentionView) => {
     setAssistantReply(attention ?? null)
@@ -86,14 +103,16 @@ export function Layout() {
   }
 
   const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'board'
-  const project = snapshot?.projects.find((item) => item.projectId === routeScope.projectId)
 
   const navigateToProject = (projectId: string) => {
     const nextProject = snapshot?.projects.find((item) => item.projectId === projectId)
-    const nextGoal = nextProject?.goals[0]
+    const nextGoalId = resolveProjectGoalId(
+      nextProject?.goals ?? [],
+      readRecentGoalId(projectId),
+    )
     navigate(
-      nextGoal
-        ? buildGoalRoute({ projectId, goalId: nextGoal.id }, surface)
+      nextGoalId
+        ? buildGoalRoute({ projectId, goalId: nextGoalId }, surface)
         : `/projects/${encodeURIComponent(projectId)}/goals/new`,
     )
   }

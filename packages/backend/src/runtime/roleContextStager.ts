@@ -13,9 +13,11 @@ import {
   parseWorkDocument,
 } from '../domain/canonicalDocuments'
 import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF } from '../domain/project'
+import { STABLE_ID_PATTERN } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
+import { runStoragePath, runtimeCacheRoot } from './runPaths'
 
 export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
 export type Responsibility = (typeof RESPONSIBILITIES)[number]
@@ -85,16 +87,7 @@ export function createRoleContextStager(
         primaryRepoId,
       )
       const paths = createGoalPackagePaths(projectRoot, input.projectId, input.projectPath)
-      const runRoot = join(
-        absoluteHomeRoot,
-        '.hopi',
-        'runtime',
-        'runs',
-        input.projectId,
-        input.goalId,
-        input.workId,
-        input.runId,
-      )
+      const runRoot = runStoragePath(absoluteHomeRoot, input.runId)
       const contextRoot = join(runRoot, 'context')
       const authorityRoot = join(contextRoot, 'authority')
       const proposalRoot = join(runRoot, 'proposal')
@@ -104,11 +97,13 @@ export function createRoleContextStager(
       const reposFile = join(runRoot, 'repos.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const runtimeScratchDir = join(runRoot, 'scratch')
+      const runtimeCacheDir = runtimeCacheRoot(absoluteHomeRoot)
 
       await rm(runRoot, { recursive: true, force: true })
       await mkdir(authorityRoot, { recursive: true })
       await mkdir(proposalRoot, { recursive: true })
       await mkdir(runtimeScratchDir, { recursive: true })
+      await mkdir(runtimeCacheDir, { recursive: true })
 
       const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, {
         paths: [
@@ -198,6 +193,7 @@ export function createRoleContextStager(
           authorityRoot,
           proposalRoot,
           runtimeScratchDir,
+          runtimeCacheDir,
           releaseHead,
           snapshot: authorityFiles,
           evidencePaths: parsedWork.attributes.evidenceRefs
@@ -239,6 +235,7 @@ export function createRoleContextStager(
 
       return {
         runtimeScratchDir,
+        runtimeCacheDir,
         runRoot,
         contextRoot,
         proposalRoot,
@@ -260,7 +257,7 @@ export function createRoleContextStager(
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
-        extraWritableRoots: [runRoot, ...repoRoots.map((repo) => repo.path)],
+        extraWritableRoots: [runRoot, runtimeCacheDir, ...repoRoots.map((repo) => repo.path)],
         contextFile,
         promptFile,
         outcomeFile: resultFile,
@@ -619,6 +616,7 @@ function renderContextManifest(
     authorityRoot: string
     proposalRoot: string
     runtimeScratchDir: string
+    runtimeCacheDir: string
     releaseHead: string
     snapshot: PublicationSnapshot['files']
     evidencePaths: readonly string[]
@@ -643,6 +641,7 @@ function renderContextManifest(
     `- Immutable authority root: ${context.authorityRoot}`,
     `- Writable proposal root: ${context.proposalRoot}`,
     `- Disposable runtime scratch: ${context.runtimeScratchDir}`,
+    `- Reusable runtime cache: ${context.runtimeCacheDir}`,
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
     `- Repo workspace manifest: ${context.reposFile}`,
@@ -710,7 +709,7 @@ function renderResponsibilityPrompt(
     'Coordinator validates every proposed document and owns all state transitions.',
     'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
     'Sandbox, Git metadata, local port, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
-    'Use $HOPI_RUN_SCRATCH for disposable temporary or cache files when a tool default is not writable.',
+    'Use $HOPI_RUN_SCRATCH for disposable temporary files and $HOPI_CACHE_DIR for reusable tool caches when a tool default is not writable.',
     `Use ${paths.reposFile} as the complete and exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.`,
     `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
     ...(paths.apiOrigin
@@ -961,7 +960,7 @@ function resultInstruction(resultFile: string, responsibility: Responsibility) {
     '```',
     '',
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
-    'Summary is explanatory evidence, never a control protocol. Artifacts lists only preserved Run-local proof such as logs or screenshots; leave it empty when no file adds evidence.',
+    'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
     '',
   ].join('\n')
 }
@@ -1014,7 +1013,7 @@ function normalizeGitPath(path: string) {
 }
 
 function assertStableId(value: string, label: string) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+  if (!STABLE_ID_PATTERN.test(value)) {
     throw new RoleContextStagingError(`Invalid ${label}: ${value}`)
   }
 }

@@ -404,7 +404,7 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
   const statesPath = join(harness.artifactRoot, 'states.jsonl')
   const invariantsPath = join(harness.artifactRoot, 'invariants.jsonl')
 
-  const capture = async () => {
+  const capture = async (settled = false) => {
     const observation = await readObservation(harness.baseUrl)
     const serializedState = JSON.stringify({ state: observation.state, goals: observation.goals })
     if (serializedState !== previous) {
@@ -412,7 +412,11 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
       observations += 1
       await appendFile(statesPath, `${JSON.stringify(observation)}\n`)
     }
-    for (const violation of stateInvariantViolations(observation)) {
+    const currentViolations = [
+      ...stateInvariantViolations(observation),
+      ...(settled ? settledAttentionLivenessViolations(observation.state) : []),
+    ]
+    for (const violation of currentViolations) {
       if (violations.has(violation)) continue
       violations.add(violation)
       await appendFile(
@@ -442,7 +446,7 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
     stopping = true
     await loop
     try {
-      await capture()
+      await capture(true)
     } catch {
       // The retained runtime already contains the server-side failure evidence.
     }
@@ -468,8 +472,23 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
       if (result.status !== 'completed') {
         throw new Error(result.error ?? 'State recorder cleanup failed')
       }
+      if (violations.size > 0) {
+        throw new Error(`State invariant violations: ${[...violations].join(' | ')}`)
+      }
     },
   }
+}
+
+export function settledAttentionLivenessViolations(state: Pick<LiveState, 'attentions'>): string[] {
+  return state.attentions
+    .filter(
+      (attention) =>
+        attention.target !== null && attention.resolvedAt === null && attention.notifiedAt === null,
+    )
+    .map(
+      (attention) =>
+        `settled boundary retains unnotified targeted Attention ${attention.id} at ${attention.target}`,
+    )
 }
 
 export async function waitForGoalQuiescence(
@@ -1843,22 +1862,27 @@ export async function countLogicalRuns(
   ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
     if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
   }
-  for await (const path of new Bun.Glob('.hopi/runtime/runs/*/*/*/*/attempt.json').scan({
-    cwd: homeRoot,
-    onlyFiles: true,
-    dot: true,
-  })) {
-    const manifest = await readLogicalRunManifest<{ responsibility?: string }>(
-      join(homeRoot, path),
-      options.tolerateUnreadable,
-    )
-    if (!manifest) continue
-    if (
-      manifest.responsibility === 'planner' ||
-      manifest.responsibility === 'generator' ||
-      manifest.responsibility === 'reviewer'
-    ) {
-      logicalRuns[manifest.responsibility] += 1
+  for (const pattern of [
+    '.hopi/runtime/runs/*/attempt.json',
+    '.hopi/runtime/runs/*/*/*/*/attempt.json',
+  ]) {
+    for await (const path of new Bun.Glob(pattern).scan({
+      cwd: homeRoot,
+      onlyFiles: true,
+      dot: true,
+    })) {
+      const manifest = await readLogicalRunManifest<{ responsibility?: string }>(
+        join(homeRoot, path),
+        options.tolerateUnreadable,
+      )
+      if (!manifest) continue
+      if (
+        manifest.responsibility === 'planner' ||
+        manifest.responsibility === 'generator' ||
+        manifest.responsibility === 'reviewer'
+      ) {
+        logicalRuns[manifest.responsibility] += 1
+      }
     }
   }
 

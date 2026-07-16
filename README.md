@@ -26,8 +26,10 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:3000`. Set `HOPI_HOME` to keep Assistant-home documents and managed Project
-worktrees outside this repository. Set `HOPI_ATTENTION_WEBHOOK_URL` to mirror public speaking-
+Open `http://localhost:3000`. Assistant-home state, Run diagnostics, artifacts, and caches default to
+`$XDG_DATA_HOME/hopi` or `~/.local/share/hopi`; set `HOPI_HOME` to choose another owner directory.
+Managed Project worktrees remain beside their linked Repo under `.hopi-worktrees`, never under this
+repository. Set `HOPI_ATTENTION_WEBHOOK_URL` to mirror public speaking-
 Assistant updates to one provider-neutral notification endpoint; raw internal Attention is never
 delivered. HOPI sends the public Inbox event identity in the `Idempotency-Key` header. A linked user
 checkout is never HOPI's publication root.

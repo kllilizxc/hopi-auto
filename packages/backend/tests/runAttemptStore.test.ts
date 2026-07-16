@@ -26,10 +26,10 @@ describe('RunAttemptStore', () => {
       workId: 'W-1',
       runId: 'R-1',
       responsibility: 'generator',
-      runRoot: runRoot('P-1', 'G-1', 'W-1', 'R-1'),
+      runRoot: runRoot('R-1'),
     })
     await Bun.write(
-      join(runRoot('P-1', 'G-1', 'W-1', 'R-1'), 'prompt.md'),
+      join(runRoot('R-1'), 'prompt.md'),
       '# Generator system prompt\n\nImplement the owning Work exactly.\n',
     )
     await recorder.record({
@@ -87,7 +87,7 @@ describe('RunAttemptStore', () => {
       workId: 'W-1',
       runId: 'R-running',
       responsibility: 'planner',
-      runRoot: runRoot('P-1', 'G-1', 'W-1', 'R-running'),
+      runRoot: runRoot('R-running'),
     })
     const restarted = createRunAttemptStore(temporaryRoot, {
       now: () => new Date('2026-07-11T00:01:00Z'),
@@ -102,7 +102,7 @@ describe('RunAttemptStore', () => {
   })
 
   test('keeps pre-recorder Run directories visible as legacy Attempts', async () => {
-    const root = runRoot('P-1', 'G-1', 'W-1', 'R-legacy')
+    const root = legacyRunRoot('P-1', 'G-1', 'W-1', 'R-legacy')
     await mkdir(root, { recursive: true })
     await Bun.write(
       join(root, 'context.md'),
@@ -128,6 +128,10 @@ describe('RunAttemptStore', () => {
   })
 })
 
-function runRoot(projectId: string, goalId: string, workId: string, runId: string) {
+function runRoot(runId: string) {
+  return join(temporaryRoot, '.hopi', 'runtime', 'runs', runId)
+}
+
+function legacyRunRoot(projectId: string, goalId: string, workId: string, runId: string) {
   return join(temporaryRoot, '.hopi', 'runtime', 'runs', projectId, goalId, workId, runId)
 }
