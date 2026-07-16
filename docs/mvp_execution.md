@@ -341,7 +341,10 @@ verification requires them. Their workspace-write Codex transport includes netwo
 loopback services and dependency-backed checks work in either Engineering responsibility; Planner
 does not receive that capability. These processes are Run-scoped diagnostics, not Project Preview
 and not canonical state. RoleRunner owns the child process group and terminates surviving descendants
-when the Run completes, fails, is interrupted, or the Coordinator stops. Each Run also receives one
+when the Run completes, fails, is interrupted, or the Coordinator stops. Termination is one idempotent
+bounded operation per Run: an OS denial falls back to the process-group leader, remains a visible
+operational cleanup failure when descendant cleanup cannot be guaranteed, and never escapes as an
+unobserved rejection that can terminate Coordinator. Each Run also receives one
 disposable writable scratch root; temporary files and tool caches are redirected there so runtime
 verification does not depend on writable global temp or user-home directories and does not expand
 the task worktree's source surface.

@@ -12,7 +12,7 @@ import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import type { RoleTransportConfig } from '../agent/vendorTransport'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
-import { terminateProcessGroup } from '../runtime/processGroup'
+import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantTools } from './assistantTools'
@@ -99,7 +99,8 @@ export function createConfiguredAssistantModelRunner(options: {
         env: { ...process.env, ...providerEnvironment },
         detached: true,
       })
-      const abort = () => void terminateProcessGroup(child.pid)
+      const terminate = createProcessGroupTerminator(child.pid)
+      const abort = () => void terminate()
       input.signal?.addEventListener('abort', abort, { once: true })
       if (typeof child.stdin !== 'number' && child.stdin) {
         child.stdin.write(assistantPrompt(config, invocation))
@@ -152,7 +153,12 @@ export function createConfiguredAssistantModelRunner(options: {
       try {
         const results = await Promise.all([
           child.exited.then(async (exitCode) => {
-            await terminateProcessGroup(child.pid)
+            try {
+              await terminate()
+            } catch (error) {
+              await consume('stderr', `Process-group cleanup failed: ${errorMessage(error)}`)
+              throw error
+            }
             return exitCode
           }),
           consumeLines(child.stdout as ReadableStream<Uint8Array>, (line) =>

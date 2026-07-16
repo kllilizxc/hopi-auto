@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { terminateProcessGroup } from '../runtime/processGroup'
+import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
 import type { AgentRuntimeEvent } from './runtimeEvents'
 import { type ProcessTranscriptFormat, normalizeProcessOutputLine } from './vendorTranscript'
@@ -306,7 +306,8 @@ async function executeProcess(
     },
     detached: true,
   })
-  const abort = () => void terminateProcessGroup(child.pid)
+  const terminate = createProcessGroupTerminator(child.pid)
+  const abort = () => void terminate()
   input.signal?.addEventListener('abort', abort, { once: true })
   if (input.signal?.aborted) abort()
   if (command.stdin !== undefined && typeof child.stdin !== 'number' && child.stdin) {
@@ -326,7 +327,15 @@ async function executeProcess(
     const format = command.transcriptFormat ?? 'plain'
     const [exitCode] = await Promise.all([
       child.exited.then(async (exitCode) => {
-        await terminateProcessGroup(child.pid)
+        try {
+          await terminate()
+        } catch (error) {
+          const line = `Process-group cleanup failed: ${errorMessage(error)}`
+          stderr.push(line)
+          await recordLine('stderr', line)
+          await emitLine(observer, format, 'stderr', input, line)
+          throw error
+        }
         return exitCode
       }),
       consumeLines(child.stdout as ReadableStream<Uint8Array>, async (line) => {
