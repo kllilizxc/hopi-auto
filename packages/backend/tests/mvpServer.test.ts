@@ -10,7 +10,12 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
-import { createServer, presentAttempt } from '../src/mvpServer'
+import {
+  createServer,
+  deriveAssistantFeedActivity,
+  latestAgentPlan,
+  presentAttempt,
+} from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
@@ -35,6 +40,37 @@ afterEach(async () => {
 })
 
 describe('MVP server', () => {
+  test('projects one prioritized conversation activity from public and hidden model work', () => {
+    expect(
+      deriveAssistantFeedActivity({
+        publicStatuses: [],
+        internalSpeakingRunning: false,
+        reflectionRunning: true,
+      }),
+    ).toEqual({ phase: 'thinking' })
+    expect(
+      deriveAssistantFeedActivity({
+        publicStatuses: ['queued'],
+        internalSpeakingRunning: true,
+        reflectionRunning: false,
+      }),
+    ).toEqual({ phase: 'thinking' })
+    expect(
+      deriveAssistantFeedActivity({
+        publicStatuses: ['running'],
+        internalSpeakingRunning: true,
+        reflectionRunning: true,
+      }),
+    ).toEqual({ phase: 'working' })
+    expect(
+      deriveAssistantFeedActivity({
+        publicStatuses: ['queued'],
+        internalSpeakingRunning: false,
+        reflectionRunning: false,
+      }),
+    ).toEqual({ phase: 'waiting' })
+  })
+
   test('preserves an explicit stale Attempt diagnosis when Evidence is unconsumed', () => {
     const producerRun = 'project:P-1/goal:G-1/work:W-1/run:R-1'
     const goalPackage = {
@@ -327,6 +363,36 @@ describe('MVP server', () => {
     )
   })
 
+  test('projects only the latest Agent plan snapshot without merging revisions', () => {
+    expect(
+      latestAgentPlan([
+        {
+          kind: 'plan',
+          transport: 'codex',
+          planId: 'plan-1',
+          status: 'active',
+          items: [{ text: 'Old step', completed: false }],
+        },
+        {
+          kind: 'plan',
+          transport: 'codex',
+          planId: 'plan-2',
+          status: 'active',
+          items: [{ text: 'Replacement step', completed: true }],
+        },
+        {
+          kind: 'transcript',
+          transport: 'codex',
+          entryKind: 'assistant',
+          summary: 'Continuing after the plan update.',
+        },
+      ]),
+    ).toMatchObject({
+      planId: 'plan-2',
+      items: [{ text: 'Replacement step', completed: true }],
+    })
+  })
+
   test('starts Project Preview from the selected Git subdirectory scope', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
@@ -568,6 +634,35 @@ describe('MVP server', () => {
       items: [{ kind: 'message', role: 'planner', content: 'Planning the Engineering Work DAG.' }],
       pageInfo: { hasNewer: false },
     })
+    await attempt.record({
+      kind: 'plan',
+      transport: 'codex',
+      planId: 'planner-plan',
+      status: 'active',
+      items: [
+        { text: 'Inspect the Goal contract', completed: true },
+        { text: 'Publish the Work DAG', completed: false },
+      ],
+      vendorEventType: 'item.updated',
+    })
+    expect(
+      await request(
+        base,
+        '/api/projects/P-1/goals/G-1/works/plan-initial/attempts/R-1/events?limit=10',
+      ),
+    ).toMatchObject({
+      items: [
+        {},
+        {},
+        {
+          kind: 'plan',
+          planId: 'planner-plan',
+          status: 'active',
+          items: [{ completed: true }, { completed: false }],
+          streamIndex: 2,
+        },
+      ],
+    })
 
     const paused = await request(base, '/api/projects/P-1/goals/G-1/pause', { method: 'POST' })
     expect(paused).toMatchObject({ goal: { lifecycle: 'paused' } })
@@ -598,7 +693,7 @@ describe('MVP server', () => {
         {
           projectId: 'P-1',
           codingDefaults: { model: 'gpt-5.3-codex' },
-          goals: [{ id: 'G-1' }],
+          goals: [{ id: 'G-1', createdAt: expect.any(String) }],
         },
       ],
     })
@@ -699,6 +794,38 @@ describe('MVP server', () => {
     expect(state).toMatchObject({ projects: [{ projectId: 'P-1', openAttentionCount: 1 }] })
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
       projectAttention: { target: 'project:P-1', resolvedAt: null },
+    })
+  })
+
+  test('keeps Workspace state readable when a blocked migrated Project root is unavailable', async () => {
+    const sourceMachine = join(temporaryRoot, 'source-machine')
+    const destinationMachine = join(temporaryRoot, 'destination-machine')
+    const homeRoot = join(sourceMachine, 'home')
+    const repoRoot = await createRepo(join(sourceMachine, 'repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Survive migration.',
+    })
+    await createWorkspaceAttentionController(
+      createAssistantWorkspaceStore(homeRoot, publisher),
+    ).ensureProjectAttention('P-1', 'The Project paths must be rebound.')
+    await rename(sourceMachine, destinationMachine)
+
+    const server = createServer({
+      rootDir: join(destinationMachine, 'home'),
+      port: 0,
+      startCoordinator: false,
+    })
+    activeServers.add(server)
+
+    expect(await request(`http://127.0.0.1:${server.port}`, '/api/state')).toMatchObject({
+      projects: [{ projectId: 'P-1', openAttentionCount: 1, goals: [] }],
+      attentions: [{ target: 'project:P-1', resolvedAt: null }],
+      activeRuns: [],
     })
   })
 
@@ -988,6 +1115,39 @@ describe('MVP server', () => {
     ).toMatchObject({
       activity: null,
       syncCursor: '2026-07-16T09:03:00.000Z',
+    })
+  })
+
+  test('shows hidden Reflection speaking work only as conversation Thinking activity', async () => {
+    const homeRoot = join(temporaryRoot, 'assistant-thinking-home')
+    const publisher = new PublicationCoordinator()
+    await createAssistantHomeStore(homeRoot, publisher).initialize()
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    const conversation = createAssistantConversationStore(homeRoot)
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    await request(base, '/api/state')
+
+    await workspace.receiveReflectionEvent({
+      eventId: 'EV-internal-thinking',
+      content: 'Reassess the latest state internally.',
+    })
+    await conversation.begin('EV-internal-thinking')
+
+    expect(await request(base, '/api/assistant/feed')).toMatchObject({
+      activity: { phase: 'thinking' },
+      items: [],
+    })
+
+    await conversation.complete('EV-internal-thinking')
+    await workspace.handleEvent('EV-internal-thinking', {
+      reply: 'No operator-facing update is needed.',
+      disposition: 'internal-noop',
+    })
+    expect(await request(base, '/api/assistant/feed')).toMatchObject({
+      activity: null,
+      items: [],
     })
   })
 

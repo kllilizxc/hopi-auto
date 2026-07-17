@@ -50,6 +50,10 @@ describe('Assistant Home migration', () => {
     await git(legacyRoot, ['commit', '-m', 'track source fixture'])
     await Bun.write(join(legacyHopi, 'home.yml'), 'version: 1\nhomeId: H-1\n')
     await Bun.write(
+      join(legacyHopi, 'preference.md'),
+      '# Preferences\n\n- Default to concise replies.\n',
+    )
+    await Bun.write(
       join(legacyHopi, 'projects.yml'),
       `version: 3\nprojects:\n  - projectId: P-1\n    primaryRepoId: primary\n    repos:\n      - repoId: primary\n        repoPath: ${repoPath}\n        deliveryBranch: main\n`,
     )
@@ -98,6 +102,9 @@ describe('Assistant Home migration', () => {
       'tracked source fixture\n',
     )
     expect(await Bun.file(join(homeRoot, '.hopi', 'home.yml')).text()).toContain('homeId: H-1')
+    expect(await Bun.file(join(homeRoot, '.hopi', 'preference.md')).text()).toBe(
+      '# Preferences\n\n- Default to concise replies.\n',
+    )
     expect(await Bun.file(join(flatRun, 'artifacts', '001-asset.png')).text()).toBe('pixel-proof')
     expect(await Bun.file(join(flatRun, 'scratch', 'deep', 'asset.png')).exists()).toBe(false)
     expect(await Bun.file(join(flatRun, 'result.json')).json()).toMatchObject({

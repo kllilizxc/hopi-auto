@@ -39,6 +39,7 @@ export interface PreviewSession {
 export interface GoalSummary {
   id: string
   title: string
+  createdAt: string | null
   lifecycle: GoalLifecycle
   priority: number
   currentSummary: string
@@ -162,7 +163,7 @@ export type AssistantFeedEntry =
     }
 
 export interface AssistantFeedActivity {
-  phase: 'waiting' | 'working'
+  phase: 'waiting' | 'working' | 'thinking'
 }
 
 export interface CursorPageInfo {
@@ -201,6 +202,25 @@ export interface AppSnapshot {
   activeRuns: Array<{ key: string; responsibility: Responsibility }>
 }
 
+export type AgentRuntimeTransport = 'process' | 'codex' | 'claude' | 'opencode'
+
+export interface AgentPlanItem {
+  text: string
+  completed: boolean
+}
+
+export interface AgentPlanSnapshot {
+  transport: AgentRuntimeTransport
+  planId: string
+  status: 'active' | 'completed'
+  items: AgentPlanItem[]
+  vendorEventType?: string
+}
+
+export interface WorkAgentPlan extends AgentPlanSnapshot {
+  runId: string
+}
+
 export interface WorkView {
   id: string
   title: string
@@ -213,6 +233,7 @@ export interface WorkView {
   evidenceRefs: string[]
   attempts: number
   body: string
+  agentPlan: WorkAgentPlan | null
   projection: {
     workId: string
     column: KanbanColumn | null
@@ -254,11 +275,22 @@ export type RunAttemptEvent =
       eventId: string
       createdAt: string
       kind: 'transcript'
-      transport: 'process' | 'codex' | 'claude' | 'opencode'
+      transport: AgentRuntimeTransport
       entryKind: 'status' | 'assistant' | 'tool_call' | 'tool_result' | 'error'
       summary: string
       toolName?: string
       toolInvocationKey?: string
+      vendorEventType?: string
+      streamIndex?: number
+    }
+  | {
+      eventId: string
+      createdAt: string
+      kind: 'plan'
+      transport: AgentRuntimeTransport
+      planId: string
+      status: 'active' | 'completed'
+      items: AgentPlanItem[]
       vendorEventType?: string
       streamIndex?: number
     }

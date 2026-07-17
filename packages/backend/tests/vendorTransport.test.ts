@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   type RoleTransportConfig,
+  appendCodexHttpsOnlyConfig,
   resolveConfiguredTransportCommand,
   roleTransportConfigSchema,
 } from '../src/agent/vendorTransport'
@@ -72,6 +73,7 @@ describe('resolveConfiguredTransportCommand', () => {
     })
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
+      ...codexHttpsOnlyArgs(),
       '-a',
       'never',
       '-c',
@@ -79,6 +81,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '-c',
       'sandbox_workspace_write.network_access=true',
       'exec',
+      '--ignore-user-config',
       '--skip-git-repo-check',
       '-s',
       'workspace-write',
@@ -109,11 +112,13 @@ describe('resolveConfiguredTransportCommand', () => {
 
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
+      ...codexHttpsOnlyArgs(),
       '-a',
       'never',
       '-c',
       'sandbox_workspace_write.network_access=true',
       'exec',
+      '--ignore-user-config',
       '--skip-git-repo-check',
       '-s',
       'workspace-write',
@@ -124,6 +129,47 @@ describe('resolveConfiguredTransportCommand', () => {
       '--json',
       '-',
     ])
+  })
+
+  test('resumes a Codex responsibility session with the current assignment', async () => {
+    await Bun.write(bundle.promptFile, '# current generator assignment\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        binary: '/usr/local/bin/codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+        model: 'gpt-5-codex',
+      } satisfies RoleTransportConfig,
+      bundle,
+      input,
+      session: { transport: 'codex', sessionId: 'thread-generator' },
+    })
+
+    expect(command.cmd).toEqual([
+      '/usr/local/bin/codex',
+      ...codexHttpsOnlyArgs(),
+      '-a',
+      'never',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
+      '-s',
+      'workspace-write',
+      '-m',
+      'gpt-5-codex',
+      'exec',
+      'resume',
+      '--ignore-user-config',
+      '--skip-git-repo-check',
+      '--json',
+      'thread-generator',
+      '-',
+    ])
+    expect(command.sessionTransport).toBe('codex')
+    expect(command.stdin).toContain('Continue the same generator responsibility for Work T-1')
+    expect(command.stdin).toContain('# current generator assignment')
   })
 
   test('makes Claude image directories accessible to the responsibility', async () => {
@@ -166,11 +212,13 @@ describe('resolveConfiguredTransportCommand', () => {
 
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
+      ...codexHttpsOnlyArgs(),
       '-a',
       'never',
       '-c',
       'sandbox_workspace_write.network_access=true',
       'exec',
+      '--ignore-user-config',
       '--skip-git-repo-check',
       '-s',
       'workspace-write',
@@ -199,11 +247,13 @@ describe('resolveConfiguredTransportCommand', () => {
 
       expect(command.cmd).toEqual([
         '/usr/local/bin/codex',
+        ...codexHttpsOnlyArgs(),
         '-a',
         'never',
         '-c',
         'sandbox_workspace_write.network_access=true',
         'exec',
+        '--ignore-user-config',
         '--skip-git-repo-check',
         '-s',
         'workspace-write',
@@ -260,6 +310,27 @@ describe('resolveConfiguredTransportCommand', () => {
         filesystem: { allowWrite: [] },
       },
     })
+  })
+
+  test('resumes a Claude responsibility session', async () => {
+    await Bun.write(bundle.promptFile, '# current reviewer assignment\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'claude',
+        binary: '/usr/local/bin/claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      } satisfies RoleTransportConfig,
+      bundle,
+      input: { ...input, role: 'reviewer' },
+      session: { transport: 'claude', sessionId: 'claude-reviewer' },
+    })
+
+    expect(command.cmd).toContain('--resume')
+    expect(command.cmd).toContain('claude-reviewer')
+    expect(command.sessionTransport).toBe('claude')
+    expect(command.stdin).toContain('# current reviewer assignment')
   })
 
   test('builds an opencode run command that reads the prompt from stdin', async () => {
@@ -323,6 +394,31 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.stdin).toBe('# prompt for opencode with images\n')
   })
 
+  test('resumes an OpenCode responsibility session', async () => {
+    await Bun.write(bundle.promptFile, '# current planner assignment\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'opencode',
+        cwdMode: 'root',
+      } satisfies RoleTransportConfig,
+      bundle,
+      input: { ...input, role: 'planner' },
+      session: { transport: 'opencode', sessionId: 'opencode-planner' },
+    })
+
+    expect(command.cmd).toEqual([
+      'opencode',
+      'run',
+      '--format',
+      'json',
+      '--session',
+      'opencode-planner',
+    ])
+    expect(command.sessionTransport).toBe('opencode')
+    expect(command.stdin).toContain('# current planner assignment')
+  })
+
   test('keeps the raw process transport path unchanged', async () => {
     const command = await resolveConfiguredTransportCommand({
       config: {
@@ -365,3 +461,9 @@ describe('resolveConfiguredTransportCommand', () => {
     })
   })
 })
+
+function codexHttpsOnlyArgs() {
+  const command: string[] = []
+  appendCodexHttpsOnlyConfig(command)
+  return command
+}

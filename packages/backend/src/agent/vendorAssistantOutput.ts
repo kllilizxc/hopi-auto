@@ -2,6 +2,11 @@ import type { AgentTranscriptTransport } from './runtimeEvents'
 
 export type AssistantTransport = Exclude<AgentTranscriptTransport, 'process'>
 
+export interface VendorSession {
+  transport: AssistantTransport
+  sessionId: string
+}
+
 export interface VendorAssistantTerminalError {
   message: string
   status?: number
@@ -25,8 +30,18 @@ export function parseVendorAssistantOutput(
   if (!parsed) return {}
 
   if (transport === 'codex') {
+    const eventType = stringValue(parsed.type)
+    const failure = errorText(parsed.error) ?? stringValue(parsed.message)
     return {
       sessionId: stringValue(parsed.thread_id) ?? stringValue(parsed.threadId),
+      ...(eventType === 'turn.failed' && failure
+        ? {
+            terminalError: {
+              message: failure,
+              sessionInvalid: isExplicitSessionFailure(failure),
+            },
+          }
+        : {}),
     }
   }
 

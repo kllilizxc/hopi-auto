@@ -1,7 +1,7 @@
 # HOPI E2E Test Cases
 
 Status: executable runbook and coverage catalog
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This document is the operating entry point for running, diagnosing, and extending HOPI E2E tests.
 It assumes the reader has no prior conversation context. The Harness design and evidence boundary
@@ -375,8 +375,8 @@ risk rather than mechanically adding one Live runner per row:
 
 The selected runners cover every execution boundary accepted in the 2026-07-15 audit. `024` reuses
 the existing session-recovery runner; OpenCode remains the only operator-approved exclusion. The
-2026-07-16 next-risk audit below adds one newly designed Project-source scenario and reopens only the
-unproved conversation-only judgment variant of `022`; earlier terminal evidence remains valid.
+2026-07-17 next-risk audit below closes the Project-source scenario, the conversation-only judgment
+variant of `022`, and dependency Evidence handoff; earlier terminal evidence remains valid.
 
 | ID             | Scenario                                                  | Priority | Layer                      | Status                                                           |
 | -------------- | --------------------------------------------------------- | -------- | -------------------------- | ---------------------------------------------------------------- |
@@ -395,7 +395,7 @@ unproved conversation-only judgment variant of `022`; earlier terminal evidence 
 | `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered; clean Live canary and four poisoned-history variants passed              |
 | `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered; native-picker boundary and nine UI checkpoints passed   |
 | `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
-| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Relevant delivery covered; conversation-only variant planned     |
+| `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Covered; relevant delivery and conversation-only variants passed |
 | `HOPI-E2E-023` | Cancel, archive, and Reopen                               | P1       | Browser and Contract       | Covered; model choice adds no boundary beyond the validated tool |
 | `HOPI-E2E-024` | Vendor, model, and session compatibility matrix           | P1       | Contract and rotating Live | Covered for Codex and Claude; OpenCode intentionally skipped     |
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Covered                                                          |
@@ -404,16 +404,17 @@ unproved conversation-only judgment variant of `022`; earlier terminal evidence 
 | `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
 | `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
-| `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Planned                                                          |
+| `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Covered; scoped lifecycle and C1 escape rejection passed          |
+| `HOPI-E2E-032` | Durable cross-Project preference judgment                 | P1       | Live Assistant and Contract | Covered; focused Live judgment canary passed                     |
+| `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
 support the scenario designs but are not themselves implementations of the catalogued Browser or Live
 scenarios. Dedicated commands exist for the independent Browser and Live boundaries selected by the
 completion audit; composed rows deliberately reuse the listed evidence instead of adding a model
-call whose output cannot affect the asserted boundary. The only forward work is the explicitly
-planned `031` and the focused `022` judgment variant. OpenCode is the only intentional execution
-exclusion.
+call whose output cannot affect the asserted boundary. All designed cases are now covered; OpenCode
+is the only intentional execution exclusion.
 
 | ID             | Deterministic scenario binding                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -429,7 +430,7 @@ exclusion.
 | `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantAttentionE2E.test.ts`            |
 | `HOPI-E2E-020` | `tests/e2e/configurationRebind.e2e.ts`                                                                                       |
 | `HOPI-E2E-021` | `tests/previewManager.test.ts`, `tests/projectReconciler.test.ts`                                                            |
-| `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`                                                            |
+| `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`, `tests/live/conversationImage.live.ts`                    |
 | `HOPI-E2E-023` | `tests/e2e/cancelReopen.browser.ts`                                                                                          |
 | `HOPI-E2E-024` | `tests/workspaceAssistant.test.ts`, `tests/vendorTransport.test.ts`                                                          |
 | `HOPI-E2E-025` | `tests/attentionDelivery.test.ts`                                                                                            |
@@ -438,6 +439,9 @@ exclusion.
 | `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts`                                   |
 | `HOPI-E2E-029` | `tests/browser/assistantProviderError.browser.ts`, `tests/workspaceAssistant.test.ts`, `tests/coordinatorReconciler.test.ts` |
 | `HOPI-E2E-030` | `tests/e2e/projectMigration.e2e.ts`                                                                                          |
+| `HOPI-E2E-031` | `tests/e2e/scopedProjectSource.e2e.ts`                                                                                       |
+| `HOPI-E2E-032` | `tests/assistantWorkspaceStore.test.ts`, `tests/workspaceAssistant.test.ts`, `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts` |
+| `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
 
 ## Detailed Cases
 
@@ -490,7 +494,8 @@ Pass conditions:
 
 - One admitted Goal reaches `done` through successful real Planner, Generator, and Reviewer Attempts.
 - Generator output is published, successful Review precedes C1, and the integration test passes.
-- The original checkout remains byte- and Git-unchanged.
+- The delivery checkout remains clean and unchanged before C1, then fast-forwards exactly to the
+  accepted release without exposing unreviewed task files.
 - No shared invariant is violated and no targeted Attention remains unresolved.
 - The completion update is visible without misleading Assistant error activity.
 - The report retains every real model Run and provider usage event.
@@ -577,6 +582,8 @@ Actions:
 Pass conditions:
 
 - Public Assistant turns are handled FIFO while Goal Runs continue independently.
+- Configured Planner, Generator, and Reviewer capacities are enforced globally across both Projects;
+  each responsibility can fill its own capacity without being blocked by another responsibility.
 - The status answer does not create a third Goal or mutate either contract.
 - Each instruction produces effects only in its named Project.
 - Both Goals either complete or expose a precise targeted Attention; neither silently stalls.
@@ -614,7 +621,11 @@ Pass conditions:
 - The user instruction and design update publish before new Planning is requested.
 - Material contract change increments revision and invalidates incompatible nonterminal work.
 - An old Generator or Reviewer result cannot move the release after its guard becomes stale.
+- The revised Work starts a fresh responsibility conversation and empty workspace; the prior
+  revision's workspace remains diagnostic until the Work becomes terminal but is never inherited.
 - The final integration and UI implement the latest design, not a mixture of revisions.
+- The delivery checkout remains clean during the race and fast-forwards exactly to the accepted C1
+  only after revised Review succeeds.
 - Historical design and Attempts remain available for diagnosis without becoming current authority.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`, `INV-07`.
@@ -622,8 +633,9 @@ Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`, `INV-07`.
 Current implementation: `packages/backend/tests/e2e/designRevision.e2e.ts`
 (`bun run e2e:revision:012`). It uses the production Server, ordinary Inbox ingress, an Assistant
 tool boundary, durable Goal revisions, real Git, and deterministic role outcomes. It proves an active
-Generator is interrupted by a material revision, then only one fresh Generator and Reviewer outcome
-can publish/integrate the revised feature. A real Assistant design-judgment canary remains pending.
+Generator is interrupted by a material revision, then proves the replacement Generator receives a
+fresh revision-scoped session/workspace before only one fresh Generator and Reviewer outcome can
+publish/integrate the revised feature. A real Assistant design-judgment canary remains pending.
 
 ### HOPI-E2E-013: Blocking Question, Notification, Answer, And Continuation
 
@@ -639,14 +651,21 @@ Actions:
 1. Ask HOPI to implement the ambiguous requirement.
 2. Wait for a targeted Attention rather than a guessed implementation.
 3. Observe `Waiting for Assistant`, then the single direct operator question and `Needs you` projection.
-4. Answer through the ordinary Assistant composer with Attention context.
-5. Let HOPI publish the answer as Goal Input, resolve Attention, replan, and finish delivery.
+4. Ask an informational follow-up without deciding; verify the Attention remains open.
+5. Give a later natural-language decision, optionally from another Goal page and without an explicit
+   Attention reference.
+6. Let Assistant select the intended Goal, apply the effect, settle the related Attention, and finish
+   delivery.
 
 Pass conditions:
 
 - One open targeted Attention is the durable blocker and no covered Work is scheduled.
 - Reflection does not speak; the persistent Assistant exposes one concise question.
 - The question asks only for the decision required to continue and does not leak internal IDs.
+- Explicit reply context is sufficient but not required: semantic target selection plus current state
+  finds the same exact Attention from another page.
+- An informational follow-up does not resolve the Attention; a later instruction that satisfies or
+  supersedes its blocker does.
 - Answer effects publish before Attention resolution.
 - Work resumes once, reaches the selected semantic outcome, and does not repeat the notification.
 - No pending internal handoff or unresolved Attention remains at terminal state.
@@ -658,7 +677,9 @@ The retained 2026-07-14 run passes the complete configured-provider path: Planne
 canonical Work target, Reflection handed off one direct question, Assistant published the answer and
 resolved the blocker, and Planner, Generator, Reviewer, C1, and completion all finished. Earlier
 failed artifacts remain retained as evidence for the document-path contract defect and a later
-provider TLS outage.
+provider TLS outage. The retained 2026-07-17 artifact additionally proves that an information-only
+follow-up leaves the blocker open before a later natural-language decision settles it; its final Run
+status records only the subsequently corrected stale delivery-checkout oracle.
 
 ### HOPI-E2E-014: Operational Failure, Bounded Recovery, And Retry
 
@@ -719,18 +740,20 @@ Pass conditions:
 - An admitted obsolete result cannot publish a Work transition after the Pause guard.
 - A paused contract edit remains durable and is included in Resume planning.
 - Resume ensures a valid Planning guard before Engineering proceeds.
-- The original checkout remains unchanged throughout.
+- The resumed Generator uses the same Work-revision responsibility session and retained workspace
+  while producing a distinct Attempt; a file written before Pause remains readable afterward.
+- The delivery checkout remains unchanged while paused, then cleanly fast-forwards to the accepted
+  release only after Review and C1.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`.
 
 Current implementation: `packages/backend/tests/e2e/pauseResume.browser.ts`
 (`bun run e2e:browser:015`) uses a production Server, real Browser Harness clicks, managed Git, and
 a deterministic interruptable RoleRunner. It waits for both the Coordinator lease and actual
-Generator entry before clicking Pause, verifies the
-durable guard and interrupted Attempt without another dispatch, waits until the visible Work
-projection no longer claims that the interrupted Run is working, then clicks Resume and retains the
-terminal Kanban. The fresh Generator/Reviewer/C1 path must reach `done`; real process interruption
-and replacement are proven by `016` rather than repeating that boundary here.
+Generator entry before clicking Pause, verifies the durable guard and interrupted Attempt without
+another dispatch, and proves a pre-Pause responsibility-workspace file is readable by the resumed
+Attempt. It then clicks Resume and retains the terminal Kanban. The fresh Generator/Reviewer/C1 path
+must reach `done`; real process replacement is proven by `016` rather than repeated here.
 
 ### HOPI-E2E-016: Process Lifecycle, Exclusion, And Restart Recovery
 
@@ -756,7 +779,9 @@ Pass conditions:
 - The Assistant turn manifest reaches attempt two and its event stream retains the interrupted-turn resume marker.
 - The old running Attempt becomes durably interrupted and never returns to running.
 - Safe Generator source is checkpointed or the stable task branch is rebuilt without contaminating release.
-- The replacement Run sees current durable context and does not rely on lost process memory.
+- The replacement Attempt resumes the same Generator conversation and responsibility workspace,
+  receives current durable context, and can prove a pre-restart scratch file without relying on lost
+  OS-process or model memory.
 - C1 moves at most once for the accepted candidate.
 - Completion and Attention notifications are not duplicated.
 - Terminal state satisfies every shared invariant and retains both pre- and post-restart logs.
@@ -764,7 +789,8 @@ Pass conditions:
 Primary invariants: `INV-02`, `INV-05`, `INV-06`, `INV-09`, `INV-10`, `INV-14`.
 
 The zero-model contract remains in
-`packages/backend/tests/e2e/restartDuringGenerator.e2e.ts` (`bun run e2e:restart:016`). The Live
+`packages/backend/tests/e2e/restartDuringGenerator.e2e.ts` (`bun run e2e:restart:016`). It proves the
+replacement Generator receives both the saved vendor session and a pre-restart workspace file. The Live
 runner also exercises the production instance lock and Assistant post-tool/pre-reply window before
 launching real responsibility processes inside the replaceable host boundary. It then waits for a
 Generator source delta, kills that boundary without product shutdown, and starts a final replacement
@@ -1004,15 +1030,15 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-05`, `INV-13`, `INV-14`.
 
-Current implementation: `packages/backend/tests/live/multimodalDelivery.live.ts`
+Current implementations: `packages/backend/tests/live/multimodalDelivery.live.ts`
 (`bun run e2e:live:022`) proves variant 1 through real Assistant, Planner, Generator, Reviewer, C1,
-and Browser presentation. Deterministic Assistant-tool coverage proves byte safety, explicit
-adoption, design-only reuse, and portable paths. It does not prove that the configured Assistant
-leaves an unrelated image conversation-only. The next `022` runner is therefore a focused
-Assistant-only Live canary: upload one unrelated image with an explicit read-only request, keep
-Reflection deterministic, and require a handled reply with byte-identical receipt but no Goal,
-Input, design, Work, Attention, responsibility Run, or Git effect. It must not repeat the expensive
-delivery chain already proven by variant 1.
+and Browser presentation. `packages/backend/tests/live/conversationImage.live.ts`
+(`bun run e2e:live:022:conversation`) proves variant 2 with one configured multimodal Assistant turn,
+byte-identical receipt, and no Goal, Input, design, Work, Attention, responsibility Run, or Git
+effect. Its accepted 2026-07-17 artifact is retained at
+`test-artifacts/conversation-only-image-judgment-2026-07-17T13-47-59-750Z-78bfa429`; it also provides
+the rotating Codex HTTPS-only raw-stream canary for `024`. Deterministic Assistant-tool coverage
+proves adoption, design-only reuse, and portable paths without repeating the expensive delivery chain.
 
 ### HOPI-E2E-023: Cancel, Archive, And Reopen
 
@@ -1053,7 +1079,7 @@ only select the same validated operation would not add another safety boundary.
 
 | Field   | Value                                                                                                           |
 | ------- | --------------------------------------------------------------------------------------------------------------- |
-| Risk    | A supported vendor renders events but cannot use HOPI tools, images, cancellation, or durable session recovery. |
+| Risk    | A supported vendor renders events but cannot use HOPI tools, images, cancellation, isolated configuration, or durable session recovery. |
 | Reality | Contract executables for every vendor and a rotating real-provider canary.                                      |
 | Fixture | One greeting, one read tool, one Goal creation tool, one image turn, and one interrupted turn.                  |
 | Cost    | Keep full delivery on the primary vendor; rotate small live canaries across other vendors.                      |
@@ -1064,7 +1090,9 @@ Matrix:
 | ------------------------------------------------- | -------- | -------- | -------- |
 | Non-interactive command and configured model      | Required | Required | Required |
 | MCP tool call/result                              | Required | Required | Required |
-| Session identity and compatible resume            | Required | Required | Required |
+| Assistant and responsibility session identity     | Required | Required | Required |
+| Compatible resume and invalid-session rebuild     | Required | Required | Required |
+| Revision-scoped responsibility workspace           | Required | Required | Required |
 | Vendor switch rebuild from durable public history | Required | Required | Required |
 | Image input                                       | Required | Required | Required |
 | Process-group interruption and raw transcript     | Required | Required | Required |
@@ -1073,11 +1101,22 @@ Matrix:
 Pass conditions:
 
 - Vendor differences stay inside adapter commands and normalization.
+- Every Codex invocation selects the explicit HTTPS Responses provider with WebSocket support
+  disabled; it never depends on an implicit CLI transport preference or fallback.
 - Upper Assistant, Attention, Inbox, session, and delivery semantics remain identical.
-- A compatible same-vendor session resumes; a vendor switch starts a new session from durable context.
+- A compatible same-vendor speaking or Work responsibility session resumes; a vendor switch starts
+  a new session from durable context.
+- Responsibility sessions never cross Work, role, or material Work-revision boundaries, and
+  Reflection never inherits one.
+- Interrupted responsibility files remain available to the compatible replacement Attempt and are
+  never reconstructed from model memory alone.
+- Codex responsibility commands ignore implicit user configuration while retaining explicit HOPI
+  model, reasoning, sandbox, network, writable roots, authentication, and project instructions.
 - Internal Reflection briefs are excluded from reconstructed public conversation history.
 - Tool effects are proven by canonical documents rather than assistant prose.
 - Stderr and malformed vendor events remain visible without corrupting public success projection.
+- The rotating Codex Live canary retains the raw stream and fails if it observes WebSocket setup,
+  TLS-to-WebSocket fallback, or transport retry diagnostics.
 
 Primary invariants: `INV-01`, `INV-08`, `INV-13`, `INV-14`.
 
@@ -1253,6 +1292,94 @@ oracles; Browser evidence proves confirmation, error presentation, reload, and v
 model canary is not required unless implementation exposes a later decision that genuinely depends
 on model interpretation.
 
+The Browser runner keeps one production directory-picker queue and exercises all three source
+classes in order. Deterministic responsibility outcomes are sufficient because the safety result is
+owned by path classification, managed Git, scoped context/cwd, preparation, Preview, and C1 rather
+than by model judgment. Its retained artifact must include the pre/post filesystem digests, durable
+`projects.yml`, scoped responsibility paths, Preview process evidence, visible screenshots, and the
+rejected out-of-scope integration result.
+
+Current implementation: `packages/backend/tests/e2e/scopedProjectSource.e2e.ts`
+(`bun run e2e:source:031`). The accepted zero-provider 2026-07-17 artifact is retained at
+`test-artifacts/safe-scoped-project-source-2026-07-17T13-46-43-771Z-9310a3d7` with twelve screenshots,
+actual zero provider usage, clean cleanup, and an unchanged sibling checkout after C1 rejection.
+
+### HOPI-E2E-032: Durable Cross-Project Preference Judgment
+
+| Field   | Value                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant forgets reusable feedback, stores one-off direction as a global rule, or silently changes active delivery. |
+| Reality | Real Browser ingress and configured speaking Assistant; canonical Home document; deterministic Reflection.          |
+| Fixture | Empty Home with no linked Project or Goal.                                                                            |
+| Cost    | Two speaking-Assistant calls; no Planner, Generator, Reviewer, or delivery chain.                                     |
+
+Actions:
+
+1. Send one explicit durable preference that applies across Projects.
+2. Wait for the public reply, then inspect the canonical Home preference and normalized tool stream.
+3. Send a conflicting instruction explicitly limited to the current reply.
+4. Compare the preference digest and inspect public state after the second reply.
+
+Pass conditions:
+
+- The first turn calls `hopi_write_preferences` once and records the reusable default as free
+  Markdown under Assistant Home.
+- The second turn follows the local instruction without calling the preference writer or changing
+  the preference digest.
+- Neither preference write nor one-off direction creates a Project, Goal, Planning request,
+  responsibility Run, Attention, or Reflection trigger of its own.
+- Deterministic contracts prove stale-digest rejection, empty-document clearing, same-session
+  refresh, session rebuild, Planner-only immutable staging, and downstream role isolation.
+- Browser screenshots, canonical documents, normalized events, raw Assistant streams, and model
+  usage remain in the ordinary Test Run artifact.
+
+Current Live implementation: `packages/backend/tests/live/preferenceJudgment.live.ts`
+(`bun run e2e:live:032`). The accepted 2026-07-17 run is retained at
+`test-artifacts/durable-preference-judgment-2026-07-17T06-44-41-288Z-4c9546be`.
+
+### HOPI-E2E-033: Dependency Evidence And Artifact Handoff
+
+| Field   | Value                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------ |
+| Risk    | A dependent Work starts too early, repeats predecessor discovery, or cannot resolve accepted Run artifacts.       |
+| Reality | Production Coordinator, RoleContextStager, durable Goal documents, immutable Run artifacts, real Git, and C1.     |
+| Fixture | One Planning Work and two Engineering Works where the second transitively depends on the first accepted artifact. |
+| Cost    | Zero provider calls; deterministic roles inspect the exact context that a configured Agent receives.              |
+
+Actions:
+
+1. Let Planner publish one sparse `W-produce -> W-consume` dependency chain.
+2. Have the first Generator change source and emit one artifact outside canonical Project documents.
+3. Accept and integrate that Work through Reviewer and C1.
+4. Observe the Coordinator dispatch the dependent Generator only after the predecessor is done.
+5. Read the predecessor Work, Evidence, and artifact manifest from the dependent Run context, then
+   finish its ordinary Generator, Reviewer, C1, and completion path.
+
+Pass conditions:
+
+- `W-consume` never dispatches before `W-produce` is terminal and accepted.
+- The dependent immutable authority includes the transitive predecessor Works and their referenced
+  Evidence, but does not widen to unrelated terminal Works or historical Runs.
+- `evidence-artifacts.json` maps portable `artifact:<run>/<path>` references to existing immutable
+  files, names the owning Evidence documents, and is read-only.
+- The dependent Agent can consume the artifact through its staged context without a Run lookup API,
+  Assistant-home path, user checkout path, or model-memory handoff.
+- Both Works retain their own Evidence, C1 reaches one clean release head, the selected delivery
+  checkout stays clean and only fast-forwards at accepted C1, and final Planning completes the Goal.
+
+Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-06`, `INV-10`, `INV-14`.
+
+This is a deterministic E2E rather than a Live model case because model wording cannot strengthen
+the handoff boundary. The production RoleRunner input is the boundary under test; one scripted
+dependent Agent proves that the exact files are sufficient. Restart, Pause, and vendor session
+continuity remain covered by `015`, `016`, and `024`; multiplying those states by this DAG would add
+cost without a new owner or invariant.
+
+Current implementation: `packages/backend/tests/contract/dependencyEvidenceHandoff.test.ts`, included
+by `bun run e2e:contract`. It runs the production Coordinator and managed Git path through both Works,
+their Reviewers, C1, and final Planning while the dependent Generator directly verifies staged
+Evidence and immutable artifact bytes.
+
 ## Harness Self-Verification
 
 Harness mechanics are deterministic repository tests, not HOPI product scenarios, so they do not
@@ -1280,18 +1407,19 @@ bun test packages/backend/tests/testRunArtifact.test.ts packages/backend/tests/l
 Run the owned-browser-resource proof with `bun run test:browser`. Its terminal `run.json` must index
 `browser-resources.jsonl`, and every record must satisfy `created = closed` and `leaked = []`.
 
-## Next Implementation Order
+## Current Stopping Point
 
 Do not run `e2e:regression:live` on each edit. Keep `e2e:preflight` cheap, retain `HOPI-E2E-002` as
 the blank-to-completion smoke, and use the explicit Live Regression only for a release, scheduled
 suite, or a change whose execution boundary requires its configured-provider canaries.
 
-1. Implement `031` first because it is zero-provider, covers newly added Project-source behavior,
-   and can fail before any expensive Agent path.
-2. Add the focused conversation-only `022` canary after `031`; it should use one real Assistant turn
-   and no responsibility model Runs.
-3. Add no separate Live case for design revision, Pause, Preview repair, or checkout isolation unless
-   a future change introduces a model-dependent boundary not already composed above.
+The 2026-07-17 completion pass stopped after `031`, the focused conversation-only `022` canary, and
+`033` passed. They close every newly identified independent boundary using one zero-provider Browser
+Run, one configured-provider Assistant turn, and one deterministic Coordinator E2E. Separate Live
+cases for design revision, Pause, Preview repair, checkout isolation, dependency restart, or vendor
+combinations would only multiply states already owned by `012`, `015`, `016`, `021`, and `024`.
+Add another scenario only when a real failure reveals a new boundary or a product change invalidates
+one of those compositions.
 
 ## New Scenario Checklist
 

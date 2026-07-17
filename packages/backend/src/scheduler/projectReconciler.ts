@@ -29,8 +29,12 @@ import {
   type ProjectPreparer,
   createProjectPreparer,
 } from '../runtime/projectPreparation'
+import {
+  type ResponsibilitySessionStore,
+  createResponsibilitySessionStore,
+} from '../runtime/responsibilitySessionStore'
 import { type RoleContextStager, createRoleContextStager } from '../runtime/roleContextStager'
-import { cleanupRunScratch, preserveRunArtifacts } from '../runtime/runArtifacts'
+import { preserveRunArtifacts } from '../runtime/runArtifacts'
 import {
   type RunAttemptRecorder,
   type RunAttemptStore,
@@ -58,6 +62,7 @@ export interface ProjectReconcilerOptions {
   worktrees?: StableWorktreeManager
   outcomes?: PassOutcomeCoordinator
   attempts?: RunAttemptStore
+  responsibilitySessions?: ResponsibilitySessionStore
   integrator?: C1Integrator
   goalController?: GoalController
   now?: () => Date
@@ -110,6 +115,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
+  const responsibilitySessions =
+    options.responsibilitySessions ?? createResponsibilitySessionStore(options.homeRoot)
   const primaryRepoId = options.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
   const projectRepos: readonly LinkedProjectRepo[] = options.projectRepos ?? [
     {
@@ -278,8 +285,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       runControllers.set(liveKey, runController)
       const runId = createRunId()
       let attempt: RunAttemptRecorder | null = null
-      let runtimeScratchDir: string | null = null
-      let keepScratchForDiagnostics = false
       try {
         if (
           interruptionGeneration.project !== projectInterruptionGeneration ||
@@ -290,6 +295,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         const owningWork = goalPackage.works.get(workId)
         if (!owningWork) throw new Error(`Work is missing: ${workId}`)
+        const sessionKey = {
+          projectId: options.projectId,
+          goalId,
+          workId,
+          responsibility,
+        }
+        const responsibilitySession = await responsibilitySessions.open(
+          sessionKey,
+          owningWork.attributes.contractRevision,
+        )
         const selectedRepos =
           responsibility === 'planner'
             ? projectRepos
@@ -353,8 +368,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           primaryRepoId,
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
+          runtimeScratchDir: responsibilitySession.workspaceDir,
         })
-        runtimeScratchDir = context.runtimeScratchDir
         attempt = await attempts
           .start({
             projectId: options.projectId,
@@ -409,10 +424,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                   runId,
                   context.runRoot,
                   context.resultFile,
-                  roleRepoRoots.map((repo) => repo.path),
+                  [context.runtimeScratchDir, ...roleRepoRoots.map((repo) => repo.path)],
                 )
               } catch (error) {
-                keepScratchForDiagnostics = true
                 outcome = artifactFailureOutcome(error, outcome.exitCode)
               }
               const application = await outcomes.apply({
@@ -452,9 +466,23 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               context.runRoot,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
+            session: responsibilitySession.session,
             signal: runController.signal,
           },
-          attempt ? { onEvent: (event) => attempt?.record(event) } : undefined,
+          {
+            onEvent: (event) => attempt?.record(event),
+            onSession: (nextSession) =>
+              responsibilitySessions.write(
+                sessionKey,
+                owningWork.attributes.contractRevision,
+                nextSession,
+              ),
+            onSessionInvalid: () =>
+              responsibilitySessions.invalidateVendor(
+                sessionKey,
+                owningWork.attributes.contractRevision,
+              ),
+          },
         )
         if (runController.signal.aborted) {
           let checkpointFailure: unknown = null
@@ -546,10 +574,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             context.runRoot,
             context.resultFile,
-            roleRepoRoots.map((repo) => repo.path),
+            [context.runtimeScratchDir, ...roleRepoRoots.map((repo) => repo.path)],
           )
         } catch (error) {
-          keepScratchForDiagnostics = true
           outcome = artifactFailureOutcome(error, outcome.exitCode)
         }
 
@@ -600,6 +627,20 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               goalId,
               `Reassess stale ${responsibility} output for Work ${workId}.`,
             )
+          } else if (application.kind === 'published' && application.result === 'fail') {
+            if (responsibility === 'planner') {
+              await goalController.ensureResponsibilityFailureAttention(
+                goalId,
+                workId,
+                responsibility,
+                application.summary,
+              )
+            } else {
+              await goalController.ensurePlanning(
+                goalId,
+                `Reassess failed ${responsibility} Evidence for Work ${workId}; do not redispatch the unchanged responsibility.`,
+              )
+            }
           }
           return {
             kind: 'pass_finished',
@@ -714,14 +755,30 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         throw error
       } finally {
-        if (runtimeScratchDir && !keepScratchForDiagnostics) {
-          await cleanupRunScratch(runtimeScratchDir).catch(() => undefined)
-        }
+        await clearTerminalWorkSessions(
+          responsibilitySessions,
+          options.store,
+          options.projectId,
+          goalId,
+          workId,
+        ).catch(() => undefined)
         live.delete(liveKey)
         runControllers.delete(liveKey)
       }
     },
   }
+}
+
+async function clearTerminalWorkSessions(
+  sessions: ResponsibilitySessionStore,
+  store: GoalPackageStore,
+  projectId: string,
+  goalId: string,
+  workId: string,
+) {
+  const work = (await store.readPackage(goalId)).works.get(workId)
+  if (!work || !isWorkTerminal(work.attributes)) return
+  await sessions.clearWork({ projectId, goalId, workId })
 }
 
 async function preserveOutcomeArtifacts(

@@ -23,6 +23,7 @@ export interface CoordinatorReconcilerOptions {
   reflection?: AssistantReflection
   attentions: WorkspaceAttentionController
   projects: readonly CoordinatorProjectRuntime[]
+  concurrency: Readonly<Record<Responsibility, number>>
   delivery?: AttentionDeliveryWorker
   now?: () => Date
   intervalMs?: number
@@ -232,9 +233,9 @@ export function createCoordinatorReconciler(
             operationallyDeferredWorkIds:
               project.reconciler.operationallyDeferredWorkIds?.(goalId, now()) ?? new Set(),
             passCapacity: {
-              planner: passCounts.planner < 1,
-              generator: passCounts.generator < 3,
-              reviewer: passCounts.reviewer < 1,
+              planner: passCounts.planner < options.concurrency.planner,
+              generator: passCounts.generator < options.concurrency.generator,
+              reviewer: passCounts.reviewer < options.concurrency.reviewer,
             },
             now: now(),
             maxAttempts: 3,
@@ -301,7 +302,7 @@ export function createCoordinatorReconciler(
     for (const candidate of candidates) {
       if (candidate.decision.kind !== 'dispatch') continue
       const responsibility = candidate.decision.responsibility
-      const limit = responsibility === 'generator' ? 3 : 1
+      const limit = options.concurrency[responsibility]
       if (reserved[responsibility] >= limit) continue
       const key = `${candidate.project.projectId}/${candidate.goalId}/${candidate.decision.workId}`
       if (active.has(key)) continue

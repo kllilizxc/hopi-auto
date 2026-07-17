@@ -3,14 +3,18 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  parseGoalDocument,
   parseWorkDocument,
+  renderAttentionDocument,
   renderEvidenceDocument,
+  renderGoalDocument,
   renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { HOPI_RELEASE_REF } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createRoleContextStager } from '../src/runtime/roleContextStager'
+import { runStoragePath } from '../src/runtime/runPaths'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
@@ -46,44 +50,54 @@ describe('RoleContextStager', () => {
       await Bun.file(join(bundle.proposalRoot, '.hopi/docs/goals/goal-1/goal.md')).exists(),
     ).toBe(false)
     const prompt = await Bun.file(bundle.promptFile).text()
-    expect(prompt).toContain('create')
-    expect(prompt).toContain('AGENTS.md')
-    expect(prompt).toContain('Never edit it or change contractRevision')
-    expect(prompt).toContain('exactly the current Goal contractRevision')
-    expect(prompt).toContain('kind engineering and stage generate')
+    expect(prompt).toContain('## Primary Task')
+    expect(prompt).toContain('### Goal Contract: Test Goal')
+    expect(prompt).toContain('<planning-work>')
+    expect(prompt).toContain('## Execution Boundary')
+    expect(prompt).not.toContain(bundle.goalHash)
+    expect(prompt).not.toContain(bundle.workHash)
+    expect(occurrences(prompt, fixture.store.paths.goalDocument('goal-1'))).toBe(1)
+    expect(occurrences(prompt, fixture.store.paths.workDocument('goal-1', 'plan-initial'))).toBe(1)
+    expect(prompt).toContain('Never propose goal.md or change its contractRevision')
+    expect(prompt).toContain('kind engineering, stage generate')
     expect(prompt).toContain('Never create or edit evidence/** or append evidenceRefs')
-    expect(prompt).toContain('proposal starts empty and is a sparse overlay')
+    expect(prompt).toContain('Proposal is an initially empty sparse overlay')
     expect(prompt).toContain('Absence means unchanged')
-    expect(prompt).toContain('Terminal Engineering Work is immutable')
-    expect(prompt).toContain('an Evidence document omitted from staging is historical')
-    expect(prompt).toContain('Never create Planner Evidence or add its ID to the Planning Work')
-    expect(prompt).toContain('Coordinator preserves the current Planning Work')
-    expect(prompt).toContain('derives its Evidence reference from result.json during publication')
-    expect(prompt).toContain('Never copy, create, or edit Planning Work in the proposal')
-    expect(prompt).toContain('The staged owning Planning Work is read-only context')
-    expect(prompt).toContain('Coordinator will advance the owning Planning Work after validation')
-    expect(prompt).toContain('do not create completion Attention')
-    expect(prompt).toContain('Never reconstruct or consume stale Run output')
-    expect(prompt).toContain('never inspect another Goal or historical Run')
-    expect(prompt).toContain('New Engineering Work frontmatter')
+    expect(prompt).toContain('Terminal Work is immutable')
+    expect(prompt).toContain('Omitted Evidence is historical')
+    expect(prompt).toContain('Planning Work is read-only and must not be copied')
+    expect(prompt).toContain('derives Planner Evidence from result.json')
+    expect(prompt).toContain('never combine it with nonterminal Engineering Work')
+    expect(prompt).toContain('reconstruct stale Run output')
+    expect(prompt).toContain('inspect another Goal/Run')
+    expect(prompt).toContain('New Engineering Work frontmatter (Markdown bodies remain free-form)')
     expect(prompt).toContain('kind: engineering')
     expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(prompt).toContain('.hopi/docs/repos.md')
-    expect(prompt).toContain(`The Planner cwd is ${bundle.runRoot}`)
-    expect(prompt).toContain('proposal/.hopi/docs/...')
+    expect(prompt).toContain(`Working directory: ${bundle.runRoot}`)
+    expect(prompt).toContain('for example `.hopi/docs/...`')
     expect(prompt).toContain('Use this exact frontmatter')
     expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
-    expect(prompt).toContain('Completion Attention frontmatter (Planner final success only)')
+    expect(prompt).toContain('Completion Attention frontmatter (final Planner success only)')
     expect(prompt).toContain('notifiedAt: null')
-    expect(prompt).toContain('scripts/hopi/prepare is absent')
-    expect(prompt).toContain('do not create a separate Init Work')
-    expect(prompt).toContain('Independent testability alone does not justify a separate Work')
-    expect(prompt).toContain('inspect, execute, or modify to prove the Work')
-    expect(prompt).toContain('Planner Run root is not a Git checkout')
-    expect(prompt).toContain('Every Engineering Work acceptance criterion must be provable')
+    expect(prompt).toContain('Preparation entrypoint is absent')
+    expect(prompt).toContain('do not create separate Init Work')
+    expect(prompt).toContain('no independent operator outcome')
+    expect(prompt).toContain(
+      'broad semantic relation, or expected integration order is not a dependency',
+    )
+    expect(prompt).toContain('never split cohesive Work merely to fill capacity')
+    expect(prompt).toContain('inspect, execute, or modify')
+    expect(prompt).toContain('Planner working directory is not a Git checkout')
+    expect(prompt).toContain('task-worktree-provable acceptance')
+    expect(prompt).toContain('Research source, tools, and external facts as deeply as needed')
+    expect(prompt).toContain('machine-local login')
+    expect(prompt).toContain('Cite exact canonical design paths instead of copying')
+    expect(prompt).toContain('do not build an ad hoc validator that duplicates Coordinator')
     expect(prompt).toContain('/api/projects/<projectId>/preview/start')
-    expect(prompt).toContain('GET http://127.0.0.1:3000/api/projects/<projectId>/preview')
+    expect(prompt).toContain('GET $HOPI_API_ORIGIN/api/projects/<projectId>/preview')
     expect(prompt).toContain('/api/projects/<projectId>/preview/stop')
+    expect(prompt.length).toBeLessThan(10_000)
     expect(bundle.apiOrigin).toBe('http://127.0.0.1:3000')
     expect(bundle.authorityFiles.find((file) => file.path === 'AGENTS.md')?.hash).toBeNull()
   })
@@ -104,9 +118,49 @@ describe('RoleContextStager', () => {
       'Existing',
     )
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
-    expect(await Bun.file(bundle.promptFile).text()).toContain(
-      'scripts/hopi/prepare already exists',
+    expect(await Bun.file(bundle.promptFile).text()).toContain('Preparation entrypoint exists')
+  })
+
+  test('stages Home preferences only for Planner without adding them to semantic guards', async () => {
+    const fixture = await createFixture(true)
+    const preference = '# Preferences\n\n- Prefer the smallest portable design.\n'
+    await Bun.write(join(fixture.homeRoot, '.hopi', 'preference.md'), preference)
+    const stager = createRoleContextStager(fixture.homeRoot, fixture.publisher)
+
+    const planner = await stager.prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-planner-preference',
+      responsibility: 'planner',
+    })
+
+    expect(planner.operatorPreferenceFile).toBeDefined()
+    expect(await Bun.file(planner.operatorPreferenceFile ?? '').text()).toBe(preference)
+    expect(await Bun.file(planner.promptFile).text()).toContain(
+      'Materialize a relevant default into design or Engineering Work',
     )
+    expect(await Bun.file(planner.contextFile).text()).toContain('Operator preference snapshot:')
+    expect(planner.authorityFiles.some((file) => file.path === '.hopi/preference.md')).toBe(false)
+    expect(planner.guardFiles['.hopi/preference.md']).toBeUndefined()
+
+    await publishEngineeringWork(fixture)
+    for (const responsibility of ['generator', 'reviewer'] as const) {
+      const bundle = await stager.prepare({
+        projectRoot: fixture.projectRoot,
+        projectId: 'project-1',
+        goalId: 'goal-1',
+        workId: 'W-1',
+        runId: `run-${responsibility}-preference`,
+        responsibility,
+      })
+      expect(bundle.operatorPreferenceFile).toBeUndefined()
+      expect(await Bun.file(bundle.promptFile).text()).not.toContain(
+        'Prefer the smallest portable design.',
+      )
+      expect(bundle.authorityFiles.some((file) => file.path === '.hopi/preference.md')).toBe(false)
+    }
   })
 
   test('stages current Planner inputs without historical Planning and Input noise', async () => {
@@ -187,9 +241,132 @@ describe('RoleContextStager', () => {
       ).exists(),
     ).toBe(false)
     const prompt = await Bun.file(bundle.promptFile).text()
-    expect(prompt).toContain('## Current Assignment')
+    expect(prompt).toContain('## Primary Task')
+    expect(prompt).toContain('### Accepted Inputs')
+    expect(prompt).toContain('<accepted-input>')
     expect(prompt).toContain('Implement the current accepted requirement.')
     expect(prompt).not.toContain('Superseded historical requirement.')
+    expect(occurrences(prompt, currentInput)).toBe(1)
+  })
+
+  test('does not repeat an accepted Input already represented in the Goal contract', async () => {
+    const fixture = await createFixture(true)
+    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
+    const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
+    const planning = parseWorkDocument(planningSource)
+    const inputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-current')
+    planning.attributes.contractRevision = 2
+    planning.body = `${planning.body.trimEnd()}\n\n## Accepted Inputs\n\n- ${inputPath}\n`
+
+    const goalPath = fixture.store.paths.goalDocument('goal-1')
+    const goalSource = await Bun.file(fixture.store.paths.absolute(goalPath)).text()
+    const goal = parseGoalDocument(goalSource)
+    goal.attributes.contractRevision = 2
+    goal.body = `${goal.body.trimEnd()}\n\n## Accepted Inbox Instruction EV-current\n\nUse the local Codex CLI.\n`
+
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: inputPath,
+          expectedHash: null,
+          content: renderInputDocument({
+            attributes: {
+              sourceHomeId: 'H-1',
+              sourceEventId: 'EV-current',
+              sourceDigest: 'c'.repeat(64),
+              attachments: [],
+            },
+            body: 'Use the local Codex CLI.\n',
+          }),
+        },
+        {
+          path: planningPath,
+          expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
+          content: renderWorkDocument(planning),
+        },
+      ],
+      gateWrite: {
+        path: goalPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
+        content: renderGoalDocument(goal),
+      },
+    })
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-deduplicated-input',
+      responsibility: 'planner',
+    })
+    const prompt = await Bun.file(bundle.promptFile).text()
+
+    expect(occurrences(prompt, 'Use the local Codex CLI.')).toBe(1)
+    expect(prompt).not.toContain('<accepted-input>')
+    expect(
+      await Bun.file(join(bundle.contextRoot, 'authority', ...inputPath.split('/'))).exists(),
+    ).toBe(true)
+  })
+
+  test('stages resolved Attention provenance without expanding it as a Planning Input', async () => {
+    const fixture = await createFixture(true)
+    const resolutionInput = fixture.store.paths.inputDocument(
+      'goal-1',
+      'H-1',
+      'EV-attention-recovery',
+    )
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-resolved')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: resolutionInput,
+          expectedHash: null,
+          content: renderInputDocument({
+            attributes: {
+              sourceHomeId: 'H-1',
+              sourceEventId: 'EV-attention-recovery',
+              sourceDigest: 'd'.repeat(64),
+              attachments: [],
+            },
+            body: 'Close the old Attention and continue.\n',
+          }),
+        },
+        {
+          path: attentionPath,
+          expectedHash: null,
+          content: renderAttentionDocument({
+            attributes: {
+              id: 'A-resolved',
+              target: 'project:project-1/goal:goal-1/work:plan-initial',
+              createdAt: '2026-07-17T00:00:00.000Z',
+              resolvedAt: '2026-07-17T00:01:00.000Z',
+              notifiedAt: '2026-07-17T00:00:30.000Z',
+              resolutionInput,
+            },
+            body: 'The old route was superseded.\n',
+          }),
+        },
+      ],
+    })
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-resolution-provenance',
+      responsibility: 'planner',
+    })
+    const prompt = await Bun.file(bundle.promptFile).text()
+
+    expect(prompt).not.toContain('Close the old Attention and continue.')
+    expect(
+      await Bun.file(join(bundle.contextRoot, 'authority', ...resolutionInput.split('/'))).exists(),
+    ).toBe(true)
+    expect(
+      await Bun.file(join(bundle.contextRoot, 'authority', ...attentionPath.split('/'))).exists(),
+    ).toBe(true)
   })
 
   test('states the Git, Attention, and Run-scoped runtime boundaries for Engineering passes', async () => {
@@ -233,16 +410,20 @@ describe('RoleContextStager', () => {
 
     const generatorPrompt = await Bun.file(generator.promptFile).text()
     const reviewerPrompt = await Bun.file(reviewer.promptFile).text()
-    expect(generatorPrompt).toContain('never run Git write operations')
-    expect(generatorPrompt).toContain('Coordinator alone owns the Git index')
-    expect(generatorPrompt).toContain('## Current Assignment')
+    expect(generatorPrompt).toContain('Git writes such as add, commit')
+    expect(generatorPrompt).toContain('Coordinator alone validates proposals')
+    expect(generatorPrompt).toContain('### Engineering Work: Engineering Work')
+    expect(generatorPrompt).not.toContain('### Goal Contract')
+    expect(generatorPrompt).not.toContain('Exercise role context staging.')
+    expect(generatorPrompt).not.toContain(generator.goalHash)
+    expect(generatorPrompt).not.toContain(generator.workHash)
     expect(generatorPrompt).toContain('### Latest Owning Work Evidence')
     expect(generatorPrompt).toContain('Repair this first.')
     expect(generatorPrompt).toContain(
       'Allowed result for this generator Run: success, attention, or fail',
     )
     expect(await Bun.file(generator.contextFile).text()).toContain(
-      `${fixture.store.paths.evidenceDocument('goal-1', 'E-latest')} (latest)`,
+      fixture.store.paths.evidenceDocument('goal-1', 'E-latest'),
     )
     expect(generatorPrompt).toContain('If you stage targeted Attention, result must be attention')
     for (const prompt of [generatorPrompt, reviewerPrompt]) {
@@ -254,30 +435,27 @@ describe('RoleContextStager', () => {
       expect(prompt).toContain('resolvedAt: null')
       expect(prompt).toContain('notifiedAt: null')
       expect(prompt).toContain('evidence that retry cannot help')
-      expect(prompt).toContain('No descendant file exists in proposal initially')
-      expect(prompt).toContain('This file starts at zero bytes as a missing-result marker')
+      expect(prompt).toContain('create only added or replaced control documents')
+      expect(prompt).toContain('Replace the zero-byte Result file')
+      expect(prompt.length).toBeLessThan(7_500)
     }
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
-    expect(generatorPrompt).toContain('Use only Repo roots listed in $HOPI_REPOS_FILE')
-    expect(generatorPrompt).toContain("never discover or use another Work's checkout")
+    expect(generatorPrompt).toContain('required Repo is absent from the Repo manifest')
+    expect(generatorPrompt).toContain('instead of discovering another Work checkout')
     expect(generatorPrompt).toContain('Batch independent file reads and checks')
     expect(generatorPrompt).toContain('exactly one HOPI_PREVIEW_URL=<reachable-url> line')
     expect(generatorPrompt).toContain('is not candidate evidence')
     expect(reviewerPrompt).toContain('short-lived local services for this Run')
     expect(reviewerPrompt).toContain('Decide the proof plan before installing optional tools')
-    expect(reviewerPrompt).toContain(
-      'If direct proof requires a missing Repo, request Assistant management through attention',
-    )
+    expect(reviewerPrompt).toContain('direct proof requires a Repo absent from the Repo manifest')
     expect(reviewerPrompt).toContain('Batch independent inspection and checks')
     expect(reviewerPrompt).toContain('accepting a bare URL would leave Project Preview stuck')
     expect(reviewerPrompt).toContain('final post-C1 Preview proof belongs to Planner')
     expect(reviewerPrompt).toContain('A helper-only change normally needs focused tests')
-    expect(reviewerPrompt).toContain(
-      'exercise that exact path through the point after the reported failure',
-    )
+    expect(reviewerPrompt).toContain('exercise that exact path through the point after the failure')
     expect(reviewerPrompt).toContain(`git merge-base ${HOPI_RELEASE_REF} HEAD`)
     expect(reviewerPrompt).toContain('C1 owns integration')
-    expect(reviewerPrompt).toContain('local port')
+    expect(reviewerPrompt).toContain('local ports')
     expect(reviewerPrompt).toContain('$HOPI_RUN_SCRATCH')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
     expect(
@@ -303,6 +481,151 @@ describe('RoleContextStager', () => {
         ),
       ).exists(),
     ).toBe(true)
+  })
+
+  test('stages transitive dependency Evidence and resolves its Run artifacts', async () => {
+    const fixture = await createFixture(true)
+    const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
+    const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
+    const planning = parseWorkDocument(planningSource)
+    planning.attributes.stage = 'done'
+    const artifactReference = 'artifact:R-base/001-proof.txt'
+    const artifactPath = join(
+      runStoragePath(fixture.homeRoot, 'R-base'),
+      'artifacts',
+      '001-proof.txt',
+    )
+    await mkdir(join(runStoragePath(fixture.homeRoot, 'R-base'), 'artifacts'), {
+      recursive: true,
+    })
+    await Bun.write(artifactPath, 'accepted predecessor proof\n')
+
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: fixture.store.paths.evidenceDocument('goal-1', 'E-base'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-base',
+              createdAt: '2026-07-17T00:00:00Z',
+              producerRun: 'project:project-1/goal:goal-1/work:W-base/run:R-base',
+              coordinatorCheck: null,
+              owner: 'project:project-1/goal:goal-1/work:W-base',
+              artifacts: [artifactReference],
+            },
+            body: 'The base behavior is accepted.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.evidenceDocument('goal-1', 'E-middle'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-middle',
+              createdAt: '2026-07-17T00:01:00Z',
+              producerRun: 'project:project-1/goal:goal-1/work:W-middle/run:R-middle',
+              coordinatorCheck: null,
+              owner: 'project:project-1/goal:goal-1/work:W-middle',
+              artifacts: [],
+            },
+            body: 'The middle behavior is accepted.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.workDocument('goal-1', 'W-base'),
+          expectedHash: null,
+          content: renderWorkDocument({
+            attributes: {
+              id: 'W-base',
+              title: 'Base Work',
+              kind: 'engineering',
+              stage: 'done',
+              notBefore: null,
+              dependsOn: [],
+              contractRevision: 1,
+              evidenceRefs: ['E-base'],
+              attempts: 0,
+            },
+            body: 'Provide the base behavior.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.workDocument('goal-1', 'W-middle'),
+          expectedHash: null,
+          content: renderWorkDocument({
+            attributes: {
+              id: 'W-middle',
+              title: 'Middle Work',
+              kind: 'engineering',
+              stage: 'done',
+              notBefore: null,
+              dependsOn: ['W-base'],
+              contractRevision: 1,
+              evidenceRefs: ['E-middle'],
+              attempts: 0,
+            },
+            body: 'Build on the base behavior.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.workDocument('goal-1', 'W-current'),
+          expectedHash: null,
+          content: renderWorkDocument({
+            attributes: {
+              id: 'W-current',
+              title: 'Current Work',
+              kind: 'engineering',
+              stage: 'generate',
+              notBefore: null,
+              dependsOn: ['W-middle'],
+              contractRevision: 1,
+              evidenceRefs: [],
+              attempts: 0,
+            },
+            body: 'Use the accepted predecessor result.\n',
+          }),
+        },
+      ],
+      gateWrite: {
+        path: planningPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
+        content: renderWorkDocument(planning),
+      },
+    })
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-current',
+      runId: 'run-dependency-context',
+      responsibility: 'generator',
+    })
+    const authorityRoot = join(bundle.contextRoot, 'authority')
+    for (const path of [
+      fixture.store.paths.workDocument('goal-1', 'W-base'),
+      fixture.store.paths.workDocument('goal-1', 'W-middle'),
+      fixture.store.paths.evidenceDocument('goal-1', 'E-base'),
+      fixture.store.paths.evidenceDocument('goal-1', 'E-middle'),
+    ]) {
+      expect(await Bun.file(join(authorityRoot, ...path.split('/'))).exists()).toBe(true)
+      expect(bundle.guardFiles[path]).toBeTruthy()
+    }
+    expect(bundle.artifactManifestFile).toBeDefined()
+    expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
+      version: 1,
+      artifacts: [
+        {
+          reference: artifactReference,
+          path: artifactPath,
+          evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-base')],
+        },
+      ],
+    })
+    expect((await stat(bundle.artifactManifestFile ?? '')).mode & 0o222).toBe(0)
+    expect(await Bun.file(bundle.contextFile).text()).toContain('Evidence artifact manifest:')
+    expect(await Bun.file(bundle.promptFile).text()).toContain('$HOPI_EVIDENCE_ARTIFACTS_FILE')
   })
 
   test('attaches only images explicitly cited by the owning Work to every responsibility pass', async () => {
@@ -379,8 +702,12 @@ describe('RoleContextStager', () => {
     expect(reviewer.imageFiles).toHaveLength(1)
     expect(generator.guardFiles[selectedPath]).toBeTruthy()
     expect(generator.guardFiles[unrelatedPath]).toBeUndefined()
-    expect(await Bun.file(generator.promptFile).text()).toContain('follow the documented purpose')
-    expect(await Bun.file(reviewer.promptFile).text()).toContain('attached original image')
+    expect(await Bun.file(generator.promptFile).text()).toContain(
+      'Apply their documented purpose and limits',
+    )
+    expect(await Bun.file(reviewer.promptFile).text()).toContain(
+      'Apply their documented purpose and limits',
+    )
   })
 })
 
@@ -489,4 +816,8 @@ async function git(cwd: string, args: string[]) {
 
 function pngBytes(marker: number) {
   return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker])
+}
+
+function occurrences(value: string, fragment: string) {
+  return value.split(fragment).length - 1
 }

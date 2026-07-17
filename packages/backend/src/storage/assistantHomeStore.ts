@@ -3,6 +3,10 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import {
+  DEFAULT_ASSISTANT_PREFERENCE,
+  normalizeAssistantPreference,
+} from '../domain/assistantPreference'
+import {
   type AssistantHomeDocument,
   DEFAULT_PRIMARY_REPO_ID,
   HOPI_RELEASE_BRANCH,
@@ -116,6 +120,7 @@ export interface AssistantHomePaths {
   hopiDir: string
   homeDocumentPath: string
   projectLinksPath: string
+  preferenceDocumentPath: string
   mutationLockPath: string
   projectDir(projectId: string): string
   integrationRoot(projectId: string): string
@@ -208,6 +213,7 @@ export function createAssistantHomePaths(rootDir = process.cwd()): AssistantHome
     hopiDir,
     homeDocumentPath: join(hopiDir, 'home.yml'),
     projectLinksPath: join(hopiDir, 'projects.yml'),
+    preferenceDocumentPath: join(hopiDir, 'preference.md'),
     mutationLockPath: join(hopiDir, 'home.lock'),
     projectDir(projectId) {
       assertStableId(projectId, 'projectId')
@@ -255,6 +261,7 @@ export function createAssistantHomeStore(
         )
         if (existing) {
           const links = await ensureProjectLinksDocument(paths.projectLinksPath)
+          await ensureAssistantPreferenceDocument(paths.preferenceDocumentPath)
           await migrateManagedWorktrees(paths, links.projects)
           return existing
         }
@@ -265,6 +272,7 @@ export function createAssistantHomeStore(
         }
         await writeYamlAtomically(paths.homeDocumentPath, home)
         const links = await ensureProjectLinksDocument(paths.projectLinksPath)
+        await ensureAssistantPreferenceDocument(paths.preferenceDocumentPath)
         await migrateManagedWorktrees(paths, links.projects)
         return home
       })
@@ -1052,6 +1060,24 @@ async function ensureProjectLinksDocument(path: string) {
   return links
 }
 
+async function ensureAssistantPreferenceDocument(path: string) {
+  const file = Bun.file(path)
+  if (!(await file.exists())) {
+    await writeTextAtomically(path, DEFAULT_ASSISTANT_PREFERENCE)
+    return
+  }
+  try {
+    const source = await file.text()
+    const normalized = normalizeAssistantPreference(source)
+    if (normalized !== source) await writeTextAtomically(path, normalized)
+  } catch (error) {
+    throw new AssistantHomeStoreError(
+      'invalid_home',
+      `Preference document is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
 async function readProjectLinks(path: string) {
   const raw = await readRawProjectLinks(path)
   if (!raw) {
@@ -1397,10 +1423,14 @@ async function readOptionalYaml<T>(
 }
 
 async function writeYamlAtomically(path: string, value: unknown) {
+  await writeTextAtomically(path, stringify(value, { indent: 2 }))
+}
+
+async function writeTextAtomically(path: string, content: string) {
   await mkdir(dirname(path), { recursive: true })
   const temporaryPath = `${path}.tmp.${crypto.randomUUID()}`
   try {
-    await Bun.write(temporaryPath, stringify(value, { indent: 2 }))
+    await Bun.write(temporaryPath, content)
     await rename(temporaryPath, path)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined)

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   type LiveHarness,
   type LiveState,
+  checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
   finishLiveHarness,
@@ -24,6 +25,7 @@ const PROJECT_ID = 'P-live-choice'
 interface FeedView {
   items: Array<{
     event?: {
+      body: string
       source: string
       status: string
       reply: string | null
@@ -47,6 +49,7 @@ try {
   harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'fixture_setup')
   await initializeChoiceProject(harness.repoRoot)
+  const checkoutBefore = await checkoutSnapshot(harness.repoRoot)
   await requestJson<LiveState>(harness.baseUrl, '/api/projects', {
     method: 'POST',
     body: {
@@ -151,6 +154,28 @@ try {
   })
   await markHarnessCheckpoint(harness, 'attention_notified')
 
+  await enterHarnessPhase(harness, 'informational_follow_up')
+  const followUp = '我只是想知道当前产物在哪里可以查看，暂时还没有做选择。'
+  await sendAssistantMessage(harness, followUp, {
+    evidencePrefix: 'follow-up',
+    pagePath: `/projects/${PROJECT_ID}/board/${goalId}`,
+  })
+  await waitForValue(
+    async () => {
+      const [feed, state] = await Promise.all([
+        requestJson<FeedView>(harness?.baseUrl ?? '', '/api/assistant/feed?limit=100'),
+        requestJson<LiveState>(harness?.baseUrl ?? '', '/api/state'),
+      ])
+      return {
+        event: feed.items.find((item) => item.event?.body.trim() === followUp)?.event,
+        attention: state.attentions.find((item) => item.id === attention.id),
+      }
+    },
+    (value) => value.event?.status === 'handled',
+    { timeoutMs: 3 * 60_000, description: 'informational follow-up to be answered' },
+  ).then((value) => assert.equal(value.attention?.resolvedAt, null))
+  await markHarnessCheckpoint(harness, 'informational_follow_up_preserved_attention')
+
   await enterHarnessPhase(harness, 'answer_and_continuation')
   await sendAssistantMessage(harness, '选择 compact。请完成测试和安全交付。', {
     evidencePrefix: 'answer',
@@ -171,9 +196,17 @@ try {
       value.activeRuns.length === 0,
     { timeoutMs: 15 * 60_000, description: 'selected delivery to complete' },
   )
+  const checkoutAfter = await checkoutSnapshot(harness.repoRoot)
+  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
+  assert.equal(checkoutAfter.status, '')
+  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
   assert.equal(
-    await Bun.file(join(harness.repoRoot, 'src', 'release.ts')).text(),
-    "export const releaseLabel = 'unset'\n",
+    checkoutAfter.head,
+    await gitOutput(harness.repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
+  )
+  assert.equal(
+    (await Bun.file(join(harness.repoRoot, 'src', 'release.ts')).text()).replaceAll('\r\n', '\n'),
+    "export const releaseLabel = 'compact'\n",
   )
   assert.deepEqual(recorder.violations, [])
   await recorder.stop()

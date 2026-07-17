@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  Check,
   CirclePause,
   CirclePlay,
   ExternalLink,
@@ -13,7 +14,7 @@ import {
 import { useMemo, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useShell } from '../components/Layout'
-import { UnifiedMessageFeed } from '../components/UnifiedMessageFeed'
+import { MessageFeedSkeleton, UnifiedMessageFeed } from '../components/UnifiedMessageFeed'
 import {
   AppAlert,
   AppButton,
@@ -32,6 +33,7 @@ import {
   WorkingIndicator,
 } from '../components/ui'
 import {
+  type AgentPlanSnapshot,
   type GoalControl,
   type KanbanColumn,
   type RunAttemptDetail,
@@ -48,9 +50,10 @@ import {
   startPreview,
   stopPreview,
 } from '../lib/api'
+import { latestAgentPlan } from '../lib/agentPlan'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
-import { cn, excerpt, formatTime } from '../lib/utils'
+import { cn, excerpt, formatTime, projectDisplayName } from '../lib/utils'
 
 const COLUMNS: Array<{
   id: KanbanColumn
@@ -202,7 +205,7 @@ export function BoardView() {
         <div className="goal-title-block">
           <div>
             <span className="eyebrow">
-              {projectId} / {goalId}
+              <span title={projectId}>{projectDisplayName(project)}</span> / {goalId}
             </span>
             <h1>{goal.goal.title}</h1>
           </div>
@@ -327,22 +330,6 @@ export function BoardView() {
         </div>
       </section>
 
-      {assistantAttention && (
-        <div className="attention-status-banner needs-you-banner" role="status">
-          <span>
-            <AlertCircle />
-          </span>
-          <span>
-            <strong>{assistantAttentionLabel}</strong>
-            <small>
-              {assistantAttention.notifiedAt
-                ? 'Reply in Assistant so work can continue.'
-                : 'Assistant is reviewing the issue before deciding whether you need to act.'}
-            </small>
-          </span>
-        </div>
-      )}
-
       <AppScrollShadow className="kanban-scroll" orientation="horizontal">
         <div className="kanban-board">
           {COLUMNS.map((column) => {
@@ -443,34 +430,75 @@ function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
         onOpen()
       }}
     >
-      <div className="work-card-top">
-        <span>{work.id}</span>
-        {badge && (
-          <StatusChip
-            className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`}
-            size="sm"
-          >
-            {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
-          </StatusChip>
-        )}
-      </div>
       <h2>{work.title}</h2>
-      <p>{excerpt(work.body)}</p>
-      {work.repos && work.repos.length > 0 && (
-        <div className="work-repos" aria-label="Repositories">
-          {work.repos.map((repoId) => (
-            <span key={repoId}>{repoId}</span>
-          ))}
+      {work.agentPlan && <AgentPlanChecklist plan={work.agentPlan} compact />}
+      {(badge || (work.repos && work.repos.length > 0)) && (
+        <div className="work-card-meta">
+          {badge && (
+            <StatusChip
+              className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`}
+              size="sm"
+            >
+              {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
+            </StatusChip>
+          )}
+          {work.repos && work.repos.length > 0 && (
+            <div className="work-repos" aria-label="Repositories">
+              {work.repos.map((repoId) => (
+                <span key={repoId}>{repoId}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
-      <div className="work-card-foot">
-        <span>{work.projection.responsibility ?? work.stage}</span>
-        <span>{work.attempts}/3 recovery</span>
-      </div>
-      {work.dependsOn.length > 0 && (
-        <small className="depends-line">after {work.dependsOn.join(', ')}</small>
-      )}
     </AppButton>
+  )
+}
+
+function AgentPlanChecklist({
+  plan,
+  compact = false,
+}: {
+  plan: AgentPlanSnapshot
+  compact?: boolean
+}) {
+  const completed = plan.items.filter((item) => item.completed).length
+  const visibleItems = compact ? plan.items.slice(0, 3) : plan.items
+  const remaining = plan.items.length - visibleItems.length
+
+  return (
+    <div
+      className={cn('agent-plan', compact ? 'agent-plan--card' : 'agent-plan--detail')}
+      aria-label={`Agent plan, ${completed} of ${plan.items.length} steps complete`}
+    >
+      <div className="agent-plan__summary">
+        {!compact && <span className="agent-plan__heading">Agent plan</span>}
+        <progress
+          className="agent-plan__progress"
+          max={Math.max(plan.items.length, 1)}
+          value={completed}
+          aria-hidden="true"
+        />
+        <strong className="agent-plan__count">
+          {completed}/{plan.items.length}
+        </strong>
+      </div>
+      <div className="agent-plan__items" role="list">
+        {visibleItems.map((item, index) => (
+          <div
+            className={cn('agent-plan__item', item.completed && 'is-complete')}
+            key={`${plan.planId}:${index}:${item.text}`}
+            role="listitem"
+          >
+            <span className="agent-plan__marker" aria-hidden="true">
+              {item.completed && <Check />}
+            </span>
+            <span>{item.text}</span>
+          </div>
+        ))}
+      </div>
+      {remaining > 0 && <span className="agent-plan__more">+{remaining} more</span>}
+    </div>
   )
 }
 
@@ -583,6 +611,7 @@ function WorkDetail({
                       selectedAttempt={selectedAttempt}
                       loading={attemptsQuery.isLoading}
                       error={attemptsQuery.error as Error | null}
+                      activePlan={work.agentPlan}
                       onSelect={setSelectedAttemptId}
                     />
                   ) : null}
@@ -765,6 +794,7 @@ function AttemptHistory({
   selectedAttempt,
   loading,
   error,
+  activePlan,
   onSelect,
 }: {
   projectId: string
@@ -774,6 +804,7 @@ function AttemptHistory({
   selectedAttempt: RunAttemptSummary | null
   loading: boolean
   error: Error | null
+  activePlan: WorkView['agentPlan']
   onSelect: (runId: string) => void
 }) {
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
@@ -796,6 +827,12 @@ function AttemptHistory({
       active: selectedAttempt.status === 'running',
     })
   }, [eventStream.items, selectedAttempt])
+  const plan = useMemo(
+    () =>
+      latestAgentPlan(eventStream.items) ??
+      (selectedAttempt?.runId === activePlan?.runId ? activePlan : null),
+    [activePlan, eventStream.items, selectedAttempt?.runId],
+  )
   const streamError = error ?? eventStream.error
   const streamLoading = loading || eventStream.isLoading
 
@@ -846,9 +883,7 @@ function AttemptHistory({
         {streamError ? (
           <AppAlert className="attempt-feed-empty error">{streamError.message}</AppAlert>
         ) : streamLoading && eventStream.items.length === 0 ? (
-          <div className="attempt-feed-empty">
-            <AppSpinner size="sm" /> Loading Attempt
-          </div>
+          <MessageFeedSkeleton density="compact" />
         ) : !selectedAttempt ? (
           <div className="attempt-feed-empty">No Attempt has been recorded for this Work.</div>
         ) : (
@@ -870,6 +905,7 @@ function AttemptHistory({
             {selectedAttempt.summary && (
               <p className="attempt-summary">{selectedAttempt.summary}</p>
             )}
+            {plan && <AgentPlanChecklist plan={plan} />}
             <UnifiedMessageFeed
               feedKey={`attempt:${selectedAttempt.runId}`}
               items={messages}

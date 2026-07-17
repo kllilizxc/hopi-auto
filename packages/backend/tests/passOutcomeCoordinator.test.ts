@@ -226,9 +226,14 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary:
+        'Invalid staged proposal: Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
+    })
     expect(goalPackage.attentions.has('A-choice')).toBe(false)
-    expect(goalPackage.works.get('plan-initial')?.attributes.attempts).toBe(1)
+    expect(goalPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
     expect(goalPackage.evidence.get('E-run-planner-path-target')?.body).toContain(
       'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
     )
@@ -259,11 +264,15 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary: 'Invalid staged proposal: Targeted Attention requires attention, received success',
+    })
     expect(goalPackage.attentions.has('A-invalid-success')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 1,
+      attempts: 0,
     })
   })
 
@@ -296,14 +305,14 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.has('A-wrong-target')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 1,
+      attempts: 0,
     })
     expect(goalPackage.evidence.get('E-run-wrong-attention-target')?.body).toContain(
       'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:W-1',
     )
   })
 
-  test('normalizes malformed Generator Attention to a failed attempt', async () => {
+  test('normalizes malformed Generator Attention to semantic failure', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-malformed-attention', 'generator')
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-malformed')
@@ -316,18 +325,22 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary: 'Invalid staged proposal: Attention document is missing YAML front matter',
+    })
     expect(goalPackage.attentions.has('A-malformed')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 1,
+      attempts: 0,
     })
     expect(goalPackage.evidence.get('E-run-malformed-attention')?.body).toContain(
       'Invalid staged proposal: Attention document is missing YAML front matter',
     )
   })
 
-  test('normalizes malformed Planner Work to a failed attempt', async () => {
+  test('normalizes malformed Planner Work to semantic failure', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-malformed-work', 'planner')
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
@@ -340,10 +353,14 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary: 'Invalid staged proposal: Work document is missing YAML front matter',
+    })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
-      attempts: 1,
+      attempts: 0,
     })
   })
 
@@ -439,7 +456,7 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(result).toMatchObject({ kind: 'published', result: 'fail' })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
-      attempts: 1,
+      attempts: 0,
       stage: 'plan',
     })
     expect(goalPackage.evidence.get('E-run-empty-incomplete')?.body).toContain(
@@ -469,7 +486,7 @@ describe('PassOutcomeCoordinator', () => {
     const failedPlanning = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
 
     expect(invalidResult).toMatchObject({ kind: 'published', result: 'fail' })
-    expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan', attempts: 1 })
+    expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan', attempts: 0 })
     expect(failedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work'])
 
     const retryContext = await fixture.stage('plan-initial', 'run-retry', 'planner')
@@ -487,7 +504,7 @@ describe('PassOutcomeCoordinator', () => {
     const completedPlanning = goalPackage.works.get('plan-initial')
 
     expect(retryResult).toMatchObject({ kind: 'published', result: 'success' })
-    expect(completedPlanning?.attributes).toMatchObject({ stage: 'done', attempts: 1 })
+    expect(completedPlanning?.attributes).toMatchObject({ stage: 'done', attempts: 0 })
     expect(completedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work', 'E-run-retry'])
     expect(completedPlanning?.body).toBe(planningBody)
     expect(goalPackage.works.get('W-retry')?.attributes.stage).toBe('generate')
@@ -532,7 +549,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.has('A-premature')).toBe(false)
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
-      attempts: 1,
+      attempts: 0,
     })
     expect(goalPackage.evidence.get('E-run-premature-completion')?.body).toContain(
       'Completion proposal requires no nonterminal Engineering Work',
@@ -559,6 +576,28 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(result).toMatchObject({ kind: 'published', result: 'fail' })
     expect((await fixture.store.readPackage('goal-1')).works.has('W-image')).toBe(false)
+  })
+
+  test('rejects Planner output that leaks a machine-local image path into Work', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-local-image', 'planner')
+    const proposedWork = engineeringWork('W-local-image', 'generate')
+    proposedWork.body =
+      'Use `/Users/operator/.codex/generated_images/reference.webp` as the visual source.\n'
+    await Bun.write(
+      join(
+        context.proposalRoot,
+        ...fixture.store.paths.workDocument('goal-1', 'W-local-image').split('/'),
+      ),
+      renderWorkDocument(proposedWork),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-local-image', 'planner', context, 'success'),
+    )
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect((await fixture.store.readPackage('goal-1')).works.has('W-local-image')).toBe(false)
   })
 })
 

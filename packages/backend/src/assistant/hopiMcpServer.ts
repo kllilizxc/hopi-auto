@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current HOPI state, including active Runs, Work control facts, open Attention, latest Attempt diagnostics, and exact canonical document/log paths. Omit projectId and goalId to use the current page scope. Explicit IDs must be copied exactly, including P- and G- prefixes. Read a local path only when its exact body is needed.',
+      'Read compact current state: active Runs, Work control facts, open Attention, latest diagnostics, and exact document/log paths. Omit IDs for current page scope; otherwise copy complete canonical IDs. Read a returned path only when its body is needed.',
     inputSchema: assistantToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
@@ -24,11 +24,23 @@ server.registerTool(
 )
 
 if (mode !== 'reflection') {
+  if (mode === 'main') {
+    server.registerTool(
+      'hopi_write_preferences',
+      {
+        description:
+          'Replace the complete cross-Project preference Markdown using the exact current expectedDigest. Preserve valid entries; store only reusable defaults, not one-off, current-task, or Project-specific rules. This remembers a default but does not change delivery.',
+        inputSchema: assistantToolSchemas.hopi_write_preferences,
+      },
+      (args) => callTool('hopi_write_preferences', args),
+    )
+  }
+
   server.registerTool(
     'hopi_create_goal',
     {
       description:
-        'Create a new HOPI Goal, record the current user turn, and start its initial Planning when the user actually requests a new autonomous outcome. When a durable public Inbox image is relevant, include its exact attachmentRef and a free-form purpose in references so it is atomically adopted before Planning. A same-turn hopi_request_planning call is unnecessary. After success, reply immediately without sleeping or polling for workflow progress, and include the exact returned goalId so the operator can find the new Goal. Do not call this tool for questions or casual conversation.',
+        'Create a Goal, record the current turn, and start initial Planning for a requested autonomous outcome. Adopt relevant Inbox images with exact attachmentRef and purpose. Do not also request Planning in the same turn; do not create Goals for questions or casual conversation. Include the returned goalId in the reply.',
       inputSchema: assistantToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
@@ -38,7 +50,7 @@ if (mode !== 'reflection') {
     'hopi_write_design',
     {
       description:
-        'Create or update Goal-local design Markdown with writes: [{ path, content }] (plus projectId, goalId, and optional references). Paths are relative to the selected Goal design root, for example index.md or architecture/api.md. Relevant durable public Inbox images may be adopted with references; HOPI records their Goal-local path and purpose in design/references.md. This is documentation-only; call hopi_request_planning separately when implementation should follow.',
+        'Create or update Goal-local design Markdown. Write paths are relative to the Goal design root. Relevant Inbox images may be adopted by reference and purpose. This changes documentation only; request Planning separately when delivery should change.',
       inputSchema: assistantToolSchemas.hopi_write_design,
     },
     (args) => callTool('hopi_write_design', args),
@@ -48,7 +60,7 @@ if (mode !== 'reflection') {
     'hopi_request_planning',
     {
       description:
-        'Adopt the current durable Inbox turn as Goal Input for an existing Goal and ensure Planning. This may invalidate an active Planner, so do not call it for an optional suggestion, future idea, or reference-only comment that should not change current delivery; those turns are already retained in conversation. When durable public Inbox images matter to the requested work, select them by exact attachmentRef and state their purpose in references; unrelated images must be omitted. A same-instruction call after hopi_create_goal is unnecessary and idempotent. After success, reply immediately without sleeping or polling for workflow progress. Set materialContractChange only when objective, scope, constraints, non-goals, success criteria, or expected behavior changes.',
+        'Adopt the current turn as Goal Input and ensure Planning. This may invalidate an active Planner, so use it only when current delivery should change, not for optional notes or future ideas. Adopt relevant Inbox images by exact attachmentRef and purpose. Do not call after same-turn Goal creation. Set materialContractChange only for an objective, scope, constraint, non-goal, success criterion, or expected-behavior change.',
       inputSchema: assistantToolSchemas.hopi_request_planning,
     },
     (args) => callTool('hopi_request_planning', args),
@@ -78,7 +90,7 @@ if (mode !== 'reflection') {
     'hopi_resolve_attention',
     {
       description:
-        "Resolve an answered event-, Project-, Goal-, or Work-target Attention after applying the repair or requested effect. Pass every required field in one call. Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...', attentionId: '...', resolution: '...' }. Workspace or Project example: { scope: 'workspace', attentionId: '...', resolution: '...' }. Copy exact IDs from hopi_read_state or current-turn context. For Project Attention, inspect and repair the condition first, then resolve it when your judgment says execution may resume. A successful result makes the Project eligible and wakes Coordinator; if the judgment is wrong, the next execution boundary creates a new Attention. Never claim the Project is unblocked unless this tool call succeeds.",
+        'Resolve an exact answered or repaired Attention. Goal scope requires projectId and goalId; workspace/Project scope does not. Copy canonical IDs from state or turn context. Resolve only after the blocker is false or superseded, and claim it cleared only when this call succeeds.',
       inputSchema: assistantToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),

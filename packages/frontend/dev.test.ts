@@ -33,7 +33,10 @@ describe('frontend dev server', () => {
       const response = await fetch(`${base}${path}`)
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toContain('text/html')
-      expect(await response.text()).toContain('id="root"')
+      const html = await response.text()
+      expect(html).toContain('id="root"')
+      expect(html).toContain('class="app-boot"')
+      expect(html).toContain('Opening workspace')
     }
 
     const response = await fetch(`${base}/api/inbox?source=frontend`, {
@@ -61,5 +64,17 @@ describe('frontend dev server', () => {
 
     expect(response.status).toBe(502)
     expect(body.error).toContain('Frontend dev proxy could not reach')
+  })
+
+  test('serves the remote surface without the HMR client', async () => {
+    const frontend = createFrontendDevServer({ port: 0, hmr: false })
+    servers.add(frontend)
+
+    const response = await fetch(`http://127.0.0.1:${frontend.port}/projects`)
+    const html = await response.text()
+
+    expect(response.status).toBe(200)
+    expect(html).toContain('class="app-boot"')
+    expect(html).not.toContain('data-bun-dev-server-script')
   })
 })

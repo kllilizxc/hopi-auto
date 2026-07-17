@@ -3,6 +3,23 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
+test('uses conversation-shaped skeleton rows for an initially loading feed', () => {
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="loading"
+      items={[]}
+      isLoading
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(markup).toContain('message-feed-skeleton')
+  expect(markup.match(/message-feed-skeleton__row/g)).toHaveLength(3)
+  expect(markup).not.toContain('app-spinner')
+  expect(markup).not.toContain('Loading messages…')
+})
+
 test('renders one conversation activity after the newest historical row', () => {
   const reply: MessageFeedItem = {
     id: 'reply',
@@ -31,6 +48,64 @@ test('renders one conversation activity after the newest historical row', () => 
   expect(markup).not.toContain('app-disclosure')
 })
 
+test('renders hidden model activity as one Thinking breathing status', () => {
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="thinking"
+      items={[]}
+      tailActivity="thinking"
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(markup).toContain('data-phase="thinking"')
+  expect(markup).toContain('app-breathing-indicator')
+  expect(markup).toContain('Thinking')
+  expect(markup.match(/app-breathing-indicator/g)).toHaveLength(1)
+  expect(markup).not.toContain('Working')
+  expect(markup).not.toContain('Empty')
+})
+
+test('decorates the exact unresolved Assistant request and restores it after resolution', () => {
+  const request: MessageFeedItem = {
+    id: 'request',
+    createdAt: '2026-07-12T12:00:00.000Z',
+    kind: 'assistant_message',
+    role: 'assistant',
+    text: 'Which release strategy should I use?',
+    groupId: 'inbox:EV-request',
+  }
+  const marked = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="needs-you"
+      items={[request]}
+      needsYouByGroupId={new Map([['inbox:EV-request', 2]])}
+      onReplyNeedsYou={() => undefined}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+  const resolved = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="resolved"
+      items={[request]}
+      needsYouByGroupId={new Map()}
+      onReplyNeedsYou={() => undefined}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(marked).toContain('unified-feed-message-row assistant needs-you')
+  expect(marked).toContain('Needs you')
+  expect(marked).toContain('· 2')
+  expect(marked).toContain('aria-label="Reply to this request"')
+  expect(marked).toContain('>Reply<')
+  expect(resolved).not.toContain('needs-you')
+  expect(resolved).not.toContain('Reply to this request')
+})
+
 test('lets Virtuoso follow updates while the reader remains near the bottom', async () => {
   const source = await Bun.file(new URL('./UnifiedMessageFeed.tsx', import.meta.url)).text()
 
@@ -39,6 +114,14 @@ test('lets Virtuoso follow updates while the reader remains near the bottom', as
   expect(source).toContain('atBottomThreshold={MESSAGE_FEED_AUTO_FOLLOW_DISTANCE}')
   expect(source).toContain('atBottomStateChange={setIsNearBottom}')
   expect(source).not.toContain("followOutput={isAtBottom ? 'auto' : false}")
+})
+
+test('can focus an exact conversation group on an explicit request', async () => {
+  const source = await Bun.file(new URL('./UnifiedMessageFeed.tsx', import.meta.url)).text()
+
+  expect(source).toContain('feedRowGroupId(row) === focusGroupId')
+  expect(source).toContain("scrollToIndex({ index: focusRowIndex, align: 'center' })")
+  expect(source).toContain('handledFocusRequestRef.current === focusRequest')
 })
 
 test('renders a trailing tool stream directly without an outer aggregate', () => {

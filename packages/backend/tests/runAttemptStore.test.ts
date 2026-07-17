@@ -46,6 +46,17 @@ describe('RunAttemptStore', () => {
       toolName: 'exec_command',
       toolInvocationKey: 'call-1',
     })
+    await recorder.record({
+      kind: 'plan',
+      transport: 'codex',
+      planId: 'item-plan-1',
+      status: 'active',
+      items: [
+        { text: 'Inspect the runtime', completed: true },
+        { text: 'Implement the projection', completed: false },
+      ],
+      vendorEventType: 'item.updated',
+    })
     await recorder.finish({
       outcome: { result: 'success', summary: 'Implementation verified.', exitCode: 0 },
       application: 'published',
@@ -65,12 +76,19 @@ describe('RunAttemptStore', () => {
       'message',
       'message',
       'transcript',
+      'plan',
       'message',
     ])
     expect(detail?.events[2]).toMatchObject({
       entryKind: 'tool_call',
       toolName: 'exec_command',
       summary: 'bun test',
+    })
+    expect(detail?.events[3]).toMatchObject({
+      kind: 'plan',
+      planId: 'item-plan-1',
+      status: 'active',
+      items: [{ completed: true }, { completed: false }],
     })
     expect(detail?.runPrompt).toBe(
       '# Generator system prompt\n\nImplement the owning Work exactly.\n',

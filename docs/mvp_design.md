@@ -1,7 +1,7 @@
 # HOPI MVP Design
 
 Status: forward product and architecture authority
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
@@ -49,7 +49,9 @@ The operator needs only three durable concepts:
 Attention remains an internal durable control document, not a separate product concept. Open
 Attention with a target is routed internally through Reflection. It appears as **Waiting for
 Assistant** before a speaking reply is delivered and **Needs you** afterward when it remains
-unresolved. Only the speaking Assistant decides whether the operator must be asked. Targetless
+unresolved. Needs-you decorates the exact Assistant question and contributes to one non-zero
+Assistant-header count; Kanban does not duplicate it as a page banner. Resolution restores ordinary
+message styling. Only the speaking Assistant decides whether the operator must be asked. Targetless
 completion Attention appears as a normal Assistant and Goal update. There is no separate Attention
 page.
 
@@ -67,8 +69,9 @@ and diagnostics. Assistant does not duplicate the board or narrate the internal 
 Provider progress messages, tool calls, and recoverable tool errors remain in the raw turn record and
 become one collapsed Activity row after the next non-tool boundary; only the turn's final durable
 reply is rendered as Assistant speech. While tools are still the conversation tail, their stream is
-shown directly. A single rebuildable conversation-level activity projection renders `Working` only
-at the tail and never becomes historical conversation state.
+shown directly. A single rebuildable conversation-level activity projection renders public work as
+`Working` and otherwise renders hidden active Reflection or internal speaking work as `Thinking`.
+It appears only at the tail and never becomes historical conversation state.
 
 Internally:
 
@@ -116,7 +119,11 @@ Planner creates Work only when it is independently schedulable, independently ve
 expected to outlive one responsibility-pass Run. The whole graph need not exist up front.
 
 Before publishing runnable Work, Planner records every known causal or conflict-avoidance order
-in `dependsOn`. The MVP has no second resource-lock or file-overlap graph.
+in `dependsOn`. Independent Work remains as dependency-free roots when both can start from the
+current release and they do not require one another's published results, write overlapping source,
+or contend for the same exclusive external resource. Parallelism is a consequence of that
+independence, not a reason to split one cohesive outcome. The MVP has no second resource-lock or
+file-overlap graph.
 
 ### 4. The MVP has one fixed delivery profile
 
@@ -196,6 +203,27 @@ and migration use the complete canonical identity rather than a bare local ID.
 A Run record, process, and transcript may be discarded, but its `runId` is never reused within the
 owning Work. Any qualified producer Run reference retained in Evidence or Git remains permanently
 meaningful after runtime cleanup.
+
+#### Agent plan runtime projection
+
+A responsibility adapter may emit a structured Agent plan while executing one Attempt. HOPI
+normalizes that vendor event into a transport-independent runtime snapshot whose items contain only
+display text and completion state. The snapshot is observability, not workflow authority:
+
+- it never creates Work, changes a Work stage, satisfies a dependency, or contributes Evidence;
+- the latest snapshot from the latest running Attempt replaces earlier snapshots instead of merging
+  them across retries, resumed sessions, responsibilities, or Runs;
+- Kanban may show a compact checklist and progress count on the running Work card. That summary is
+  visually part of the card rather than a nested panel: a quiet progress track and at most three
+  rows preserve scanability, while the Attempt detail shows the complete current snapshot;
+- plan events stay out of the conversational Activity projection, because changing an internal plan
+  is neither Assistant speech nor a tool interaction; and
+- raw vendor transcripts remain diagnostic input only. Product UI reads the normalized event stream
+  and gracefully omits plans recorded before normalization support existed.
+
+An Agent plan may be revised or abandoned at any time. Canonical decomposition remains Planner-owned
+Work in the Goal package; promoting an internal plan item into durable Work requires the ordinary
+reviewed planning path.
 
 #### Project and Repo boundary
 
@@ -452,8 +480,10 @@ task branches, Attention, Evidence, stable Repo IDs, and the primary release man
 self-contained. Assistant-home Inbox turns and workspace Attention move with the HOPI-home export
 together with `home.yml`; the complete existing Repo-ID set is explicitly rebound as one local
 operation before validation allows work to resume. A startup against stale paths fails closed and
-may expose Project Attention, but cannot schedule Agent work. HOPI refuses to reconstruct a missing
-primary managed root from a potentially older Git checkpoint.
+exposes Project Attention, but cannot schedule Agent work. While that Project authority is unreadable,
+the product state remains available as a Project/Repo/Attention shell and does not pretend to list
+Goals from missing files; successful complete-set Rebind reloads the same canonical Goal packages.
+HOPI refuses to reconstruct a missing primary managed root from a potentially older Git checkpoint.
 
 ## Evidence From CardGame
 

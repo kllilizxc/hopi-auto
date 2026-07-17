@@ -34,13 +34,20 @@ Assistant updates to one provider-neutral notification endpoint; raw internal At
 delivered. HOPI sends the public Inbox event identity in the `Idempotency-Key` header. A linked user
 checkout is never HOPI's publication root.
 
+For phone or tablet access on the same network, open `http://<host-ip>:3000`. This is the optimized
+single-server product surface. Ports opened by `dev:frontend` (normally `5173` and upward) carry an
+unminified HMR client for source development and can be several megabytes, so they are intentionally
+not the remote-device entrypoint. When an independent frontend proxy is required, run
+`bun run remote:frontend`; it keeps the same API proxy without shipping HMR.
+
 For standalone frontend HMR, keep `bun run dev:backend` running and start `bun run dev:frontend` in
 another terminal, then open `http://localhost:5173`. The frontend dev server proxies to port 3000;
 use `HOPI_BACKEND_URL` to override the backend origin.
 
 `dev:backend` deliberately runs a stable Coordinator process so source edits cannot interrupt an
-active responsibility Run. Use `bun run dev:backend:watch` only for isolated backend development
-when no Goal is executing.
+active responsibility Run. It serves the frontend bundle through a backend-local HTML adapter so
+Bun roots emitted assets correctly. Use `bun run dev:backend:watch` only for isolated backend
+development when no Goal is executing.
 
 Run all production checks with:
 

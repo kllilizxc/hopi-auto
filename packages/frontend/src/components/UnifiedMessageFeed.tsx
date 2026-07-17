@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  MessageSquareReply,
 } from 'lucide-react'
 import {
   Virtuoso,
@@ -35,7 +36,7 @@ interface UnifiedMessageFeedProps {
   feedKey: string
   items: MessageFeedItem[]
   emptyState: ReactNode
-  tailActivity?: 'waiting' | 'working' | null
+  tailActivity?: 'waiting' | 'working' | 'thinking' | null
   isLoading?: boolean
   hasMoreBefore?: boolean
   isLoadingOlder?: boolean
@@ -45,6 +46,10 @@ interface UnifiedMessageFeedProps {
   className?: string
   ariaLabel?: string
   onScrollingChange?: (scrolling: boolean) => void
+  focusGroupId?: string | null
+  focusRequest?: number
+  needsYouByGroupId?: ReadonlyMap<string, number>
+  onReplyNeedsYou?: (groupId: string) => void
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
@@ -67,7 +72,7 @@ type RenderedFeedRow =
   | {
       type: 'tail_activity'
       id: 'tail-activity'
-      phase: 'waiting' | 'working'
+      phase: 'waiting' | 'working' | 'thinking'
     }
 
 const FEED_VIRTUOSO_COMPONENTS: Components<RenderedFeedRow, FeedVirtuosoContext> = {
@@ -90,8 +95,13 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   className,
   ariaLabel = 'Message stream',
   onScrollingChange,
+  focusGroupId = null,
+  focusRequest = 0,
+  needsYouByGroupId,
+  onReplyNeedsYou,
 }: UnifiedMessageFeedProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const handledFocusRequestRef = useRef(0)
   const [firstItemIndex, setFirstItemIndex] = useState(INITIAL_FIRST_ITEM_INDEX)
   const [isNearBottom, setIsNearBottom] = useState(true)
   const [announceUpdates, setAnnounceUpdates] = useState(true)
@@ -108,13 +118,33 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
         : displayRows,
     [displayRows, tailActivity],
   )
+  const focusRowIndex = focusGroupId
+    ? renderedRows.findLastIndex((row) => feedRowGroupId(row) === focusGroupId)
+    : -1
 
   useEffect(() => {
     setExpandedItems({})
     setFirstItemIndex(INITIAL_FIRST_ITEM_INDEX)
     setIsNearBottom(true)
+    handledFocusRequestRef.current = 0
     previousSnapshotRef.current = { length: 0 }
   }, [feedKey])
+
+  useEffect(() => {
+    if (
+      focusRequest === 0 ||
+      focusRowIndex < 0 ||
+      handledFocusRequestRef.current === focusRequest
+    ) {
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      virtuosoRef.current?.scrollToIndex({ index: focusRowIndex, align: 'center' })
+      handledFocusRequestRef.current = focusRequest
+      setIsNearBottom(false)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusRequest, focusRowIndex])
 
   useEffect(() => {
     const previous = previousSnapshotRef.current
@@ -146,29 +176,39 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
     return () => cancelAnimationFrame(frame)
   }, [isLoadingOlder])
 
-  const renderRow = useCallback((row: RenderedFeedRow) => {
-    if (row.type === 'tail_activity') return <TailActivityRow phase={row.phase} />
-    if (row.type === 'activity_group') {
-      if (row.id === lastRowId && row.entries.some((entry) => entry.type === 'tool_block')) {
-        return <LiveToolActivityRow row={row} />
+  const renderRow = useCallback(
+    (row: RenderedFeedRow) => {
+      if (row.type === 'tail_activity') return <TailActivityRow phase={row.phase} />
+      if (row.type === 'activity_group') {
+        if (row.id === lastRowId && row.entries.some((entry) => entry.type === 'tool_block')) {
+          return <LiveToolActivityRow row={row} />
+        }
+        return (
+          <ActivityGroupRow
+            row={row}
+            expanded={expandedItems[row.id] ?? false}
+            onToggle={(expanded) =>
+              setExpandedItems((current) => ({
+                ...current,
+                [row.id]: expanded,
+              }))
+            }
+          />
+        )
       }
+      if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
+      if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
+      const groupId = row.item.groupId
       return (
-        <ActivityGroupRow
-          row={row}
-          expanded={expandedItems[row.id] ?? false}
-          onToggle={(expanded) =>
-            setExpandedItems((current) => ({
-              ...current,
-              [row.id]: expanded,
-            }))
-          }
+        <MessageRow
+          item={row.item}
+          needsYouCount={groupId ? (needsYouByGroupId?.get(groupId) ?? 0) : 0}
+          onReply={groupId && onReplyNeedsYou ? () => onReplyNeedsYou(groupId) : undefined}
         />
       )
-    }
-    if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
-    if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
-    return <MessageRow item={row.item} />
-  }, [expandedItems, lastRowId])
+    },
+    [expandedItems, lastRowId, needsYouByGroupId, onReplyNeedsYou],
+  )
   const itemContent = useCallback(
     (_index: number, row: RenderedFeedRow) => renderRow(row),
     [renderRow],
@@ -188,10 +228,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   if (isLoading && renderedRows.length === 0) {
     return (
       <div className={rootClassName}>
-        <div className="unified-message-feed__empty unified-message-feed__empty--loading">
-          <AppSpinner size="sm" />
-          <span>Loading messages…</span>
-        </div>
+        <MessageFeedSkeleton density={density} />
       </div>
     )
   }
@@ -272,6 +309,34 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   )
 }, messageFeedPropsEqual)
 
+export function MessageFeedSkeleton({
+  density = 'comfortable',
+}: {
+  density?: 'comfortable' | 'compact'
+}) {
+  return (
+    <div
+      className={cn('message-feed-skeleton', `message-feed-skeleton--${density}`)}
+      role="status"
+      aria-label="Loading messages"
+    >
+      <div className="message-feed-skeleton__row assistant" aria-hidden="true">
+        <span className="message-feed-skeleton__meta" />
+        <span className="message-feed-skeleton__line wide" />
+        <span className="message-feed-skeleton__line medium" />
+      </div>
+      <div className="message-feed-skeleton__row user" aria-hidden="true">
+        <span className="message-feed-skeleton__line medium" />
+        <span className="message-feed-skeleton__line short" />
+      </div>
+      <div className="message-feed-skeleton__row assistant compact" aria-hidden="true">
+        <span className="message-feed-skeleton__meta" />
+        <span className="message-feed-skeleton__line wide" />
+      </div>
+    </div>
+  )
+}
+
 function messageFeedPropsEqual(
   previous: UnifiedMessageFeedProps,
   next: UnifiedMessageFeedProps,
@@ -288,7 +353,11 @@ function messageFeedPropsEqual(
     previous.density !== next.density ||
     previous.className !== next.className ||
     previous.ariaLabel !== next.ariaLabel ||
-    previous.onScrollingChange !== next.onScrollingChange
+    previous.onScrollingChange !== next.onScrollingChange ||
+    previous.focusGroupId !== next.focusGroupId ||
+    previous.focusRequest !== next.focusRequest ||
+    previous.needsYouByGroupId !== next.needsYouByGroupId ||
+    previous.onReplyNeedsYou !== next.onReplyNeedsYou
   ) {
     return false
   }
@@ -303,11 +372,49 @@ function messageFeedPropsEqual(
   )
 }
 
-function MessageRow({ item }: { item: MessageFeedItem }) {
+function feedRowGroupId(row: RenderedFeedRow) {
+  if (row.type === 'tail_activity') return null
+  if (row.type === 'activity_group') return row.groupId ?? null
+  return row.item.groupId ?? null
+}
+
+function MessageRow({
+  item,
+  needsYouCount = 0,
+  onReply,
+}: {
+  item: MessageFeedItem
+  needsYouCount?: number
+  onReply?: () => void
+}) {
   const isUser = item.kind === 'user_message'
+  const needsYou = !isUser && needsYouCount > 0
   return (
-    <article className={cn('unified-feed-message-row', isUser ? 'user' : 'assistant')}>
+    <article
+      className={cn(
+        'unified-feed-message-row',
+        isUser ? 'user' : 'assistant',
+        needsYou && 'needs-you',
+      )}
+    >
       <div className="unified-feed-message">
+        {needsYou ? (
+          <div className="unified-feed-needs-you">
+            <StatusChip color="warning" size="sm" variant="soft">
+              Needs you{needsYouCount > 1 ? ` · ${needsYouCount}` : ''}
+            </StatusChip>
+            <AppButton
+              className="unified-feed-needs-you__reply"
+              variant="ghost"
+              type="button"
+              onClick={onReply}
+              aria-label="Reply to this request"
+            >
+              <MessageSquareReply />
+              Reply
+            </AppButton>
+          </div>
+        ) : null}
         {isUser && item.text.trim() ? (
           <div className="unified-feed-message__bubble">{item.text}</div>
         ) : !isUser ? (
@@ -385,11 +492,17 @@ function SystemUpdateRow({ item }: { item: MessageFeedItem }) {
   )
 }
 
-function TailActivityRow({ phase }: { phase: 'waiting' | 'working' }) {
+function TailActivityRow({ phase }: { phase: 'waiting' | 'working' | 'thinking' }) {
+  const label =
+    phase === 'working' ? 'Working' : phase === 'thinking' ? 'Thinking' : 'Waiting to start'
   return (
-    <div className="unified-feed-waiting unified-feed-tail-activity" role="status">
+    <div
+      className="unified-feed-waiting unified-feed-tail-activity"
+      data-phase={phase}
+      role="status"
+    >
       <AppBreathingIndicator />
-      <span>{phase === 'working' ? 'Working' : 'Waiting to start'}</span>
+      <span>{label}</span>
     </div>
   )
 }

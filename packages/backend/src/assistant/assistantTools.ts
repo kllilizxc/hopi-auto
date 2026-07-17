@@ -1,5 +1,6 @@
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import {
+  goalAttentionReference,
   normalizeInboxAttentionReferences,
   parseAttentionReference,
 } from '../domain/attentionReference'
@@ -12,6 +13,7 @@ import {
   renderAttentionDocument,
   renderInputDocument,
 } from '../domain/canonicalDocuments'
+import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import type { LinkedProjectRepo } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
 import { deriveReadableId } from '../domain/stableId'
@@ -281,6 +283,23 @@ export function createAssistantTools(options: {
             },
           }
         }
+        case 'hopi_write_preferences': {
+          if (event.attributes.source !== 'user' || event.attributes.visibility !== 'public') {
+            throw new Error('Preferences can be changed only from a public user turn')
+          }
+          const args = parseAssistantToolArguments(name, input)
+          const result = await options.workspace.writePreference(args.content, args.expectedDigest)
+          return {
+            summary: result.changed
+              ? 'Updated durable user preferences.'
+              : 'User preferences were already current.',
+            changed: result.changed,
+            value: {
+              path: options.workspace.paths.preference,
+              digest: result.preference.digest,
+            },
+          }
+        }
         case 'hopi_create_goal': {
           const args = parseAssistantToolArguments(name, input)
           assertPortableGoalText('Goal title', args.title)
@@ -350,6 +369,7 @@ export function createAssistantTools(options: {
               projectId: project.projectId,
               goalId,
               references: references.planning,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, goalId),
             },
           }
         }
@@ -403,6 +423,7 @@ export function createAssistantTools(options: {
               goalId: args.goalId,
               writes: [...normalizedWrites.keys()],
               references: references.planning,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
             },
           }
         }
@@ -450,6 +471,7 @@ export function createAssistantTools(options: {
               goalId: args.goalId,
               inputChanged: Boolean(admission.write),
               references: references.planning,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
             },
           }
         }
@@ -515,6 +537,7 @@ export function createAssistantTools(options: {
               projectId: project.projectId,
               goalId: args.goalId,
               lifecycle: goal.attributes.lifecycle,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
             },
           }
         }
@@ -555,6 +578,7 @@ export function createAssistantTools(options: {
               goalId: args.goalId,
               workId: args.workId,
               inputChanged,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
             },
           }
         }
@@ -603,7 +627,12 @@ export function createAssistantTools(options: {
           return {
             summary: `Resolved Goal Attention ${args.attentionId}.`,
             changed,
-            value: { projectId: project.projectId, goalId, attentionId: args.attentionId },
+            value: {
+              projectId: project.projectId,
+              goalId,
+              attentionId: args.attentionId,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, goalId),
+            },
           }
         }
         case 'hopi_control_preview': {
@@ -650,7 +679,14 @@ export function createAssistantTools(options: {
           return {
             summary: `Preview repair planning requested in ${contextGoalId}.`,
             changed: true,
-            value: { projectId: project.projectId, goalId: contextGoalId },
+            value: {
+              projectId: project.projectId,
+              goalId: contextGoalId,
+              remainingAttentionRefs: await remainingGoalAttentionRefs(
+                project.store,
+                contextGoalId,
+              ),
+            },
           }
         }
         case 'hopi_notify_user': {
@@ -677,6 +713,19 @@ export function createAssistantTools(options: {
       }
     },
   }
+}
+
+async function remainingGoalAttentionRefs(store: GoalPackageStore, goalId: string) {
+  const goalPackage = await store.readPackage(goalId)
+  return [...goalPackage.attentions.values()]
+    .filter(
+      (attention) =>
+        attention.attributes.target !== null && attention.attributes.resolvedAt === null,
+    )
+    .map((attention) =>
+      goalAttentionReference(store.paths.projectId, goalId, attention.attributes.id),
+    )
+    .toSorted()
 }
 
 async function ensurePlanningWithRunInvalidation(
@@ -957,9 +1006,10 @@ function normalizeMarkdown(content: string) {
 }
 
 function assertPortableGoalText(label: string, content: string) {
-  if (content.includes('.hopi/docs/assistant/attachments/')) {
+  const reference = findNonPortableGoalImageReference(content)
+  if (reference) {
     throw new Error(
-      `${label} cannot cite an Assistant-home attachment path; adopt the image through references and let Planning cite the returned Goal-local asset path`,
+      `${label} cannot cite non-portable image path ${reference}; adopt the image through references and let Planning cite the returned Goal-local asset path`,
     )
   }
 }

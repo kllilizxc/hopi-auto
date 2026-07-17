@@ -13,6 +13,7 @@ import {
   renderEvidenceDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
+import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { type GoalPackage, GoalPackageValidationError } from '../domain/goalPackage'
 import { MarkdownDocumentError } from '../domain/markdownDocument'
 import { HOPI_RELEASE_REF } from '../domain/project'
@@ -32,7 +33,7 @@ export interface ApplyPassOutcomeInput {
 }
 
 export type PassOutcomeApplication =
-  | { kind: 'published'; evidenceId: string; result: PassResultKind }
+  | { kind: 'published'; evidenceId: string; result: PassResultKind; summary: string }
   | { kind: 'attention'; evidenceId: string; attentionId: string }
   | { kind: 'integration_required'; evidence: EvidenceDocument; work: WorkDocument }
   | { kind: 'already_applied'; evidenceId: string }
@@ -150,6 +151,7 @@ export function createPassOutcomeCoordinator(
         kind: 'published',
         evidenceId: evidence.attributes.id,
         result: input.outcome.result,
+        summary: input.outcome.summary,
       })
     }
 
@@ -167,6 +169,7 @@ export function createPassOutcomeCoordinator(
       kind: 'published',
       evidenceId: evidence.attributes.id,
       result: input.outcome.result,
+      summary: input.outcome.summary,
     })
   }
 }
@@ -262,13 +265,14 @@ async function readPassProposal(
     if (file.hash === expectedHash) continue
     const source = new TextDecoder().decode(file.content)
 
-    if (
+    const nonPortableImage =
       file.path.startsWith(`${goalRoot}/`) &&
-      !file.path.startsWith(`${store.paths.inputsRoot(input.goalId)}/`) &&
-      source.includes('.hopi/docs/assistant/attachments/')
-    ) {
+      !file.path.startsWith(`${store.paths.inputsRoot(input.goalId)}/`)
+        ? findNonPortableGoalImageReference(source)
+        : null
+    if (nonPortableImage) {
       throw new PassProposalError(
-        `Goal proposal must cite adopted Goal-local assets instead of Assistant-home attachments: ${file.path}`,
+        `Goal proposal must cite adopted Goal-local assets instead of non-portable image path ${nonPortableImage}: ${file.path}`,
       )
     }
 
@@ -366,7 +370,6 @@ function buildPlannerApplication(
 
   if (input.outcome.result === 'fail') {
     const failed = appendEvidence(currentWork, evidence.attributes.id)
-    failed.attributes.attempts += 1
     return {
       supportingWrites: [evidenceWrite(store, input.goalId, evidence)],
       gateWrite: workWrite(store, input.goalId, failed, input.context.workHash),
@@ -453,7 +456,7 @@ function buildEngineeringApplication(
     next.attributes.stage = 'generate'
     next.attributes.attempts += 1
   } else if (input.outcome.result === 'fail') {
-    next.attributes.attempts += 1
+    // Semantic failure returns to Planning; attempts count reviewed repair cycles only.
   } else {
     throw new PassProposalError(
       `Unsupported ${input.responsibility} outcome: ${input.outcome.result}`,

@@ -37,9 +37,9 @@ const profileSchema = z
       .strict(),
     concurrency: z
       .object({
-        planner: z.literal(1),
-        generator: z.literal(3),
-        reviewer: z.literal(1),
+        planner: z.number().int().positive(),
+        generator: z.number().int().positive(),
+        reviewer: z.number().int().positive(),
       })
       .strict(),
   })

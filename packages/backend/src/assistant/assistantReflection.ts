@@ -234,7 +234,7 @@ export function createAssistantReflection(options: {
     }
 
     try {
-      const prompt = await reflectionPrompt(options.workspace, snapshot, previousSnapshot, trigger)
+      const prompt = reflectionPrompt(snapshot, previousSnapshot, trigger)
       await Bun.write(promptPath, prompt)
       await options.runner.run(
         {
@@ -382,44 +382,24 @@ function unnotifiedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
   return scopes
 }
 
-async function reflectionPrompt(
-  workspaceStore: AssistantWorkspaceStore,
+function reflectionPrompt(
   snapshot: AssistantStateSnapshot,
   previousSnapshot: AssistantStateSnapshot | null,
   trigger: readonly string[],
 ) {
-  const workspace = await workspaceStore.readWorkspace()
-  const history = [...workspace.events.values()]
-    .filter(
-      (event) =>
-        event.attributes.status === 'handled' &&
-        event.attributes.source === 'user' &&
-        event.attributes.visibility === 'public',
-    )
-    .sort((left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt))
-    .slice(-8)
-    .flatMap((event) => {
-      return [
-        `User: ${bounded(event.body, 1_000)}`,
-        `Assistant: ${bounded(event.attributes.reply ?? '', 1_500)}`,
-      ]
-    })
   const delta = reflectionDelta(previousSnapshot, snapshot)
-  const current = compactReflectionState(snapshot, delta.scopes)
   return [
     '# HOPI Background Reflection',
     '',
     'You are a disposable read-only thinking run for the workspace Assistant.',
-    'Assess this semantic state change, not the whole workspace history.',
-    'Decide from the trigger, changed facts, and relevant current state first.',
+    'Assess only this trigger and compact semantic delta, not workspace history.',
     'Do not mutate canonical files or source. You only have hopi_read_state and hopi_handoff_to_main.',
-    'Use hopi_read_state only to revalidate a concrete candidate, scoped to the exact Project or Goal when known.',
+    'Use hopi_read_state only after the delta identifies a concrete candidate, scoped to its exact Project or Goal.',
     'Use local read-only shell access only for an exact diagnostic path already present in state. Never scan .hopi or search historical Runs speculatively.',
-    'Call hopi_handoff_to_main at most once to prepare a concise internal brief only when the speaking Assistant should revalidate a useful action or user decision. The Coordinator publishes it only if this snapshot remains current. Otherwise finish silently.',
+    'Call hopi_handoff_to_main at most once only when the speaking Assistant should revalidate a useful action or user decision; otherwise finish silently.',
     'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
-    'Do not draft polished operator-facing prose or narrate the whole workflow. The speaking Assistant will revalidate the brief and translate only the useful outcome and required action for the operator.',
-    'When one Goal has unresolved Attention that speaking should manage, select its exact projectId and goalId. Do not copy Attention IDs: Coordinator owns the final canonical attentionRefs and augments them from this current snapshot. Keep one handoff Goal-scoped; the next Reflection can handle another Goal. Never rely on brief text for identity.',
-    'Do not assume this snapshot is still current; the speaking Assistant will revalidate before acting.',
+    'For unresolved Goal Attention, select exact projectId and goalId but do not copy Attention IDs; Coordinator adds canonical references. Keep one handoff Goal-scoped.',
+    'Do not draft operator prose or assume this snapshot is current. The speaking Assistant revalidates and communicates only the useful outcome or required action.',
     '',
     `State digest: ${snapshot.stateDigest}`,
     '',
@@ -430,13 +410,6 @@ async function reflectionPrompt(
     '## Changed Facts Since Last Assessment',
     '',
     ...delta.lines.map((line) => `- ${line}`),
-    '',
-    ...(history.length ? ['## Recent Public Conversation', '', ...history, ''] : []),
-    '## Relevant Current State',
-    '',
-    '```json',
-    bounded(JSON.stringify(current, null, 2), 24_000),
-    '```',
     '',
   ].join('\n')
 }
@@ -561,25 +534,13 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
   return reasons
 }
 
-interface ReflectionScope {
-  projects: Set<string>
-  goals: Map<string, Set<string>>
-}
-
-interface ReflectionFact {
-  value: unknown
-  projectId?: string
-  goalId?: string
-}
-
 function reflectionDelta(previous: AssistantStateSnapshot | null, current: AssistantStateSnapshot) {
   const currentFacts = reflectionFacts(current)
-  const scopes: ReflectionScope = { projects: new Set(), goals: new Map() }
   if (!previous) {
-    for (const fact of currentFacts.values()) addFactScope(scopes, fact)
     return {
-      lines: ['No previous assessed snapshot is available; assess the current immediate facts.'],
-      scopes,
+      lines: [
+        'No previous assessed snapshot is available; use the trigger to inspect its exact candidate.',
+      ],
     }
   }
 
@@ -588,71 +549,64 @@ function reflectionDelta(previous: AssistantStateSnapshot | null, current: Assis
   for (const key of new Set([...previousFacts.keys(), ...currentFacts.keys()])) {
     const before = previousFacts.get(key)
     const after = currentFacts.get(key)
-    if (JSON.stringify(before?.value) === JSON.stringify(after?.value)) continue
-    const fact = after ?? before
-    if (fact) addFactScope(scopes, fact)
+    if (JSON.stringify(before) === JSON.stringify(after)) continue
     const change = before === undefined ? 'Added' : after === undefined ? 'Removed' : 'Changed'
-    const value = after !== undefined ? after.value : before?.value
-    lines.push(`${change} ${key}: ${bounded(JSON.stringify(value) ?? 'undefined', 1_200)}`)
+    const value = after !== undefined ? after : before
+    lines.push(`${change} ${key}: ${bounded(JSON.stringify(value) ?? 'undefined', 800)}`)
   }
-  const visible = lines.slice(0, 60)
+  const visible: string[] = []
+  let characters = 0
+  for (const line of lines) {
+    if (visible.length >= 48 || characters + line.length > 12_000) break
+    visible.push(line)
+    characters += line.length
+  }
   if (lines.length > visible.length) {
     visible.push(`${lines.length - visible.length} additional changed facts omitted.`)
   }
   if (visible.length === 0) {
     visible.push('The semantic digest changed without a difference in the compact fact projection.')
   }
-  return { lines: visible, scopes }
+  return { lines: visible }
 }
 
 function reflectionFacts(snapshot: AssistantStateSnapshot) {
-  const facts = new Map<string, ReflectionFact>()
+  const facts = new Map<string, unknown>()
+  for (const run of snapshot.activeRuns) {
+    facts.set(`Active Run ${run.projectId}/${run.goalId}/${run.workId}`, {
+      responsibility: run.responsibility,
+      runId: run.runId,
+    })
+  }
   for (const attention of snapshot.workspaceAttentions) {
     const id = recordId(attention)
-    facts.set(`workspace Attention ${id}`, {
-      value: compactAttention(attention),
-      ...scopeFromTarget(recordTarget(attention)),
-    })
+    facts.set(`Workspace Attention ${id}`, compactAttention(attention))
   }
   for (const project of snapshot.projects) {
     if (!isRecord(project)) continue
     const projectId = stringValue(project.projectId, 'unknown-project')
     facts.set(`Project ${projectId}`, {
-      projectId,
-      value: { available: project.available, releaseHead: project.releaseHead },
+      available: project.available,
+      releaseHead: project.releaseHead,
     })
     if (!Array.isArray(project.goals)) continue
     for (const goal of project.goals) {
       if (!isRecord(goal)) continue
       const goalId = nestedId(goal.goal, 'unknown-goal')
-      const scope = { projectId, goalId }
-      facts.set(`Goal ${projectId}/${goalId}`, {
-        ...scope,
-        value: isRecord(goal.goal)
-          ? { attributes: goal.goal.attributes, path: goal.goal.path }
-          : null,
-      })
+      facts.set(`Goal ${projectId}/${goalId}`, compactGoal(goal.goal))
       if (Array.isArray(goal.works)) {
         for (const work of goal.works) {
           if (!isRecord(work)) continue
           const workId = nestedId(work.attributes, 'unknown-work')
-          facts.set(`Work ${projectId}/${goalId}/${workId}`, {
-            ...scope,
-            value: {
-              attributes: work.attributes,
-              path: work.path,
-              projection: compactProjection(work.projection),
-              runtime: compactRuntime(work.runtime),
-            },
-          })
+          facts.set(`Work ${projectId}/${goalId}/${workId}`, compactWork(work))
         }
       }
       if (Array.isArray(goal.attentions)) {
         for (const attention of goal.attentions) {
-          facts.set(`Goal Attention ${projectId}/${goalId}/${recordId(attention)}`, {
-            ...scope,
-            value: compactAttention(attention),
-          })
+          facts.set(
+            `Goal Attention ${projectId}/${goalId}/${recordId(attention)}`,
+            compactAttention(attention),
+          )
         }
       }
     }
@@ -660,87 +614,41 @@ function reflectionFacts(snapshot: AssistantStateSnapshot) {
   return facts
 }
 
-function compactReflectionState(snapshot: AssistantStateSnapshot, scopes: ReflectionScope) {
-  const allProjects = scopes.projects.size === 0
-  const projects = snapshot.projects.flatMap((project) => {
-    if (!isRecord(project)) return []
-    const projectId = stringValue(project.projectId, 'unknown-project')
-    if (!allProjects && !scopes.projects.has(projectId)) return []
-    const selectedGoals = scopes.goals.get(projectId)
-    const goals = Array.isArray(project.goals)
-      ? project.goals.flatMap((goal) => {
-          if (!isRecord(goal)) return []
-          const goalId = nestedId(goal.goal, 'unknown-goal')
-          if (selectedGoals?.size && !selectedGoals.has(goalId)) return []
-          return [
-            {
-              goal: isRecord(goal.goal)
-                ? { attributes: goal.goal.attributes, path: goal.goal.path }
-                : goal.goal,
-              works: Array.isArray(goal.works)
-                ? goal.works.flatMap((work) =>
-                    isRecord(work)
-                      ? [
-                          {
-                            attributes: work.attributes,
-                            path: work.path,
-                            projection: compactProjection(work.projection),
-                            runtime: compactRuntime(work.runtime),
-                          },
-                        ]
-                      : [],
-                  )
-                : [],
-              attentions: Array.isArray(goal.attentions)
-                ? goal.attentions.map(compactAttention)
-                : [],
-            },
-          ]
-        })
-      : []
-    return [
-      {
-        projectId,
-        available: project.available,
-        releaseHead: project.releaseHead,
-        goals,
-      },
-    ]
-  })
+function compactGoal(value: unknown) {
+  if (!isRecord(value)) return value
+  const attributes = isRecord(value.attributes) ? value.attributes : value
   return {
-    observedAt: snapshot.observedAt,
-    stateDigest: snapshot.stateDigest,
-    activeRuns: snapshot.activeRuns.filter(
-      (run) => allProjects || scopes.projects.has(run.projectId),
-    ),
-    workspaceAttentions: snapshot.workspaceAttentions.map(compactAttention),
-    unresolvedAttentions: collectUnresolvedAttentions(snapshot),
-    projects,
+    id: attributes.id,
+    title: attributes.title,
+    lifecycle: attributes.lifecycle,
+    priority: attributes.priority,
+    contractRevision: attributes.contractRevision,
+    completionAttentionId: attributes.completionAttentionId,
   }
 }
 
-function collectUnresolvedAttentions(snapshot: AssistantStateSnapshot) {
-  const unresolved: unknown[] = snapshot.workspaceAttentions
-    .filter(isUnresolvedAttention)
-    .map((attention) => ({ scope: 'workspace', attention: compactAttention(attention) }))
-  for (const project of snapshot.projects) {
-    if (!isRecord(project) || !Array.isArray(project.goals)) continue
-    const projectId = stringValue(project.projectId, 'unknown-project')
-    for (const goal of project.goals) {
-      if (!isRecord(goal) || !Array.isArray(goal.attentions)) continue
-      const goalId = nestedId(goal.goal, 'unknown-goal')
-      for (const attention of goal.attentions) {
-        if (!isUnresolvedAttention(attention)) continue
-        unresolved.push({
-          scope: 'goal',
-          projectId,
-          goalId,
-          attention: compactAttention(attention),
-        })
-      }
-    }
+function compactWork(value: Record<string, unknown>) {
+  const attributes = isRecord(value.attributes) ? value.attributes : {}
+  const evidenceRefs = Array.isArray(attributes.evidenceRefs) ? attributes.evidenceRefs : []
+  return {
+    attributes: {
+      id: attributes.id,
+      title:
+        typeof attributes.title === 'string' ? bounded(attributes.title, 120) : attributes.title,
+      kind: attributes.kind,
+      stage: attributes.stage,
+      notBefore: attributes.notBefore,
+      contractRevision: attributes.contractRevision,
+      attempts: attributes.attempts,
+    },
+    evidenceCount: evidenceRefs.length,
+    latestEvidenceRef: evidenceRefs.at(-1) ?? null,
+    runtime: compactRuntime(value.runtime),
+    projection: compactProjection(value.projection),
+    dependsOn: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.slice(0, 8) : [],
+    dependencyCount: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.length : 0,
+    repos: Array.isArray(attributes.repos) ? attributes.repos.slice(0, 8) : attributes.repos,
   }
-  return unresolved
 }
 
 function compactProjection(value: unknown) {
@@ -757,50 +665,46 @@ function compactRuntime(value: unknown) {
   if (!isRecord(value)) return value
   return {
     activeResponsibility: value.activeResponsibility,
-    latestAttempt: value.latestAttempt,
+    latestAttempt: compactAttempt(value.latestAttempt),
     lastActivityAt: value.lastActivityAt,
     stale: value.stale,
-    paths: value.paths,
+  }
+}
+
+function compactAttempt(value: unknown) {
+  if (!isRecord(value)) return value
+  return {
+    runId: value.runId,
+    responsibility: value.responsibility,
+    status: value.status,
+    result: value.result,
+    application: value.application,
+    endedAt: value.endedAt,
+    exitCode: value.exitCode,
+    summary: typeof value.summary === 'string' ? bounded(value.summary, 240) : value.summary,
   }
 }
 
 function compactAttention(value: unknown) {
   if (!isRecord(value)) return value
-  const attributes = isRecord(value.attributes)
-    ? value.attributes
-    : Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'body' && key !== 'path'))
+  const attributes = isRecord(value.attributes) ? value.attributes : value
   return {
-    attributes,
-    ...(typeof value.path === 'string' ? { path: value.path } : {}),
-    ...(typeof value.body === 'string' ? { body: bounded(value.body, 2_000) } : {}),
+    attributes: {
+      id: attributes.id,
+      target: attributes.target,
+      createdAt: attributes.createdAt,
+      resolvedAt: attributes.resolvedAt,
+      notifiedAt: attributes.notifiedAt,
+      resolutionInput: attributes.resolutionInput,
+    },
+    ...(typeof value.body === 'string' ? { body: bounded(value.body, 800) } : {}),
   }
-}
-
-function addFactScope(scopes: ReflectionScope, fact: ReflectionFact) {
-  if (!fact.projectId) return
-  scopes.projects.add(fact.projectId)
-  if (!fact.goalId) return
-  const goals = scopes.goals.get(fact.projectId) ?? new Set<string>()
-  goals.add(fact.goalId)
-  scopes.goals.set(fact.projectId, goals)
-}
-
-function scopeFromTarget(target: unknown) {
-  if (typeof target !== 'string') return {}
-  const match = target.match(/^project:([^/]+)(?:\/goal:([^/]+))?/)
-  return match ? { projectId: match[1], ...(match[2] ? { goalId: match[2] } : {}) } : {}
 }
 
 function recordId(value: unknown) {
   if (!isRecord(value)) return 'unknown-attention'
   const attributes = isRecord(value.attributes) ? value.attributes : value
   return stringValue(attributes.id, 'unknown-attention')
-}
-
-function recordTarget(value: unknown) {
-  if (!isRecord(value)) return null
-  const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.target
 }
 
 function nestedId(value: unknown, fallback: string) {
@@ -846,10 +750,4 @@ function isUnnotifiedAttention(value: unknown) {
   if (!isRecord(value)) return false
   const attributes = isRecord(value.attributes) ? value.attributes : value
   return attributes.resolvedAt === null && attributes.notifiedAt === null
-}
-
-function isUnresolvedAttention(value: unknown) {
-  if (!isRecord(value)) return false
-  const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.resolvedAt === null
 }

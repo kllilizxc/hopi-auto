@@ -17,6 +17,37 @@ afterEach(async () => {
 })
 
 describe('AssistantWorkspaceStore', () => {
+  test('publishes the complete preference document with optimistic concurrency', async () => {
+    const fixture = await setup(false)
+    const initial = (await fixture.store.readWorkspace()).preference
+
+    const first = await fixture.store.writePreference(
+      '# Preferences\r\n\r\n- Prefer direct answers.',
+      initial.digest,
+    )
+    expect(first).toMatchObject({
+      changed: true,
+      preference: { content: '# Preferences\n\n- Prefer direct answers.\n' },
+    })
+    expect(await Bun.file(join(temporaryRoot, fixture.store.paths.preference)).text()).toBe(
+      first.preference.content,
+    )
+
+    const repeated = await fixture.store.writePreference(
+      first.preference.content,
+      first.preference.digest,
+    )
+    expect(repeated.changed).toBe(false)
+
+    await expect(
+      fixture.store.writePreference('# Preferences\n\n- Prefer long answers.\n', initial.digest),
+    ).rejects.toThrow('changed since this Assistant turn')
+    expect((await fixture.store.readWorkspace()).preference).toEqual(first.preference)
+
+    const cleared = await fixture.store.writePreference('', first.preference.digest)
+    expect(cleared).toMatchObject({ changed: true, preference: { content: '' } })
+  })
+
   test('publishes image bytes with the Inbox receipt and resolves the durable reference', async () => {
     const fixture = await setup(false)
     const event = await fixture.store.receiveEvent({

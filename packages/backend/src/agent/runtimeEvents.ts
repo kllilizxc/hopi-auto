@@ -10,6 +10,20 @@ export const AGENT_TRANSCRIPT_ENTRY_KINDS = [
 export type AgentTranscriptTransport = (typeof AGENT_TRANSCRIPT_TRANSPORTS)[number]
 export type AgentTranscriptEntryKind = (typeof AGENT_TRANSCRIPT_ENTRY_KINDS)[number]
 
+export interface AgentPlanItem {
+  text: string
+  completed: boolean
+}
+
+export interface AgentPlanEvent {
+  kind: 'plan'
+  transport: AgentTranscriptTransport
+  planId: string
+  status: 'active' | 'completed'
+  items: AgentPlanItem[]
+  vendorEventType?: string
+}
+
 export type AgentRuntimeEvent =
   | {
       kind: 'message'
@@ -26,3 +40,4 @@ export type AgentRuntimeEvent =
       toolInvocationKey?: string
       vendorEventType?: string
     }
+  | AgentPlanEvent

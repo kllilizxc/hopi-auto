@@ -49,6 +49,10 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     objectValue(objectValue(objectValue(parsed)?.params)?.item)
   const itemType = stringValue(item?.type)
 
+  if (itemType === 'todo_list') {
+    return normalizeCodexPlanEvent(eventType, item)
+  }
+
   if (itemType === 'command_execution') {
     return normalizeCodexCommandExecutionEvent(eventType, item)
   }
@@ -112,6 +116,29 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   return [transcriptEvent('codex', 'status', compactSummary(JSON.stringify(parsed)))]
+}
+
+function normalizeCodexPlanEvent(
+  eventType: string | undefined,
+  item: Record<string, unknown> | undefined,
+): AgentRuntimeEvent[] {
+  const items = (arrayValue(item?.items) ?? []).flatMap((candidate) => {
+    const value = objectValue(candidate)
+    const text = stringValue(value?.text)
+    return text ? [{ text: compactSummary(text), completed: value?.completed === true }] : []
+  })
+  if (items.length === 0) return []
+
+  return [
+    {
+      kind: 'plan',
+      transport: 'codex',
+      planId: stringValue(item?.id) ?? 'codex-todo-list',
+      status: normalizeEventType(eventType) === 'item.completed' ? 'completed' : 'active',
+      items,
+      vendorEventType: eventType,
+    },
+  ]
 }
 
 function normalizeCodexMcpToolCallEvent(

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Activity, ArrowLeft, Bot, ImagePlus, RefreshCw, Send, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import {
   type AppSnapshot,
@@ -11,7 +11,13 @@ import {
   readReflectionRuns,
   sendInboxMessage,
 } from '../lib/api'
-import { resolveAssistantInboxContext } from '../lib/assistantContext'
+import {
+  assistantAttentionReference,
+  findAttentionNotificationEventId,
+  groupNeedsYouAttentions,
+  isNeedsYouAttention,
+  resolveAssistantInboxContext,
+} from '../lib/assistantContext'
 import type { GoalScope } from '../lib/goalScope'
 import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
 import { useAssistantFeedStream } from '../lib/useAssistantFeedStream'
@@ -25,6 +31,7 @@ import {
   AppScrollShadow,
   AppSpinner,
   AppTextArea,
+  CountBadge,
   IconButton,
   WorkingIndicator,
 } from './ui'
@@ -62,7 +69,7 @@ export function AssistantPanel({
   const [input, setInput] = useState('')
   const [draftImages, setDraftImages] = useState<DraftImage[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
-  const [replyAttention, setReplyAttention] = useState<AttentionView | null>(null)
+  const [replyAttentions, setReplyAttentions] = useState<AttentionView[]>([])
   const [showReflectionDebug, setShowReflectionDebug] = useState(false)
   const [assistantScrolling, setAssistantScrolling] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -82,7 +89,7 @@ export function AssistantPanel({
 
   useEffect(() => {
     if (focusRequest === 0) return
-    setReplyAttention(initialReply)
+    setReplyAttentions(initialReply ? [initialReply] : [])
     setShowReflectionDebug(false)
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [focusRequest, initialReply])
@@ -106,6 +113,95 @@ export function AssistantPanel({
     () => assistantFeedEntriesToMessageFeed(assistantStream.items),
     [assistantStream.items],
   )
+  const needsYouAttentions = useMemo(
+    () => (snapshot?.attentions ?? []).filter(isNeedsYouAttention),
+    [snapshot?.attentions],
+  )
+  const needsYouAttentionsByGroupId = useMemo(
+    () =>
+      groupNeedsYouAttentions(
+        assistantStream.items,
+        needsYouAttentions,
+        snapshot?.home.homeId,
+      ),
+    [assistantStream.items, needsYouAttentions, snapshot?.home.homeId],
+  )
+  const needsYouByGroupId = useMemo(
+    () =>
+      new Map(
+        [...needsYouAttentionsByGroupId].map(([groupId, attentions]) => [
+          groupId,
+          attentions.length,
+        ]),
+      ),
+    [needsYouAttentionsByGroupId],
+  )
+  const mappedNeedsYouCount = [...needsYouAttentionsByGroupId.values()].reduce(
+    (total, attentions) => total + attentions.length,
+    0,
+  )
+  const attentionNotificationEventId = useMemo(
+    () =>
+      initialReply?.notifiedAt
+        ? findAttentionNotificationEventId(
+            assistantStream.items,
+            initialReply,
+            snapshot?.home.homeId,
+          )
+        : null,
+    [assistantStream.items, initialReply, snapshot?.home.homeId],
+  )
+
+  useEffect(() => {
+    const initialNotificationMissing = Boolean(
+      initialReply?.notifiedAt && !attentionNotificationEventId,
+    )
+    const needsYouNotificationMissing = mappedNeedsYouCount < needsYouAttentions.length
+    if (
+      (!initialNotificationMissing && !needsYouNotificationMissing) ||
+      !assistantStream.hasMoreBefore ||
+      assistantStream.isLoadingOlder
+    ) {
+      return
+    }
+    assistantStream.loadOlder()
+  }, [
+    assistantStream.hasMoreBefore,
+    assistantStream.isLoadingOlder,
+    assistantStream.loadOlder,
+    attentionNotificationEventId,
+    initialReply?.notifiedAt,
+    mappedNeedsYouCount,
+    needsYouAttentions.length,
+  ])
+
+  useEffect(() => {
+    if (!snapshot || replyAttentions.length === 0) return
+    const openReferences = new Set(
+      snapshot.attentions.flatMap((attention) => {
+        if (attention.resolvedAt !== null) return []
+        const reference = assistantAttentionReference(attention, snapshot.home.homeId)
+        return reference ? [reference] : []
+      }),
+    )
+    setReplyAttentions((current) => {
+      const next = current.filter((attention) => {
+        const reference = assistantAttentionReference(attention, snapshot.home.homeId)
+        return Boolean(reference && openReferences.has(reference))
+      })
+      return next.length === current.length ? current : next
+    })
+  }, [replyAttentions.length, snapshot])
+
+  const replyToNeedsYouMessage = useCallback(
+    (groupId: string) => {
+      const attentions = needsYouAttentionsByGroupId.get(groupId)
+      if (!attentions?.length) return
+      setReplyAttentions(attentions)
+      requestAnimationFrame(() => composerRef.current?.focus())
+    },
+    [needsYouAttentionsByGroupId],
+  )
 
   const sendMutation = useMutation({
     mutationFn: async () => {
@@ -116,7 +212,7 @@ export function AssistantPanel({
         images: draftImages.map(({ file }) => file),
         context: resolveAssistantInboxContext(
           scope,
-          replyAttention,
+          replyAttentions,
           snapshot?.attentions,
           snapshot?.home.homeId,
         ),
@@ -129,7 +225,7 @@ export function AssistantPanel({
         return []
       })
       setImageError(null)
-      setReplyAttention(null)
+      setReplyAttentions([])
       assistantStream.refresh()
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
@@ -186,8 +282,19 @@ export function AssistantPanel({
           <span className={cn('assistant-avatar', showReflectionDebug && 'debug')}>
             {showReflectionDebug ? <Activity /> : <Bot />}
           </span>
-          <span>
-            <strong>{showReflectionDebug ? 'Reflection debug' : 'Assistant'}</strong>
+          <span className="assistant-header-copy">
+            <span className="assistant-header-title">
+              <strong>{showReflectionDebug ? 'Reflection debug' : 'Assistant'}</strong>
+              {!showReflectionDebug && needsYouAttentions.length > 0 ? (
+                <CountBadge
+                  className="assistant-needs-you-count"
+                  color="warning"
+                  aria-label={`${needsYouAttentions.length} requests need your reply`}
+                >
+                  {needsYouAttentions.length}
+                </CountBadge>
+              ) : null}
+            </span>
             <small>{showReflectionDebug ? 'Runtime event stream' : 'Workspace conversation'}</small>
           </span>
         </div>
@@ -237,6 +344,12 @@ export function AssistantPanel({
           isLoadingOlder={assistantStream.isLoadingOlder}
           onLoadOlder={assistantStream.loadOlder}
           onScrollingChange={setAssistantScrolling}
+          focusGroupId={
+            attentionNotificationEventId ? `inbox:${attentionNotificationEventId}` : null
+          }
+          focusRequest={focusRequest}
+          needsYouByGroupId={needsYouByGroupId}
+          onReplyNeedsYou={replyToNeedsYouMessage}
               emptyState={
             <div className="conversation-empty">
               {assistantStream.error ? (
@@ -263,10 +376,10 @@ export function AssistantPanel({
                 {sendMutation.error?.message ?? imageError}
               </AppAlert>
         )}
-        {replyAttention && (
+        {replyAttentions.length > 0 && (
           <div className="composer-context">
-            <AppButton variant="ghost" type="button" onClick={() => setReplyAttention(null)}>
-              Responding to this request <X />
+            <AppButton variant="ghost" type="button" onClick={() => setReplyAttentions([])}>
+              Responding to {replyAttentions.length === 1 ? 'this request' : `${replyAttentions.length} requests`} <X />
             </AppButton>
           </div>
         )}

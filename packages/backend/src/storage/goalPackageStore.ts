@@ -265,21 +265,9 @@ function initialGoalDocument(input: CreateCanonicalGoalInput): GoalDocument {
       '',
       input.objective.trim(),
       '',
-      '## Constraints',
-      '',
-      markdownList(input.constraints, 'None recorded.'),
-      '',
-      '## Non-Goals',
-      '',
-      markdownList(input.nonGoals, 'None recorded.'),
-      '',
-      '## Success Criteria',
-      '',
-      markdownList(
-        input.successCriteria,
-        'The desired outcome is delivered against measurable criteria recorded in design and Engineering Work.',
-      ),
-      '',
+      ...optionalMarkdownList('Constraints', input.constraints),
+      ...optionalMarkdownList('Non-Goals', input.nonGoals),
+      ...optionalMarkdownList('Success Criteria', input.successCriteria),
     ].join('\n'),
   }
 }
@@ -303,7 +291,7 @@ function initialPlanningWork(
     body: [
       '## Objective',
       '',
-      `Clarify and plan: ${input.objective.trim()}`,
+      'Clarify the current Goal contract and accepted Inputs, then update design and the sparse Engineering Work DAG.',
       '',
       '## Acceptance Criteria',
       '',
@@ -340,11 +328,11 @@ function initialDesign(input: CreateCanonicalGoalInput) {
   ].join('\n')
 }
 
-function markdownList(values: string[] | undefined, fallback: string) {
+function optionalMarkdownList(title: string, values: string[] | undefined) {
   const normalized = values?.map((value) => value.trim()).filter(Boolean) ?? []
   return normalized.length > 0
-    ? normalized.map((value) => `- ${value}`).join('\n')
-    : `- ${fallback}`
+    ? [`## ${title}`, '', ...normalized.map((value) => `- ${value}`), '']
+    : []
 }
 
 function isDirectMarkdownPath(root: string, path: string) {

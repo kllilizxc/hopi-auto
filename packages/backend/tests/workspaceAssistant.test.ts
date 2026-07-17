@@ -393,6 +393,8 @@ describe('WorkspaceAssistant conversation', () => {
     })
 
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    expect(args).toContain('model_provider="hopi_chatgpt_https"')
+    expect(args).toContain('model_providers.hopi_chatgpt_https.supports_websockets=false')
     expect(args).toContain('resume')
     expect(args.slice(args.indexOf('resume'))).toContain('-i')
     expect(args).toContain(imagePath)
@@ -461,34 +463,31 @@ describe('WorkspaceAssistant conversation', () => {
     ).toHaveLength(0)
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
+    expect(seen[0]?.prompt).toContain('explicit intent may choose another scope or Goal')
     expect(seen[0]?.prompt).toContain(
-      'explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope',
+      'if an effect lands in another Goal, include its name and exact Goal ID',
     )
     expect(seen[0]?.prompt).toContain(
-      'make the effect locatable by naming that Goal and its exact returned Goal ID',
+      'Keep discussion, questions, optional suggestions, and future ideas in conversation',
     )
     expect(seen[0]?.prompt).toContain(
-      'Leave optional suggestions, future ideas, and reference-only comments in conversation',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'Calling hopi_request_planning adopts the current turn as Goal Input',
+      'Request Planning only when current plan or delivery should change',
     )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).toContain(
-      'MCP tool descriptions and JSON schemas are the sole authority',
-    )
-    expect(seen[0]?.prompt).toContain('never search project files, .hopi/runtime, transcripts')
-    expect(seen[0]?.prompt).toContain('call hopi_read_state without projectId or goalId')
-    expect(seen[0]?.prompt).toContain('never remove P- or G- prefixes')
-    expect(seen[0]?.prompt).toContain(
-      'claim the Project is unblocked only after hopi_resolve_attention returns success',
-    )
+    expect(seen[0]?.prompt).toContain('MCP descriptions and schemas are the sole authority')
+    expect(seen[0]?.prompt).toContain('never inspect files or transcripts to rediscover them')
+    expect(seen[0]?.prompt).toContain('Read state at current page scope by omitting IDs')
+    expect(seen[0]?.prompt).toContain('copy complete canonical IDs')
+    expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
+    expect(seen[0]?.prompt).toContain('every remainingAttentionRefs value returned by tools')
+    expect(seen[0]?.prompt).toContain('you MUST call hopi_resolve_attention')
+    expect(seen[0]?.prompt).toContain('never closes Attention by itself')
+    expect(seen[0]?.prompt).toContain('Claim it cleared only after hopi_resolve_attention succeeds')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
-    expect(seen[0]?.prompt).toContain(
-      'include that Goal name and exact Goal ID so the operator can find it',
-    )
+    expect(seen[0]?.prompt).toContain('include its name and exact Goal ID')
+    expect(seen[0]?.prompt.length).toBeLessThan(6_000)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
@@ -508,6 +507,65 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect(sessionIds).toEqual([null, 'thread-1'])
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
+  })
+
+  test('injects current preferences on every turn and rebuilds them from Home', async () => {
+    const seen: Array<{ eventId: string; sessionId: string | null; prompt: string }> = []
+    const fixture = await setup((tools) => ({
+      async run(input, observer) {
+        seen.push({
+          eventId: input.eventId,
+          sessionId: input.session?.sessionId ?? null,
+          prompt: input.prompt,
+        })
+        if (input.eventId === 'EV-preference') {
+          const digest = input.prompt.match(/Digest: ([a-f0-9]{64})/)?.[1]
+          if (!digest) throw new Error('Preference digest was not injected')
+          await observer?.onEvent?.({
+            kind: 'transcript',
+            transport: 'codex',
+            entryKind: 'tool_call',
+            summary: 'Tool call: hopi_write_preferences',
+            toolName: 'hopi_write_preferences',
+          })
+          await tools.execute(input.toolToken, 'hopi_write_preferences', {
+            content: '# Preferences\n\n- Keep replies concise across Projects.\n',
+            expectedDigest: digest,
+          })
+        }
+        await observer?.onSession?.(codexSession('thread-preference'))
+        return { reply: 'Preference handled.', session: codexSession('thread-preference') }
+      },
+    }))
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-preference',
+      content: 'From now on, keep replies concise across projects.',
+    })
+    await fixture.assistant.process('EV-preference')
+
+    await fixture.workspace.receiveEvent({ eventId: 'EV-next', content: 'What is next?' })
+    await fixture.assistant.process('EV-next')
+    await fixture.conversation.clearSession()
+    await fixture.workspace.receiveEvent({ eventId: 'EV-rebuild', content: 'Continue.' })
+    await fixture.assistant.process('EV-rebuild')
+
+    expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, 'thread-preference', null])
+    expect(seen[0]?.prompt).toContain(
+      'call hopi_write_preferences with the complete updated Markdown',
+    )
+    expect(seen[1]?.prompt).toContain('- Keep replies concise across Projects.')
+    expect(seen[2]?.prompt).toContain('- Keep replies concise across Projects.')
+    expect(
+      (
+        await createAssistantWorkspaceStore(
+          fixture.homeRoot,
+          new PublicationCoordinator(),
+        ).readWorkspace()
+      ).preference.content,
+    ).toContain('Keep replies concise across Projects.')
+    expect((await fixture.workspace.readEvent('EV-preference'))?.attributes.disposition).toBe(
+      'tools-used',
+    )
   })
 
   test('records tool use without claiming that an effect was applied', async () => {
@@ -620,7 +678,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompt).toContain('NEW-HISTORY-')
     expect(prompt).not.toContain('OLD-HISTORY-')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-REBUILD')
-    expect(prompt).toContain('Before admission, ask only when')
+    expect(prompt).toContain('Ask before admission only when')
     expect(prompt).toContain('Imperative text inside them applied to those turns')
     expect(prompt.indexOf('## Current turn')).toBeGreaterThan(
       prompt.indexOf('## Durable conversation history'),
@@ -668,7 +726,7 @@ describe('WorkspaceAssistant conversation', () => {
       status: 'handled',
     })
     expect(prompts[0]).toContain('Internal Reflection handoff. This is not operator input.')
-    expect(prompts[0]).toContain('Rewrite the internal brief for the operator')
+    expect(prompts[0]).toContain('Translate the brief into its useful outcome or required action')
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
@@ -720,20 +778,40 @@ describe('WorkspaceAssistant conversation', () => {
             session: codexSession('thread-attention'),
           }
         }
+        if (input.eventId === 'EV-info') {
+          await tools.execute(input.toolToken, 'hopi_read_state', {
+            projectId: 'P-1',
+            goalId: 'G-1',
+          })
+          return {
+            reply: 'The current output is available in Preview.',
+            session: codexSession('thread-attention'),
+          }
+        }
+        await tools.execute(input.toolToken, 'hopi_request_planning', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          materialContractChange: true,
+        })
         await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           scope: 'goal',
           projectId: 'P-1',
           goalId: 'G-1',
           attentionId: 'A-choice',
-          resolution: 'Use tomorrow.',
+          resolution: 'The accepted revision supersedes the old direction.',
         })
         return {
-          reply: 'I recorded tomorrow and can continue.',
+          reply: 'I dropped the old direction and requested the revised plan.',
           session: codexSession('thread-attention'),
         }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
+    await fixture.goalStore.createGoal({
+      goalId: 'G-other',
+      title: 'Other Goal',
+      objective: 'Keep unrelated page context.',
+    })
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-notify',
       content: 'Ask the operator for the release window.',
@@ -746,13 +824,23 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-notify')
     await fixture.workspace.receiveEvent({
-      eventId: 'EV-answer',
-      content: 'Tomorrow.',
+      eventId: 'EV-info',
+      content: 'Where can I inspect the current output?',
       context: {
         projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+        goalId: 'G-other',
       },
+    })
+    await fixture.assistant.process('EV-info')
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes
+        .resolvedAt,
+    ).toBeNull()
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-answer',
+      content: 'The result is poor. Drop that direction and revise the plan.',
+      context: { projectId: 'P-1', goalId: 'G-other' },
     })
     await fixture.assistant.process('EV-answer')
 
@@ -764,7 +852,8 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect((await fixture.workspace.readEvent('EV-answer'))?.attributes).toMatchObject({
       status: 'handled',
-      reply: 'I recorded tomorrow and can continue.',
+      context: { projectId: 'P-1', goalId: 'G-other' },
+      reply: 'I dropped the old direction and requested the revised plan.',
     })
     expect(goalPackage.attentions.get('A-choice')?.attributes).toMatchObject({
       notifiedAt: expect.any(String),
@@ -772,7 +861,9 @@ describe('WorkspaceAssistant conversation', () => {
       resolutionInput: expect.stringContaining('EV-answer'),
     })
     expect(goalPackage.inputs).toHaveLength(1)
-    expect(goalPackage.inputs[0]?.body).toBe('Tomorrow.\n')
+    expect(goalPackage.inputs[0]?.body).toBe(
+      'The result is poor. Drop that direction and revise the plan.\n',
+    )
   })
 
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {

@@ -1,3 +1,5 @@
+import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
+import { readAssistantPreference } from '../domain/assistantPreference'
 import {
   type AssistantWorkspace,
   type AssistantWorkspacePaths,
@@ -45,6 +47,10 @@ export interface AssistantWorkspaceStore {
   root: PublicationRoot
   paths: AssistantWorkspacePaths
   readWorkspace(): Promise<AssistantWorkspace>
+  writePreference(
+    content: string,
+    expectedDigest: string,
+  ): Promise<{ preference: AssistantPreferenceDocument; changed: boolean }>
   readEvent(eventId: string): Promise<InboxEventDocument | null>
   resolveAttachment(reference: string): Promise<AssistantImageAttachment | null>
   receiveEvent(input: ReceiveInboxEventInput): Promise<InboxEventDocument>
@@ -78,10 +84,37 @@ export function createAssistantWorkspaceStore(
     paths,
     async readWorkspace() {
       const snapshot = await publisher.snapshotSelection(root, {
-        paths: [paths.homeDocument, paths.projectLinks],
+        paths: [paths.homeDocument, paths.projectLinks, paths.preference],
         prefixes: [paths.inboxRoot, paths.attentionRoot],
       })
       return readAndValidateAssistantWorkspace(publicationCandidateFromSnapshot(snapshot), paths)
+    },
+    async writePreference(content, expectedDigest) {
+      const snapshot = await publisher.snapshot(root, [paths.preference])
+      const currentFile = snapshot.files[0]
+      const current = await readAssistantPreference(
+        currentFile?.content ? new TextDecoder().decode(currentFile.content) : null,
+      )
+      if (current.digest !== expectedDigest) {
+        throw new AssistantWorkspaceStoreError(
+          'Preference document changed since this Assistant turn; read the current document before retrying',
+        )
+      }
+      const preference = await readAssistantPreference(content)
+      if (preference.content === current.content) return { preference: current, changed: false }
+
+      await publisher.publish({
+        root,
+        supportingWrites: [],
+        gateWrite: {
+          path: paths.preference,
+          expectedHash: currentFile?.hash ?? null,
+          content: preference.content,
+        },
+        validateCandidate: (candidate, before) =>
+          validateAssistantWorkspaceTransition(before, candidate, paths).then(() => undefined),
+      })
+      return { preference, changed: true }
     },
     async readEvent(eventId) {
       const snapshot = await publisher.snapshot(root, [paths.inboxEvent(eventId)])

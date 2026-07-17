@@ -43,26 +43,33 @@ describe('HOPI MCP server', () => {
     const result = await client.callTool({ name: 'hopi_read_state', arguments: {} })
 
     expect(tools.tools.map((tool) => tool.name)).toContain('hopi_request_planning')
+    expect(tools.tools.map((tool) => tool.name)).toContain('hopi_write_preferences')
     expect(tools.tools.map((tool) => tool.name)).not.toContain('hopi_notify_user')
-    expect(tools.tools).toHaveLength(8)
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'reply immediately without sleeping or polling',
+    expect(tools.tools).toHaveLength(9)
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
+    ).toContain('reusable defaults')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
+      'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'include the exact returned goalId',
+      'Include the returned goalId',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
-    ).toContain('same-instruction call after hopi_create_goal is unnecessary and idempotent')
+    ).toContain('Do not call after same-turn Goal creation')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
-    ).toContain('do not call it for an optional suggestion')
+    ).toContain('not for optional notes or future ideas')
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
-      'writes: [{ path, content }]',
+      'relative to the Goal design root',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
-    ).toContain("Goal example: { scope: 'goal', projectId: 'P-...', goalId: 'G-...'")
+    ).toContain('Goal scope requires projectId and goalId')
+    expect(
+      tools.tools.reduce((total, tool) => total + (tool.description?.length ?? 0), 0),
+    ).toBeLessThan(2_500)
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })
@@ -91,6 +98,7 @@ describe('HOPI MCP server', () => {
     const names = (await client.listTools()).tools.map((tool) => tool.name)
     expect(names).toContain('hopi_request_planning')
     expect(names).toContain('hopi_notify_user')
+    expect(names).not.toContain('hopi_write_preferences')
     expect(names).toHaveLength(9)
   })
 

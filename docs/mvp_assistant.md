@@ -78,10 +78,11 @@ interrupted.
 Reflection is a disposable, read-only model Run that lets the Assistant notice progress or trouble
 without waiting for a new user message. It is an internal runtime mechanism, not a second product
 Assistant, responsibility pass, Work stage, durable workflow entity, or Kanban concept. A Reflection
-is a logical fork: it receives a compact reason for waking, semantic facts changed since the last
-assessed snapshot, the relevant current-state slice, and bounded public conversation context. Old
-Reflection briefs are not fed back into later Reflection prompts. The implementation does not require
-a model vendor to clone a live session.
+is a logical fork: it receives a compact reason for waking and semantic facts changed since the last
+assessed snapshot. It does not receive public conversation or another full current-state dump. The
+speaking thread already owns conversation, and Reflection can reread bounded scoped state only after
+the delta identifies a concrete candidate. Old Reflection briefs are not fed back into later
+Reflection prompts. The implementation does not require a model vendor to clone a live session.
 
 Reflection is a single read-only background analyst. User input never interrupts its model Run.
 Every Run owns an immutable semantic snapshot; changes observed while it runs make the result stale,
@@ -102,9 +103,10 @@ snapshot. Reflection follows one small protocol:
    forming an event queue. A failed Run never marks its digest assessed and retries with
    per-digest exponential backoff up to one fixed attempt ceiling. An exhausted digest waits for a
    semantic change rather than consuming calls forever.
-4. Reflection first decides from the supplied trigger and delta. It may reread bounded scoped HOPI
-   state and follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does
-   not scan the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
+4. Reflection first decides from the supplied trigger and compact delta. Work facts contain only
+   control state plus a bounded latest-Run outcome. It may reread bounded scoped HOPI state and follow
+   an exact diagnostic path only when a concrete anomaly needs revalidation. It does not scan the
+   HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
 5. If no response or action is useful, it ends silently. A successful Reflection transport may
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
@@ -305,6 +307,25 @@ appropriate HOPI tool without conducting a delivery interview; Planner owns tech
 clarification discovered after admission. Current canonical state overrides thread memory, and the
 current Inbox turn overrides suggestions from older conversation.
 
+## User Preferences
+
+Speaking Assistant receives the current Assistant-home `preference.md` content and digest on every
+turn, including resumed vendor sessions. This document contains only durable cross-Project defaults.
+The model applies relevant defaults to its communication and judgment, while the current turn and
+explicit Project or Goal authority always win. Reflection analysis does not receive or modify this
+document.
+
+Speaking Assistant is the sole preference writer. It uses model judgment rather than keywords,
+classification fields, or a fixed feedback workflow to distinguish a reusable preference from a
+one-off request. A write replaces the complete free-Markdown document using the exact digest from
+the current turn; stale writes fail without partial change. There is no Preference agent, structured
+preference record, or preference lifecycle.
+
+A preference write records a default only. It does not wake Reflection, request Planning, interrupt
+a Run, or mutate a Goal. When the same instruction should also change current delivery, Assistant
+separately uses the existing design and Planning tools in that turn. This keeps remembering and
+acting as two explicit effects instead of introducing a hidden trigger between them.
+
 ## MVP Tool Surface
 
 The exact JSON schemas are implementation details, but the MVP exposes these capability families:
@@ -312,6 +333,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Capability | Purpose | Durable effect |
 | --- | --- | --- |
 | Read HOPI state | Read Projects, Goals, design, Work, Attention, Evidence, Attempts, and derived Kanban | None |
+| Write preferences | Replace durable cross-Project user defaults | Assistant-home `preference.md` |
 | Create Goal | Create one Goal, record the current instruction, and start its initial Planning | Goal package and Goal Input |
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Request planning | Record the current user instruction for a Goal and ensure Planning | Goal Input and Planning Work |
@@ -437,6 +459,27 @@ Needs-you and completion Attention appear in the same Assistant thread as system
 to one sends another normal user turn with the Attention reference in context. Assistant may answer,
 read current state, and call the appropriate HOPI tool; no separate answer parser exists.
 
+An unresolved notified Attention decorates the exact Assistant message that asked the question with
+one quiet warning surface, a small `Needs you` label, and a `Reply` action. Multiple open references
+from the same message share that presentation and reply context. Resolution removes the decoration
+and returns the message to ordinary conversation styling; it does not append a synthetic resolved
+row. The Assistant header shows only a non-zero count of unresolved notified Attention. Kanban keeps
+its Work badge and focus projection but does not repeat Needs-you as a separate page banner.
+
+A **Needs you** projection must navigate to the exact public Assistant turn that acknowledged its
+canonical Attention reference. The conversation loads older pages when necessary and focuses that
+turn; Goal surfaces do not copy the reply, expose the internal Attention body, or persist another
+notification link.
+
+An Attention reference is an exact reply hint, not a gate on understanding. After a user turn changes
+a Project or Goal, speaking Assistant reconciles every materially related open targeted Attention it
+observed in that scope. If the instruction or a successful tool effect satisfies or supersedes the
+blocking condition, Assistant resolves that exact Attention before replying. If the condition remains,
+it stays open and Assistant states the one remaining decision when silence would mislead the operator.
+Goal mutation tools surface the still-open canonical references after their effect so this settlement
+is not buried in a large state read. HOPI adds no answer parser, intent labels, or automatic closure
+rule.
+
 After the configured bounded Assistant retry count, HOPI creates event-target Attention and stops
 retrying that turn until the operator responds or the condition changes. A visible error replaces
 an indefinite loading indicator.
@@ -446,10 +489,13 @@ an indefinite loading indicator.
 The Assistant drawer shows one chronological conversation:
 
 - a submitted user message appears immediately
-- `Working` is one rebuildable speaking-conversation projection, never an Inbox message, runtime
-  event, or durable status row. It is rendered at most once and only after the newest conversation
-  row. `Waiting to start` is used when public work is queued but no speaking turn is running; both
-  disappear when no resumable or running public turn remains
+- Conversation activity is one rebuildable tail projection, never an Inbox message, runtime event,
+  or durable status row. It is rendered at most once and only after the newest conversation row.
+  A running public speaking turn shows `Working`. When no public turn is running, an active
+  Reflection or Reflection-sourced internal speaking turn shows `Thinking` without exposing its
+  hidden prompt, messages, or tools. `Waiting to start` is used when public work is queued but no
+  speaking or Reflection activity is running. The projection disappears when none of those owners
+  remains active
 - live activity synchronization is independent of chronological pagination. The Server projects a
   change cursor from existing Inbox handling timestamps, turn manifests, and runtime events; the
   client applies changed entries and removals by stable identity. It does not assume that only the
@@ -461,8 +507,8 @@ The Assistant drawer shows one chronological conversation:
   turn itself fails
 - a trailing tool stream is rendered directly without an aggregate summary. It becomes one
   collapsed historical Activity row only after a later non-tool conversation row establishes the
-  boundary. The conversation-level `Working` projection is not such a boundary. Individual tool
-  calls remain compact diagnostics rather than chat commands the operator must understand
+  boundary. The conversation-level activity projection is not such a boundary. Individual tool calls
+  remain compact diagnostics rather than chat commands the operator must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
 - internal Reflection turns and their diagnostics are hidden
@@ -471,7 +517,7 @@ The Assistant drawer shows one chronological conversation:
 - operator-facing replies contain conclusions and required actions; internal process belongs in the
   existing collapsed activity and Attempt views
 - targeted Attention is pinned as one direct request without displaying its internal identifier;
-  replying preserves the identifier invisibly as context
+  replying preserves every open identifier associated with that exact message invisibly as context
 
 The composer may show the current Project/Goal context and let the operator clear it. Its wording is
 `Context`, never `Route to`. There is no generic loading state without elapsed activity or a durable

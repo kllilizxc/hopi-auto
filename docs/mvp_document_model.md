@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -17,6 +17,7 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
 <hopi-home>/.hopi/
   home.yml
   projects.yml
+  preference.md
   docs/
     assistant/
       attachments/
@@ -44,6 +45,19 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
     leases/
     index/
 ```
+
+`preference.md` is the one canonical user-preference document for this Assistant Home. It is free
+Markdown containing only durable defaults that should apply across Projects. It has no record
+schema, item lifecycle, or separate history model; an empty document means no stored defaults.
+Explicit instructions in the current turn and
+Project- or Goal-local authority override these defaults.
+
+Speaking Assistant reads the current document on every turn and is its sole writer. Writes replace
+the complete normalized document under an expected content digest, so normal publication provides
+optimistic concurrency without adding preference IDs or a preference database. The model decides
+whether feedback expresses a reusable default; one-off direction and Project-specific rules stay in
+conversation or the existing Project/Goal documents. Updating this document alone has no Goal,
+Planning, Reflection, or notification effect.
 
 Managed Git checkouts are deliberately outside Assistant home and outside the selected checkout:
 
@@ -127,7 +141,10 @@ violations, and path traversal fail before the turn is accepted.
 
 This receipt storage does not make an image part of a Project or Goal. It preserves the exact
 conversation input for replay and lets Assistant inspect the current turn. Only a later explicit
-Goal-targeted HOPI tool call may adopt selected attachments as Goal references.
+Goal-targeted HOPI tool call may adopt selected attachments as Goal references. Accepted image input
+may enter Goal, design, and Work prose only through the resulting Goal-local asset path;
+Assistant-home paths and machine-local absolute image paths are never canonical authority. This
+does not prohibit Project-relative source image paths or ordinary remote URLs.
 
 Historical Inbox events may contain the removed `routeClaim` field. The compatibility reader keeps
 it as provenance, but new turns never write it and no forward control rule depends on it.
@@ -236,7 +253,6 @@ the canonical project target for workspace Attention; it never guesses or replac
   AGENTS.md
   .hopi/
     project.yml
-    preference.md
     docs/
       index.md
       tech-debt.md
@@ -266,8 +282,9 @@ checkout. `HOPI_HOME` selects their owner directory; when it is unset the produc
 worktrees live under the Repo-adjacent root above. The managed
 integration worktree is stable rather than disposable
 because ordinary canonical document publications may precede their next Git checkpoint. Canonical
-documents, preferences, `project.yml`, the `hopi/release` ref, and task branch refs travel with a
-lossless Project migration.
+Project documents, `project.yml`, the `hopi/release` ref, and task branch refs travel with a lossless
+Project migration. User preferences travel with Assistant Home instead; Project-specific operating
+rules remain in Project docs or Repo-local `AGENTS.md`.
 
 Each responsibility dispatch uses one globally identified runtime directory. Project, Goal, Work,
 and responsibility already belong in `attempt.json`; repeating them as filesystem ancestry adds no
@@ -386,7 +403,9 @@ Attention resolution, or runtime state.
 When Assistant adopts an Inbox image for a Goal, `design/references.md` records its Goal-relative
 asset path, source Inbox event, and free-form purpose or usage boundary. It is an ordinary editable
 design document, not an Asset schema, registry, approval surface, or control ledger. A user may
-revise it through the same design tool as any other design document.
+revise it through the same design tool as any other design document. If a machine-local image is
+useful, Assistant must first adopt its durable Inbox attachment rather than write the absolute path
+into Goal authority.
 
 Goal-local design is the HOPI design surface shown in the UI and a living planning input, not an
 approval workflow. A user may instruct Assistant to revise any of these documents. Assistant and
@@ -477,8 +496,16 @@ every linked Repo. Branch HEAD remains checkpoint authority but never owns Work 
 
 #### Planning Work invariant
 
-Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present;
-otherwise it creates a stable ID from the triggering event or planning cause.
+Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present,
+replaces its concise Objective with the latest trigger, and preserves plus appends accepted Input and
+reference paths; otherwise it creates a stable ID from the triggering event or planning cause. The
+Objective describes the current reason to plan, not an append-only trigger history.
+
+The initial Planning Work is a concise control envelope. Its body points Planner at the current Goal
+and its accepted Input paths; it does not copy the Goal objective. Goal creation omits empty optional
+constraints, non-goals, and success-criteria sections instead of storing placeholder text. The Goal
+contract and verbatim Input remain separate first-class documents because normalization and source
+provenance are different facts.
 
 Triggers include Goal creation, material contract change, resume, reopen, stale output, an explicit
 speaking-Assistant planning request after Attention, and an active Goal with neither nonterminal
@@ -682,6 +709,12 @@ Evidence existence alone does not consume a Run result. A result becomes consume
 canonically appends its Evidence to `evidenceRefs`; the qualified `producerRun` on referenced
 Evidence then prevents that Run from affecting Work again. Evidence left unreferenced by a process
 crash is preserved, but a later attempt uses a new Run rather than recovering the old transition.
+
+For an Engineering responsibility, staged authority includes every Work reachable from the owning
+Work through `dependsOn` and all Evidence named by those Works' append-only `evidenceRefs`. HOPI
+resolves portable Run artifact references from that selected Evidence into one Run-local read-only
+manifest. This is a projection of existing canonical Evidence and immutable Run storage, not a new
+document type or a second source of truth.
 
 Corrections create new Evidence and may reference the superseded Evidence; existing Evidence is
 never edited into a different claim. Raw transcripts are runtime data, and a success claim backed

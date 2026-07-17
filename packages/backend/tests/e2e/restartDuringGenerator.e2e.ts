@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
+import type {
+  RoleRunInput,
+  RoleRunObserver,
+  RoleRunResult,
+  RoleRunner,
+} from '../../src/agent/RoleRunner'
 import {
   parseWorkDocument,
   renderAttentionDocument,
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
 import {
   errorMessage,
   finishTestRun,
@@ -110,6 +116,24 @@ try {
     ),
     'The replacement Coordinator must publish a fresh successful Generator Attempt',
   )
+  const firstGeneratorRun = firstRunner.runs.find((run) => run.responsibility === 'generator')
+  const resumedGeneratorRun = resumedRunner.runs.find((run) => run.responsibility === 'generator')
+  assert.equal(
+    resumedGeneratorRun?.sessionId,
+    'restart-generator-session',
+    'The replacement Generator Attempt must resume the same Work responsibility Session',
+  )
+  assert.equal(
+    resumedGeneratorRun?.workspaceDir,
+    firstGeneratorRun?.workspaceDir,
+    'The replacement Generator Attempt must reuse the same Work-revision workspace',
+  )
+  assert.equal(firstGeneratorRun?.markerFound, false)
+  assert.equal(
+    resumedGeneratorRun?.markerFound,
+    true,
+    'The replacement process must read a file written before Coordinator shutdown',
+  )
   assert.ok(
     attempts.some(
       (attempt) =>
@@ -120,7 +144,7 @@ try {
     'The replacement Coordinator must integrate only an accepted Review',
   )
   assert.equal(
-    await gitOutput(join(homeRoot, '.hopi', 'projects', PROJECT_ID, 'integration'), [
+    await gitOutput(managedRepoWorktreePaths(repoRoot).integration, [
       'rev-list',
       '--count',
       'refs/heads/hopi/release',
@@ -129,6 +153,13 @@ try {
     ]),
     '1',
     'C1 must advance at most once for the recovered Work',
+  )
+  assert.equal(
+    await Bun.file(
+      join(resumedGeneratorRun?.workspaceDir ?? '', 'restart-continuity.txt'),
+    ).exists(),
+    false,
+    'Terminal Work must remove its disposable responsibility workspace',
   )
   await Bun.write(
     join(artifactRoot, 'restart-contract.json'),
@@ -186,14 +217,40 @@ try {
 }
 
 function createRestartRoleRunner(blockFirstGenerator: boolean): RoleRunner & {
-  runs: Array<{ responsibility: string; runId: string }>
+  runs: Array<{
+    responsibility: string
+    runId: string
+    sessionId: string | null
+    workspaceDir: string
+    markerFound: boolean
+  }>
   generatorWorktree: string | null
 } {
   const runner = {
-    runs: [] as Array<{ responsibility: string; runId: string }>,
+    runs: [] as Array<{
+      responsibility: string
+      runId: string
+      sessionId: string | null
+      workspaceDir: string
+      markerFound: boolean
+    }>,
     generatorWorktree: null as string | null,
-    async run(input: RoleRunInput): Promise<RoleRunResult> {
-      runner.runs.push({ responsibility: input.responsibility, runId: input.runId })
+    async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
+      const continuityMarker = join(input.context.runtimeScratchDir, 'restart-continuity.txt')
+      const markerFound = await Bun.file(continuityMarker).exists()
+      runner.runs.push({
+        responsibility: input.responsibility,
+        runId: input.runId,
+        sessionId: input.session?.sessionId ?? null,
+        workspaceDir: input.context.runtimeScratchDir,
+        markerFound,
+      })
+      if (input.responsibility === 'generator') {
+        await observer?.onSession?.({
+          transport: 'codex',
+          sessionId: 'restart-generator-session',
+        })
+      }
       if (input.responsibility === 'planner') return plan(input)
       if (input.responsibility === 'generator') return generate(input)
       if (input.responsibility === 'reviewer') return review(input)
@@ -202,7 +259,10 @@ function createRestartRoleRunner(blockFirstGenerator: boolean): RoleRunner & {
   }
 
   async function generate(input: RoleRunInput): Promise<RoleRunResult> {
+    const continuityMarker = join(input.context.runtimeScratchDir, 'restart-continuity.txt')
     if (blockFirstGenerator) {
+      assert.equal(await Bun.file(continuityMarker).exists(), false)
+      await Bun.write(continuityMarker, 'written before Coordinator shutdown\n')
       runner.generatorWorktree = input.cwd
       await Bun.write(
         join(input.cwd, 'src', 'restart-marker.ts'),
@@ -213,6 +273,7 @@ function createRestartRoleRunner(blockFirstGenerator: boolean): RoleRunner & {
       )
       return successful('Generator was stopped after writing a checkpoint candidate.')
     }
+    assert.equal(await Bun.file(continuityMarker).text(), 'written before Coordinator shutdown\n')
     await Bun.write(join(input.cwd, 'src', 'feature.ts'), 'export const feature = 2\n')
     return successful('Replacement Generator finished the recovered candidate.')
   }

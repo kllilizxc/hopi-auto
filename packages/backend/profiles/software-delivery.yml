@@ -19,6 +19,6 @@ retry:
   exhausted: create_attention
 
 concurrency:
-  planner: 1
+  planner: 3
   generator: 3
-  reviewer: 1
+  reviewer: 3

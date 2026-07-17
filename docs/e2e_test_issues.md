@@ -900,3 +900,213 @@ Inbox event, and verifies the server remains available. A lower-level contract v
 
 The final `bun run check` passed 348 Backend tests with 1,437 assertions and 65 Frontend tests with
 211 assertions, together with runtime verification, typechecks, Biome, and the Frontend build.
+
+## 2026-07-17: Role Capacity Was Global But Not Profile-Driven
+
+A Goal appeared stuck in Review with no active Run. Its Generator had actually finished while the
+single global Reviewer slot was occupied by another Project; it moved from `queued` to `working`
+within two seconds of that healthy Reviewer finishing. The queue was correct, but the incident made
+the fixed `reviewer: 1` bottleneck visible.
+
+The profile already documented separate Planner, Generator, and Reviewer capacities, while
+Coordinator duplicated `1 / 3 / 1` in two code paths. The profile was therefore not the actual
+scheduling source of truth. The three fields remain independent positive integers and now hold
+`3 / 3 / 3`; runtime loads them once and supplies the same object to both candidate readiness and
+dispatch reservation. Each capacity is global across all Projects and Goals in one Home, rather
+than being multiplied per Project or collapsed into one shared Engineering pool.
+
+A deterministic contract distributes four Goals across two Projects for each responsibility. It
+proves that three Runs start globally, the fourth stays queued, and one newly available slot admits
+exactly one Run. A profile contract separately proves that unequal positive values such as
+`2 / 5 / 4` remain valid without making dispatch or retry semantics configurable.
+
+The final `bun run check` passed 359 Backend tests with 1,472 assertions and 75 Frontend tests with
+238 assertions, together with runtime verification, typechecks, Biome, and the Frontend build.
+
+## 2026-07-17: Responsibility Attempts Lost Their Model Conversation
+
+Planner, Generator, and Reviewer already retained canonical authority, stable Work source, raw
+transcripts, and immutable Attempt diagnostics. They did not retain the vendor Session ID. Any new
+Attempt therefore started a new model conversation after Coordinator restart, Pause/Resume,
+Attention resolution, operational retry, or a Reviewer rejection, repeating discovery and reasoning
+even though it still owned the same Work responsibility.
+
+The correction adds one runtime-only identity rather than separate recovery flows. A provider-neutral
+Session belongs to one `Project + Goal + Work + responsibility` pair; an Attempt remains one process
+invocation. RoleRunner captures the vendor ID as soon as Codex, Claude, or OpenCode reports it, and
+every later Attempt for that pair receives it together with the complete current assignment. A
+different Work or responsibility never inherits it, Reflection remains disposable, and canonical
+documents remain the only authority. An incompatible transport or explicit vendor rejection clears
+the cache and rebuilds once inside the same Attempt. Process transports remain non-resumable.
+
+The same contract now covers interruption, Pause/Resume, Attention continuation, operational retry,
+and Generator/Reviewer feedback without encoding those causes in Session state. Deterministic tests
+prove Work/role isolation, all three vendor resume commands, immediate ID capture, invalid-session
+fallback, and independent Generator/Reviewer continuity through rejection. The restart contract
+retains the interrupted Attempt and proves the replacement Generator receives
+`restart-generator-session`; the browser Pause contract proves a second Generator Attempt receives
+`pause-generator-session`. Passing evidence is retained at
+`test-artifacts/restart-during-generator-2026-07-16T18-33-35-291Z-b64da3a5` and
+`test-artifacts/pause-resume-browser-2026-07-16T18-37-19-770Z-bb6bf54c`.
+
+Those reruns also exposed two stale test assumptions after managed worktree and delivery projection
+changes. The restart case addressed a removed legacy integration path instead of the shared managed
+path helper. The Pause and single-Repo Live contracts still required the delivery checkout to remain
+unchanged after accepted C1, while execution authority requires it to remain unchanged only before
+C1 and then cleanly fast-forward exactly to `hopi/release`. Tests and case documentation now assert
+that actual boundary instead of weakening current delivery behavior.
+
+The final `bun run check` passed 367 Backend tests with 1,500 assertions and 76 Frontend tests with
+241 assertions, together with runtime verification, typechecks, Biome, and the Frontend build.
+
+## 2026-07-17: Needs You Was Durable But Not Reachable
+
+Goal `G-b560d714-d9e6-4200-8589-cf8b64b89d6a` projected **Needs you**, and its Attention had both a
+handled public speaking-Assistant reply and `notifiedAt`. The message was not lost. It was older than
+the initial page of the global cross-Project conversation, while the Goal banner opened no exact
+context and left the reader at the newest message. From the operator's perspective, Assistant had
+said nothing.
+
+The correction adds no notification state or copied message. The banner opens Assistant with the
+existing Attention; the conversation matches its canonical reference against public Reflection
+turns, loads older pages until the turn is present, focuses it, and binds the ordinary composer to
+the same reference. Exact-reference unit regressions cover cross-Goal ID reuse, and the real Goal was
+verified in the browser with the decision question outside the initial history page. Future Attention
+E2E checks must verify this user-reachable path, not stop at Inbox persistence, `notifiedAt`, or the
+Kanban badge.
+
+Frontend typechecks, all 83 Frontend tests, and the production build passed.
+
+## 2026-07-17: A New Direction Left Its Superseded Attention Open
+
+Goal `G-b560d714-d9e6-4200-8589-cf8b64b89d6a` retained an old Work Attention after the operator
+rejected that direction and asked for a materially different result. The speaking Assistant correctly
+routed the instruction to the Goal and requested revised Planning, but it did not explicitly settle
+the blocker that the accepted revision had superseded. Kanban therefore continued to show **Needs
+you** even though no old decision was still required.
+
+The correction adds no intent parser, Attention trigger, or Coordinator inference. Each speaking
+Assistant turn now has one settlement obligation: after an accepted mutation, reconcile materially
+related open targeted Attention from current state. Explicit references are identity hints rather than
+the only discovery path. If the mutation satisfies or supersedes a blocker, Assistant resolves its
+exact canonical Attention; if the blocker still matters, it remains open and Assistant states the one
+remaining decision. Goal mutation tools return the still-open canonical references so that a
+successful planning or control call cannot make the unresolved consequence easy to overlook.
+
+Deterministic contracts cover the original shape: an informational follow-up from another Goal does
+not settle the blocker, while a later ordinary instruction from that same unrelated page revises the
+intended Goal and resolves the old Attention through its durable Input. A real configured-provider
+`HOPI-E2E-013` run retained at
+`test-artifacts/blocking-attention-continuation-2026-07-17T03-59-42-883Z-3444834d` proved the model
+boundary: the information-only turn left Attention open, the later `compact` decision became the only
+new Goal Input, Assistant resolved the exact Attention against that Input, and Planner, Generator,
+Reviewer, C1, completion, and notification all converged.
+
+That Live run exposed two harness defects after the product behavior had completed. Browser URLs with
+non-ASCII Goal IDs were interpolated directly into the WSL-to-Windows script and arrived mojibaked;
+all Harness navigation now uses the same Base64 UTF-8 boundary as message text. The case also retained
+the obsolete assertion that the delivery checkout never changes, while current authority requires it
+to remain untouched before C1 and then cleanly fast-forward to `hopi/release`. The case now asserts the
+recorded branch, clean status, exact accepted head, and normalized delivered content. The retained run
+is marked failed only by that stale final oracle; it was not repeated after correcting the oracle
+because its complete real-model evidence is immutable and another run would repeat roughly 1.8 million
+input tokens without exercising a changed product path.
+
+The final checks passed 372 Backend tests with 1,536 assertions and 83 Frontend tests with 279
+assertions, together with both typechecks, Biome, and the production Frontend build.
+
+## 2026-07-17: Durable Preferences Needed One Home Authority
+
+The previous repo-local `.hopi/preference.md` was an empty passive snapshot: speaking Assistant could
+not read or update it, every Project could become a competing preference source, and downstream
+roles received it without Planner deciding whether it mattered. The correction replaces that shape
+with one free-Markdown Assistant-home document. Speaking Assistant receives its content and digest
+on every turn and is the only writer; Planner receives one immutable Run snapshot and materializes
+relevant defaults into design or Work. Generator, Reviewer, Reflection analysis, Goal freshness, and
+Kanban receive no preference state or trigger.
+
+Deterministic tests cover Home upgrade, complete-document publication, stale-digest rejection,
+clearing, public-turn capability, internal-turn rejection, same-session refresh, session rebuild,
+and Planner-only staging. The focused configured-model `HOPI-E2E-032` run retained at
+`test-artifacts/durable-preference-judgment-2026-07-17T06-44-41-288Z-4c9546be` then proved the model
+boundary through the real Browser and speaking Assistant: an explicit cross-Project preference made
+exactly one `hopi_write_preferences` call, while a conflicting one-off instruction changed only its
+reply and left the digest unchanged. It used two Assistant Runs, zero Reflection or responsibility
+Runs, 31,700 uncached input tokens, and 815 output tokens. Cleanup, browser audit, final screenshot,
+Inbox liveness, and Attention checks all passed.
+
+The final repository check passed 377 Backend tests with 1,570 assertions and 89 Frontend tests with
+293 assertions, together with runtime verification, both typechecks, Biome, and the production
+Frontend build.
+
+## 2026-07-17: Next-Risk Completion Audit
+
+The next audit stops treating every state combination as a new E2E. Existing restart, Pause,
+concurrency, vendor-session, multi-Repo, and image-delivery Runs already prove their respective
+owners. The remaining high-value gaps are three orthogonal boundaries:
+
+- finish `031` with one zero-provider Browser Run over non-Git rejection, explicit empty-folder
+  initialization, scoped monorepo execution, preparation, Preview, and out-of-scope C1 rejection;
+- finish the conversation-only variant of `022` with one real multimodal Assistant turn and no
+  responsibility chain; and
+- add `033`, one zero-provider production-Coordinator E2E proving a dependent Work receives accepted
+  predecessor Evidence and immutable Run artifacts through its ordinary staged context.
+
+The `022` canary also serves as the rotating Codex transport proof for `024`: deterministic command
+contracts require the explicit HTTPS Responses provider with WebSockets disabled, while the retained
+real raw stream must contain no WebSocket setup or fallback diagnostics. No additional full delivery
+Run is justified. After these scenarios pass, further Cartesian combinations are below the current
+marginal-value threshold unless a failure reveals a shared boundary that existing tests do not own.
+
+The first `031` Browser execution exposed such a Harness boundary before reaching product behavior.
+It clicked the Project picker while initial state was still loading, shifted the deterministic host
+selection queue, and then kept polling later steps. During that long wait another Browser Harness
+client selected an unrelated tab, so targetless `js()` and screenshots continued against that tab.
+Browser scripts now bind their created target explicitly, wait for enabled controls, and fail at the
+first unmet semantic checkpoint. This is a general Browser execution fix; no Project-source product
+rule or scenario-specific retry is added.
+
+The next focused retry also corrected the fixture boundary: a directory below repository-local
+`test-artifacts` is, correctly, a Git subdirectory rather than a non-Git or empty source. Those two
+fixtures now live under an owned temporary root outside every Git ancestor and are removed through
+ordinary Test Run cleanup; the nested monorepo and all durable evidence remain artifact-local.
+
+The first behaviorally passing `031` Run was not accepted as the final cost proof. Its deterministic
+Project actions woke the default configured Reflection, which began one real provider turn before
+Server cleanup interrupted it, while the scenario had hard-coded zero usage in `run.json`. The
+Browser fixture now supplies deterministic speaking Assistant and no-action Reflection runners and
+verifies retained runtime usage before reporting zero. This preserves the real completion-notification
+orchestration while replacing only the provider boundary; Reflection product behavior remains covered
+by its dedicated Live cases.
+
+The first deterministic retry also exposed a test-only vocabulary mistake: Reflection handoff speaks
+through the ordinary `internal` Assistant mode, not only `main`. The zero-provider seam now accepts all
+three production modes (`main`, `internal`, and `reflection`) and failed scenario reports retain the
+assertion stack instead of reducing failures to messages such as `false == true`.
+
+The complete preflight then found a stale `011` oracle. After both Goals reached `done`, the scenario
+still required each delivery checkout HEAD to equal its initial commit. That contradicts `INV-05` and
+the current C1 contract: the checkout must remain unchanged before C1, then cleanly fast-forward to
+the exact accepted `hopi/release`. The scenario now verifies the recorded branch is unchanged, the
+checkout is clean, the initial HEAD is an ancestor, the final HEAD equals `hopi/release`, and the
+accepted feature content is present. The content oracle ignores LF/CRLF materialization because the
+delivery checkout retains the user's Git conversion policy while managed HOPI worktrees deliberately
+use `core.autocrlf=false`. No release or checkout product behavior is changed.
+
+The next preflight retry reached `020` and exposed an obsolete Browser adapter rather than a product
+failure. Project creation now derives canonical Project and Repo identities from selected folders,
+but the script still searched for removed identity inputs and searched visible copy for a canonical
+`P-*` ID. It then continued after that failure. Its supposed moved-Repo fixture was also a second Git
+worktree on a different branch, which the product correctly rejected instead of treating as the moved
+recorded delivery checkout. The scenario is split at the real host-filesystem boundary: Browser links
+and configures the Project, the fixture physically renames the linked secondary Repo, then a second
+Browser phase performs Rebind and reload verification. Both phases bind their own target and fail at
+the first unmet semantic checkpoint; no product selector, identity, or Rebind rule is weakened.
+
+After `020` passed, `030` exposed a product recovery defect. Bootstrap correctly created Project
+Attention and disabled scheduling for stale migrated paths, but `/api/state` still unconditionally
+opened the missing old integration root. The whole Workspace returned 500, so the operator could not
+see the blocker or reach Rebind. State presentation now degrades only the blocked Project's unreadable
+Goal expansion: Project identity, Repo bindings, model settings, and Project Attention remain visible;
+canonical Goal authority is neither guessed nor mutated. Complete-set Rebind still rebuilds runtime
+from validated files before Goals reappear.

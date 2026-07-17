@@ -1,8 +1,10 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { RoleRunner } from './agent/RoleRunner'
+import type { AgentPlanEvent, AgentRuntimeEvent } from './agent/runtimeEvents'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
+import type { InboxEventDocument } from './domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
@@ -10,6 +12,7 @@ import {
   workspaceAttentionReference,
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
+import type { GoalPackage } from './domain/goalPackage'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -681,8 +684,15 @@ async function presentState(runtime: MvpRuntime) {
     )
     const goals = []
     let goalOpenAttentionCount = 0
-    for (const goalId of await project.store.listGoalIds()) {
-      const goalPackage = await project.store.readPackage(goalId)
+    const readableGoalPackages: Array<{ goalId: string; goalPackage: GoalPackage }> = []
+    try {
+      for (const goalId of await project.store.listGoalIds()) {
+        readableGoalPackages.push({ goalId, goalPackage: await project.store.readPackage(goalId) })
+      }
+    } catch (error) {
+      if (!projectAttention) throw error
+    }
+    for (const { goalId, goalPackage } of readableGoalPackages) {
       const projectAttentionOpen = Boolean(projectAttention)
       const liveWorkIds = new Set(
         [...runtime.coordinator.activeRuns().keys()]
@@ -706,6 +716,7 @@ async function presentState(runtime: MvpRuntime) {
       goals.push({
         id: goalId,
         title: goalPackage.goal.attributes.title,
+        createdAt: goalCreatedAt(goalPackage, workspace.events),
         lifecycle: goalPackage.goal.attributes.lifecycle,
         priority: goalPackage.goal.attributes.priority,
         ...summaries,
@@ -770,6 +781,22 @@ async function presentState(runtime: MvpRuntime) {
   }
 }
 
+function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, InboxEventDocument>) {
+  let earliest: { value: string; timestamp: number } | null = null
+  for (const input of goalPackage.inputs.values()) {
+    const receivedAt = events.get(input.attributes.sourceEventId)?.attributes.receivedAt
+    const inputTimestamp = receivedAt ? Date.parse(receivedAt) : Number.NaN
+    if (
+      receivedAt &&
+      Number.isFinite(inputTimestamp) &&
+      (!earliest || inputTimestamp < earliest.timestamp)
+    ) {
+      earliest = { value: receivedAt, timestamp: inputTimestamp }
+    }
+  }
+  return earliest?.value ?? null
+}
+
 async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequest) {
   const projection = await readAssistantFeedProjection(runtime)
   const page = paginateItems(projection.entries, request, {
@@ -824,32 +851,44 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
       attention,
     ]),
   )
-  const publicEvents = [...workspace.events.values()].filter(
-    (event) => event.attributes.visibility === 'public',
+  const workspaceEvents = [...workspace.events.values()]
+  const publicEvents = workspaceEvents.filter((event) => event.attributes.visibility === 'public')
+  const internalSpeakingEvents = workspaceEvents.filter(
+    (event) =>
+      event.attributes.source === 'reflection' &&
+      event.attributes.visibility === 'internal' &&
+      event.attributes.status === 'pending',
   )
-  const eventStates = await Promise.all(
-    publicEvents.map(async (event) => {
-      if (event.attributes.status === 'handled') {
+  const [eventStates, internalSpeakingTurns] = await Promise.all([
+    Promise.all(
+      publicEvents.map(async (event) => {
+        if (event.attributes.status === 'handled') {
+          return {
+            event,
+            turn: null,
+            runtimeStatus: 'completed' as const,
+            updatedAt: maxTimestamp(event.attributes.receivedAt, event.attributes.handledAt),
+          }
+        }
+        const turn = await runtime.assistantConversation.readTurn(event.attributes.id)
         return {
           event,
-          turn: null,
-          runtimeStatus: 'completed' as const,
-          updatedAt: maxTimestamp(event.attributes.receivedAt, event.attributes.handledAt),
+          turn,
+          runtimeStatus: turn?.manifest.status ?? ('queued' as const),
+          updatedAt: maxTimestamp(
+            event.attributes.receivedAt,
+            turn?.manifest.updatedAt,
+            turn?.events.at(-1)?.createdAt,
+          ),
         }
-      }
-      const turn = await runtime.assistantConversation.readTurn(event.attributes.id)
-      return {
-        event,
-        turn,
-        runtimeStatus: turn?.manifest.status ?? ('queued' as const),
-        updatedAt: maxTimestamp(
-          event.attributes.receivedAt,
-          turn?.manifest.updatedAt,
-          turn?.events.at(-1)?.createdAt,
-        ),
-      }
-    }),
-  )
+      }),
+    ),
+    Promise.all(
+      internalSpeakingEvents.map((event) =>
+        runtime.assistantConversation.readTurn(event.attributes.id),
+      ),
+    ),
+  ])
   const linkedCompletionReferences = new Set<string>()
   const eventCompletionReferences = new Map<string, string>()
   for (const event of publicEvents.toSorted(
@@ -921,17 +960,36 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
   return {
     entries,
     removals,
-    activity: statuses.includes('running')
-      ? ({ phase: 'working' } as const)
-      : statuses.some((status) => status === 'queued' || status === 'interrupted')
-        ? ({ phase: 'waiting' } as const)
-        : null,
+    activity: deriveAssistantFeedActivity({
+      publicStatuses: statuses,
+      internalSpeakingRunning: internalSpeakingTurns.some(
+        (turn) => turn?.manifest.status === 'running',
+      ),
+      reflectionRunning: runtime.reflection.isActive(),
+    }),
     syncCursor: entries.reduce<string | null>(
       (latest, entry) =>
         !latest || Date.parse(entry.updatedAt) > Date.parse(latest) ? entry.updatedAt : latest,
       null,
     ),
   }
+}
+
+type AssistantFeedRuntimeStatus = 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
+
+export function deriveAssistantFeedActivity(input: {
+  publicStatuses: readonly AssistantFeedRuntimeStatus[]
+  internalSpeakingRunning: boolean
+  reflectionRunning: boolean
+}) {
+  if (input.publicStatuses.includes('running')) return { phase: 'working' as const }
+  if (input.internalSpeakingRunning || input.reflectionRunning) {
+    return { phase: 'thinking' as const }
+  }
+  if (input.publicStatuses.some((status) => status === 'queued' || status === 'interrupted')) {
+    return { phase: 'waiting' as const }
+  }
+  return null
 }
 
 type AssistantFeedProjectionEntry = Awaited<
@@ -1137,10 +1195,13 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
     maxAttempts: 3,
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
-  const designSnapshot = await runtime.publisher.snapshotTree(
-    project.store.paths.publicationRoot,
-    project.store.paths.designRoot(goalId),
-  )
+  const [designSnapshot, agentPlanByWork] = await Promise.all([
+    runtime.publisher.snapshotTree(
+      project.store.paths.publicationRoot,
+      project.store.paths.designRoot(goalId),
+    ),
+    readLiveAgentPlans(runtime, projectId, goalId, liveWorkIds),
+  ])
   return {
     projectId,
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
@@ -1148,6 +1209,7 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
       ...work.attributes,
       body: work.body,
       projection: projectionByWork.get(work.attributes.id),
+      agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
     })),
     design: designSnapshot.files.map((file) => ({
       path: file.path,
@@ -1173,6 +1235,46 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
       body: evidence.body,
     })),
   }
+}
+
+async function readLiveAgentPlans(
+  runtime: MvpRuntime,
+  projectId: string,
+  goalId: string,
+  liveWorkIds: ReadonlySet<string>,
+) {
+  const plans = await Promise.all(
+    [...liveWorkIds].map(async (workId) => {
+      const attempt = (await runtime.attempts.list(projectId, goalId, workId)).find(
+        (candidate) => candidate.status === 'running',
+      )
+      if (!attempt) return null
+      const events = await runtime.attempts.readEvents(projectId, goalId, workId, attempt.runId)
+      const plan = latestAgentPlan(events ?? [])
+      return plan
+        ? ([
+            workId,
+            {
+              runId: attempt.runId,
+              transport: plan.transport,
+              planId: plan.planId,
+              status: plan.status,
+              items: plan.items,
+              vendorEventType: plan.vendorEventType,
+            },
+          ] as const)
+        : null
+    }),
+  )
+  return new Map(plans.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
+}
+
+export function latestAgentPlan(events: readonly AgentRuntimeEvent[]): AgentPlanEvent | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.kind === 'plan') return event
+  }
+  return null
 }
 
 function matchGoalRoute(parts: string[]) {

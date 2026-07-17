@@ -2,6 +2,11 @@ import { parse } from 'yaml'
 import { z } from 'zod'
 import type { PublicationCandidate } from '../publication/types'
 import {
+  ASSISTANT_PREFERENCE_PATH,
+  type AssistantPreferenceDocument,
+  readAssistantPreference,
+} from './assistantPreference'
+import {
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
   inboxSourceDigest,
@@ -93,6 +98,7 @@ const linksSchema = z
 export interface AssistantWorkspace {
   homeId: string
   projects: readonly ProjectLink[]
+  preference: AssistantPreferenceDocument
   events: ReadonlyMap<string, InboxEventDocument>
   attentions: ReadonlyMap<string, WorkspaceAttentionDocument>
 }
@@ -100,6 +106,7 @@ export interface AssistantWorkspace {
 export interface AssistantWorkspacePaths {
   homeDocument: string
   projectLinks: string
+  preference: string
   attachmentRoot: string
   inboxRoot: string
   attentionRoot: string
@@ -113,6 +120,7 @@ export function createAssistantWorkspacePaths(): AssistantWorkspacePaths {
   return {
     homeDocument: '.hopi/home.yml',
     projectLinks: '.hopi/projects.yml',
+    preference: ASSISTANT_PREFERENCE_PATH,
     attachmentRoot: '.hopi/docs/assistant/attachments',
     inboxRoot: '.hopi/docs/assistant/inbox',
     attentionRoot: '.hopi/docs/attention',
@@ -153,6 +161,7 @@ export async function readAndValidateAssistantWorkspace(
   }
   const events = new Map<string, InboxEventDocument>()
   const attentions = new Map<string, WorkspaceAttentionDocument>()
+  const preference = await readAssistantPreference(await candidate.readText(paths.preference))
 
   for (const path of await candidate.listFiles(paths.inboxRoot)) {
     const eventId = localMarkdownId(path, paths.inboxRoot)
@@ -179,7 +188,7 @@ export async function readAndValidateAssistantWorkspace(
   }
 
   validateReferences(home.homeId, links.projects, events, attentions)
-  return { homeId: home.homeId, projects: links.projects, events, attentions }
+  return { homeId: home.homeId, projects: links.projects, preference, events, attentions }
 }
 
 async function validateImageAttachment(

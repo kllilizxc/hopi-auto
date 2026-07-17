@@ -15,6 +15,7 @@ import {
 } from '../components/ui'
 import { createGoal, readState } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
+import { projectDisplayName } from '../lib/utils'
 
 export function GoalCreatePage() {
   const { projectId } = useParams()
@@ -46,7 +47,9 @@ export function GoalCreatePage() {
           <header>
             <span className="goal-create-icon"><Flag /></span>
             <div>
-              <span className="eyebrow">{project?.projectId ?? projectId}</span>
+              <span className="eyebrow" title={projectId}>
+                {project ? projectDisplayName(project) : projectId}
+              </span>
               <h1>Create a Goal</h1>
               <p>Describe the outcome. Planner will clarify only what is materially unclear.</p>
             </div>

@@ -1,6 +1,7 @@
-import { chmod, mkdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TransportContextBundle } from '../agent/vendorTransport'
+import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/assistantPreference'
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
   engineeringWorkRepoIds,
@@ -17,6 +18,7 @@ import { STABLE_ID_PATTERN } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
+import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
 
 export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
@@ -33,6 +35,7 @@ export interface PrepareRoleContextInput {
   primaryRepoId?: string
   repoRoots?: readonly RoleRepoRoot[]
   apiOrigin?: string
+  runtimeScratchDir?: string
 }
 
 export interface RoleRepoRoot {
@@ -55,6 +58,7 @@ export interface RoleContextBundle extends TransportContextBundle {
   bootstrapSourceRoot?: string
   agentsPath?: string
   preparePath?: string
+  operatorPreferenceFile?: string
   repoRoots: readonly RoleRepoRoot[]
   reposFile: string
 }
@@ -96,7 +100,7 @@ export function createRoleContextStager(
       const promptFile = join(runRoot, 'prompt.md')
       const reposFile = join(runRoot, 'repos.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
-      const runtimeScratchDir = join(runRoot, 'scratch')
+      const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
       const runtimeCacheDir = runtimeCacheRoot(absoluteHomeRoot)
 
       await rm(runRoot, { recursive: true, force: true })
@@ -110,7 +114,6 @@ export function createRoleContextStager(
           paths.agentsPath,
           paths.preparePath,
           '.hopi/project.yml',
-          '.hopi/preference.md',
           '.hopi/docs/index.md',
           '.hopi/docs/repos.md',
           '.hopi/docs/tech-debt.md',
@@ -157,11 +160,40 @@ export function createRoleContextStager(
         input.responsibility === 'planner'
           ? selectPlannerAuthorityFiles(input, snapshot.files, paths, parsedWork)
           : snapshot.files.filter((file) => Object.hasOwn(guardFiles, file.path))
+      const evidencePaths = authorityFiles
+        .filter((file) => file.path.startsWith(`${paths.evidenceRoot(input.goalId)}/`))
+        .map((file) => file.path)
+      const evidenceArtifacts = await resolveEvidenceArtifacts(
+        absoluteHomeRoot,
+        authorityFiles,
+        paths,
+        input.goalId,
+      )
+      const artifactManifestFile =
+        evidenceArtifacts.length > 0 ? join(contextRoot, 'evidence-artifacts.json') : undefined
       const assignment = createRunAssignment(input, paths, parsedGoal, parsedWork, authorityFiles)
+      const operatorPreference =
+        input.responsibility === 'planner'
+          ? await snapshotOperatorPreference(publisher, absoluteHomeRoot)
+          : undefined
+      const operatorPreferenceFile = operatorPreference
+        ? join(contextRoot, 'operator', 'preference.md')
+        : undefined
 
       for (const file of authorityFiles) {
         if (file.content === null) continue
         await writeSnapshotFile(authorityRoot, file.path, file.content)
+      }
+      if (operatorPreferenceFile && operatorPreference) {
+        await mkdir(dirname(operatorPreferenceFile), { recursive: true })
+        await Bun.write(operatorPreferenceFile, operatorPreference.content)
+      }
+      if (artifactManifestFile) {
+        await Bun.write(
+          artifactManifestFile,
+          `${JSON.stringify({ version: 1, artifacts: evidenceArtifacts }, null, 2)}\n`,
+        )
+        await chmod(artifactManifestFile, 0o444)
       }
       const imageFiles = [...referencedImages].map((imagePath) =>
         join(authorityRoot, ...imagePath.split('/')),
@@ -196,9 +228,8 @@ export function createRoleContextStager(
           runtimeCacheDir,
           releaseHead,
           snapshot: authorityFiles,
-          evidencePaths: parsedWork.attributes.evidenceRefs
-            .map((evidenceId) => paths.evidenceDocument(input.goalId, evidenceId))
-            .filter((path) => authorityFiles.some((file) => file.path === path)),
+          evidencePaths,
+          artifactManifestFile,
           bootstrapSourceRoot,
           imagePaths: [...referencedImages],
           primaryRepoId,
@@ -206,6 +237,9 @@ export function createRoleContextStager(
           reposFile,
           projectPath: paths.projectPath,
           apiOrigin,
+          operatorPreference: operatorPreferenceFile
+            ? { path: operatorPreferenceFile, digest: operatorPreference?.digest ?? '' }
+            : undefined,
         }),
       )
       await Bun.write(
@@ -215,6 +249,7 @@ export function createRoleContextStager(
           {
             runRoot,
             contextFile,
+            artifactManifestFile,
             authorityRoot,
             proposalRoot,
             resultFile,
@@ -227,6 +262,8 @@ export function createRoleContextStager(
             repoRoots,
             reposFile,
             apiOrigin,
+            operatorPreferenceFile,
+            hasImages: imageFiles.length > 0,
           },
           assignment,
         ),
@@ -252,13 +289,22 @@ export function createRoleContextStager(
         bootstrapSourceRoot,
         agentsPath: paths.agentsPath,
         preparePath: paths.preparePath,
+        operatorPreferenceFile,
         repoRoots,
         reposFile,
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
-        extraWritableRoots: [runRoot, runtimeCacheDir, ...repoRoots.map((repo) => repo.path)],
+        extraWritableRoots: [
+          ...new Set([
+            runRoot,
+            runtimeScratchDir,
+            runtimeCacheDir,
+            ...repoRoots.map((repo) => repo.path),
+          ]),
+        ],
         contextFile,
+        artifactManifestFile,
         promptFile,
         outcomeFile: resultFile,
         canonicalOutcomeFile: resultFile,
@@ -269,6 +315,14 @@ export function createRoleContextStager(
       }
     },
   }
+}
+
+async function snapshotOperatorPreference(publisher: PublicationCoordinator, homeRoot: string) {
+  const snapshot = await publisher.snapshot({ id: 'assistant-home', path: homeRoot }, [
+    ASSISTANT_PREFERENCE_PATH,
+  ])
+  const content = snapshot.files[0]?.content
+  return readAssistantPreference(content ? new TextDecoder().decode(content) : null)
 }
 
 function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
@@ -310,6 +364,82 @@ function collectReferencedImages(
   return new Set(body.match(pattern) ?? [])
 }
 
+function collectDependencyContext(
+  files: readonly PublicationSnapshotFile[],
+  paths: ReturnType<typeof createGoalPackagePaths>,
+  goalId: string,
+  owningWork: ReturnType<typeof parseWorkDocument>,
+) {
+  const workRoot = `${paths.workRoot(goalId)}/`
+  const workById = new Map<
+    string,
+    { path: string; document: ReturnType<typeof parseWorkDocument> }
+  >()
+  for (const file of files) {
+    if (!file.content || !file.path.startsWith(workRoot)) continue
+    const document = parseWorkDocument(decode(file.content))
+    workById.set(document.attributes.id, { path: file.path, document })
+  }
+
+  const workPaths = new Set<string>()
+  const evidencePaths = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (workId: string) => {
+    if (visited.has(workId)) return
+    visited.add(workId)
+    const dependency = workById.get(workId)
+    if (!dependency) {
+      throw new RoleContextStagingError(`Dependency Work is missing from authority: ${workId}`)
+    }
+    workPaths.add(dependency.path)
+    for (const evidenceId of dependency.document.attributes.evidenceRefs) {
+      evidencePaths.add(paths.evidenceDocument(goalId, evidenceId))
+    }
+    for (const dependencyId of dependency.document.attributes.dependsOn) visit(dependencyId)
+  }
+
+  for (const dependencyId of owningWork.attributes.dependsOn) visit(dependencyId)
+  return { workPaths, evidencePaths }
+}
+
+async function resolveEvidenceArtifacts(
+  homeRoot: string,
+  files: readonly PublicationSnapshotFile[],
+  paths: ReturnType<typeof createGoalPackagePaths>,
+  goalId: string,
+) {
+  const evidenceRoot = `${paths.evidenceRoot(goalId)}/`
+  const artifacts = new Map<string, { reference: string; path: string; evidence: Set<string> }>()
+  for (const file of files) {
+    if (!file.content || !file.path.startsWith(evidenceRoot)) continue
+    const evidence = parseEvidenceDocument(decode(file.content))
+    for (const reference of evidence.attributes.artifacts) {
+      const parsed = parsePortableArtifactReference(reference)
+      if (!parsed?.runId) continue
+      const path = join(
+        runStoragePath(homeRoot, parsed.runId),
+        'artifacts',
+        ...parsed.artifactPath.split('/'),
+      )
+      const metadata = await stat(path).catch(() => null)
+      if (!metadata?.isFile()) {
+        throw new RoleContextStagingError(
+          `Canonical Evidence ${file.path} references missing Run artifact ${reference}`,
+        )
+      }
+      const existing = artifacts.get(reference)
+      if (existing) {
+        existing.evidence.add(file.path)
+      } else {
+        artifacts.set(reference, { reference, path, evidence: new Set([file.path]) })
+      }
+    }
+  }
+  return [...artifacts.values()]
+    .map((artifact) => ({ ...artifact, evidence: [...artifact.evidence].sort() }))
+    .sort((left, right) => left.reference.localeCompare(right.reference))
+}
+
 function selectGuardFiles(
   input: PrepareRoleContextInput,
   files: readonly PublicationSnapshotFile[],
@@ -323,14 +453,14 @@ function selectGuardFiles(
   const goalRoot = paths.goalRoot(input.goalId)
   const goalTarget = goalAttentionTarget(input.projectId, input.goalId)
   const workTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
-  const referencedEvidence = new Set(
-    work.attributes.evidenceRefs.map((evidenceId) =>
+  const dependencyContext = collectDependencyContext(files, paths, input.goalId, work)
+  const referencedEvidence = new Set([
+    ...work.attributes.evidenceRefs.map((evidenceId) =>
       paths.evidenceDocument(input.goalId, evidenceId),
     ),
-  )
-  const dependencyWork = new Set(
-    work.attributes.dependsOn.map((workId) => paths.workDocument(input.goalId, workId)),
-  )
+    ...dependencyContext.evidencePaths,
+  ])
+  const dependencyWork = dependencyContext.workPaths
   const referencedImages = collectReferencedImages(work.body, paths, input.goalId)
   const latestResolvedAttention = latestResolvedAttentionForTarget(
     files,
@@ -450,20 +580,18 @@ function latestResolvedAttentionForTarget(
 interface RunAssignment {
   goal: {
     path: string
-    hash: string
     title: string
     contractRevision: number
     body: string
   }
   work: {
     path: string
-    hash: string
     title: string
     kind: string
     stage: string
     body: string
   }
-  acceptedInputs: Array<{ path: string; body: string }>
+  acceptedInputs: Array<{ path: string; sourceEventId: string; body: string }>
   latestEvidence: { path: string; body: string } | null
 }
 
@@ -479,29 +607,31 @@ function createRunAssignment(
   const workPath = paths.workDocument(input.goalId, input.workId)
   const acceptedInputs =
     input.responsibility === 'planner'
-      ? authorityFiles.flatMap((file) => {
-          if (!file.content || !file.path.startsWith(`${paths.inputsRoot(input.goalId)}/`)) {
-            return []
-          }
-          const document = parseInputDocument(decode(file.content))
-          const referencedByResolution = authorityFiles.some((candidate) => {
-            if (
-              !candidate.content ||
-              !candidate.path.startsWith(`${paths.attentionRoot(input.goalId)}/`)
-            ) {
-              return false
+      ? authorityFiles
+          .flatMap((file) => {
+            if (!file.content || !file.path.startsWith(`${paths.inputsRoot(input.goalId)}/`)) {
+              return []
             }
-            return (
-              parseAttentionDocument(decode(candidate.content)).attributes.resolutionInput ===
-              file.path
-            )
+            const document = parseInputDocument(decode(file.content))
+            return work.body.includes(file.path) ||
+              work.body.includes(document.attributes.sourceEventId)
+              ? [
+                  {
+                    path: file.path,
+                    sourceEventId: document.attributes.sourceEventId,
+                    body: document.body,
+                  },
+                ]
+              : []
           })
-          return work.body.includes(file.path) ||
-            work.body.includes(document.attributes.sourceEventId) ||
-            referencedByResolution
-            ? [{ path: file.path, body: document.body }]
-            : []
-        })
+          .sort((left, right) => {
+            const leftIndex = work.body.indexOf(left.path)
+            const rightIndex = work.body.indexOf(right.path)
+            if (leftIndex < 0 && rightIndex < 0) return left.path.localeCompare(right.path)
+            if (leftIndex < 0) return 1
+            if (rightIndex < 0) return -1
+            return leftIndex - rightIndex
+          })
       : []
   const latestEvidenceId = work.attributes.evidenceRefs.at(-1)
   const latestEvidencePath = latestEvidenceId
@@ -519,14 +649,12 @@ function createRunAssignment(
   return {
     goal: {
       path: goalPath,
-      hash: requiredHash(requiredSnapshotFile(authorityFiles, goalPath), goalPath),
       title: goal.attributes.title,
       contractRevision: goal.attributes.contractRevision,
       body: goal.body,
     },
     work: {
       path: workPath,
-      hash: requiredHash(requiredSnapshotFile(authorityFiles, workPath), workPath),
       title: work.attributes.title,
       kind: work.attributes.kind,
       stage: work.attributes.stage,
@@ -620,6 +748,7 @@ function renderContextManifest(
     releaseHead: string
     snapshot: PublicationSnapshot['files']
     evidencePaths: readonly string[]
+    artifactManifestFile?: string
     bootstrapSourceRoot?: string
     imagePaths: readonly string[]
     primaryRepoId: string
@@ -627,6 +756,7 @@ function renderContextManifest(
     reposFile: string
     projectPath: string
     apiOrigin?: string
+    operatorPreference?: { path: string; digest: string }
   },
 ) {
   return [
@@ -640,11 +770,19 @@ function renderContextManifest(
     `- Integration target snapshot: ${context.releaseHead}`,
     `- Immutable authority root: ${context.authorityRoot}`,
     `- Writable proposal root: ${context.proposalRoot}`,
-    `- Disposable runtime scratch: ${context.runtimeScratchDir}`,
+    `- Responsibility session workspace: ${context.runtimeScratchDir}`,
     `- Reusable runtime cache: ${context.runtimeCacheDir}`,
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
     `- Repo workspace manifest: ${context.reposFile}`,
+    ...(context.artifactManifestFile
+      ? [`- Evidence artifact manifest: ${context.artifactManifestFile}`]
+      : []),
+    ...(context.operatorPreference
+      ? [
+          `- Operator preference snapshot: ${context.operatorPreference.path} (${context.operatorPreference.digest})`,
+        ]
+      : []),
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
     ...context.repoRoots.map(
       (repo) => `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
@@ -660,14 +798,7 @@ function renderContextManifest(
       ? ['', '## Attached Reference Images', '', ...context.imagePaths.map((path) => `- ${path}`)]
       : []),
     ...(context.evidencePaths.length > 0
-      ? [
-          '',
-          '## Owning Work Evidence (oldest to newest)',
-          '',
-          ...context.evidencePaths.map((path, index) =>
-            index === context.evidencePaths.length - 1 ? `- ${path} (latest)` : `- ${path}`,
-          ),
-        ]
+      ? ['', '## Selected Evidence', '', ...context.evidencePaths.map((path) => `- ${path}`)]
       : []),
     '',
     'Files under the authority root are immutable inputs. The proposal is never canonical until the Coordinator validates and publishes it.',
@@ -681,6 +812,7 @@ function renderResponsibilityPrompt(
   paths: {
     runRoot: string
     contextFile: string
+    artifactManifestFile?: string
     authorityRoot: string
     proposalRoot: string
     resultFile: string
@@ -693,59 +825,73 @@ function renderResponsibilityPrompt(
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
     apiOrigin?: string
+    operatorPreferenceFile?: string
+    hasImages: boolean
   },
   assignment: RunAssignment,
 ) {
-  const common = [
-    '## Canonical Boundary',
+  const boundary = [
+    '## Execution Boundary',
     '',
-    `Process working directory: ${input.responsibility === 'planner' ? paths.runRoot : 'the assigned task Repo root'}.`,
+    `Working directory: ${input.responsibility === 'planner' ? paths.runRoot : 'the assigned task Repo root'}`,
+    `Authority root: ${paths.authorityRoot}`,
+    `Proposal root: ${paths.proposalRoot}`,
+    `Result file: ${paths.resultFile}`,
     `Audit manifest: ${paths.contextFile}`,
-    `Treat ${paths.authorityRoot} as immutable canonical authority.`,
-    `Write control-document proposals only beneath ${paths.proposalRoot}.`,
-    'The proposal starts empty and is a sparse overlay: write only added or replaced documents. Read existing content from authority; do not mirror unchanged files. Absence means unchanged, and canonical deletion is unsupported.',
-    'No descendant file exists in proposal initially. Create each proposed file and its parent directories; do not try to patch an authority file in place.',
-    'Do not invent actions, workflow states, roles, or control fields.',
-    'Coordinator validates every proposed document and owns all state transitions.',
-    'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply.',
-    'Sandbox, Git metadata, local port, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
-    'Use $HOPI_RUN_SCRATCH for disposable temporary files and $HOPI_CACHE_DIR for reusable tool caches when a tool default is not writable.',
-    `Use ${paths.reposFile} as the complete and exact Repo ID to source-root map for this Run. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.`,
-    `Project primary Repo ID is ${paths.primaryRepoId}. This Run's source roots are: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}.`,
-    ...(paths.apiOrigin
+    ...(paths.artifactManifestFile
       ? [
-          `HOPI public API origin is ${paths.apiOrigin} and is also available as $HOPI_API_ORIGIN. Project Preview endpoints always operate on the current managed integration release, never this Run's task worktree.`,
+          `Evidence artifact manifest: ${paths.artifactManifestFile} (also $HOPI_EVIDENCE_ARTIFACTS_FILE)`,
         ]
       : []),
-    'Any attached image input corresponds to an exact Goal asset path cited by the owning Work. Apply only the purpose and limits written in that Work.',
+    `Repo manifest: ${paths.reposFile}`,
+    `Attention proposal directory: ${paths.attentionRoot} (relative to Proposal root)`,
+    `Project guidance: ${paths.agentsPath}`,
+    `Preparation entrypoint: ${paths.preparePath}`,
+    `Primary Repo: ${paths.primaryRepoId}`,
+    `Source roots: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}`,
+    ...(paths.operatorPreferenceFile
+      ? [`Operator preference snapshot: ${paths.operatorPreferenceFile}`]
+      : []),
+    ...(paths.apiOrigin
+      ? [`Public Preview API origin: ${paths.apiOrigin} (also $HOPI_API_ORIGIN)`]
+      : []),
+    '',
+    'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
+    'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns Git staging and commits.',
+    'The Repo manifest is the complete source-root map. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.',
+    'Use $HOPI_RUN_SCRATCH for files retained across Attempts of this Work revision and $HOPI_CACHE_DIR only for reusable caches. A remembered measurement is not evidence when its file or log is absent.',
+    ...(paths.hasImages
+      ? [
+          'Attached images correspond only to Goal assets cited by the owning Work. Apply their documented purpose and limits.',
+        ]
+      : []),
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
+    'Do not invent workflow states, roles, actions, or control fields.',
+    'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply. Sandbox, Git metadata, local ports, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
-    ...targetedAttentionContract(input, paths),
+    ...targetedAttentionContract(input),
     '',
   ]
   const responsibility =
     input.responsibility === 'planner'
       ? plannerPrompt(paths)
       : input.responsibility === 'generator'
-        ? generatorPrompt(paths)
-        : reviewerPrompt(paths)
+        ? generatorPrompt()
+        : reviewerPrompt()
   return [
     '# HOPI Responsibility Run',
     '',
-    ...renderCurrentAssignment(assignment),
-    ...common,
+    ...renderCurrentAssignment(input.responsibility, assignment),
+    ...boundary,
     ...responsibility,
-    resultInstruction(paths.resultFile, input.responsibility),
+    resultInstruction(input.responsibility),
   ].join('\n')
 }
 
-function targetedAttentionContract(
-  input: PrepareRoleContextInput,
-  paths: { proposalRoot: string; attentionRoot: string },
-) {
+function targetedAttentionContract(input: PrepareRoleContextInput) {
   const target = workAttentionTarget(input.projectId, input.goalId, input.workId)
   return [
-    `Write targeted Attention as exactly one ${join(paths.proposalRoot, paths.attentionRoot, '<id>.md')}; the filename stem must equal the frontmatter id.`,
+    'Write targeted Attention as exactly one <id>.md in the Attention proposal directory; the filename stem must equal the frontmatter id.',
     'Use this exact frontmatter:',
     '```yaml',
     '---',
@@ -760,47 +906,84 @@ function targetedAttentionContract(
   ]
 }
 
-function renderCurrentAssignment(assignment: RunAssignment) {
-  return [
-    '## Current Assignment',
-    '',
-    `### Goal: ${assignment.goal.title}`,
-    '',
-    `Canonical source: ${assignment.goal.path} (${assignment.goal.hash})`,
-    `Contract revision: ${assignment.goal.contractRevision}`,
-    '',
-    assignment.goal.body.trim(),
-    '',
-    `### Owning Work: ${assignment.work.title}`,
-    '',
-    `Canonical source: ${assignment.work.path} (${assignment.work.hash})`,
-    `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
-    '',
-    assignment.work.body.trim(),
-    '',
-    ...(assignment.acceptedInputs.length > 0
+function renderCurrentAssignment(responsibility: Responsibility, assignment: RunAssignment) {
+  const expandedAcceptedInputs = assignment.acceptedInputs.filter(
+    (input) =>
+      !assignment.goal.body.includes(`## Accepted Inbox Instruction ${input.sourceEventId}`),
+  )
+  const primary =
+    responsibility === 'planner'
       ? [
-          '### Accepted Inputs For This Planning Work',
+          '## Primary Task',
           '',
-          ...assignment.acceptedInputs.flatMap((input) => [
-            `Canonical source: ${input.path}`,
-            '',
-            input.body.trim(),
-            '',
-          ]),
+          `### Goal Contract: ${assignment.goal.title}`,
+          `Source: ${assignment.goal.path}`,
+          `Contract revision: ${assignment.goal.contractRevision}`,
+          '',
+          '<goal-contract>',
+          assignment.goal.body.trim(),
+          '</goal-contract>',
+          '',
+          `### Planning Work: ${assignment.work.title}`,
+          `Source: ${assignment.work.path}`,
+          `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
+          '',
+          '<planning-work>',
+          assignment.work.body.trim(),
+          '</planning-work>',
+          '',
+          ...(expandedAcceptedInputs.length > 0
+            ? [
+                '### Accepted Inputs (Planning Work order)',
+                '',
+                ...expandedAcceptedInputs.flatMap((input, index) => [
+                  `#### Input ${index + 1}`,
+                  ...(assignment.work.body.includes(input.path) ? [] : [`Source: ${input.path}`]),
+                  '<accepted-input>',
+                  input.body.trim(),
+                  '</accepted-input>',
+                  '',
+                ]),
+              ]
+            : []),
         ]
-      : []),
+      : [
+          '## Primary Task',
+          '',
+          `### Engineering Work: ${assignment.work.title}`,
+          `Source: ${assignment.work.path}`,
+          `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
+          '',
+          '<engineering-work>',
+          assignment.work.body.trim(),
+          '</engineering-work>',
+          '',
+        ]
+  const supporting = [
+    ...(responsibility === 'planner'
+      ? []
+      : [
+          '## Supporting Authority',
+          '',
+          `Goal: ${assignment.goal.title}`,
+          `Goal source: ${assignment.goal.path}`,
+          `Goal contract revision: ${assignment.goal.contractRevision}`,
+        ]),
     ...(assignment.latestEvidence
       ? [
+          ...(responsibility === 'planner' ? ['## Supporting Authority', ''] : []),
+          '',
           '### Latest Owning Work Evidence',
+          `Source: ${assignment.latestEvidence.path}`,
           '',
-          `Canonical source: ${assignment.latestEvidence.path}`,
-          '',
+          '<latest-evidence>',
           assignment.latestEvidence.body.trim(),
-          '',
+          '</latest-evidence>',
         ]
       : []),
+    '',
   ]
+  return [...primary, ...supporting]
 }
 
 function plannerPrompt(paths: {
@@ -812,28 +995,30 @@ function plannerPrompt(paths: {
   preparePath: string
   attentionRoot: string
   apiOrigin?: string
+  operatorPreferenceFile?: string
 }) {
   return [
     '## Planner',
     '',
-    'Clarify only material ambiguity. First inspect staged code and documents; never ask what the available evidence can answer.',
-    'Walk the decision tree in dependency order. One Attention may group all currently knowable independent material questions, but must defer questions whose meaning depends on an earlier answer.',
-    'For every question include your recommended answer, alternatives, trade-offs, and the design or acceptance impact. Record established decisions in the relevant design document and in design/decisions.md before asking the next round.',
-    'The staged goal.md is immutable accepted authority. Never edit it or change contractRevision; contract changes come only from an operator instruction interpreted by Assistant.',
-    'Record established decisions in design/** before exposing implementation Work.',
+    'Inspect staged authority and source first. Ask only material ambiguity that available evidence cannot answer. Group currently knowable independent questions, sequence dependent ones, and include a recommendation, alternatives, trade-offs, and design or acceptance impact.',
+    'Research source, tools, and external facts as deeply as needed to avoid planning from false feasibility assumptions. Preserve durable contracts and choices in design; keep machine-local login, installed version, visible model, transient service response, and one-Run measurements in Run evidence or Work verification unless generalized into a lasting product constraint.',
+    'The Goal contract is immutable accepted authority. Never propose goal.md or change its contractRevision; only an operator instruction interpreted by Assistant changes it.',
+    ...(paths.operatorPreferenceFile
+      ? [
+          'Apply relevant operator defaults, but current accepted Input and Project/Goal authority override them. Materialize a relevant default into design or Engineering Work; never copy unrelated preferences.',
+        ]
+      : []),
+    'Record durable established decisions in the relevant design/** documents, including design/decisions.md, before exposing implementation Work.',
     'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
-    'Plan the smallest independently schedulable Engineering Work set, with complete acceptance criteria and permanent dependsOn edges for known causal, semantic, or file-writer overlap.',
-    'Every Engineering Work acceptance criterion must be provable against its task worktree before C1. Do not put public Project Preview API validation in Engineering Work: that API starts the already integrated release, so it cannot prove a candidate.',
-    'Give every Engineering Work the smallest non-empty repos list containing every Repo its Generator or Reviewer must inspect, execute, or modify to prove the Work. There is no separate read-only Repo scope; unchanged listed Repos are C1 no-ops. A Work may span multiple Repos and still remains one Generator, Reviewer, and C1 unit.',
-    'Independent testability alone does not justify a separate Work. Keep prerequisite scaffolding with its only consumer when they share primary files and the prerequisite has no independently useful operator outcome.',
-    'Every newly proposed Engineering Work must use kind engineering and stage generate. Never copy, create, or edit Planning Work in the proposal; a successful complete proposal lets Coordinator advance the owning Planning Work.',
-    'Terminal Engineering Work is immutable. Never copy it into proposal or edit its fields, body, or evidenceRefs.',
-    'This authority is intentionally compact: an Evidence document omitted from staging is historical, not missing canonical truth. Never repair an evidenceRef merely because its document is not staged.',
-    'Every proposed Work must use exactly the current Goal contractRevision. Do not create next-revision Work support.',
-    'Your proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and the missing Project AGENTS.md bootstrap described below. Maintain repos.md when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale; it is semantic context, not workflow configuration. Never create Planner Evidence or add its ID to the Planning Work; Coordinator preserves the current Planning Work and derives its Evidence reference from result.json during publication.',
-    'Never reconstruct or consume stale Run output, synthesize Evidence from runtime directories, or advance Engineering Work to review or done; a fresh Generator or Reviewer Run owns that transition.',
-    'The fixed control fields are listed below. Use them directly; never inspect another Goal or historical Run to infer document format. Markdown bodies remain free-form.',
-    'New Engineering Work frontmatter:',
+    'Plan the smallest independently useful and schedulable Engineering Work DAG. Add dependsOn only when downstream Work needs a predecessor result, writers may overlap, or concurrent execution would contend for the same exclusive external resource. Leave independently useful Work that can start from the current release dependency-free; shared read-only context, broad semantic relation, or expected integration order is not a dependency. Keep prerequisite scaffolding with its only consumer when it has no independent operator outcome; never split cohesive Work merely to fill capacity.',
+    'Each Engineering Work is standalone for outcome, scope, dependencies, Repo coverage, and task-worktree-provable acceptance. Cite exact canonical design paths instead of copying durable design contracts; repeat only a boundary whose omission would make execution or review materially ambiguous. Use the smallest non-empty repos list covering every Repo Generator or Reviewer must inspect, execute, or modify. One Work may span multiple Repos; unchanged listed Repos are C1 no-ops.',
+    'Public Project Preview runs the integrated release and cannot prove an Engineering candidate. Keep that validation out of Engineering acceptance criteria.',
+    'New Engineering Work uses kind engineering, stage generate, and the current Goal contractRevision. Terminal Work is immutable; never create next-revision Work or advance Engineering Work to review/done.',
+    'Proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and an allowed missing AGENTS.md bootstrap. Planning Work is read-only and must not be copied. Coordinator advances it and derives Planner Evidence from result.json.',
+    'Maintain .hopi/docs/repos.md only when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale. It is semantic context, not workflow configuration.',
+    'Omitted Evidence is historical, not missing truth. Never repair an evidenceRef because its document is unstaged, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run for document format.',
+    'Coordinator owns deterministic proposal schema and DAG validation. Perform semantic and proportionate content checks, but do not build an ad hoc validator that duplicates Coordinator; returned validation diagnostics drive a later Attempt.',
+    'New Engineering Work frontmatter (Markdown bodies remain free-form):',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -848,7 +1033,7 @@ function plannerPrompt(paths: {
     'repos: [<one-or-more-listed-repo-ids>]',
     '---',
     '```',
-    'Completion Attention frontmatter (Planner final success only):',
+    'Completion Attention frontmatter (final Planner success only):',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -858,91 +1043,68 @@ function plannerPrompt(paths: {
     'notifiedAt: null',
     '---',
     '```',
-    'The staged owning Planning Work is read-only context. Never copy it into proposal. Never reopen terminal Work.',
     ...(paths.apiOrigin
       ? [
-          `Only when accepted design explicitly requires public Preview proof and all relevant Engineering Work is terminal, validate the integrated release with POST ${paths.apiOrigin}/api/projects/<projectId>/preview/start, GET ${paths.apiOrigin}/api/projects/<projectId>/preview, and POST ${paths.apiOrigin}/api/projects/<projectId>/preview/stop. Do not probe alternate routes or start Preview by default. Propose completion only after the session is running and its endpoint is reachable; if proof fails, plan the smallest repair.`,
+          'Only when accepted design explicitly requires public Preview proof and all relevant Engineering Work is terminal, validate the integrated release with POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/start, GET $HOPI_API_ORIGIN/api/projects/<projectId>/preview, and POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/stop. Do not probe alternate routes or start Preview by default. Propose completion only after the endpoint is reachable; otherwise plan the smallest repair.',
         ]
       : []),
-    `The Planner cwd is ${paths.runRoot}. Write each canonical relative path exactly once below its proposal/ child; for example, .hopi/docs/... belongs at proposal/.hopi/docs/....`,
-    'The Planner Run root is not a Git checkout. Validate the sparse proposal by reading its files; do not run Git status or search historical runtime directories.',
-    `Write changed Goal-package documents into the sparse overlay at ${paths.proposalRoot}; do not edit source or ordinary project documents.`,
+    'Planner working directory is not a Git checkout. Write canonical relative paths beneath the Proposal root (for example `.hopi/docs/...`), validate the sparse files directly, and do not edit source or ordinary project documents.',
     ...(paths.bootstrapSourceRoot
       ? [
-          `Project guidance ${paths.agentsPath} was absent. Scan the scoped snapshot at ${paths.bootstrapSourceRoot} and create ${join(paths.proposalRoot, 'AGENTS.md')} as a concise Project entrypoint in this same proposal.`,
+          `Project guidance is absent. Scan the read-only source snapshot at ${paths.bootstrapSourceRoot} and propose AGENTS.md as a concise Project entrypoint.`,
         ]
-      : [
-          `Project guidance ${paths.agentsPath} already exists and must not be replaced automatically.`,
-        ]),
+      : ['Project guidance exists and must not be replaced automatically.']),
     ...(paths.prepareMissing
       ? [
-          `${paths.preparePath} is absent. If this delivery needs an executable environment, include creation of the idempotent executable in the first real Engineering Work; do not create a separate Init Work or let Planner write the executable.`,
+          'Preparation entrypoint is absent. If delivery needs an executable environment, include an idempotent script in the first real Engineering Work; do not create separate Init Work or let Planner write it.',
         ]
       : [
-          `${paths.preparePath} already exists. Preserve it unless accepted dependency, build, runtime, or repository-topology changes require the owning Engineering Work to keep it current.`,
+          'Preparation entrypoint exists. Preserve it unless accepted dependency, build, runtime, or Repo-topology changes require an Engineering Work to update it.',
         ]),
-    `When Assistant management or operator authority is materially required, create one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)}, return attention, and leave Planning Work at plan.`,
-    'When final proof is sufficient, create the one target-null completion Attention. If this proposal creates or keeps any nonterminal Engineering Work, do not create completion Attention. Return success only after the complete semantic proposal is staged; Coordinator will advance the owning Planning Work after validation.',
+    'When Assistant management is materially required, stage one targeted Attention and leave Planning Work at plan. When final proof is sufficient, stage one target-null completion Attention; never combine it with nonterminal Engineering Work.',
     '',
   ]
 }
 
-function generatorPrompt(paths: {
-  proposalRoot: string
-  attentionRoot: string
-  agentsPath: string
-  preparePath: string
-}) {
+function generatorPrompt() {
   return [
     '## Generator',
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
-    `Read the Project guidance at ${paths.agentsPath} and preparation entrypoint at ${paths.preparePath} before rediscovering setup or runtime entrypoints. A Project Preparation Diagnostic appended below is exact preflight input, not a separate Work.`,
-    "Use only Repo roots listed in $HOPI_REPOS_FILE. When a required Repo is absent, request Assistant management through attention; never discover or use another Work's checkout. Project scripts must use the manifest when it is present instead of scanning HOPI runtime siblings.",
+    'Read Project guidance and the preparation entrypoint before rediscovering setup. A Project Preparation Diagnostic appended below is exact preflight input, not separate Work.',
+    'When a required Repo is absent from the Repo manifest, stage Attention instead of discovering another Work checkout. Project scripts must consume the manifest rather than scan HOPI runtime siblings.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest.',
     'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
     'The staged canonical context overrides any older .hopi copy in the task branch.',
-    'If the owning Work cites a reference image, inspect the attached image and follow the documented purpose rather than treating every visual detail as a requirement.',
     'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
-    'You may inspect Git status and diff, but never run Git write operations such as add, commit, checkout, switch, merge, rebase, reset, or clean.',
-    'Coordinator alone owns the Git index, task-branch checkpoints, and commits after this Run.',
-    `If accepted design, missing information, or an external condition prevents safe progress, stage one targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management and return attention.`,
+    'Git status and diff are allowed; Git writes such as add, commit, checkout, switch, merge, rebase, reset, or clean are not.',
     'Do not rerun an unchanged passing check. One passing run after the final relevant source change is sufficient unless distinct acceptance criteria require distinct evidence.',
     'Batch independent file reads and checks where practical. Extra progress narration and repeated discovery are not implementation evidence.',
-    'Return success only after the acceptance criteria have evidence. Return attention when Assistant management is required; use fail for a retryable execution failure that does not require Assistant input.',
     '',
   ]
 }
 
-function reviewerPrompt(paths: {
-  proposalRoot: string
-  attentionRoot: string
-  agentsPath: string
-  preparePath: string
-}) {
+function reviewerPrompt() {
   return [
     '## Reviewer',
     '',
     'Independently inspect acceptance criteria, the task-branch diff, checks, and material runtime behavior.',
     `Review the owning Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Do not attribute release-only commits or canonical .hopi movement to this Work; C1 owns integration onto the current release tip.`,
     'Do not edit source, ordinary project documents, or .hopi in the task worktree.',
-    'If the owning Work cites a reference image, compare material visual criteria against the attached original image and its documented purpose.',
     'Choose the strongest proportionate proof for every acceptance criterion.',
-    `Decide the proof plan before installing optional tools. Reuse ${paths.agentsPath}, ${paths.preparePath}, and the existing project test/browser stack; do not install a competing harness after decisive proof already exists.`,
-    'Use only Repo roots listed in $HOPI_REPOS_FILE. If direct proof requires a missing Repo, request Assistant management through attention instead of inspecting another Work checkout or historical runtime directory.',
+    'Decide the proof plan before installing optional tools. Reuse Project guidance, preparation, and the existing test/browser stack; do not add a competing harness after decisive proof exists.',
+    'If direct proof requires a Repo absent from the Repo manifest, stage Attention instead of inspecting another Work checkout or historical runtime directory.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
     'When scripts/hopi/preview is in scope, verify that readiness emits exactly one HOPI_PREVIEW_URL=<reachable-url> line; accepting a bare URL would leave Project Preview stuck in starting.',
-    'A helper-only change normally needs focused tests, not browser exploration. A visual, crash, or interaction Work needs one direct runtime exercise of the reported path. Do not rerun an unchanged passing check.',
-    'When the Work addresses an operator-reported runtime path, crash, interaction, or visual behavior, exercise that exact path through the point after the reported failure. Unit or shell-level tests alone are insufficient unless existing evidence is strictly stronger and you explain why.',
+    'A helper-only change normally needs focused tests, not browser exploration. For an operator-reported visual, crash, or interaction path, exercise that exact path through the point after the failure. Unit or shell proof alone is insufficient unless strictly stronger and explained.',
+    'Do not rerun an unchanged passing check.',
     'Batch independent inspection and checks where practical. Extra progress narration and repeated discovery are not review evidence.',
     'This is an evidence obligation, not a fixed browser workflow. You may start short-lived local services for this Run; persistent Project Preview and integration are not your responsibility.',
-    `If design, information, or operator authority is required, stage one valid targeted Attention under ${join(paths.proposalRoot, paths.attentionRoot)} for Assistant management.`,
-    'Return reject for an implementation defect, attention when Assistant management is required, and fail for a retryable review failure.',
     '',
   ]
 }
 
-function resultInstruction(resultFile: string, responsibility: Responsibility) {
+function resultInstruction(responsibility: Responsibility) {
   const allowed =
     responsibility === 'planner'
       ? 'success, attention, or fail'
@@ -952,14 +1114,25 @@ function resultInstruction(resultFile: string, responsibility: Responsibility) {
   return [
     '## Required Result',
     '',
-    `Write exactly one JSON object to ${resultFile}:`,
-    'This file starts at zero bytes as a missing-result marker. Replace the whole file; the example below is not prewritten content.',
+    'Replace the zero-byte Result file with exactly one JSON object:',
     '',
     '```json',
     '{"result":"success","summary":"Concise evidence-backed result","artifacts":[]}',
     '```',
     '',
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
+    ...(responsibility === 'planner'
+      ? [
+          'success = complete valid sparse proposal; fail = no valid proposal and no operator request is needed.',
+        ]
+      : responsibility === 'generator'
+        ? [
+            'success = implementation and proof complete; fail = execution failed but no operator request is needed.',
+          ]
+        : [
+            'success = criteria pass; reject = implementation defect; fail = review failed but no operator request is needed.',
+          ]),
+    'attention = exactly one staged operator request.',
     'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
     '',
   ].join('\n')

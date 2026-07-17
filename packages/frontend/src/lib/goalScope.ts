@@ -10,6 +10,18 @@ export interface GoalPreferenceStorage {
   setItem: (key: string, value: string) => void
 }
 
+export interface RecentProjectPreference {
+  projectId: string
+  visitedAt: string
+}
+
+export interface RecentGoalPreference {
+  projectId: string
+  goalId: string
+  visitedAt: string
+}
+
+const RECENT_PROJECT_KEY = 'hopi.navigation.recent-project'
 const RECENT_GOAL_KEY_PREFIX = 'hopi.navigation.recent-goal.'
 
 export function buildGoalRoute(scope: GoalScope | null, surface: GoalSurface) {
@@ -27,35 +39,210 @@ export function readRecentGoalId(
   projectId: string,
   storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
 ) {
+  return readRecentGoal(projectId, storage)?.goalId ?? null
+}
+
+export function readRecentProjects(
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+) {
+  let raw: string | null
   try {
-    return storage?.getItem(recentGoalKey(projectId)) ?? null
+    raw = storage?.getItem(RECENT_PROJECT_KEY) ?? null
+  } catch {
+    return []
+  }
+  if (!raw) return []
+
+  try {
+    const value = JSON.parse(raw) as unknown
+    const preferences = normalizeRecentProjects(value)
+    if (!Array.isArray(value) && preferences.length) {
+      writePreference(storage, RECENT_PROJECT_KEY, preferences)
+    }
+    return preferences
+  } catch {
+    return []
+  }
+}
+
+export function readRecentGoal(
+  projectId: string,
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+): RecentGoalPreference | null {
+  const key = recentGoalKey(projectId)
+  let raw: string | null
+  try {
+    raw = storage?.getItem(key) ?? null
   } catch {
     return null
   }
+  if (!raw) return null
+
+  try {
+    const value = JSON.parse(raw) as unknown
+    if (
+      isRecord(value) &&
+      value.projectId === projectId &&
+      isString(value.goalId) &&
+      isTimestamp(value.visitedAt)
+    ) {
+      return { projectId, goalId: value.goalId, visitedAt: value.visitedAt }
+    }
+    return null
+  } catch {
+    // The previous preference format stored only the Goal ID.
+  }
+
+  const migrated = { projectId, goalId: raw, visitedAt: new Date().toISOString() }
+  try {
+    storage?.setItem(key, JSON.stringify(migrated))
+  } catch {
+    // A readable legacy preference remains useful even when migration cannot be persisted.
+  }
+  return migrated
+}
+
+export function rememberRecentProject(
+  projectId: string,
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+  visitedAt = new Date(),
+) {
+  const preference = { projectId, visitedAt: visitedAt.toISOString() }
+  const preferences = normalizeRecentProjects([
+    preference,
+    ...readRecentProjects(storage).filter((item) => item.projectId !== projectId),
+  ])
+  writePreference(storage, RECENT_PROJECT_KEY, preferences)
+  return preferences
 }
 
 export function rememberRecentGoal(
   projectId: string,
   goalId: string,
   storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+  visitedAt = new Date(),
+) {
+  const preference = { projectId, goalId, visitedAt: visitedAt.toISOString() }
+  writePreference(storage, recentGoalKey(projectId), preference)
+  return preference
+}
+
+export function orderProjectsByRecency<T extends { projectId: string }>(
+  projects: readonly T[],
+  recentProjects: readonly RecentProjectPreference[],
+) {
+  const visitedAtByProject = new Map(
+    recentProjects.map((preference) => [preference.projectId, timestamp(preference.visitedAt)]),
+  )
+  return stableOrder(projects, (project) => visitedAtByProject.get(project.projectId) ?? 0)
+}
+
+export function selectProjectShortcuts<T extends { projectId: string }>(
+  orderedProjects: readonly T[],
+  currentProjectId: string,
+  limit: number,
+) {
+  if (limit <= 0) return []
+  const shortcuts = orderedProjects.slice(0, limit)
+  if (shortcuts.some((project) => project.projectId === currentProjectId)) return shortcuts
+
+  const currentProject = orderedProjects.find(
+    (project) => project.projectId === currentProjectId,
+  )
+  return currentProject ? [currentProject, ...shortcuts.slice(0, limit - 1)] : shortcuts
+}
+
+export function orderGoalsByRecency<T extends { id: string; createdAt?: string | null }>(
+  goals: readonly T[],
+  projectId: string,
+  recentGoal: RecentGoalPreference | null,
+) {
+  return stableOrder(goals, (goal) =>
+    Math.max(
+      timestamp(goal.createdAt),
+      recentGoal?.projectId === projectId && recentGoal.goalId === goal.id
+        ? timestamp(recentGoal.visitedAt)
+        : 0,
+    ),
+  )
+}
+
+export function findNewestUnseenGoal<T extends { id: string; createdAt?: string | null }>(
+  goals: readonly T[],
+  projectId: string,
+  knownGoalIds: ReadonlySet<string> | undefined,
+) {
+  const unseen = goals.filter((goal) => !knownGoalIds?.has(goal.id))
+  return orderGoalsByRecency(unseen, projectId, null)[0] ?? null
+}
+
+export function resolveProjectGoalId<T extends { id: string; createdAt?: string | null }>(
+  goals: readonly T[],
+  projectId: string,
+  recentGoal: RecentGoalPreference | null,
+) {
+  return orderGoalsByRecency(goals, projectId, recentGoal)[0]?.id ?? null
+}
+
+function recentGoalKey(projectId: string) {
+  return `${RECENT_GOAL_KEY_PREFIX}${encodeURIComponent(projectId)}`
+}
+
+function writePreference(
+  storage: GoalPreferenceStorage | null,
+  key: string,
+  value: RecentProjectPreference[] | RecentGoalPreference,
 ) {
   try {
-    storage?.setItem(recentGoalKey(projectId), goalId)
+    storage?.setItem(key, JSON.stringify(value))
   } catch {
     // Navigation preferences must never block the workspace when storage is unavailable.
   }
 }
 
-export function resolveProjectGoalId(
-  goals: readonly { id: string }[],
-  recentGoalId: string | null,
-) {
-  if (recentGoalId && goals.some((goal) => goal.id === recentGoalId)) return recentGoalId
-  return goals[0]?.id ?? null
+function normalizeRecentProjects(value: unknown) {
+  const candidates = Array.isArray(value) ? value : [value]
+  const byProject = new Map<string, RecentProjectPreference>()
+  for (const candidate of candidates) {
+    if (
+      !isRecord(candidate) ||
+      !isString(candidate.projectId) ||
+      !isTimestamp(candidate.visitedAt)
+    ) {
+      continue
+    }
+    const preference = { projectId: candidate.projectId, visitedAt: candidate.visitedAt }
+    const current = byProject.get(preference.projectId)
+    if (!current || timestamp(preference.visitedAt) > timestamp(current.visitedAt)) {
+      byProject.set(preference.projectId, preference)
+    }
+  }
+  return stableOrder([...byProject.values()], (preference) => timestamp(preference.visitedAt))
 }
 
-function recentGoalKey(projectId: string) {
-  return `${RECENT_GOAL_KEY_PREFIX}${encodeURIComponent(projectId)}`
+function stableOrder<T>(items: readonly T[], score: (item: T) => number) {
+  return items
+    .map((item, index) => ({ item, index, score: score(item) }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ item }) => item)
+}
+
+function timestamp(value: string | null | undefined) {
+  if (!value) return 0
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
+function isTimestamp(value: unknown): value is string {
+  return isString(value) && timestamp(value) > 0
 }
 
 function browserPreferenceStorage(): GoalPreferenceStorage | null {

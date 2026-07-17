@@ -48,6 +48,12 @@ export interface GoalController {
     },
   ): Promise<GoalDocument>
   ensureAttemptsAttention(goalId: string, workId: string): Promise<AttentionDocument>
+  ensureResponsibilityFailureAttention(
+    goalId: string,
+    workId: string,
+    responsibility: 'planner' | 'generator' | 'reviewer',
+    latestFailure: string,
+  ): Promise<AttentionDocument>
   ensureOperationalFailureAttention(
     goalId: string,
     workId: string,
@@ -83,9 +89,10 @@ export function createGoalController(
         const acceptedBody = acceptedInput
           ? appendAcceptedInput(existing.body, acceptedInput.path)
           : existing.body
+        const currentBody = replacePlanningObjective(acceptedBody, reason)
         const next = {
           ...existing,
-          body: appendPlanningReferences(acceptedBody, context.references ?? []),
+          body: appendPlanningReferences(currentBody, context.references ?? []),
         }
         const changed = next.body !== existing.body
         const supportingWrites = [
@@ -286,9 +293,55 @@ export function createGoalController(
         body: [
           '## Needs you',
           '',
-          `Work ${workId} exhausted its ${work.attributes.attempts} published recovery attempts.`,
+          `Work ${workId} exhausted its ${work.attributes.attempts} reviewed repair attempts.`,
           '',
           'Inspect the linked Evidence and decide whether to retry, revise the Goal, or cancel Work.',
+          '',
+        ].join('\n'),
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path: store.paths.attentionDocument(goalId, attention.attributes.id),
+          expectedHash: null,
+          content: renderAttentionDocument(attention),
+        },
+      })
+      return attention
+    },
+    async ensureResponsibilityFailureAttention(goalId, workId, responsibility, latestFailure) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot create responsibility failure Attention for missing or terminal Work: ${workId}`,
+        )
+      }
+      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
+      const existing = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.target === target && attention.attributes.resolvedAt === null,
+      )
+      if (existing) return existing
+
+      const attention: AttentionDocument = {
+        attributes: {
+          id: `failure-${workId}-${crypto.randomUUID()}`,
+          target,
+          createdAt: now().toISOString(),
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: [
+          '## Assistant recovery needed',
+          '',
+          `${responsibility} could not complete Work ${workId} under its current contract.`,
+          '',
+          '## Latest result',
+          '',
+          latestFailure.trim() || 'No failure summary was recorded.',
+          '',
+          'Inspect the linked Evidence and current documents. Retry only if the blocker changed; otherwise revise or cancel the Work. Notify the operator only when an exact decision or external action remains.',
           '',
         ].join('\n'),
       }
@@ -748,6 +801,17 @@ function dependentClosure(goalPackage: GoalPackage, workId: string) {
 
 function appendInstruction(body: string, input: { eventId: string; content: string }) {
   return `${body.trimEnd()}\n\n${instructionHeading(input.eventId)}\n\n${input.content.trim()}\n`
+}
+
+function replacePlanningObjective(body: string, objective: string) {
+  const normalized = body.trimEnd()
+  const heading = '## Objective'
+  const headingIndex = normalized.indexOf(heading)
+  if (headingIndex === -1) return `${heading}\n\n${objective.trim()}\n\n${normalized}\n`
+  const nextHeading = normalized.indexOf('\n## ', headingIndex + heading.length)
+  const prefix = normalized.slice(0, headingIndex)
+  const suffix = nextHeading === -1 ? '' : normalized.slice(nextHeading).trimStart()
+  return `${prefix}${heading}\n\n${objective.trim()}\n${suffix ? `\n${suffix}\n` : ''}`
 }
 
 function appendAcceptedInput(body: string, path: string) {

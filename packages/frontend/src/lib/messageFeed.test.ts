@@ -448,6 +448,26 @@ describe('unified message feed adapters', () => {
     expect(summarizeActivityGroup(activity.entries)).toBe('Ran command')
   })
 
+  test('keeps Agent plan snapshots out of conversational Activity rows', () => {
+    const items = runEventsToMessageFeed(
+      [
+        {
+          eventId: 'plan-1',
+          createdAt: '2026-07-11T08:00:00.000Z',
+          kind: 'plan',
+          transport: 'codex',
+          planId: 'todo-1',
+          status: 'active',
+          items: [{ text: 'Implement the projection', completed: false }],
+          vendorEventType: 'item.started',
+        },
+      ],
+      { namespace: 'attempt:R-1', groupId: 'R-1', active: true },
+    )
+
+    expect(items).toEqual([])
+  })
+
   test('keeps an activity row identity stable when its older tool call is prepended', () => {
     const options = { namespace: 'attempt:R-1', groupId: 'R-1', active: false }
     const result = transcript('tool-end', 'tool_result', '4 pass, 0 fail', {

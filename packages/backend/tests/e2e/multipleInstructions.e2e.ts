@@ -102,8 +102,10 @@ try {
     'Public Assistant turns must be FIFO',
   )
   assert.equal(assistant.createdGoals, 1, 'The status question must not create another Goal')
-  assert.deepEqual(await checkoutSnapshot(repoA), checkoutA)
-  assert.deepEqual(await checkoutSnapshot(repoB), checkoutB)
+  await Promise.all([
+    assertAcceptedDelivery(repoA, checkoutA, PROJECT_A),
+    assertAcceptedDelivery(repoB, checkoutB, PROJECT_B),
+  ])
   const [goalA, goalB] = await Promise.all([
     requestJson<GoalView>(baseUrl, `/api/projects/${PROJECT_A}/goals/${GOAL_A}`),
     requestJson<GoalView>(baseUrl, `/api/projects/${PROJECT_B}/goals/${GOAL_B}`),
@@ -295,6 +297,22 @@ async function initializeFixture(root: string) {
   await gitOutput(root, ['config', 'user.name', 'HOPI E2E'])
   await gitOutput(root, ['add', '.'])
   await gitOutput(root, ['commit', '-m', 'initial fixture'])
+}
+async function assertAcceptedDelivery(
+  root: string,
+  before: Awaited<ReturnType<typeof checkoutSnapshot>>,
+  projectId: string,
+) {
+  const after = await checkoutSnapshot(root)
+  assert.equal(after.branch, before.branch)
+  assert.equal(after.status, '')
+  assert.notEqual(after.head, before.head)
+  assert.equal(after.head, await gitOutput(root, ['rev-parse', 'hopi/release']))
+  await gitOutput(root, ['merge-base', '--is-ancestor', before.head, after.head])
+  assert.equal(
+    (await Bun.file(join(root, 'src', 'feature.ts')).text()).trim(),
+    `export const project = '${projectId}'`,
+  )
 }
 interface StateView {
   projects: Array<{ projectId: string; goals: Array<{ id: string; lifecycle: string }> }>

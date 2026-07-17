@@ -19,3 +19,14 @@ export function formatTime(value: string) {
     minute: '2-digit',
   }).format(new Date(value))
 }
+
+export function projectDisplayName(project: {
+  projectId: string
+  repoPath: string
+  projectPath: string
+}) {
+  const selectedPath =
+    project.projectPath && project.projectPath !== '.' ? project.projectPath : project.repoPath
+  const segments = selectedPath.split(/[\\/]+/).filter(Boolean)
+  return segments.at(-1) ?? project.projectId
+}

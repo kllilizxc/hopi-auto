@@ -109,7 +109,47 @@ describe('Assistant Reflection', () => {
         {
           projectId: 'P-1',
           available: false,
-          goals: [],
+          goals: [
+            {
+              goal: {
+                attributes: {
+                  id: 'G-1',
+                  title: 'Compact delta',
+                  lifecycle: 'active',
+                  contractRevision: 1,
+                },
+              },
+              works: [
+                {
+                  attributes: {
+                    id: 'W-1',
+                    title: 'Verify compaction',
+                    kind: 'engineering',
+                    stage: 'review',
+                    notBefore: null,
+                    dependsOn: [],
+                    contractRevision: 1,
+                    attempts: 1,
+                    evidenceRefs: ['E-1', 'E-2'],
+                  },
+                  projection: { column: 'Review', ready: true, responsibility: 'reviewer' },
+                  runtime: {
+                    activeResponsibility: null,
+                    latestAttempt: {
+                      runId: 'R-1',
+                      responsibility: 'generator',
+                      status: 'finished',
+                      result: 'success',
+                      summary: 'Candidate implementation completed.',
+                    },
+                    paths: { transcript: 'SECRET-RUNTIME-PATH' },
+                    stale: false,
+                  },
+                },
+              ],
+              attentions: [],
+            },
+          ],
           design: 'UNRELATED-DESIGN-BODY'.repeat(10_000),
         },
       ],
@@ -121,11 +161,18 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('Unnotified workspace Attention A-1')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
     expect(prompt).toContain('whether operator action is required')
-    expect(prompt).toContain('translate only the useful outcome and required action')
-    expect(prompt).toContain('User: Keep public context.')
+    expect(prompt).toContain('useful outcome or required action')
+    expect(prompt).not.toContain('User: Keep public context.')
+    expect(prompt).not.toContain('## Recent Public Conversation')
+    expect(prompt).not.toContain('## Relevant Current State')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-RECUR')
     expect(prompt).not.toContain('UNRELATED-DESIGN-BODY')
-    expect(prompt.length).toBeLessThan(30_000)
+    expect(prompt).toContain('"evidenceCount":2')
+    expect(prompt).toContain('"latestEvidenceRef":"E-2"')
+    expect(prompt).toContain('Candidate implementation completed.')
+    expect(prompt).not.toContain('"evidenceRefs"')
+    expect(prompt).not.toContain('SECRET-RUNTIME-PATH')
+    expect(prompt.length).toBeLessThan(5_000)
   })
 
   test('does not interrupt for a newer state and discards the stale handoff before rerunning', async () => {

@@ -4,6 +4,12 @@ import { z } from 'zod'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
 import type { AgentRuntimeEvent } from './runtimeEvents'
+import {
+  type AssistantTransport,
+  type VendorSession,
+  isExplicitSessionFailure,
+  parseVendorAssistantOutput,
+} from './vendorAssistantOutput'
 import { type ProcessTranscriptFormat, normalizeProcessOutputLine } from './vendorTranscript'
 import { type RoleTransportConfig, resolveConfiguredTransportCommand } from './vendorTransport'
 
@@ -29,6 +35,7 @@ export interface RoleRunInput {
   cwd: string
   sourceRoots?: readonly string[]
   context: RoleContextBundle
+  session?: VendorSession | null
   signal?: AbortSignal
 }
 
@@ -43,6 +50,8 @@ export interface RoleRunResult {
 export interface RoleRunObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
   onHeartbeat?(): Promise<void> | void
+  onSession?(session: VendorSession): Promise<void> | void
+  onSessionInvalid?(): Promise<void> | void
 }
 
 export interface RoleRunner {
@@ -65,18 +74,17 @@ export class ConfiguredRoleRunner implements RoleRunner {
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     const config = await this.resolveConfig(input)
-    const command = await resolveConfiguredTransportCommand({
-      config,
-      bundle: input.context,
-      input: {
-        projectId: input.projectId,
-        goalKey: input.goalId,
-        taskRef: input.workId,
-        runId: input.runId,
-        stepId: input.responsibility,
-        role: input.responsibility,
-      },
-    })
+    const transport = resumableTransport(config)
+    let session = transport && input.session?.transport === transport ? input.session : null
+    if (input.session && !session) {
+      await observer?.onEvent?.({
+        kind: 'message',
+        level: 'info',
+        role: 'coordinator',
+        content: 'Configured responsibility transport changed; starting a new Session.',
+      })
+      await observer?.onSessionInvalid?.()
+    }
 
     const workflowBefore = await workflowDocumentStatus(input)
     const sourceRoots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
@@ -86,13 +94,52 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const transcriptFile = join(input.context.runRoot, 'transcript.log')
     await Bun.write(transcriptFile, '')
 
-    let execution: { exitCode: number; stderr: string[] }
+    const execute = async () => {
+      await Bun.write(input.context.resultFile, '')
+      const command = await resolveConfiguredTransportCommand({
+        config,
+        bundle: input.context,
+        input: {
+          projectId: input.projectId,
+          goalKey: input.goalId,
+          taskRef: input.workId,
+          runId: input.runId,
+          stepId: input.responsibility,
+          role: input.responsibility,
+        },
+        session,
+      })
+      return executeProcess(command, input, observer, this.heartbeatMs, transcriptFile, session)
+    }
+
+    if (session) {
+      await observer?.onEvent?.({
+        kind: 'message',
+        level: 'info',
+        role: 'coordinator',
+        content: `Resuming the existing ${input.responsibility} Session for this Work.`,
+      })
+    }
+
+    let execution: Awaited<ReturnType<typeof execute>>
     try {
-      execution = await executeProcess(command, input, observer, this.heartbeatMs, transcriptFile)
+      execution = await execute()
+      if (session && execution.sessionInvalid && !input.signal?.aborted) {
+        await observer?.onEvent?.({
+          kind: 'message',
+          level: 'info',
+          role: 'coordinator',
+          content:
+            'The saved responsibility Session could not continue; rebuilding it once from the current assignment.',
+        })
+        await observer?.onSessionInvalid?.()
+        session = null
+        execution = await execute()
+      }
     } catch (error) {
       return failedResult(`Unable to run ${input.responsibility}: ${errorMessage(error)}`)
     }
-    const { exitCode, stderr } = execution
+    const { exitCode, stderr, terminalError } = execution
 
     if (input.signal?.aborted) {
       return failedResult(`${input.responsibility} Run was interrupted`, exitCode)
@@ -107,6 +154,9 @@ export class ConfiguredRoleRunner implements RoleRunner {
     }
     if (reviewerBefore !== null && reviewerBefore !== (await sourceRootsFingerprint(sourceRoots))) {
       return failedResult('reviewer modified a task worktree', exitCode)
+    }
+    if (terminalError) {
+      return failedResult(terminalError, exitCode)
     }
     if (exitCode !== 0) {
       return failedResult(
@@ -126,6 +176,11 @@ export class ConfiguredRoleRunner implements RoleRunner {
     }
     return { ...parsed.value, exitCode }
   }
+}
+
+function resumableTransport(config: RoleTransportConfig): AssistantTransport | null {
+  if ('cmd' in config) return null
+  return config.transport
 }
 
 export class MockRoleRunner implements RoleRunner {
@@ -284,6 +339,7 @@ async function executeProcess(
   observer: RoleRunObserver | undefined,
   heartbeatMs: number,
   transcriptFile: string,
+  session: VendorSession | null,
 ) {
   const tempDir = join(input.context.runtimeScratchDir, 'tmp')
   const cacheDir = input.context.runtimeCacheDir
@@ -317,6 +373,9 @@ async function executeProcess(
   await observer?.onHeartbeat?.()
   const heartbeat = setInterval(() => void observer?.onHeartbeat?.(), heartbeatMs)
   const stderr: string[] = []
+  let observedSessionId = session?.sessionId ?? null
+  let sessionInvalid = false
+  let terminalError: string | null = null
   let transcriptTail: Promise<void> = Promise.resolve()
   const recordLine = (stream: 'stdout' | 'stderr', line: string) => {
     transcriptTail = transcriptTail.then(() => appendFile(transcriptFile, `${stream}: ${line}\n`))
@@ -340,16 +399,32 @@ async function executeProcess(
       }),
       consumeLines(child.stdout as ReadableStream<Uint8Array>, async (line) => {
         await recordLine('stdout', line)
+        if (command.sessionTransport) {
+          const output = parseVendorAssistantOutput(command.sessionTransport, line)
+          if (output.sessionId && output.sessionId !== observedSessionId) {
+            observedSessionId = output.sessionId
+            await observer?.onSession?.({
+              transport: command.sessionTransport,
+              sessionId: output.sessionId,
+            })
+          }
+          if (output.terminalError) {
+            terminalError = output.terminalError.message
+            sessionInvalid ||= output.terminalError.sessionInvalid
+          }
+          if (session && isExplicitSessionFailure(line)) sessionInvalid = true
+        }
         await emitLine(observer, format, 'stdout', input, line)
       }),
       consumeLines(child.stderr as ReadableStream<Uint8Array>, async (line) => {
         stderr.push(line)
         await recordLine('stderr', line)
+        if (session && isExplicitSessionFailure(line)) sessionInvalid = true
         await emitLine(observer, format, 'stderr', input, line)
       }),
     ])
     await transcriptTail
-    return { exitCode, stderr }
+    return { exitCode, stderr, terminalError, sessionInvalid }
   } finally {
     clearInterval(heartbeat)
     input.signal?.removeEventListener('abort', abort)

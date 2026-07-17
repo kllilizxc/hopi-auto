@@ -38,6 +38,10 @@ vendor transport/session, or interaction between a real model process and produc
 Deterministic process, publication, and Browser proofs remain the stronger evidence when model output
 cannot affect the result.
 
+A zero-provider Browser scenario replaces both speaking and background model seams whenever its
+deterministic product actions can wake them. Before sealing the Run it derives provider usage from
+the retained runtime streams; a hard-coded zero in `run.json` is not evidence.
+
 ## Reality Boundary
 
 The full Live E2E starts the production server without injected `AssistantModelRunner` or
@@ -83,6 +87,13 @@ within one Run. Each invocation retains its created, closed, and leaked target I
 artifact-local append-only resource log. A Run fails immediately when one of its owned targets
 remains open; the host browser's unrelated target count is diagnostic only and is never treated as
 owned state.
+
+Every multi-action script binds the target ID returned by `new_tab` and sends DOM reads and writes to
+that target explicitly. The host browser may contain unrelated tabs, and an external Browser Harness
+client may change the globally active tab even while a Test Run is waiting. Global active-tab state
+is therefore presentation only, never execution authority. Before the first consequential action,
+the script also waits for the exact control to become enabled; a failed semantic wait aborts the
+script instead of consuming later fixture inputs or replaying any click.
 
 ## Live Execution And Artifact Inspection
 

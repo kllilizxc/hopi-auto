@@ -26,12 +26,32 @@ describe('software delivery profile', () => {
       version: 1,
       id: 'software-delivery-v1',
       retry: { maxAttempts: 3, exhausted: 'create_attention' },
-      concurrency: { planner: 1, generator: 3, reviewer: 1 },
+      concurrency: { planner: 3, generator: 3, reviewer: 3 },
     })
     expect(responsibilityFor('planning', 'plan')).toBe('planner')
     expect(responsibilityFor('engineering', 'generate')).toBe('generator')
     expect(responsibilityFor('engineering', 'review')).toBe('reviewer')
     expect(responsibilityFor('engineering', 'done')).toBeNull()
+  })
+
+  test('keeps independent positive capacity for every responsibility', async () => {
+    const path = join(temporaryRoot, 'profile.yml')
+    const builtIn = await Bun.file(
+      join(import.meta.dir, '..', 'profiles', 'software-delivery.yml'),
+    ).text()
+    await Bun.write(
+      path,
+      builtIn
+        .replace('planner: 3', 'planner: 2')
+        .replace('generator: 3', 'generator: 5')
+        .replace('reviewer: 3', 'reviewer: 4'),
+    )
+
+    expect((await readSoftwareDeliveryProfile(path)).concurrency).toEqual({
+      planner: 2,
+      generator: 5,
+      reviewer: 4,
+    })
   })
 
   test('rejects profile edits that would create a configurable workflow', async () => {

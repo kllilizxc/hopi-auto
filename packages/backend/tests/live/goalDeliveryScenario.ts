@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { join } from 'node:path'
 import { verifyIntegratedClampProject } from './failingClampProject'
 import {
   type BrowserHarnessContext,
@@ -7,6 +6,7 @@ import {
   type LiveState,
   captureCompletionUpdate,
   checkoutSnapshot,
+  gitOutput,
   inspectKanban,
   readPendingInboxEvents,
   requestJson,
@@ -68,14 +68,26 @@ export async function verifyGoalDeliveryDomain(input: {
   const attempts = await readAttempts(input.context, input.projectId, input.goalId, finalGoal)
   assertRealResponsibilityPath(attempts)
   const projectVerification = await verifyIntegratedClampProject(input.integrationRoot)
-  assert.deepEqual(await checkoutSnapshot(input.context.repoRoot), input.checkoutBefore)
+  const checkoutAfter = await checkoutSnapshot(input.context.repoRoot)
+  assert.equal(checkoutAfter.branch, input.checkoutBefore.branch)
+  assert.equal(checkoutAfter.status, '')
+  assert.notEqual(checkoutAfter.head, input.checkoutBefore.head)
   assert.equal(
-    await Bun.file(join(input.context.repoRoot, 'src', 'clamp.ts')).text(),
-    'export function clampScore(score: number) {\n  return Math.min(0, Math.max(100, score))\n}\n',
-    'User checkout source must remain unchanged',
+    checkoutAfter.head,
+    await gitOutput(input.context.repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
+    'Delivery checkout must fast-forward exactly to the accepted release',
   )
+  const deliveryVerification = await verifyIntegratedClampProject(input.context.repoRoot)
 
-  return { finalState, finalGoal, completion, attempts, projectVerification }
+  return {
+    finalState,
+    finalGoal,
+    completion,
+    attempts,
+    projectVerification,
+    deliveryVerification,
+    checkoutAfter,
+  }
 }
 
 export async function captureGoalDeliveryPresentation(

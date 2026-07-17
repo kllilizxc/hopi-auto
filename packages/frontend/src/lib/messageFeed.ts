@@ -97,7 +97,12 @@ export function runEventsToMessageFeed(
   events: RunAttemptEvent[],
   options: RunEventFeedOptions,
 ): MessageFeedItem[] {
-  return events.map((event) => {
+  type VisibleRunEvent = Exclude<RunAttemptEvent, { kind: 'plan' }>
+  const visibleEvents = events.filter(
+    (event): event is VisibleRunEvent => event.kind !== 'plan',
+  )
+
+  return visibleEvents.map((event) => {
     const common = {
       id: `${options.namespace}:${event.eventId}`,
       createdAt: event.createdAt,

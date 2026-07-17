@@ -11,6 +11,25 @@ describe('parseVendorAssistantOutput', () => {
     ).toEqual({ sessionId: 'thread-1' })
   })
 
+  test('uses a Codex terminal turn error instead of unrelated stderr warnings', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'codex',
+        JSON.stringify({
+          type: 'turn.failed',
+          error: {
+            message: 'stream disconnected before completion: error sending request for responses',
+          },
+        }),
+      ),
+    ).toEqual({
+      terminalError: {
+        message: 'stream disconnected before completion: error sending request for responses',
+        sessionInvalid: false,
+      },
+    })
+  })
+
   test('extracts Claude session IDs and the complete final result', () => {
     const text = 'x'.repeat(800)
     expect(

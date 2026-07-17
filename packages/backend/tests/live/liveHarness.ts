@@ -603,7 +603,7 @@ export async function sendAssistantMessage(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     captureScreenshotLine(screenshots.pageLoaded),
     `opened = js(${JSON.stringify(openExpression)})`,
@@ -671,7 +671,7 @@ export async function captureBrowserPage(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     `visible = bool(js(${JSON.stringify(visibleExpression)}))`,
     captureScreenshotLine(screenshot),
@@ -766,7 +766,7 @@ async function captureAssistantFeedCheckpoint(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     `opened = js(${JSON.stringify(openExpression)})`,
     'visible = False',
@@ -823,7 +823,7 @@ export async function inspectKanban(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     'view = None',
     'for _ in range(80):',
@@ -896,7 +896,7 @@ export async function clickGoalControl(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     'clicked = None',
     'for _ in range(80):',
@@ -960,7 +960,6 @@ export async function configureProjectInBrowser(
     duplicateRepoPath: string
     secondaryRepoId: string
     secondaryRepoPath: string
-    reboundSecondaryRepoPath: string
     assistantModel: string
     projectModel: string
   },
@@ -974,8 +973,6 @@ export async function configureProjectInBrowser(
     linked: await screenshotTarget(harness, '05-project-multi-repo-linked.png'),
     assistantConfigured: await screenshotTarget(harness, '06-assistant-model-configured.png'),
     projectConfigured: await screenshotTarget(harness, '07-project-model-configured.png'),
-    rebound: await screenshotTarget(harness, '08-project-repo-rebound.png'),
-    reloaded: await screenshotTarget(harness, '09-project-configuration-reloaded.png'),
   }
   const values = Object.fromEntries(
     Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
@@ -983,84 +980,74 @@ export async function configureProjectInBrowser(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `target = new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
+    'def page_js(expression):',
+    '    return js(expression, target_id=target)',
     'def wait_js(expression, attempts=120):',
     '    value = None',
     '    for _ in range(attempts):',
-    '        value = js(expression)',
+    '        value = page_js(expression)',
     '        if value: return value',
     '        time.sleep(0.25)',
     '    return value',
-    captureScreenshotLine(screenshots.initial),
-    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    'def require_step(name, value):',
+    '    if not value: raise RuntimeError("Project configuration browser step did not settle: " + name)',
+    `picker_ready = wait_js(${JSON.stringify("(() => { const button = document.querySelector('.project-directory-picker'); return Boolean(button && !button.disabled) })()")})`,
+    'require_step("picker_ready", picker_ready)',
+    captureScreenshotLine(screenshots.initial, 'target'),
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
     'time.sleep(0.25)',
     `cancelled = wait_js(${JSON.stringify("!document.querySelector('.project-directory-picker')?.disabled && document.querySelectorAll('.project-create-repo').length === 0")})`,
-    captureScreenshotLine(screenshots.cancelled),
+    'require_step("picker_cancelled", cancelled)',
+    captureScreenshotLine(screenshots.cancelled, 'target'),
     `hopi_audit_note("cancel system repository selection", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
     `primary_selected = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 1")})`,
-    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    'require_step("primary_selected", primary_selected)',
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
     `duplicate_selected = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 2")})`,
-    captureScreenshotLine(screenshots.duplicateSelected),
-    `project_filled = js(${JSON.stringify(
-      [
-        '(() => {',
-        '  const project = document.querySelector(\'input[placeholder="Derived when omitted"]\')',
-        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        "  if (!project || !setter) return { ok: false, reason: 'missing Project ID input' }",
-        `  setter.call(project, ${values.projectId})`,
-        "  project.dispatchEvent(new Event('input', { bubbles: true }))",
-        '  return { ok: true }',
-        '})()',
-      ].join('\n'),
-    )})`,
+    'require_step("duplicate_selected", duplicate_selected)',
+    captureScreenshotLine(screenshots.duplicateSelected, 'target'),
     `hopi_audit_note("reject duplicate Git identity before Project link", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
+    `page_js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
     `conflict_visible = wait_js(${JSON.stringify("document.querySelector('.error-banner')?.textContent?.includes('same Git Repo')")})`,
-    `js(${JSON.stringify("fetch('/api/state').then((response) => response.json()).then((state) => { window.__hopiConflictAtomic = state.projects.length === 0 })")})`,
+    'require_step("duplicate_conflict_visible", conflict_visible)',
+    `page_js(${JSON.stringify("fetch('/api/state').then((response) => response.json()).then((state) => { window.__hopiConflictAtomic = state.projects.length === 0 })")})`,
     `conflict_atomic = wait_js(${JSON.stringify('window.__hopiConflictAtomic === true')})`,
-    captureScreenshotLine(screenshots.conflict),
-    `duplicate_removed = js(${JSON.stringify(
+    'require_step("duplicate_conflict_atomic", conflict_atomic)',
+    captureScreenshotLine(screenshots.conflict, 'target'),
+    `duplicate_removed = page_js(${JSON.stringify(
       `(() => { const row = [...document.querySelectorAll('.project-create-repo')].find((candidate) => candidate.querySelector('.project-create-repo-copy small')?.title === ${values.duplicateRepoPath}); const button = row?.querySelector('button[aria-label^="Remove"]'); if (!button) return false; button.click(); return true })()`,
     )})`,
+    'require_step("duplicate_removed", duplicate_removed)',
     `one_repo_remains = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 1")})`,
-    `js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    'require_step("one_repo_remains", one_repo_remains)',
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
     `final_selection = wait_js(${JSON.stringify("document.querySelectorAll('.project-create-repo').length === 2")})`,
-    `repo_ids_filled = js(${JSON.stringify(
+    'require_step("secondary_selected", final_selection)',
+    `repo_ids_ready = page_js(${JSON.stringify(
       [
         '(() => {',
-        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        '  if (!setter) return false',
         `  const values = new Map([[${values.primaryRepoPath}, ${values.primaryRepoId}], [${values.secondaryRepoPath}, ${values.secondaryRepoId}]])`,
-        "  for (const row of document.querySelectorAll('.project-create-repo')) {",
+        "  const rows = [...document.querySelectorAll('.project-create-repo')]",
+        '  if (rows.length !== values.size) return false',
+        '  for (const row of rows) {',
         "    const path = row.querySelector('.project-create-repo-copy small')?.title",
-        "    const input = row.querySelector('.project-create-repo-copy input')",
-        '    const value = path ? values.get(path) : null',
-        '    if (!input || !value) return false',
-        '    setter.call(input, value)',
-        "    input.dispatchEvent(new Event('input', { bubbles: true }))",
+        "    const repoId = row.querySelector('.project-create-repo-copy strong')?.textContent?.trim()",
+        '    if (!path || values.get(path) !== repoId) return false',
         '  }',
         '  return true',
         '})()',
       ].join('\n'),
     )})`,
+    'require_step("derived_repo_ids_ready", repo_ids_ready)',
     `hopi_audit_note("create one multi-repository HOPI Project", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
-    `linked = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.projectId}) && document.querySelectorAll('.project-repo-entry').length === 2`)})`,
-    captureScreenshotLine(screenshots.linked),
-    `manager = js(${JSON.stringify(
-      [
-        '(() => {',
-        "  const button = [...document.querySelectorAll('.project-card button')].find((candidate) => candidate.textContent?.includes('Manage'))",
-        "  if (!button) return { ok: false, reason: 'missing repository manager' }",
-        '  button.click()',
-        '  return { ok: true }',
-        '})()',
-      ].join('\n'),
-    )})`,
-    `secondary_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-id')].some((element) => element.textContent?.trim() === ${values.secondaryRepoId})`)})`,
-    `assistant_filled = js(${JSON.stringify(
+    `page_js(${JSON.stringify('document.querySelector(\'.link-project-panel button[type="submit"]\')?.click()')})`,
+    `linked = wait_js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.title === ${values.projectId}); const ids = [...(card?.querySelectorAll('.project-repo-id') ?? [])].map((element) => element.textContent?.trim()); return ids.includes(${values.primaryRepoId}) && ids.includes(${values.secondaryRepoId}) && ids.length === 2 })()`)})`,
+    'require_step("project_linked", linked)',
+    captureScreenshotLine(screenshots.linked, 'target'),
+    `assistant_filled = page_js(${JSON.stringify(
       [
         '(() => {',
         "  const input = document.querySelector('.assistant-settings-form input')",
@@ -1072,18 +1059,23 @@ export async function configureProjectInBrowser(
         '})()',
       ].join('\n'),
     )})`,
+    'require_step("assistant_model_filled", assistant_filled.get("ok"))',
     `hopi_audit_note("save Home Assistant model", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify("[...document.querySelectorAll('.assistant-settings-form button')].find((candidate) => candidate.textContent?.trim().endsWith('Save'))?.click()")})`,
+    `page_js(${JSON.stringify("[...document.querySelectorAll('.assistant-settings-form button')].find((candidate) => candidate.textContent?.trim().endsWith('Save'))?.click()")})`,
     `assistant_visible = wait_js(${JSON.stringify(`document.querySelector('.assistant-settings-current strong')?.textContent?.includes(${values.assistantModel})`)})`,
-    captureScreenshotLine(screenshots.assistantConfigured),
-    `configured_open = js(${JSON.stringify("(() => { const button = document.querySelector('.project-model-row button'); if (!button) return false; button.click(); return true })()")})`,
+    'require_step("assistant_model_visible", assistant_visible)',
+    captureScreenshotLine(screenshots.assistantConfigured, 'target'),
+    `configured_open = page_js(${JSON.stringify("(() => { const button = document.querySelector('.project-model-row button'); if (!button) return false; button.click(); return true })()")})`,
+    'require_step("project_configuration_open", configured_open)',
     `wait_js(${JSON.stringify("Boolean(document.querySelector('.project-model-form .app-select__trigger'))")})`,
     `hopi_audit_note("select Claude for Project coding agents", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify("document.querySelector('.project-model-form .app-select__trigger')?.click()")})`,
-    `wait_js(${JSON.stringify("[...document.querySelectorAll('[role=option]')].some((option) => option.textContent?.includes('Claude'))")})`,
-    `agent_selected = js(${JSON.stringify("(() => { const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.textContent?.includes('Claude')); if (!option) return false; option.click(); return true })()")})`,
+    `page_js(${JSON.stringify("document.querySelector('.project-model-form .app-select__trigger')?.click()")})`,
+    `options_visible = wait_js(${JSON.stringify("[...document.querySelectorAll('[role=option]')].some((option) => option.textContent?.includes('Claude'))")})`,
+    'require_step("project_agent_options_visible", options_visible)',
+    `agent_selected = page_js(${JSON.stringify("(() => { const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.textContent?.includes('Claude')); if (!option) return false; option.click(); return true })()")})`,
+    'require_step("project_agent_selected", agent_selected)',
     'time.sleep(0.25)',
-    `project_filled = js(${JSON.stringify(
+    `project_filled = page_js(${JSON.stringify(
       [
         '(() => {',
         "  const input = document.querySelector('.project-model-form input')",
@@ -1095,34 +1087,14 @@ export async function configureProjectInBrowser(
         '})()',
       ].join('\n'),
     )})`,
+    'require_step("project_model_filled", project_filled.get("ok"))',
     `hopi_audit_note("save Project coding model", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify("[...document.querySelectorAll('.project-model-form button')].find((candidate) => candidate.textContent?.includes('Save model'))?.click()")})`,
+    `page_js(${JSON.stringify("[...document.querySelectorAll('.project-model-form button')].find((candidate) => candidate.textContent?.includes('Save model'))?.click()")})`,
     `project_model_visible = wait_js(${JSON.stringify(`document.querySelector('.project-model-row strong')?.textContent?.includes(${values.projectModel})`)})`,
-    captureScreenshotLine(screenshots.projectConfigured),
-    `rebind_open = js(${JSON.stringify(`(() => { const row = [...document.querySelectorAll('.project-repo-entry')].find((candidate) => candidate.querySelector('.project-repo-id')?.textContent?.trim() === ${values.secondaryRepoId}); const button = row ? [...row.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Rebind')) : null; if (!button) return false; button.click(); return true })()`)})`,
-    `wait_js(${JSON.stringify(`Boolean(document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]'))`)})`,
-    `rebind_filled = js(${JSON.stringify(
-      [
-        '(() => {',
-        `  const input = document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]')`,
-        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        "  if (!input || !setter) return { ok: false, reason: 'missing rebind input' }",
-        `  setter.call(input, ${values.reboundSecondaryRepoPath})`,
-        "  input.dispatchEvent(new Event('input', { bubbles: true }))",
-        '  return { ok: true }',
-        '})()',
-      ].join('\n'),
-    )})`,
-    `hopi_audit_note("rebind secondary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
-    `js(${JSON.stringify(`(() => { const input = document.querySelector('input[aria-label="New path for ' + ${values.secondaryRepoId} + '"]'); input?.closest('form')?.querySelector('button[type="submit"]')?.click() })()`)})`,
-    `rebound_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-path')].some((element) => element.textContent?.trim() === ${values.reboundSecondaryRepoPath})`)})`,
-    captureScreenshotLine(screenshots.rebound),
-    `goto_url(${JSON.stringify(url)})`,
-    'wait_for_load()',
-    `reloaded = wait_js(${JSON.stringify(`document.body.innerText.includes(${values.assistantModel}) && document.body.innerText.includes(${values.projectModel}) && document.body.innerText.includes(${values.reboundSecondaryRepoPath})`)})`,
-    captureScreenshotLine(screenshots.reloaded),
-    `hopi_audit_note("HOPI Project configuration survived browser reload", scenario=${JSON.stringify(harness.scenario)})`,
-    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"cancelled": cancelled, "primarySelected": primary_selected, "duplicateSelected": duplicate_selected, "projectFilled": project_filled, "conflictVisible": conflict_visible, "conflictAtomic": conflict_atomic, "duplicateRemoved": duplicate_removed, "oneRepoRemains": one_repo_remains, "finalSelection": final_selection, "repoIdsFilled": repo_ids_filled, "linked": linked, "manager": manager, "secondaryVisible": secondary_visible, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectModelVisible": project_model_visible, "rebindOpen": rebind_open, "rebindFilled": rebind_filled, "reboundVisible": rebound_visible, "reloaded": reloaded, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'require_step("project_model_visible", project_model_visible)',
+    captureScreenshotLine(screenshots.projectConfigured, 'target'),
+    `hopi_audit_note("HOPI Project linking and model configuration completed", scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"cancelled": cancelled, "primarySelected": primary_selected, "duplicateSelected": duplicate_selected, "conflictVisible": conflict_visible, "conflictAtomic": conflict_atomic, "duplicateRemoved": duplicate_removed, "oneRepoRemains": one_repo_remains, "finalSelection": final_selection, "repoIdsReady": repo_ids_ready, "linked": linked, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectFilled": project_filled, "projectModelVisible": project_model_visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -1142,16 +1114,12 @@ export async function configureProjectInBrowser(
     'duplicateRemoved',
     'oneRepoRemains',
     'finalSelection',
-    'repoIdsFilled',
+    'repoIdsReady',
     'linked',
-    'secondaryVisible',
     'assistantVisible',
     'configuredOpen',
     'agentSelected',
     'projectModelVisible',
-    'rebindOpen',
-    'reboundVisible',
-    'reloaded',
   ]) {
     if (evidence[field] !== true) {
       throw new Error(
@@ -1168,6 +1136,239 @@ export async function configureProjectInBrowser(
   )
   await recordAction(harness, 'project_configured_in_browser', {
     projectId: input.projectId,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
+}
+
+export async function rebindProjectInBrowser(
+  harness: BrowserHarnessContext,
+  input: {
+    projectId: string
+    repoId: string
+    repoPath: string
+    assistantModel: string
+    projectModel: string
+  },
+) {
+  const url = `${harness.baseUrl}/projects`
+  const screenshots = {
+    rebound: await screenshotTarget(harness, '08-project-repo-rebound.png'),
+    reloaded: await screenshotTarget(harness, '09-project-configuration-reloaded.png'),
+  }
+  const values = Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
+  ) as Record<keyof typeof input, string>
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `target = new_tab(${pythonUtf8Expression(url)})`,
+    'wait_for_load()',
+    'def page_js(expression):',
+    '    return js(expression, target_id=target)',
+    'def wait_js(expression, attempts=160):',
+    '    value = None',
+    '    for _ in range(attempts):',
+    '        value = page_js(expression)',
+    '        if value: return value',
+    '        time.sleep(0.25)',
+    '    return value',
+    'def require_step(name, value):',
+    '    if not value: raise RuntimeError("Project Rebind browser step did not settle: " + name)',
+    `project_ready = wait_js(${JSON.stringify(`Boolean([...document.querySelectorAll('.project-card h2')].find((heading) => heading.title === ${values.projectId}))`)})`,
+    'require_step("project_ready", project_ready)',
+    `manager_open = page_js(${JSON.stringify("(() => { const button = [...document.querySelectorAll('.project-card button')].find((candidate) => candidate.textContent?.includes('Manage')); if (!button) return false; button.click(); return true })()")})`,
+    'require_step("repository_manager_open", manager_open)',
+    `repo_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-id')].some((element) => element.textContent?.trim() === ${values.repoId})`)})`,
+    'require_step("repository_visible", repo_visible)',
+    `rebind_open = page_js(${JSON.stringify(`(() => { const row = [...document.querySelectorAll('.project-repo-entry')].find((candidate) => candidate.querySelector('.project-repo-id')?.textContent?.trim() === ${values.repoId}); const button = row ? [...row.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Rebind')) : null; if (!button) return false; button.click(); return true })()`)})`,
+    'require_step("rebind_open", rebind_open)',
+    `rebind_input_ready = wait_js(${JSON.stringify(`Boolean(document.querySelector('input[aria-label="New path for ' + ${values.repoId} + '"]'))`)})`,
+    'require_step("rebind_input_ready", rebind_input_ready)',
+    `rebind_filled = page_js(${JSON.stringify(
+      [
+        '(() => {',
+        `  const input = document.querySelector('input[aria-label="New path for ' + ${values.repoId} + '"]')`,
+        "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
+        "  if (!input || !setter) return { ok: false, reason: 'missing rebind input' }",
+        `  setter.call(input, ${values.repoPath})`,
+        "  input.dispatchEvent(new Event('input', { bubbles: true }))",
+        '  return { ok: true }',
+        '})()',
+      ].join('\n'),
+    )})`,
+    'require_step("rebind_path_filled", rebind_filled.get("ok"))',
+    `hopi_audit_note("rebind physically moved secondary HOPI repository", scenario=${JSON.stringify(harness.scenario)})`,
+    `rebind_submitted = page_js(${JSON.stringify(`(() => { const input = document.querySelector('input[aria-label="New path for ' + ${values.repoId} + '"]'); const button = input?.closest('form')?.querySelector('button[type="submit"]'); if (!button) return false; button.click(); return true })()`)})`,
+    'require_step("rebind_submitted", rebind_submitted)',
+    `rebound_visible = wait_js(${JSON.stringify(`[...document.querySelectorAll('.project-repo-path')].some((element) => element.title === ${values.repoPath})`)})`,
+    'require_step("rebound_visible", rebound_visible)',
+    captureScreenshotLine(screenshots.rebound, 'target'),
+    'switch_tab(target)',
+    `goto_url(${pythonUtf8Expression(url)})`,
+    'wait_for_load()',
+    `reloaded = wait_js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.title === ${values.projectId}); const moved = [...(card?.querySelectorAll('.project-repo-path') ?? [])].some((element) => element.title === ${values.repoPath}); return Boolean(card && moved && document.body.innerText.includes(${values.assistantModel}) && card.textContent?.includes(${values.projectModel})) })()`)})`,
+    'require_step("configuration_reloaded", reloaded)',
+    captureScreenshotLine(screenshots.reloaded, 'target'),
+    `hopi_audit_note("HOPI Project Rebind survived browser reload", scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_REBIND=" + json.dumps({"projectReady": project_ready, "managerOpen": manager_open, "repoVisible": repo_visible, "rebindOpen": rebind_open, "rebindInputReady": rebind_input_ready, "rebindFilled": rebind_filled, "rebindSubmitted": rebind_submitted, "reboundVisible": rebound_visible, "reloaded": reloaded, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    'browser-rebind.log',
+    'HOPI_E2E_REBIND=',
+    script,
+  )) as Record<string, unknown> & {
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  for (const field of [
+    'projectReady',
+    'managerOpen',
+    'repoVisible',
+    'rebindOpen',
+    'rebindInputReady',
+    'rebindSubmitted',
+    'reboundVisible',
+    'reloaded',
+  ]) {
+    if (evidence[field] !== true) {
+      throw new Error(`Project browser Rebind did not complete ${field}: ${safeJson(evidence)}`)
+    }
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots(Object.values(screenshots))
+  const retainedScreenshots = screenshotEvidence(screenshots)
+  await Bun.write(
+    join(harness.artifactRoot, 'browser-rebind-evidence.json'),
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
+  )
+  await recordAction(harness, 'project_rebound_in_browser', {
+    projectId: input.projectId,
+    repoId: input.repoId,
+    auditHeadHash: evidence.audit?.head_hash,
+    browserAuditMode: auditMode,
+  })
+  return { ...evidence, auditMode, screenshots: retainedScreenshots }
+}
+
+export async function selectScopedProjectSourcesInBrowser(
+  harness: BrowserHarnessContext,
+  input: {
+    nonGitPath: string
+    emptyPath: string
+    emptyProjectId: string
+    scopedPath: string
+    scopedProjectId: string
+  },
+) {
+  const url = `${harness.baseUrl}/projects`
+  const screenshots = {
+    initial: await screenshotTarget(harness, '01-source-selection-initial.png'),
+    nonGitRejected: await screenshotTarget(harness, '02-non-git-source-rejected.png'),
+    emptyConfirmation: await screenshotTarget(harness, '03-empty-source-confirmation.png'),
+    emptyInitialized: await screenshotTarget(harness, '04-empty-source-initialized.png'),
+    emptyLinked: await screenshotTarget(harness, '05-empty-source-linked.png'),
+    scopedSelected: await screenshotTarget(harness, '06-scoped-source-selected.png'),
+    scopedLinked: await screenshotTarget(harness, '07-scoped-source-linked.png'),
+  }
+  const values = Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
+  ) as Record<keyof typeof input, string>
+  const script = [
+    'import base64, json, time',
+    ...browserAuditPrelude(),
+    `target = new_tab(${pythonUtf8Expression(url)})`,
+    'wait_for_load()',
+    'def page_js(expression):',
+    '    return js(expression, target_id=target)',
+    'def wait_js(expression, attempts=160):',
+    '    value = None',
+    '    for _ in range(attempts):',
+    '        value = page_js(expression)',
+    '        if value: return value',
+    '        time.sleep(0.25)',
+    '    return value',
+    'def require_step(name, value):',
+    '    if not value: raise RuntimeError("Project source browser step did not settle: " + name)',
+    `picker_ready = wait_js(${JSON.stringify("(() => { const button = document.querySelector('.project-directory-picker'); return Boolean(button && !button.disabled) })()")})`,
+    'require_step("picker_ready", picker_ready)',
+    captureScreenshotLine(screenshots.initial, 'target'),
+    'switch_tab(target)',
+    `hopi_audit_note("reject a non-Git project source", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `non_git_rejected = wait_js(${JSON.stringify(`(() => { const notice = document.querySelector('.directory-notice')?.textContent ?? ''; return notice.includes('not a Git repository') && notice.includes(${values.nonGitPath}) && document.querySelectorAll('.project-create-repo').length === 0 })()`)})`,
+    'require_step("non_git_rejected", non_git_rejected)',
+    captureScreenshotLine(screenshots.nonGitRejected, 'target'),
+    `picker_ready = wait_js(${JSON.stringify("(() => { const button = document.querySelector('.project-directory-picker'); return Boolean(button && !button.disabled) })()")})`,
+    'require_step("picker_ready_after_non_git", picker_ready)',
+    'switch_tab(target)',
+    `hopi_audit_note("request explicit empty-folder initialization", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `empty_confirmation = wait_js(${JSON.stringify(`(() => { const dialog = document.querySelector('.repo-init-modal'); return Boolean(dialog?.textContent?.includes('Initialize Git here?') && dialog?.textContent?.includes(${values.emptyPath})) })()`)})`,
+    'require_step("empty_confirmation", empty_confirmation)',
+    captureScreenshotLine(screenshots.emptyConfirmation, 'target'),
+    'switch_tab(target)',
+    `hopi_audit_note("confirm empty-folder Git initialization", scenario=${JSON.stringify(harness.scenario)})`,
+    `empty_confirmed = page_js(${JSON.stringify("(() => { const button = [...document.querySelectorAll('.repo-init-modal button')].find((candidate) => candidate.textContent?.includes('Initialize and use folder')); if (!button) return false; button.click(); return true })()")})`,
+    'require_step("empty_confirmed", empty_confirmed)',
+    `empty_initialized = wait_js(${JSON.stringify(`(() => !document.querySelector('.repo-init-modal') && [...document.querySelectorAll('.project-create-repo small')].some((element) => element.title === ${values.emptyPath}))()`)})`,
+    'require_step("empty_initialized", empty_initialized)',
+    captureScreenshotLine(screenshots.emptyInitialized, 'target'),
+    'switch_tab(target)',
+    `hopi_audit_note("link the explicitly initialized Project", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelector('.link-project-panel button[type=submit]')?.click()")})`,
+    `empty_linked = wait_js(${JSON.stringify(`(() => [...document.querySelectorAll('.project-card h2')].some((heading) => heading.title === ${values.emptyProjectId}) && document.querySelectorAll('.project-create-repo').length === 0)()`)})`,
+    'require_step("empty_linked", empty_linked)',
+    captureScreenshotLine(screenshots.emptyLinked, 'target'),
+    `picker_ready = wait_js(${JSON.stringify("(() => { const button = document.querySelector('.project-directory-picker'); return Boolean(button && !button.disabled) })()")})`,
+    'require_step("picker_ready_after_empty_link", picker_ready)',
+    'switch_tab(target)',
+    `hopi_audit_note("select a monorepo subfolder as Project scope", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelector('.project-directory-picker')?.click()")})`,
+    `scoped_selected = wait_js(${JSON.stringify(`(() => { const row = [...document.querySelectorAll('.project-create-repo')].find((candidate) => candidate.querySelector('small')?.title === ${values.scopedPath}); return Boolean(row?.querySelector('.project-scope-label')) })()`)})`,
+    'require_step("scoped_selected", scoped_selected)',
+    captureScreenshotLine(screenshots.scopedSelected, 'target'),
+    'switch_tab(target)',
+    `hopi_audit_note("link the scoped monorepo Project", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelector('.link-project-panel button[type=submit]')?.click()")})`,
+    `scoped_linked = wait_js(${JSON.stringify(`(() => { const cards = [...document.querySelectorAll('.project-card')]; const scoped = cards.find((card) => card.querySelector('h2')?.title === ${values.scopedProjectId}); return cards.length === 2 && Boolean(scoped?.querySelector('.project-scope-label')) && scoped?.textContent?.includes('storefront') })()`)})`,
+    'require_step("scoped_linked", scoped_linked)',
+    captureScreenshotLine(screenshots.scopedLinked, 'target'),
+    'switch_tab(target)',
+    `hopi_audit_note("project source selections completed", scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_PROJECT_SOURCES=" + json.dumps({"non_git_rejected": non_git_rejected, "empty_confirmation": empty_confirmation, "empty_confirmed": empty_confirmed, "empty_initialized": empty_initialized, "empty_linked": empty_linked, "scoped_selected": scoped_selected, "scoped_linked": scoped_linked, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+  ].join('\n')
+  const evidence = (await runBrowserHarness(
+    harness,
+    'project-source-selection.log',
+    'HOPI_E2E_PROJECT_SOURCES=',
+    script,
+  )) as {
+    non_git_rejected?: boolean
+    empty_confirmation?: boolean
+    empty_confirmed?: boolean
+    empty_initialized?: boolean
+    empty_linked?: boolean
+    scoped_selected?: boolean
+    scoped_linked?: boolean
+    audit?: { head_hash?: string }
+    verify?: BrowserAuditVerification
+  }
+  for (const [name, passed] of Object.entries(evidence).filter(
+    ([name]) => name !== 'audit' && name !== 'verify',
+  )) {
+    if (!passed) throw new Error(`Project source browser step did not settle: ${name}`)
+  }
+  const auditMode = resolveBrowserAuditMode(evidence.verify)
+  await assertScreenshots(Object.values(screenshots))
+  const retainedScreenshots = screenshotEvidence(screenshots)
+  await Bun.write(
+    join(harness.artifactRoot, 'project-source-browser-evidence.json'),
+    `${JSON.stringify({ url, ...evidence, auditMode, screenshots: retainedScreenshots }, null, 2)}\n`,
+  )
+  await recordAction(harness, 'project_sources_selected_in_browser', {
     auditHeadHash: evidence.audit?.head_hash,
     browserAuditMode: auditMode,
   })
@@ -1194,7 +1395,7 @@ export async function controlPreviewInBrowser(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     'clicked = None',
     'for _ in range(120):',
@@ -1248,7 +1449,7 @@ export async function requestPreviewRepairInBrowser(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     'start = None',
     'for _ in range(120):',
@@ -1318,7 +1519,7 @@ export async function inspectProjectPreviewStatus(
   const script = [
     'import base64, json, time',
     ...browserAuditPrelude(),
-    `new_tab(${JSON.stringify(url)})`,
+    `new_tab(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
     'projection = None',
     'for _ in range(120):',
@@ -1399,8 +1600,9 @@ async function browserWritablePath(localPath: string) {
   return result.stdout.trim()
 }
 
-function captureScreenshotLine(target: ScreenshotTarget) {
-  return `capture_screenshot(${pythonUtf8Expression(target.browserPath)}, max_dim=1800)`
+function captureScreenshotLine(target: ScreenshotTarget, browserTarget?: string) {
+  const capture = `capture_screenshot(${pythonUtf8Expression(target.browserPath)}, max_dim=1800)`
+  return browserTarget ? `switch_tab(${browserTarget}); ${capture}` : capture
 }
 
 function browserUtf8Expression(value: string) {
@@ -1508,6 +1710,27 @@ function withOwnedBrowserTabs(script: string) {
     'import json as _hopi_json',
     '_hopi_tabs_before = {tab.get("targetId") or tab.get("target_id") for tab in list_tabs(include_chrome=True)} - {None}',
     '_hopi_cleanup_errors = []',
+    '_hopi_owned_target = None',
+    '_hopi_original_new_tab = new_tab',
+    '_hopi_original_js = js',
+    '_hopi_original_wait_for_load = wait_for_load',
+    '_hopi_original_capture_screenshot = capture_screenshot',
+    'def _hopi_bound_new_tab(url="about:blank"):',
+    '    global _hopi_owned_target',
+    '    _hopi_owned_target = _hopi_original_new_tab(url)',
+    '    return _hopi_owned_target',
+    'def _hopi_bound_js(expression, target_id=None):',
+    '    return _hopi_original_js(expression, target_id=target_id or _hopi_owned_target)',
+    'def _hopi_bound_wait_for_load(timeout=15.0):',
+    '    if _hopi_owned_target: switch_tab(_hopi_owned_target)',
+    '    return _hopi_original_wait_for_load(timeout)',
+    'def _hopi_bound_capture_screenshot(path=None, full=False, max_dim=None):',
+    '    if _hopi_owned_target: switch_tab(_hopi_owned_target)',
+    '    return _hopi_original_capture_screenshot(path=path, full=full, max_dim=max_dim)',
+    'new_tab = _hopi_bound_new_tab',
+    'js = _hopi_bound_js',
+    'wait_for_load = _hopi_bound_wait_for_load',
+    'capture_screenshot = _hopi_bound_capture_screenshot',
     'try:',
     body,
     'finally:',

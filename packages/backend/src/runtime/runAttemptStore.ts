@@ -64,9 +64,32 @@ const storedTranscriptEventSchema = z
   })
   .strict()
 
+const storedPlanEventSchema = z
+  .object({
+    eventId: stableIdSchema,
+    createdAt: z.string().datetime(),
+    kind: z.literal('plan'),
+    transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
+    planId: z.string().min(1),
+    status: z.enum(['active', 'completed']),
+    items: z
+      .array(
+        z
+          .object({
+            text: z.string().min(1),
+            completed: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1),
+    vendorEventType: z.string().min(1).optional(),
+  })
+  .strict()
+
 const storedEventSchema = z.discriminatedUnion('kind', [
   storedMessageEventSchema,
   storedTranscriptEventSchema,
+  storedPlanEventSchema,
 ])
 const legacyResultSchema = z
   .object({

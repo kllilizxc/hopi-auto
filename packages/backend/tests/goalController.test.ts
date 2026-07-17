@@ -22,6 +22,21 @@ afterEach(async () => {
 })
 
 describe('GoalController', () => {
+  test('refreshes the reused Planning objective to the latest trigger', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+
+    await controller.ensurePlanning('G-1', 'Assess the first trigger.')
+    const first = (await store.readPackage('G-1')).works.get('plan-initial')
+    expect(first?.body).toContain('Assess the first trigger.')
+
+    await controller.ensurePlanning('G-1', 'Reconcile the latest accepted instruction.')
+    const latest = (await store.readPackage('G-1')).works.get('plan-initial')
+    expect(latest?.body).toContain('Reconcile the latest accepted instruction.')
+    expect(latest?.body).not.toContain('Assess the first trigger.')
+    expect(latest?.body).toContain('## Acceptance Criteria')
+  })
+
   test('Pause and Resume retain lifecycle simplicity and ensure Planning before activation', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -119,6 +134,36 @@ describe('GoalController', () => {
     expect(first.attributes.id).not.toContain('operational')
     expect(first.body).toContain('3 consecutive operational failures')
     expect(first.body).toContain('configured runtime command exited')
+  })
+
+  test('uses one ordinary Work Attention for a responsibility semantic failure', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+
+    const first = await controller.ensureResponsibilityFailureAttention(
+      'G-1',
+      'plan-initial',
+      'planner',
+      'The proposal did not satisfy its document contract.',
+    )
+    const reused = await controller.ensureResponsibilityFailureAttention(
+      'G-1',
+      'plan-initial',
+      'planner',
+      'A duplicate wake-up must not create duplicate Attention.',
+    )
+    const planning = (await store.readPackage('G-1')).works.get('plan-initial')
+
+    expect(reused.attributes.id).toBe(first.attributes.id)
+    expect(first.attributes).toMatchObject({
+      target: 'project:P-1/goal:G-1/work:plan-initial',
+      resolvedAt: null,
+      notifiedAt: null,
+    })
+    expect(first.attributes.id).toStartWith('failure-plan-initial-')
+    expect(first.body).toContain('planner could not complete Work plan-initial')
+    expect(first.body).toContain('proposal did not satisfy its document contract')
+    expect(planning?.attributes.attempts).toBe(0)
   })
 
   test('installs Planning before a material revision and invalidates nonterminal Work', async () => {

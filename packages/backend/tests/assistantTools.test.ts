@@ -32,6 +32,40 @@ afterEach(async () => {
 })
 
 describe('Assistant HOPI tools', () => {
+  test('lets only a public user turn replace durable preferences without Goal effects', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-preference',
+      content: 'Across projects, keep your replies concise.',
+    })
+    const initial = (await fixture.workspace.readWorkspace()).preference
+
+    const result = await fixture.tools.executeForEvent('EV-preference', 'hopi_write_preferences', {
+      content: '# Preferences\n\n- Keep replies concise.\n',
+      expectedDigest: initial.digest,
+    })
+
+    expect(result).toMatchObject({
+      changed: true,
+      value: { path: '.hopi/preference.md', digest: expect.any(String) },
+    })
+    expect((await fixture.workspace.readWorkspace()).preference.content).toContain(
+      'Keep replies concise.',
+    )
+    expect(await fixture.goalStore.listGoalIds()).toEqual([])
+
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-internal-preference',
+      content: 'Invent a preference.',
+    })
+    await expect(
+      fixture.tools.executeForEvent('EV-internal-preference', 'hopi_write_preferences', {
+        content: '# Preferences\n\n- Invented internally.\n',
+        expectedDigest: (await fixture.workspace.readWorkspace()).preference.digest,
+      }),
+    ).rejects.toThrow('only from a public user turn')
+  })
+
   test('derives a readable Goal ID when the Assistant omits it', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-readable', content: '优化整体前端样式。' })
@@ -146,8 +180,26 @@ describe('Assistant HOPI tools', () => {
           },
         ],
       }),
-    ).rejects.toThrow('cannot cite an Assistant-home attachment path')
+    ).rejects.toThrow('cannot cite non-portable image path')
     expect(await fixture.goalStore.readGoal('G-invalid-image-path')).toBeNull()
+  })
+
+  test('rejects machine-local absolute image paths in Goal prose', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-local-image-path',
+      content: 'Use the generated reference.',
+    })
+
+    expect(
+      fixture.tools.executeForEvent('EV-local-image-path', 'hopi_create_goal', {
+        projectId: 'P-1',
+        goalId: 'G-local-image-path',
+        title: 'Reference layout',
+        objective: 'Recreate /home/user/.codex/generated_images/reference.png.',
+      }),
+    ).rejects.toThrow('/home/user/.codex/generated_images/reference.png')
+    expect(await fixture.goalStore.readGoal('G-local-image-path')).toBeNull()
   })
 
   test('can adopt an image as design-only context and later reuse it for Planning', async () => {
@@ -492,15 +544,18 @@ describe('Assistant HOPI tools', () => {
         ?.attributes.resolvedAt,
     ).toBeNull()
 
-    await fixture.tools.executeForEvent('EV-1', 'hopi_control_work', {
+    const retried = await fixture.tools.executeForEvent('EV-1', 'hopi_control_work', {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
       operation: 'retry',
     })
+    expect(retried.value).toMatchObject({
+      remainingAttentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+    })
     expect(
       await fixture.tools.executeForEvent('EV-1', 'hopi_resolve_attention', resolution),
-    ).toMatchObject({ changed: true })
+    ).toMatchObject({ changed: true, value: { remainingAttentionRefs: [] } })
     const resolvedPackage = await fixture.goalStore.readPackage('G-1')
     expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: expect.any(String),
@@ -508,6 +563,52 @@ describe('Assistant HOPI tools', () => {
     })
     expect(resolvedPackage.inputs).toHaveLength(1)
     expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
+  })
+
+  test('surfaces a superseded Work Attention after material Planning until Assistant settles it', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const workPath = fixture.goalStore.paths.workDocument('G-1', 'plan-initial')
+    const source = await Bun.file(fixture.goalStore.paths.absolute(workPath)).text()
+    const work = parseWorkDocument(source)
+    work.attributes.attempts = 3
+    await fixture.goalStore.publishGoal('G-1', {
+      supportingWrites: [],
+      gateWrite: {
+        path: workPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(source)),
+        content: renderWorkDocument(work),
+      },
+    })
+    const attention = await fixture.controller.ensureAttemptsAttention('G-1', 'plan-initial')
+    const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-revise',
+      content: 'The result is poor. Abandon that direction and try the model native task.',
+      context: { projectId: 'P-1', goalId: 'G-other' },
+    })
+
+    const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_request_planning', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      materialContractChange: true,
+    })
+    expect(planned.value).toMatchObject({ remainingAttentionRefs: [reference] })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
+    ).toMatchObject({ attempts: 0, contractRevision: 2 })
+
+    const settled = await fixture.tools.executeForEvent('EV-revise', 'hopi_resolve_attention', {
+      scope: 'goal',
+      projectId: 'P-1',
+      goalId: 'G-1',
+      attentionId: attention.attributes.id,
+      resolution: 'The accepted revision supersedes the exhausted direction.',
+    })
+    expect(settled).toMatchObject({
+      changed: true,
+      value: { remainingAttentionRefs: [] },
+    })
   })
 
   test('resolves Project Attention optimistically and restores eligibility exactly once', async () => {

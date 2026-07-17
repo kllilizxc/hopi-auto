@@ -22,9 +22,10 @@ export interface SelectFieldProps {
   name?: string
   onValueChange: (value: string) => void
   options: SelectOption[]
+  placeholder?: string
   popoverClassName?: string
   triggerClassName?: string
-  value: string
+  value: string | null
 }
 
 export function SelectField({
@@ -36,6 +37,7 @@ export function SelectField({
   name,
   onValueChange,
   options,
+  placeholder,
   popoverClassName,
   triggerClassName,
   value,
@@ -49,7 +51,8 @@ export function SelectField({
       onSelectionChange={(key) => {
         if (key !== null) onValueChange(String(key))
       }}
-      selectedKey={value}
+      placeholder={placeholder}
+      selectedKey={value ?? null}
     >
       {label ? <span className={cn('app-select__label', labelClassName)}>{label}</span> : null}
       <Select.Trigger className={cn('app-select__trigger', triggerClassName)}>

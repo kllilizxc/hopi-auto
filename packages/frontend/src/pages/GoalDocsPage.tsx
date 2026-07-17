@@ -10,8 +10,8 @@ import {
   CountBadge,
   StatusChip,
 } from '../components/ui'
-import { readGoal } from '../lib/api'
-import { cn, excerpt, formatTime } from '../lib/utils'
+import { readGoal, readState } from '../lib/api'
+import { cn, excerpt, formatTime, projectDisplayName } from '../lib/utils'
 
 const CONTRACT_KEY = '__goal_contract__'
 
@@ -24,6 +24,11 @@ export function GoalDocsPage() {
     enabled: Boolean(projectId && goalId),
     refetchInterval: 2_000,
   })
+  const snapshotQuery = useQuery({
+    queryKey: ['mvp-state'],
+    queryFn: readState,
+    refetchInterval: 2_000,
+  })
 
   useEffect(() => setSelectedDocument(CONTRACT_KEY), [projectId, goalId])
 
@@ -34,6 +39,7 @@ export function GoalDocsPage() {
   }
 
   const goal = goalQuery.data
+  const project = snapshotQuery.data?.projects.find((item) => item.projectId === projectId)
   const selected =
     selectedDocument === CONTRACT_KEY
       ? { path: 'goal.md', content: goal.goal.body }
@@ -46,7 +52,10 @@ export function GoalDocsPage() {
     <div className="docs-page">
       <header className="docs-header">
         <div>
-          <span className="eyebrow">{projectId} / {goalId}</span>
+          <span className="eyebrow">
+            <span title={projectId}>{project ? projectDisplayName(project) : projectId}</span> /{' '}
+            {goalId}
+          </span>
           <h1>Goal Design</h1>
           <p>Canonical documents are the durable design and traceability surface.</p>
         </div>

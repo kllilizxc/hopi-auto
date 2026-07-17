@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
+import type {
+  RoleRunInput,
+  RoleRunObserver,
+  RoleRunResult,
+  RoleRunner,
+} from '../../src/agent/RoleRunner'
 import {
   parseWorkDocument,
   renderAttentionDocument,
@@ -77,6 +82,11 @@ try {
       goal.works.some((work) => work.id === WORK_ID && work.stage === 'generate'),
     { timeoutMs: 30_000, description: 'durable paused Goal after browser Pause' },
   )
+  assert.deepEqual(
+    await checkoutSnapshot(repoRoot),
+    checkoutBefore,
+    'Pause must not expose the partial Generator candidate in the delivery checkout',
+  )
   const runCountWhilePaused = roles.runs.length
   await Bun.sleep(1_200)
   assert.equal(
@@ -109,13 +119,41 @@ try {
     ),
   )
   assert.deepEqual(
-    await checkoutSnapshot(repoRoot),
-    checkoutBefore,
-    'Pause, Resume, and resumed delivery must not mutate the user checkout',
+    roles.sessions.filter((run) => run.responsibility === 'generator'),
+    [
+      { responsibility: 'generator', sessionId: null },
+      { responsibility: 'generator', sessionId: 'pause-generator-session' },
+    ],
+    'Resume must preserve the Work Generator Session across distinct Attempts',
+  )
+  assert.equal(roles.generatorWorkspaces.length, 2)
+  assert.equal(
+    roles.generatorWorkspaces[0]?.path,
+    roles.generatorWorkspaces[1]?.path,
+    'Resume must reuse the same Work-revision responsibility workspace',
+  )
+  assert.deepEqual(
+    roles.generatorWorkspaces.map((workspace) => workspace.markerFound),
+    [false, true],
+    'The resumed Attempt must read a file written in the pre-Pause workspace',
+  )
+  const checkoutAfter = await checkoutSnapshot(repoRoot)
+  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
+  assert.equal(checkoutAfter.status, '')
+  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
+  assert.equal(
+    checkoutAfter.head,
+    await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
+    'Accepted delivery must fast-forward the clean checkout exactly to hopi/release',
+  )
+  assert.equal(
+    await Bun.file(join(roles.generatorWorkspaces[1]?.path ?? '', 'pause-continuity.txt')).exists(),
+    false,
+    'Terminal Work must remove its disposable responsibility workspace',
   )
   await Bun.write(
     join(artifactRoot, 'pause-resume-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, pauseBrowser, resumeBrowser, terminalBrowser, paused, settled, attempts, runs: roles.runs }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, pauseBrowser, resumeBrowser, terminalBrowser, paused, settled, attempts, checkoutBefore, checkoutAfter, runs: roles.runs, sessions: roles.sessions, generatorWorkspaces: roles.generatorWorkspaces }, null, 2)}\n`,
   )
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot, repo: repoRoot },
@@ -141,12 +179,41 @@ try {
   await server?.shutdown()
 }
 
-function createRoles(): RoleRunner & { runs: string[]; firstGeneratorWorktree: string | null } {
+function createRoles(): RoleRunner & {
+  runs: string[]
+  sessions: Array<{ responsibility: string; sessionId: string | null }>
+  generatorWorkspaces: Array<{ path: string; markerFound: boolean }>
+  firstGeneratorWorktree: string | null
+} {
   const runner = {
     runs: [] as string[],
+    sessions: [] as Array<{ responsibility: string; sessionId: string | null }>,
+    generatorWorkspaces: [] as Array<{ path: string; markerFound: boolean }>,
     firstGeneratorWorktree: null as string | null,
-    async run(input: RoleRunInput): Promise<RoleRunResult> {
+    async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
       runner.runs.push(input.responsibility)
+      runner.sessions.push({
+        responsibility: input.responsibility,
+        sessionId: input.session?.sessionId ?? null,
+      })
+      if (input.responsibility === 'generator') {
+        const continuityMarker = join(input.context.runtimeScratchDir, 'pause-continuity.txt')
+        const markerFound = await Bun.file(continuityMarker).exists()
+        runner.generatorWorkspaces.push({
+          path: input.context.runtimeScratchDir,
+          markerFound,
+        })
+        await observer?.onSession?.({
+          transport: 'codex',
+          sessionId: 'pause-generator-session',
+        })
+        if (runner.firstGeneratorWorktree === null) {
+          assert.equal(markerFound, false)
+          await Bun.write(continuityMarker, 'written before Pause\n')
+        } else {
+          assert.equal(await Bun.file(continuityMarker).text(), 'written before Pause\n')
+        }
+      }
       if (input.responsibility === 'planner') return plan(input)
       if (input.responsibility === 'reviewer') {
         assert.equal(

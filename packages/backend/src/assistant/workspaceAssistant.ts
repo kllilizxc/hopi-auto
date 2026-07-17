@@ -9,7 +9,8 @@ import {
   parseVendorAssistantOutput,
 } from '../agent/vendorAssistantOutput'
 import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
-import type { RoleTransportConfig } from '../agent/vendorTransport'
+import { type RoleTransportConfig, appendCodexHttpsOnlyConfig } from '../agent/vendorTransport'
+import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
@@ -256,13 +257,17 @@ export function createWorkspaceAssistant(input: {
       try {
         const imageFiles = await resolveEventImages(input.workspace, event)
         let session = await input.conversation.readSession()
-        const rebuildPrompt = renderNewConversation(workspaceState.events, event)
+        const rebuildPrompt = renderNewConversation(
+          workspaceState.events,
+          event,
+          workspaceState.preference,
+        )
         let result: AssistantModelResult
         try {
           result = await input.runner.run(
             {
               eventId,
-              prompt: session ? renderTurn(event) : rebuildPrompt,
+              prompt: session ? renderTurn(event, workspaceState.preference) : rebuildPrompt,
               rebuildPrompt,
               session,
               cwd: workspaceRoot,
@@ -501,7 +506,9 @@ function assistantCodexCommand(
   config: Extract<RoleTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
 ) {
-  const command = [config.binary ?? 'codex', '-a', config.approvalPolicy, '-s', 'read-only']
+  const command = [config.binary ?? 'codex']
+  appendCodexHttpsOnlyConfig(command)
+  command.push('-a', config.approvalPolicy, '-s', 'read-only')
   if (config.reasoningEffort) {
     command.push('-c', `model_reasoning_effort="${config.reasoningEffort}"`)
   }
@@ -534,6 +541,7 @@ function assistantCodexCommand(
 function renderNewConversation(
   events: ReadonlyMap<string, InboxEventDocument>,
   current: InboxEventDocument,
+  preference: AssistantPreferenceDocument,
 ) {
   const historyEvents = [...events.values()]
     .filter(
@@ -545,19 +553,17 @@ function renderNewConversation(
     '# HOPI Workspace Assistant',
     '',
     'Continue as one normal Assistant conversation for the operator.',
-    'Use HOPI tools only when the operator actually requests a durable Project, Goal, Work, design, Attention, or Preview effect.',
-    'Page context is the preferred target for ambiguous references such as "this" or "continue", but explicit user intent may select another Goal, create a new Goal, or stay at Workspace scope.',
-    'Page context never implies a mutation. Never turn greetings, discussion, or questions into Planning.',
-    'When an accepted mutation creates or changes a Goal other than the preferred page Goal, make the effect locatable by naming that Goal and its exact returned Goal ID in the final reply.',
-    'Every public turn is already durably remembered in Assistant Inbox. Leave optional suggestions, future ideas, and reference-only comments in conversation unless the operator intends them to change current authority.',
-    'Calling hopi_request_planning adopts the current turn as Goal Input and may invalidate an active Planner. Use it only when the current plan or delivery should change; do not call it merely to remember a note.',
-    'Before admission, ask only when the requested outcome, target, or operator intent is materially unclear. Once it is clear enough to admit, use the appropriate HOPI tool; Planner owns technical and delivery clarification.',
+    'Use HOPI tools only for a requested durable effect. Page context disambiguates references but never implies mutation; explicit intent may choose another scope or Goal.',
+    'Inbox already preserves every public turn. Keep discussion, questions, optional suggestions, and future ideas in conversation unless the operator intends to change current authority. Request Planning only when current plan or delivery should change.',
+    'Ask before admission only when outcome, target, or operator intent is materially unclear; Planner owns later technical and delivery clarification.',
     'Do not edit HOPI canonical files or project source directly. Use HOPI tools; implementation work must go through Planning and the fixed delivery flow.',
-    'The injected HOPI MCP tool descriptions and JSON schemas are the sole authority for tool arguments. Call those tools with their advertised fields; never search project files, .hopi/runtime, transcripts, or source code to rediscover a tool schema.',
-    'For Project Attention, inspect current state and apply the repair you judge sufficient, then call hopi_resolve_attention. A successful repair or shell command does not itself remove Attention; claim the Project is unblocked only after hopi_resolve_attention returns success.',
-    'Use exact document or diagnostic paths returned by hopi_read_state only when their body is needed. Never broadly search .hopi/runtime for control facts already returned by the state tool.',
-    'For the preferred current page, call hopi_read_state without projectId or goalId so the tool applies that exact context. When another scope is explicit, copy its complete canonical IDs and never remove P- or G- prefixes.',
-    'Current-turn images are already visible to you. Adopt only task-relevant images through the references field of the Goal tool you already need, with a concise purpose; leave unrelated images conversation-only. Never copy an Assistant-home attachment reference into Goal, design, or Work prose: adopted references return portable Goal-local asset paths for Planning.',
+    'MCP descriptions and schemas are the sole authority for tool arguments; never inspect files or transcripts to rediscover them.',
+    '[Mandatory Attention check before every final reply]',
+    'Inspect every exact Attention reference attached to the current Inbox turn and every remainingAttentionRefs value returned by tools in this turn. Reconcile each reference before ending the turn; do not silently carry it past a successful mutation.',
+    'When the current instruction or a successful effect satisfies or supersedes its blocker, you MUST call hopi_resolve_attention with the exact scope and IDs. Requesting Planning, retrying Work, or changing a Goal never closes Attention by itself.',
+    'If a referenced Attention still blocks, leave it open and state the one exact decision or external action still needed. Claim it cleared only after hopi_resolve_attention succeeds.',
+    'Read state at current page scope by omitting IDs; for another explicit scope copy complete canonical IDs. Follow exact returned document or diagnostic paths only when their body is needed; never scan runtime history broadly.',
+    'Adopt only task-relevant current images through the references field of the Goal tool already needed, with a concise purpose. Keep unrelated images in conversation and use returned Goal-local paths in authority.',
     'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
     '',
     ...(history.length
@@ -572,22 +578,21 @@ function renderNewConversation(
       : []),
     '## Current turn',
     '',
-    renderTurn(current),
+    renderTurn(current, preference),
   ].join('\n')
 }
 
-function renderTurn(event: InboxEventDocument) {
+function renderTurn(event: InboxEventDocument, preference: AssistantPreferenceDocument) {
   const context = event.attributes.context
   if (event.attributes.source === 'reflection') {
     return [
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
       '[Internal Reflection handoff. This is not operator input.]',
-      'Re-read current HOPI state and every referenced unresolved Attention before acting. Attention is an internal request for Assistant management, not automatically a user question.',
-      'Resolve what current code and canonical documents can answer. Update design or request Planning when needed. Ask the operator only for a decision or external action that Assistant cannot safely supply.',
-      'When the brief is stale or all referenced Attention is already resolved, finish silently.',
-      'Call hopi_notify_user with the exact concise message only when the operator should see an update; otherwise finish silently and the turn stays hidden. Other text from this internal turn is never shown.',
+      'Re-read current state and referenced Attention. Resolve what code and authority can answer; change design or request Planning when needed. Ask the operator only for a decision or external action Assistant cannot supply.',
+      'If stale or already resolved, finish silently. Call hopi_notify_user only with an exact concise update the operator should see; all other output stays hidden.',
+      renderPreference(preference, false),
       renderOperatorReplyContract(),
-      '[Rewrite the internal brief for the operator. Do not copy its internal IDs, role names, stages, or diagnostic process unless the operator needs that detail.]',
+      '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Workspace context]',
       event.body,
     ].join('\n\n')
@@ -595,6 +600,7 @@ function renderTurn(event: InboxEventDocument) {
   return [
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
     '[HOPI effects are asynchronous: after a mutating tool accepts the request, reply without sleeping or polling; Reflection reports later completion, blockers, or decisions.]',
+    renderPreference(preference, true),
     renderOperatorReplyContract(),
     context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Workspace context]',
     renderAttachmentReferences(event),
@@ -602,6 +608,22 @@ function renderTurn(event: InboxEventDocument) {
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function renderPreference(preference: AssistantPreferenceDocument, writable: boolean) {
+  return [
+    '[Current durable cross-Project user preferences]',
+    `Digest: ${preference.digest}`,
+    'Apply relevant defaults; current turn and explicit Project/Goal authority override them.',
+    ...(writable
+      ? [
+          'For a reusable cross-Project default, call hopi_write_preferences with the complete updated Markdown and this exact digest; preserve valid entries. Exclude one-off, current-task, and Project-specific rules. Remembering does not change current delivery; use design or Planning separately when both effects are intended.',
+        ]
+      : ['This internal turn may use these defaults for communication but cannot modify them.']),
+    '--- preference.md begins ---',
+    preference.content.trimEnd(),
+    '--- preference.md ends ---',
+  ].join('\n')
 }
 
 function renderAttentionContext(context: {
@@ -633,12 +655,10 @@ function renderInboxContext(context: {
 function renderOperatorReplyContract() {
   return [
     '[Operator-facing reply contract]',
-    '- Start with what happened or the current condition in plain language.',
-    "- Default to one or two short sentences. Add detail only when it changes the operator's understanding or decision, or when asked.",
+    "- Start with the outcome or current condition in the operator's language; do not repeat the request.",
+    '- Default to one or two short sentences. Add only detail that changes understanding or a decision, unless asked.',
     '- If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
-    '- Omit internal IDs, responsibility names, stages, tools, document paths, and verification process unless requested or needed to disambiguate a choice.',
-    '- If an accepted effect landed in a Goal other than the preferred page Goal, include that Goal name and exact Goal ID so the operator can find it.',
-    "- Use the operator's language. Do not repeat their request.",
+    '- Omit internal IDs and process unless requested or needed; if an effect lands in another Goal, include its name and exact Goal ID.',
   ].join('\n')
 }
 

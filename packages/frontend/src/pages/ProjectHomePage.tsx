@@ -47,7 +47,7 @@ import {
   updateProjectSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
-import { excerpt } from '../lib/utils'
+import { excerpt, projectDisplayName } from '../lib/utils'
 
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
@@ -503,6 +503,7 @@ function AssistantSettingsPanel({
 
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
+  const projectName = projectDisplayName(project)
   const [showRepoManager, setShowRepoManager] = useState(false)
   const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
   const [showModelSettings, setShowModelSettings] = useState(false)
@@ -544,9 +545,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   return (
     <AppCard className="project-card">
       <div className="project-card-top">
-        <span className="project-initial">{project.projectId.slice(0, 2).toUpperCase()}</span>
+        <span className="project-initial">{projectName.slice(0, 2).toUpperCase()}</span>
         <div>
-          <h2>{project.projectId}</h2>
+          <h2 title={project.projectId}>{projectName}</h2>
           <p>
             {project.primaryRepoId} · {scopedRepoPath(project.repoPath, project.projectPath)}
           </p>

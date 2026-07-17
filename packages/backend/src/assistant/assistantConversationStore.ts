@@ -2,7 +2,7 @@ import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
-import type { AssistantTransport } from '../agent/vendorAssistantOutput'
+import type { VendorSession } from '../agent/vendorAssistantOutput'
 import { readDurableJsonLines } from '../storage/jsonLines'
 
 const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'])
@@ -52,10 +52,7 @@ export interface AssistantTurnRuntime {
   events: AssistantTurnEvent[]
 }
 
-export interface AssistantSession {
-  transport: AssistantTransport
-  sessionId: string
-}
+export type AssistantSession = VendorSession
 
 export interface AssistantConversationStore {
   interruptRunning(): Promise<void>

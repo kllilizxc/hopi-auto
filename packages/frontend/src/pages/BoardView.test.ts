@@ -43,3 +43,38 @@ test('Work Attempt messages reuse the shared breathing tail activity', async () 
   expect(source).not.toContain('Agent is working')
   expect(source).not.toContain(':runtime-status')
 })
+
+test('Work cards keep full prose and dependencies in the detail modal', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+  const card = source.slice(source.indexOf('function WorkCard'), source.indexOf('function WorkDetail'))
+  const contract = source.slice(source.indexOf('function WorkContract'), source.indexOf('function RunPromptView'))
+
+  expect(card).not.toContain('excerpt(work.body)')
+  expect(card).not.toContain('work.dependsOn')
+  expect(card).not.toContain('work.attempts')
+  expect(card).not.toContain('work.projection.responsibility')
+  expect(card).not.toContain('<span>{work.id}</span>')
+  expect(contract).toContain('work.dependsOn')
+  expect(contract).toContain('<pre>{work.body}</pre>')
+  expect(source).toContain('<MessageFeedSkeleton density="compact" />')
+})
+
+test('Work cards project the current Agent plan while Attempt detail keeps the full snapshot', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+  const card = source.slice(source.indexOf('function WorkCard'), source.indexOf('function WorkDetail'))
+
+  expect(card).toContain('<AgentPlanChecklist plan={work.agentPlan} compact />')
+  expect(source).toContain('latestAgentPlan(eventStream.items)')
+  expect(source).toContain('{plan && <AgentPlanChecklist plan={plan} />}')
+  expect(source).toContain("plan.items.slice(0, 3)")
+  expect(card).toContain('agent-plan__progress')
+  expect(card).not.toContain('Current steps')
+})
+
+test('Needs you stays out of the Board banner and belongs to the Assistant message', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+
+  expect(source).not.toContain('needs-you-banner')
+  expect(source).not.toContain('openAssistant(assistantAttention)')
+  expect(source).toContain('assistantAttentionLabel')
+})

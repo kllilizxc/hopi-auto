@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
+import type {
+  RoleRunInput,
+  RoleRunObserver,
+  RoleRunResult,
+  RoleRunner,
+} from '../../src/agent/RoleRunner'
 import type {
   AssistantModelInput,
   AssistantModelResult,
@@ -125,10 +130,48 @@ try {
     ),
     'Only a Reviewer result from the revised candidate may integrate',
   )
-  assert.deepEqual(await checkoutSnapshot(repoRoot), checkoutBefore)
+  const generatorRuns = roles.runs.filter((run) => run.responsibility === 'generator')
+  assert.equal(generatorRuns.length, 2)
+  assert.deepEqual(
+    generatorRuns.map((run) => ({ revision: run.revision, sessionId: run.sessionId })),
+    [
+      { revision: 1, sessionId: null },
+      { revision: 2, sessionId: null },
+    ],
+    'A material revision must not resume the prior Generator conversation',
+  )
+  assert.notEqual(
+    generatorRuns[0]?.workspaceDir,
+    generatorRuns[1]?.workspaceDir,
+    'A material revision must receive a fresh responsibility workspace',
+  )
+  assert.deepEqual(
+    generatorRuns.map((run) => run.markerFound),
+    [false, false],
+    'The revised Generator must not inherit files from the prior revision',
+  )
+  assert.equal(
+    generatorRuns[1]?.previousRevisionMarkerRetained,
+    true,
+    'The old revision workspace must remain available for diagnosis until Work is terminal',
+  )
+  assert.equal(
+    await Bun.file(join(generatorRuns[0]?.workspaceDir ?? '', 'revision-continuity.txt')).exists(),
+    false,
+    'Terminal Work must clean every revision workspace',
+  )
+  const checkoutAfter = await checkoutSnapshot(repoRoot)
+  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
+  assert.equal(checkoutAfter.status, '')
+  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
+  assert.equal(
+    checkoutAfter.head,
+    await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
+    'Only the reviewed revision may fast-forward the delivery checkout',
+  )
   await Bun.write(
     join(artifactRoot, 'design-revision-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, settled, attempts, roleRuns: roles.runs }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, settled, attempts, checkoutBefore, checkoutAfter, roleRuns: roles.runs }, null, 2)}\n`,
   )
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot, repo: repoRoot },
@@ -185,15 +228,54 @@ function createAssistant(): AssistantModelRunner & { materialRevisionRequests: n
   return runner
 }
 
-function createRoles(): RoleRunner & { runs: Array<{ responsibility: string; revision: number }> } {
+function createRoles(): RoleRunner & {
+  runs: Array<{
+    responsibility: string
+    revision: number
+    sessionId: string | null
+    workspaceDir: string
+    markerFound: boolean
+    previousRevisionMarkerRetained: boolean | null
+  }>
+} {
   const runner = {
-    runs: [] as Array<{ responsibility: string; revision: number }>,
-    async run(input: RoleRunInput): Promise<RoleRunResult> {
+    runs: [] as Array<{
+      responsibility: string
+      revision: number
+      sessionId: string | null
+      workspaceDir: string
+      markerFound: boolean
+      previousRevisionMarkerRetained: boolean | null
+    }>,
+    async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
       const revision = await readRevision(input)
-      runner.runs.push({ responsibility: input.responsibility, revision })
+      const continuityMarker = join(input.context.runtimeScratchDir, 'revision-continuity.txt')
+      const markerFound = await Bun.file(continuityMarker).exists()
+      const priorGenerator = runner.runs.find(
+        (run) => run.responsibility === 'generator' && run.revision < revision,
+      )
+      const previousRevisionMarkerRetained = priorGenerator
+        ? await Bun.file(join(priorGenerator.workspaceDir, 'revision-continuity.txt')).exists()
+        : null
+      runner.runs.push({
+        responsibility: input.responsibility,
+        revision,
+        sessionId: input.session?.sessionId ?? null,
+        workspaceDir: input.context.runtimeScratchDir,
+        markerFound,
+        previousRevisionMarkerRetained,
+      })
+      if (input.responsibility === 'generator') {
+        await observer?.onSession?.({
+          transport: 'codex',
+          sessionId: `design-revision-generator-${revision}`,
+        })
+      }
       if (input.responsibility === 'planner') return plan(input)
       if (input.responsibility === 'generator') {
         if (revision === 1) {
+          assert.equal(markerFound, false)
+          await Bun.write(continuityMarker, 'revision 1 only\n')
           await new Promise<void>((resolve) =>
             input.signal?.addEventListener('abort', () => resolve(), { once: true }),
           )
@@ -203,6 +285,8 @@ function createRoles(): RoleRunner & { runs: Array<{ responsibility: string; rev
           )
           return success('Stale Generator proposed revision 1 after interruption.')
         }
+        assert.equal(markerFound, false)
+        assert.equal(previousRevisionMarkerRetained, true)
         await Bun.write(join(input.cwd, 'src', 'feature.ts'), 'export const featureRevision = 2\n')
         return success('Fresh Generator completed revision 2.')
       }

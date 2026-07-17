@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ConfiguredRoleRunner } from '../src/agent/RoleRunner'
@@ -155,6 +155,81 @@ describe('ConfiguredRoleRunner', () => {
     })
     expect(result.summary).toContain('provider quota exhausted')
   })
+
+  test('captures a built-in vendor session as soon as the responsibility reports it', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeCodex(
+      fixture.root,
+      'console.log(JSON.stringify({type:"thread.started",thread_id:"thread-generator"})); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"continued",artifacts:[]}))',
+    )
+    const sessions: string[] = []
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
+      onSession: (session) => {
+        sessions.push(`${session.transport}:${session.sessionId}`)
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'success', summary: 'continued' })
+    expect(sessions).toEqual(['codex:thread-generator'])
+  })
+
+  test('rebuilds an explicitly invalid saved session once inside the same Attempt', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeCodex(
+      fixture.root,
+      'if(Bun.argv.includes("resume")){console.error("saved thread not found");process.exit(1)} console.log(JSON.stringify({type:"thread.started",thread_id:"thread-rebuilt"})); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"rebuilt",artifacts:[]}))',
+    )
+    const sessions: string[] = []
+    const messages: string[] = []
+    let invalidations = 0
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+
+    const result = await runner.run(
+      {
+        ...fixture.input('planner', fixture.proposalRoot),
+        session: { transport: 'codex', sessionId: 'thread-missing' },
+      },
+      {
+        onEvent: (event) => {
+          if (event.kind === 'message') messages.push(event.content)
+        },
+        onSession: (session) => {
+          sessions.push(session.sessionId)
+        },
+        onSessionInvalid: () => {
+          invalidations += 1
+        },
+      },
+    )
+
+    expect(result).toMatchObject({ result: 'success', summary: 'rebuilt' })
+    expect(invalidations).toBe(1)
+    expect(sessions).toEqual(['thread-rebuilt'])
+    expect(messages).toContain(
+      'The saved responsibility Session could not continue; rebuilding it once from the current assignment.',
+    )
+    expect(await Bun.file(join(fixture.runRoot, 'transcript.log')).text()).toContain(
+      'saved thread not found',
+    )
+  })
 })
 
 function processRunner(code: string) {
@@ -215,6 +290,7 @@ async function createFixture() {
   await Bun.write(context.promptFile, '# Prompt\n')
 
   return {
+    root,
     repoRoot,
     runRoot,
     runtimeScratchDir,
@@ -231,6 +307,13 @@ async function createFixture() {
       } as const
     },
   }
+}
+
+async function fakeCodex(root: string, code: string) {
+  const path = join(root, `fake-codex-${crypto.randomUUID()}`)
+  await Bun.write(path, `#!/usr/bin/env bun\n${code}\n`)
+  await chmod(path, 0o755)
+  return path
 }
 
 async function git(cwd: string, args: string[]) {

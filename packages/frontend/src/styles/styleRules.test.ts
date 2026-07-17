@@ -78,16 +78,18 @@ test('Working states share one centered indicator implementation', async () => {
   expect(applicationSource).not.toContain('.working-indicator')
 })
 
-test('only actively working Work cards use the running glow', async () => {
+test('Work cards keep running emphasis off the whole surface', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const board = await Bun.file(new URL('../pages/BoardView.tsx', import.meta.url)).text()
-  const engineeringRule = styles.match(/\.work-card\.engineering\s*\{([^}]*)\}/)?.[1] ?? ''
   const workingRule =
     styles.match(/\.work-card\.work-card--working\s*\{([^}]*)\}/)?.[1] ?? ''
+  const badgeRule = styles.match(/\.badge-working\s*\{([^}]*)\}/)?.[1] ?? ''
 
   expect(board).toContain("badge === 'working' && 'work-card--working'")
-  expect(engineeringRule).not.toContain('animation: running-glow')
-  expect(workingRule).toContain('animation: running-glow')
+  expect(board).toContain('<WorkingIndicator label={badge} />')
+  expect(workingRule).not.toContain('animation:')
+  expect(badgeRule).not.toContain('animation: running-glow')
+  expect(styles).toContain('.work-card.work-card--working::before')
 })
 
 test('raw application colors live only in the theme contract', async () => {
@@ -130,4 +132,54 @@ test('Select values inherit control typography and stay vertically centered', as
   expect(valueRule).toContain('align-items: center')
   expect(valueRule).toContain('font-size: inherit')
   expect(valueRule).toContain('line-height: inherit')
+})
+
+test('compact Goal workspaces keep the active surface full-height and open Assistant on demand', async () => {
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()
+
+  expect(layout).toContain("const COMPACT_WORKSPACE_QUERY = '(max-width: 1280px)'")
+  expect(layout).toContain('const shouldRenderAssistant = assistantDocked || assistantActivated')
+  expect(layout).toContain('docked={assistantDocked}')
+  expect(layout).toContain('isOpen={assistantDocked || assistantOpen}')
+  expect(layout).toContain('className="workspace-assistant-button"')
+  expect(styles).toMatch(/@media \(max-width: 1280px\)[\s\S]*?\.goal-workspace\s*\{[\s\S]*?height:\s*100dvh;/)
+  expect(styles).not.toContain('grid-template-rows: minmax(310px, 44vh)')
+})
+
+test('Project navigation exposes responsive recent shortcuts with one overflow Select', async () => {
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()
+
+  expect(layout).toContain('selectProjectShortcuts(')
+  expect(layout).toContain("'project-switcher__tabs'")
+  expect(layout).toContain('<AppTabs.Indicator className="project-switcher__indicator" />')
+  expect(layout).toContain('className="project-switcher__more"')
+  expect(layout).toContain('placeholder={`More ${overflowProjects.length}`}')
+  expect(layout).toContain("if (window.matchMedia(SINGLE_PROJECT_SHORTCUT_QUERY).matches) return 1")
+  expect(layout).toContain("if (window.matchMedia(NARROW_PROJECT_SHORTCUT_QUERY).matches) return 2")
+  expect(layout).toContain('const [recentProjects] = useState(readRecentProjects)')
+  expect(layout).not.toContain('setRecentProjects(')
+  expect(styles).toContain('.project-switcher__tabs.tabs')
+  expect(styles).toContain('.project-switcher__indicator.tabs__indicator')
+  expect(styles).toContain('.project-switcher__tab.tabs__tab[data-pressed="true"]')
+  expect(styles).toContain('.project-switcher__more .app-select__value')
+})
+
+test('compact Kanban and Docs preserve every lane and evidence surface', async () => {
+  const source = await Bun.file(new URL('../index.css', import.meta.url)).text()
+
+  expect(source).toContain('scroll-snap-type: x mandatory')
+  expect(source).toContain('grid-template-columns: repeat(4, var(--compact-lane-width))')
+  expect(source).toContain('scroll-snap-stop: always')
+  expect(source).toMatch(/@media \(max-width: 900px\)[\s\S]*?\.evidence-panel\s*\{[\s\S]*?display:\s*block;/)
+})
+
+test('phone form controls avoid viewport zoom and honor display safe areas', async () => {
+  const source = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const html = await Bun.file(new URL('../../index.html', import.meta.url)).text()
+
+  expect(html).toContain('viewport-fit=cover')
+  expect(source).toMatch(/@media \(max-width: 660px\)[\s\S]*?body :is\(input, textarea\)\s*\{[\s\S]*?font-size:\s*16px;/)
+  expect(source).toContain('env(safe-area-inset-bottom)')
 })

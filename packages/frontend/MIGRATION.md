@@ -19,8 +19,10 @@ packages/backend (Bun server + canonical runtime)
               -> file-native Assistant, Project, Goal, Work, Attention, Evidence
 ```
 
-Bun imports `packages/frontend/index.html` directly, so the correction restores a frontend package
-without restoring Vite or adding a second runtime process.
+Bun imports the React entry through `packages/backend/src/product.html`, a thin production adapter
+that keeps emitted asset URLs rooted inside the backend bundle. Its pre-React boot surface mirrors
+`packages/frontend/index.html` under regression coverage. This restores a frontend package without
+restoring Vite or adding a second runtime process.
 
 For development only, `packages/frontend/dev.ts` provides a dedicated Bun HMR server and same-origin
 API proxy. This is an optional development boundary, not another production authority.

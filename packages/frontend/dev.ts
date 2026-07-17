@@ -3,12 +3,14 @@ import indexPage from './index.html'
 export interface FrontendDevServerOptions {
   port?: number
   backendOrigin?: string
+  hmr?: boolean
 }
 
 export function createFrontendDevServer(options: FrontendDevServerOptions = {}) {
   const backendOrigin = new URL(
     options.backendOrigin ?? process.env.HOPI_BACKEND_URL ?? 'http://127.0.0.1:3000',
   )
+  const hmr = options.hmr ?? readHmr(process.env.HOPI_FRONTEND_HMR)
 
   let port = options.port ?? readPort(process.env.HOPI_FRONTEND_PORT, 5173)
   const maxPort = port + 100
@@ -22,10 +24,7 @@ export function createFrontendDevServer(options: FrontendDevServerOptions = {}) 
           '/projects': indexPage,
           '/projects/*': indexPage,
         },
-        development: {
-          hmr: true,
-          console: true,
-        },
+        development: hmr ? { hmr: true, console: true } : false,
         async fetch(request) {
           const source = new URL(request.url)
           if (source.pathname !== '/api' && !source.pathname.startsWith('/api/')) {
@@ -80,9 +79,14 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
+function readHmr(value: string | undefined) {
+  return value !== '0' && value !== 'false'
+}
+
 if (import.meta.main) {
   const server = createFrontendDevServer()
+  const mode = readHmr(process.env.HOPI_FRONTEND_HMR) ? 'HMR' : 'remote optimized'
   console.log(
-    `HOPI frontend listening on http://localhost:${server.port} (API: ${process.env.HOPI_BACKEND_URL ?? 'http://127.0.0.1:3000'})`,
+    `HOPI frontend listening on http://localhost:${server.port} (${mode}; API: ${process.env.HOPI_BACKEND_URL ?? 'http://127.0.0.1:3000'})`,
   )
 }

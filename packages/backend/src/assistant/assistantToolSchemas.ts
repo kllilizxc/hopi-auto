@@ -15,6 +15,7 @@ const goalReferences = z
 
 export const mainAssistantToolNames = [
   'hopi_read_state',
+  'hopi_write_preferences',
   'hopi_create_goal',
   'hopi_write_design',
   'hopi_request_planning',
@@ -46,6 +47,12 @@ export const assistantToolSchemas = {
           'Exact canonical Goal ID, including its G- prefix. Omit to use current page context.',
         )
         .optional(),
+    })
+    .strict(),
+  hopi_write_preferences: z
+    .object({
+      content: z.string().max(16_000),
+      expectedDigest: z.string().regex(/^[a-f0-9]{64}$/),
     })
     .strict(),
   hopi_create_goal: z

@@ -48,6 +48,14 @@ describe('createGoalPackageStore', () => {
     expect([...goalPackage.works.values()].map((work) => work.attributes)).toEqual([
       expect.objectContaining({ id: 'plan-initial', kind: 'planning', stage: 'plan' }),
     ])
+    expect(goalPackage.goal.body).toContain('## Constraints\n\n- Never mutate a user checkout.')
+    expect(goalPackage.goal.body).toContain(
+      '## Success Criteria\n\n- All MVP acceptance scenarios pass.',
+    )
+    expect(goalPackage.goal.body).not.toContain('## Non-Goals')
+    const planning = [...goalPackage.works.values()][0]
+    expect(planning?.body).toContain('Clarify the current Goal contract and accepted Inputs')
+    expect(planning?.body).not.toContain('Replace every legacy workflow authority.')
     expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-1'))).text()).toContain(
       '## Current Design',
     )
@@ -60,10 +68,10 @@ describe('createGoalPackageStore', () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     const created = await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    expect(created.goal.body).toContain(
-      'The desired outcome is delivered against measurable criteria recorded in design and Engineering Work.',
-    )
-    expect(created.goal.body).not.toContain('Planner must define measurable success criteria')
+    expect(created.goal.body).not.toContain('## Constraints')
+    expect(created.goal.body).not.toContain('## Non-Goals')
+    expect(created.goal.body).not.toContain('## Success Criteria')
+    expect(created.works.get('plan-initial')?.body).not.toContain('Ship it.')
     const secondPlanningPath = store.paths.workDocument('G-1', 'plan-second')
 
     await expect(

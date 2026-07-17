@@ -35,8 +35,10 @@ import { createCompletionStructureVerifier } from './completionVerifier'
 import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
+import { createResponsibilitySessionStore } from './responsibilitySessionStore'
 import type { Responsibility } from './roleContextStager'
 import { createRunAttemptStore } from './runAttemptStore'
+import { readSoftwareDeliveryProfile } from './softwareDeliveryProfile'
 import { createWorkspaceAttentionController } from './workspaceAttentionController'
 
 export interface MvpProjectRuntime {
@@ -91,6 +93,7 @@ export interface CreateMvpRuntimeOptions {
 }
 
 export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promise<MvpRuntime> {
+  const profile = await readSoftwareDeliveryProfile()
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(options.homeRoot, publisher)
   await home.initialize()
@@ -98,6 +101,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const workspace = createAssistantWorkspaceStore(options.homeRoot, publisher)
   const attempts = createRunAttemptStore(options.homeRoot)
   await attempts.interruptRunningAttempts()
+  const responsibilitySessions = createResponsibilitySessionStore(options.homeRoot)
   const assistantConversation = createAssistantConversationStore(options.homeRoot)
   await assistantConversation.interruptRunning()
   const attentions = createWorkspaceAttentionController(workspace)
@@ -154,6 +158,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       publisher,
       roleRunner,
       attempts,
+      responsibilitySessions,
       goalController: controller,
       apiOrigin: assistantToolUrl ? () => new URL(assistantToolUrl()).origin : undefined,
       onProjectBlocked: async ({ projectId, reason }) => {
@@ -258,6 +263,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       reconciler: project.reconciler,
       recover: () => recoverRuntimeProject(project),
     })),
+    concurrency: profile.concurrency,
     delivery,
   })
   readActiveRuns = () => coordinator.activeRuns()

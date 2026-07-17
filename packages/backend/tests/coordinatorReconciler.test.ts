@@ -6,13 +6,23 @@ import type { WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
-import { createCoordinatorReconciler } from '../src/scheduler/coordinatorReconciler'
+import { createCoordinatorReconciler as createCoordinatorReconcilerWithOptions } from '../src/scheduler/coordinatorReconciler'
 import type { ProjectReconciler } from '../src/scheduler/projectReconciler'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'coordinator-reconciler')
+const testConcurrency = { planner: 3, generator: 3, reviewer: 3 } as const
+type CoordinatorOptions = Parameters<typeof createCoordinatorReconcilerWithOptions>[0]
+
+function createCoordinatorReconciler(
+  options: Omit<CoordinatorOptions, 'concurrency'> & {
+    concurrency?: CoordinatorOptions['concurrency']
+  },
+) {
+  return createCoordinatorReconcilerWithOptions({ concurrency: testConcurrency, ...options })
+}
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -271,30 +281,111 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)
   })
 
-  test('enforces the fixed global Generator capacity of three', async () => {
+  test('enforces each configured responsibility capacity globally across Projects and Goals', async () => {
     const fixture = await workspaceFixture()
-    const packages = new Map(
-      ['G-1', 'G-2', 'G-3', 'G-4'].map((goalId) => [goalId, engineeringPackage(goalId)]),
-    )
-    const pending = new Map<string, () => void>()
-    const store = {
-      listGoalIds: async () => [...packages.keys()],
-      readPackage: async (goalId: string) => requirePackage(packages, goalId),
-    } as unknown as GoalPackageStore
+    for (const responsibility of ['planner', 'generator', 'reviewer'] as const) {
+      const packages = new Map(
+        ['G-1', 'G-2', 'G-3', 'G-4'].map((goalId) => [
+          goalId,
+          responsibilityPackage(goalId, responsibility),
+        ]),
+      )
+      const pending = new Map<string, () => void>()
+      const storeFor = (goalIds: string[]) =>
+        ({
+          listGoalIds: async () => goalIds,
+          readPackage: async (goalId: string) => requirePackage(packages, goalId),
+        }) as unknown as GoalPackageStore
+      const reconciler = {
+        interruptRuns: () => undefined,
+        liveWorkIds: () => new Set<string>(),
+        reconcileGoal(goalId: string) {
+          return new Promise((resolve) => {
+            pending.set(goalId, () => {
+              const goalPackage = requirePackage(packages, goalId)
+              const work = [...goalPackage.works.values()][0]
+              if (!work) throw new Error(`Missing Work for ${goalId}`)
+              work.attributes.stage = 'done'
+              goalPackage.goal.attributes.lifecycle = 'paused'
+              resolve({
+                kind: 'pass_finished',
+                workId: work.attributes.id,
+                runId: `run-${goalId}`,
+                result: 'success',
+                application: 'published',
+              })
+            })
+          })
+        },
+      } as ProjectReconciler
+      const coordinator = createCoordinatorReconciler({
+        workspace: fixture.workspace,
+        assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
+        attentions: fixture.attentions,
+        projects: [
+          { projectId: 'P-1', store: storeFor(['G-1', 'G-2']), reconciler },
+          { projectId: 'P-2', store: storeFor(['G-3', 'G-4']), reconciler },
+        ],
+      })
+
+      expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 3 })
+      expect([...coordinator.activeRuns().values()]).toEqual([
+        responsibility,
+        responsibility,
+        responsibility,
+      ])
+      expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+
+      pending.get('G-1')?.()
+      await Bun.sleep(0)
+      expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+      pending.get('G-2')?.()
+      pending.get('G-3')?.()
+      pending.get('G-4')?.()
+      await coordinator.waitForIdle()
+    }
+  })
+
+  test('admits independent Generator Work from the same Goal on successive ticks', async () => {
+    const fixture = await workspaceFixture()
+    const goalPackage = engineeringPackage('G-1')
+    const firstWork = goalPackage.works.get('W-1')
+    if (!firstWork) throw new Error('Missing first Work')
+    goalPackage.works = new Map([
+      ...goalPackage.works,
+      [
+        'W-2',
+        {
+          attributes: {
+            ...firstWork.attributes,
+            id: 'W-2',
+            title: 'Build independently',
+          },
+          body: 'Build independently.\n',
+        } satisfies WorkDocument,
+      ],
+    ])
+    const live = new Set<string>()
+    const finish = new Map<string, () => void>()
     const reconciler = {
       interruptRuns: () => undefined,
-      liveWorkIds: () => new Set<string>(),
-      reconcileGoal(goalId: string) {
+      liveWorkIds: () => new Set([...live].map((workId) => `G-1/${workId}`)),
+      reconcileGoal() {
+        const work = [...goalPackage.works.values()].find(
+          (candidate) =>
+            candidate.attributes.stage === 'generate' && !live.has(candidate.attributes.id),
+        )
+        if (!work) throw new Error('Missing ready Work')
+        const workId = work.attributes.id
+        live.add(workId)
         return new Promise((resolve) => {
-          pending.set(goalId, () => {
-            const work = requirePackage(packages, goalId).works.get('W-1')
-            if (!work) throw new Error(`Missing Work for ${goalId}`)
+          finish.set(workId, () => {
             work.attributes.stage = 'done'
-            requirePackage(packages, goalId).goal.attributes.lifecycle = 'paused'
+            live.delete(workId)
             resolve({
               kind: 'pass_finished',
-              workId: 'W-1',
-              runId: `run-${goalId}`,
+              workId,
+              runId: `run-${workId}`,
               result: 'success',
               application: 'published',
             })
@@ -306,19 +397,25 @@ describe('CoordinatorReconciler', () => {
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       attentions: fixture.attentions,
-      projects: [{ projectId: 'P-1', store, reconciler }],
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => ['G-1'],
+            readPackage: async () => goalPackage,
+          } as unknown as GoalPackageStore,
+          reconciler,
+        },
+      ],
     })
 
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 3 })
-    expect([...coordinator.activeRuns().values()]).toEqual(['generator', 'generator', 'generator'])
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-
-    pending.get('G-1')?.()
-    await Bun.sleep(0)
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
-    pending.get('G-2')?.()
-    pending.get('G-3')?.()
-    pending.get('G-4')?.()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    expect([...coordinator.activeRuns().keys()]).toEqual(['P-1/G-1/W-1', 'P-1/G-1/W-2'])
+    expect([...coordinator.activeRuns().values()]).toEqual(['generator', 'generator'])
+
+    finish.get('W-1')?.()
+    finish.get('W-2')?.()
     await coordinator.waitForIdle()
   })
 
@@ -866,5 +963,19 @@ function planningPackage(goalId: string): GoalPackage {
       },
     ],
   ])
+  return goalPackage
+}
+
+function responsibilityPackage(
+  goalId: string,
+  responsibility: 'planner' | 'generator' | 'reviewer',
+) {
+  if (responsibility === 'planner') return planningPackage(goalId)
+  const goalPackage = engineeringPackage(goalId)
+  if (responsibility === 'reviewer') {
+    const work = goalPackage.works.get('W-1')
+    if (!work) throw new Error(`Missing Work for ${goalId}`)
+    work.attributes.stage = 'review'
+  }
   return goalPackage
 }

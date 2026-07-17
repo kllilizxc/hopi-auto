@@ -103,6 +103,96 @@ describe('ProjectReconciler', () => {
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
   })
 
+  test('reuses separate Generator and Reviewer sessions across a rejection loop', async () => {
+    const fixture = await createFixture({ reviewerRejectOnce: true })
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+
+    expect(fixture.runner.responsibilities).toEqual([
+      'planner',
+      'generator',
+      'reviewer',
+      'generator',
+      'reviewer',
+    ])
+    expect(
+      fixture.runner.sessionsByRun
+        .filter((run) => run.responsibility === 'generator')
+        .map((run) => run.sessionId),
+    ).toEqual([null, 'session-W-1-generator'])
+    expect(
+      fixture.runner.sessionsByRun
+        .filter((run) => run.responsibility === 'reviewer')
+        .map((run) => run.sessionId),
+    ).toEqual([null, 'session-W-1-reviewer'])
+    expect(
+      fixture.runner.sessionWorkspacesByRun
+        .filter((run) => run.responsibility === 'generator')
+        .map((run) => ({ path: run.path, markerFound: run.markerFound })),
+    ).toEqual([
+      {
+        path: expect.stringContaining('/generator/revision-1/workspace'),
+        markerFound: false,
+      },
+      {
+        path: expect.stringContaining('/generator/revision-1/workspace'),
+        markerFound: true,
+      },
+    ])
+    expect(
+      fixture.runner.sessionWorkspacesByRun
+        .filter((run) => run.responsibility === 'reviewer')
+        .map((run) => ({ path: run.path, markerFound: run.markerFound })),
+    ).toEqual([
+      {
+        path: expect.stringContaining('/reviewer/revision-1/workspace'),
+        markerFound: false,
+      },
+      {
+        path: expect.stringContaining('/reviewer/revision-1/workspace'),
+        markerFound: true,
+      },
+    ])
+    expect(fixture.runner.sessionWorkspacesByRun[1]?.path).toBe(
+      fixture.runner.sessionWorkspacesByRun[3]?.path,
+    )
+    expect(fixture.runner.sessionWorkspacesByRun[2]?.path).toBe(
+      fixture.runner.sessionWorkspacesByRun[4]?.path,
+    )
+    expect(
+      await Bun.file(
+        join(fixture.runner.sessionWorkspacesByRun[1]?.path ?? '', 'continuity.txt'),
+      ).exists(),
+    ).toBe(false)
+  })
+
+  test('turns Planner semantic failure into one ordinary Work Attention', async () => {
+    const fixture = await createFixture({ plannerResult: 'fail' })
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const planning = goalPackage.works.get('plan-initial')
+    const attentions = [...goalPackage.attentions.values()].filter(
+      (attention) =>
+        attention.attributes.target === 'project:project-1/goal:goal-1/work:plan-initial',
+    )
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect(planning?.attributes).toMatchObject({ stage: 'plan', attempts: 0 })
+    expect(attentions).toHaveLength(1)
+    expect(attentions[0]?.attributes).toMatchObject({ resolvedAt: null, notifiedAt: null })
+    expect(attentions[0]?.body).toContain('planner could not complete Work plan-initial')
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    expect(fixture.runner.responsibilities).toEqual(['planner'])
+  })
+
   test('keeps a Git subdirectory Project inside its selected source scope', async () => {
     const projectPath = 'apps/new-product'
     const fixture = await createFixture({ projectPath })
@@ -277,7 +367,7 @@ describe('ProjectReconciler', () => {
     expect(secondAttempt?.status).toBe('interrupted')
   })
 
-  test('checkpoints partial Generator source before applying fail', async () => {
+  test('checkpoints partial Generator source and returns semantic failure to Planning', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({
       generatorResult: 'fail',
@@ -289,14 +379,22 @@ describe('ProjectReconciler', () => {
 
     await fixture.reconciler.reconcileGoal('goal-1')
     const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const work = goalPackage.works.get('W-1')
+    const recoveryPlanning = [...goalPackage.works.values()].find(
+      (candidate) =>
+        candidate.attributes.kind === 'planning' && candidate.attributes.stage === 'plan',
+    )
 
     expect(result).toMatchObject({
       kind: 'pass_finished',
       result: 'fail',
       application: 'published',
     })
-    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 1 })
+    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
+    expect(recoveryPlanning?.attributes.contractRevision).toBe(
+      goalPackage.goal.attributes.contractRevision,
+    )
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
     expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
   })
@@ -534,25 +632,52 @@ describe('ProjectReconciler', () => {
 
 class DeliveryScriptRunner implements RoleRunner {
   readonly responsibilities: string[] = []
+  readonly sessionsByRun: Array<{ responsibility: string; sessionId: string | null }> = []
+  readonly sessionWorkspacesByRun: Array<{
+    responsibility: string
+    path: string
+    markerFound: boolean
+  }> = []
   readonly plannerCwds: string[] = []
   readonly plannerRunRoots: string[] = []
   readonly repoRootsByRun: Array<{ responsibility: string; paths: string[] }> = []
   private reviewerRuns = 0
+  private reviewerRejections = 0
 
   constructor(
     private readonly options: {
       generatorResult: 'success' | 'fail'
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
+      reviewerRejectOnce: boolean
       generatorCreatesPrepare: boolean
       generatorWaitForAbort: boolean
       plannerWaitForAbort: boolean
+      plannerResult: 'success' | 'fail'
       workRepos: readonly string[]
     },
   ) {}
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     this.responsibilities.push(input.responsibility)
+    this.sessionsByRun.push({
+      responsibility: input.responsibility,
+      sessionId: input.session?.sessionId ?? null,
+    })
+    const continuityMarker = join(input.context.runtimeScratchDir, 'continuity.txt')
+    const markerFound = await Bun.file(continuityMarker).exists()
+    this.sessionWorkspacesByRun.push({
+      responsibility: input.responsibility,
+      path: input.context.runtimeScratchDir,
+      markerFound,
+    })
+    if (!markerFound) {
+      await Bun.write(continuityMarker, `${input.responsibility} continuity\n`)
+    }
+    await observer?.onSession?.({
+      transport: 'codex',
+      sessionId: `session-${input.workId}-${input.responsibility}`,
+    })
     this.repoRootsByRun.push({
       responsibility: input.responsibility,
       paths: input.context.repoRoots.map((repo) => repo.path),
@@ -569,7 +694,7 @@ class DeliveryScriptRunner implements RoleRunner {
     })
     if (input.responsibility === 'planner') {
       if (this.options.plannerWaitForAbort) await waitForAbort(input.signal)
-      else await this.plan(input)
+      else if (this.options.plannerResult === 'success') await this.plan(input)
     }
     if (input.responsibility === 'generator') {
       for (const repo of input.context.repoRoots) {
@@ -610,8 +735,25 @@ class DeliveryScriptRunner implements RoleRunner {
         failureKind: 'operational',
       }
     }
+    if (
+      input.responsibility === 'reviewer' &&
+      this.options.reviewerRejectOnce &&
+      this.reviewerRejections++ === 0
+    ) {
+      return {
+        result: 'reject',
+        summary: 'Reviewer requested one focused correction.',
+        artifacts: [],
+        exitCode: 0,
+      }
+    }
     return {
-      result: input.responsibility === 'generator' ? this.options.generatorResult : 'success',
+      result:
+        input.responsibility === 'generator'
+          ? this.options.generatorResult
+          : input.responsibility === 'planner'
+            ? this.options.plannerResult
+            : 'success',
       summary: `${input.responsibility} completed its fixed responsibility.`,
       artifacts: [],
       exitCode: 0,
@@ -689,7 +831,9 @@ async function createFixture(
     generatorOperationalFailure?: boolean
     generatorWaitForAbort?: boolean
     plannerWaitForAbort?: boolean
+    plannerResult?: 'success' | 'fail'
     reviewerOperationalWriteOnce?: boolean
+    reviewerRejectOnce?: boolean
     includeSecondaryRepo?: boolean
     projectPath?: string
     operationalRetryBaseMs?: number
@@ -758,9 +902,11 @@ async function createFixture(
     generatorResult: options.generatorResult ?? 'success',
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
+    reviewerRejectOnce: options.reviewerRejectOnce ?? false,
     generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
     generatorWaitForAbort: options.generatorWaitForAbort ?? false,
     plannerWaitForAbort: options.plannerWaitForAbort ?? false,
+    plannerResult: options.plannerResult ?? 'success',
     workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
   })
   let runSequence = 0

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import type { AttentionView } from './apiTypes'
-import { resolveAssistantInboxContext } from './assistantContext'
+import type { AssistantFeedEntry, AttentionView, InboxEventView } from './apiTypes'
+import {
+  findAttentionNotificationEventId,
+  groupNeedsYouAttentions,
+  resolveAssistantInboxContext,
+} from './assistantContext'
 
 describe('Assistant automatic context', () => {
   test('uses the current Goal as the default page context', () => {
@@ -58,14 +62,122 @@ describe('Assistant automatic context', () => {
       ],
     })
   })
+
+  test('keeps every open reference from one Assistant question in its reply context', () => {
+    expect(
+      resolveAssistantInboxContext(
+        { projectId: 'P-1', goalId: 'G-current' },
+        [
+          attention({ projectId: 'P-2', goalId: 'G-attention', id: 'A-1' }),
+          attention({ projectId: 'P-2', goalId: 'G-attention', id: 'A-2' }),
+        ],
+      ),
+    ).toEqual({
+      projectId: 'P-2',
+      goalId: 'G-attention',
+      attentionRefs: [
+        'project:P-2/goal:G-attention/attention:A-1',
+        'project:P-2/goal:G-attention/attention:A-2',
+      ],
+    })
+  })
+
+  test('finds the public speaking turn that notified an exact Attention', () => {
+    const target = attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW })
+    const reference = 'project:P-1/goal:G-1/attention:A-1'
+
+    expect(
+      findAttentionNotificationEventId(
+        [
+          feedEvent('EV-user', { source: 'user', context: { attentionRefs: [reference] } }),
+          feedEvent('EV-internal', {
+            visibility: 'internal',
+            context: { attentionRefs: [reference] },
+          }),
+          feedEvent('EV-public', { context: { attentionRefs: [reference] } }),
+        ],
+        target,
+      ),
+    ).toBe('EV-public')
+  })
+
+  test('does not confuse a similarly named Attention in another Goal', () => {
+    expect(
+      findAttentionNotificationEventId(
+        [
+          feedEvent('EV-other', {
+            context: { attentionRefs: ['project:P-1/goal:G-2/attention:A-1'] },
+          }),
+        ],
+        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW }),
+      ),
+    ).toBeNull()
+  })
+
+  test('groups only unresolved notified Attention under the exact Assistant message', () => {
+    const references = [
+      'project:P-1/goal:G-1/attention:A-1',
+      'project:P-1/goal:G-1/attention:A-2',
+    ]
+    const groups = groupNeedsYouAttentions(
+      [feedEvent('EV-public', { context: { attentionRefs: references } })],
+      [
+        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW }),
+        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-2', notifiedAt: NOW }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          id: 'A-resolved',
+          notifiedAt: NOW,
+          resolvedAt: NOW,
+        }),
+        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-unnotified', notifiedAt: null }),
+      ],
+    )
+
+    expect(
+      [...groups.entries()].map(([groupId, attentions]) => [
+        groupId,
+        attentions.map((item) => item.id),
+      ]),
+    ).toEqual([['inbox:EV-public', ['A-1', 'A-2']]])
+  })
 })
+
+const NOW = '2026-07-12T00:00:00.000Z'
+
+function feedEvent(id: string, overrides: Partial<InboxEventView> = {}): AssistantFeedEntry {
+  return {
+    kind: 'event',
+    id: `event:${id}`,
+    occurredAt: NOW,
+    completion: null,
+    event: {
+      id,
+      receivedAt: NOW,
+      status: 'handled',
+      source: 'reflection',
+      visibility: 'public',
+      body: 'Internal handoff.',
+      attachments: [],
+      reply: 'Please decide.',
+      disposition: null,
+      context: null,
+      routeClaim: null,
+      runtimeStatus: 'completed',
+      runtimeEvents: [],
+      runtimeError: null,
+      ...overrides,
+    },
+  }
+}
 
 function attention(overrides: Partial<AttentionView>): AttentionView {
   return {
     scope: 'goal',
     id: 'A-1',
     target: 'project:P-1/goal:G-1',
-    createdAt: '2026-07-12T00:00:00.000Z',
+    createdAt: NOW,
     resolvedAt: null,
     notifiedAt: null,
     body: 'Needs a decision.',

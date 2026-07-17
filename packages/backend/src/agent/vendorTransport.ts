@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
 import { codingReasoningEffortSchema, providerQualifiedModelSchema } from './projectCodingDefaults'
+import type { AssistantTransport, VendorSession } from './vendorAssistantOutput'
 import type { ProcessTranscriptFormat } from './vendorTranscript'
 
 export interface TransportCommand {
@@ -10,6 +11,7 @@ export interface TransportCommand {
   cwdMode: 'root' | 'worktree'
   stdin?: string
   transcriptFormat?: ProcessTranscriptFormat
+  sessionTransport?: AssistantTransport
   env?: Record<string, string>
   baseRef?: string
   outcomeFile?: string
@@ -25,6 +27,7 @@ export interface TransportContextBundle {
   designFile: string
   extraWritableRoots?: string[]
   contextFile: string
+  artifactManifestFile?: string
   promptFile: string
   outcomeFile: string
   canonicalOutcomeFile: string
@@ -90,6 +93,25 @@ export const roleTransportConfigSchema = z.union([
 
 export type RoleTransportConfig = z.infer<typeof roleTransportConfigSchema>
 
+const HOPI_CODEX_HTTPS_PROVIDER = 'hopi_chatgpt_https'
+
+export function appendCodexHttpsOnlyConfig(command: string[]) {
+  command.push(
+    '-c',
+    `model_provider=${JSON.stringify(HOPI_CODEX_HTTPS_PROVIDER)}`,
+    '-c',
+    `model_providers.${HOPI_CODEX_HTTPS_PROVIDER}.name=${JSON.stringify('HOPI ChatGPT HTTPS')}`,
+    '-c',
+    `model_providers.${HOPI_CODEX_HTTPS_PROVIDER}.base_url=${JSON.stringify('https://chatgpt.com/backend-api/codex')}`,
+    '-c',
+    `model_providers.${HOPI_CODEX_HTTPS_PROVIDER}.wire_api=${JSON.stringify('responses')}`,
+    '-c',
+    `model_providers.${HOPI_CODEX_HTTPS_PROVIDER}.requires_openai_auth=true`,
+    '-c',
+    `model_providers.${HOPI_CODEX_HTTPS_PROVIDER}.supports_websockets=false`,
+  )
+}
+
 export interface ConfiguredTransportInvocation {
   goalKey: string
   runId: string
@@ -103,6 +125,7 @@ export async function resolveConfiguredTransportCommand(options: {
   config: RoleTransportConfig
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
+  session?: VendorSession | null
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -127,10 +150,16 @@ export async function resolveConfiguredTransportCommand(options: {
     }
   }
 
-  const prompt = await Bun.file(options.bundle.promptFile).text()
+  const savedSession =
+    options.session?.transport === options.config.transport ? options.session : null
+  const assignment = await Bun.file(options.bundle.promptFile).text()
+  const prompt = savedSession
+    ? responsibilityContinuationPrompt(assignment, options.input)
+    : assignment
 
   if (options.config.transport === 'codex') {
     const cmd = [options.config.binary ?? 'codex']
+    appendCodexHttpsOnlyConfig(cmd)
     cmd.push('-a', options.config.approvalPolicy)
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
@@ -143,22 +172,23 @@ export async function resolveConfiguredTransportCommand(options: {
     ) {
       cmd.push('-c', 'sandbox_workspace_write.network_access=true')
     }
-    cmd.push('exec', '--skip-git-repo-check')
-    cmd.push('-s', options.config.sandbox)
-    for (const dir of options.bundle.extraWritableRoots ?? []) {
-      cmd.push('--add-dir', dir)
+    if (savedSession) {
+      cmd.push('-s', options.config.sandbox)
+      for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      if (options.config.model) cmd.push('-m', options.config.model)
+      if (options.config.profile) cmd.push('-p', options.config.profile)
+      cmd.push('exec', 'resume', '--ignore-user-config', '--skip-git-repo-check')
+      for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
+      cmd.push('--json', savedSession.sessionId, '-')
+    } else {
+      cmd.push('exec', '--ignore-user-config', '--skip-git-repo-check')
+      cmd.push('-s', options.config.sandbox)
+      for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      if (options.config.model) cmd.push('-m', options.config.model)
+      if (options.config.profile) cmd.push('-p', options.config.profile)
+      for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
+      cmd.push('--json', '-')
     }
-    if (options.config.model) {
-      cmd.push('-m', options.config.model)
-    }
-    if (options.config.profile) {
-      cmd.push('-p', options.config.profile)
-    }
-    for (const imageFile of options.bundle.imageFiles ?? []) {
-      cmd.push('-i', imageFile)
-    }
-    cmd.push('--json')
-    cmd.push('-')
     return {
       cmd,
       cwdMode: options.config.cwdMode,
@@ -170,6 +200,7 @@ export async function resolveConfiguredTransportCommand(options: {
       env,
       stdin: prompt,
       transcriptFormat: 'codex_jsonl',
+      sessionTransport: 'codex',
     }
   }
 
@@ -216,6 +247,7 @@ export async function resolveConfiguredTransportCommand(options: {
     if (options.config.model) {
       cmd.push('--model', options.config.model)
     }
+    if (savedSession) cmd.push('--resume', savedSession.sessionId)
     return {
       cmd,
       cwdMode: options.config.cwdMode,
@@ -227,6 +259,7 @@ export async function resolveConfiguredTransportCommand(options: {
       env,
       stdin: prompt,
       transcriptFormat: 'claude_stream_json',
+      sessionTransport: 'claude',
     }
   }
 
@@ -240,6 +273,7 @@ export async function resolveConfiguredTransportCommand(options: {
   if (options.config.variant) {
     cmd.push('--variant', options.config.variant)
   }
+  if (savedSession) cmd.push('--session', savedSession.sessionId)
   for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('--file', imageFile)
   return {
     cmd,
@@ -252,7 +286,23 @@ export async function resolveConfiguredTransportCommand(options: {
     env,
     stdin: prompt,
     transcriptFormat: 'opencode_json',
+    sessionTransport: 'opencode',
   }
+}
+
+function responsibilityContinuationPrompt(
+  assignment: string,
+  input: ConfiguredTransportInvocation,
+) {
+  return [
+    '# Continue Responsibility Session',
+    '',
+    `Continue the same ${input.role ?? input.stepId} responsibility for Work ${input.taskRef ?? input.stepId} in a new Attempt.`,
+    'The complete current assignment below is authoritative and supersedes remembered paths or facts.',
+    'Inspect the current workspace and retain valid prior progress instead of repeating completed work.',
+    '',
+    assignment,
+  ].join('\n')
 }
 
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
@@ -260,6 +310,9 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
     HOPI_CACHE_DIR: bundle.runtimeCacheDir,
     HOPI_CONTEXT_FILE: bundle.contextFile,
+    ...(bundle.artifactManifestFile
+      ? { HOPI_EVIDENCE_ARTIFACTS_FILE: bundle.artifactManifestFile }
+      : {}),
     HOPI_OUTCOME_FILE: bundle.outcomeFile,
     HOPI_GOAL_FILE: bundle.goalFile,
     HOPI_DESIGN_FILE: bundle.designFile,
@@ -285,6 +338,7 @@ function placeholderValues(options: {
 }) {
   return {
     CONTEXT_FILE: options.bundle.contextFile,
+    EVIDENCE_ARTIFACTS_FILE: options.bundle.artifactManifestFile ?? '',
     OUTCOME_FILE: options.bundle.outcomeFile,
     GOAL_FILE: options.bundle.goalFile,
     DESIGN_FILE: options.bundle.designFile,

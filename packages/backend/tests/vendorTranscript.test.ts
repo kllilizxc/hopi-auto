@@ -102,6 +102,83 @@ describe('normalizeProcessOutputLine', () => {
     expect(entries).toEqual([])
   })
 
+  test('normalizes Codex todo snapshots without flattening them into transcript status', () => {
+    const started = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'item-plan-1',
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect the current runtime', completed: false },
+            { text: 'Implement the projection', completed: false },
+          ],
+        },
+      }),
+    })
+    const updated = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.updated',
+        item: {
+          id: 'item-plan-1',
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect the current runtime', completed: true },
+            { text: 'Implement the projection', completed: false },
+          ],
+        },
+      }),
+    })
+    const completed = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item-plan-1',
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect the current runtime', completed: true },
+            { text: 'Implement the projection', completed: true },
+          ],
+        },
+      }),
+    })
+
+    expect(started).toEqual([
+      {
+        kind: 'plan',
+        transport: 'codex',
+        planId: 'item-plan-1',
+        status: 'active',
+        items: [
+          { text: 'Inspect the current runtime', completed: false },
+          { text: 'Implement the projection', completed: false },
+        ],
+        vendorEventType: 'item.started',
+      },
+    ])
+    expect(updated[0]).toMatchObject({
+      kind: 'plan',
+      status: 'active',
+      items: [{ completed: true }, { completed: false }],
+      vendorEventType: 'item.updated',
+    })
+    expect(completed[0]).toMatchObject({
+      kind: 'plan',
+      status: 'completed',
+      items: [{ completed: true }, { completed: true }],
+      vendorEventType: 'item.completed',
+    })
+  })
+
   test('normalizes current Codex command_execution started/completed events into tool rows', () => {
     const toolStarted = normalizeProcessOutputLine({
       format: 'codex_jsonl',

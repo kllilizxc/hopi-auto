@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
@@ -9,12 +9,13 @@ import {
   finishTestRun,
   gitOutput,
   ownTestRunServer,
+  rebindProjectInBrowser,
   requestJson,
   startTestRun,
 } from '../live/liveHarness'
 
 const SCENARIO = 'configuration-rebind'
-const PROJECT_ID = 'P-configuration'
+const PROJECT_ID = 'P-web'
 const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
@@ -48,15 +49,7 @@ try {
   })
   serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`
-  await gitOutput(secondaryRoot, [
-    'worktree',
-    'add',
-    '-b',
-    'relocated-checkout',
-    movedSecondaryRoot,
-    'HEAD',
-  ])
-  const browser = await configureProjectInBrowser(
+  const browserConfiguration = await configureProjectInBrowser(
     { scenario: SCENARIO, artifactRoot, baseUrl },
     {
       projectId: PROJECT_ID,
@@ -65,7 +58,17 @@ try {
       duplicateRepoPath: duplicatePrimaryRoot,
       secondaryRepoId: 'api',
       secondaryRepoPath: secondaryRoot,
-      reboundSecondaryRepoPath: movedSecondaryRoot,
+      assistantModel: 'gpt-5.4',
+      projectModel: 'claude-sonnet-4-6',
+    },
+  )
+  await rename(secondaryRoot, movedSecondaryRoot)
+  const browserRebind = await rebindProjectInBrowser(
+    { scenario: SCENARIO, artifactRoot, baseUrl },
+    {
+      projectId: PROJECT_ID,
+      repoId: 'api',
+      repoPath: movedSecondaryRoot,
       assistantModel: 'gpt-5.4',
       projectModel: 'claude-sonnet-4-6',
     },
@@ -73,7 +76,7 @@ try {
   const rebound = await requestJson<StateView>(baseUrl, '/api/state')
   assertState(rebound)
   assert.deepEqual(await checkoutSnapshot(primaryRoot), primaryBefore)
-  assert.deepEqual(await checkoutSnapshot(secondaryRoot), secondaryBefore)
+  assert.deepEqual(await checkoutSnapshot(movedSecondaryRoot), secondaryBefore)
   await serverCleanup.run()
   server = null
   restarted = createServer({ rootDir: homeRoot, port: 0 })
@@ -82,7 +85,7 @@ try {
   assertState(durable)
   await Bun.write(
     join(artifactRoot, 'configuration-rebind-contract.json'),
-    `${JSON.stringify({ status: 'passed', startedAt, browser, rebound, durable }, null, 2)}\n`,
+    `${JSON.stringify({ status: 'passed', startedAt, browserConfiguration, browserRebind, rebound, durable }, null, 2)}\n`,
   )
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot, primary: primaryRoot, secondary: secondaryRoot },

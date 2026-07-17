@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
+import { DEFAULT_ASSISTANT_PREFERENCE } from '../src/domain/assistantPreference'
 import { HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../src/domain/project'
 import {
   AssistantHomeStoreError,
@@ -31,6 +32,30 @@ describe('createAssistantHomeStore', () => {
     expect(first.homeId).toMatch(/^H-/)
     expect(await readYaml(store.paths.homeDocumentPath)).toEqual(first)
     expect(await readYaml(store.paths.projectLinksPath)).toEqual({ version: 3, projects: [] })
+    expect(await Bun.file(store.paths.preferenceDocumentPath).text()).toBe(
+      DEFAULT_ASSISTANT_PREFERENCE,
+    )
+  })
+
+  test('adds the preference document to an existing Home without replacing user content', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const store = createAssistantHomeStore(homeRoot)
+    await store.initialize()
+    await rm(store.paths.preferenceDocumentPath)
+
+    await store.initialize()
+    expect(await Bun.file(store.paths.preferenceDocumentPath).text()).toBe(
+      DEFAULT_ASSISTANT_PREFERENCE,
+    )
+
+    await Bun.write(
+      store.paths.preferenceDocumentPath,
+      '# Preferences\r\n\r\n- Keep replies concise.',
+    )
+    await store.initialize()
+    expect(await Bun.file(store.paths.preferenceDocumentPath).text()).toBe(
+      '# Preferences\n\n- Keep replies concise.\n',
+    )
   })
 
   test('links a Repo through hopi/release without changing the user checkout', async () => {
