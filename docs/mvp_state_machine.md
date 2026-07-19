@@ -59,8 +59,8 @@ codingDefaults? }`, where every Repo owns a stable ID and local path.
 `codingDefaults` selects defaults for future responsibility Runs but is not lifecycle state. The
 selected checkout locates the Repo but is never a canonical root. Its symbolic branch at link time
 is retained as the delivery branch. Coordinator derives Repo-adjacent stable integration and task
-worktrees; a missing, corrupt, or divergent managed or delivery projection is blocked under the
-expected identity.
+worktrees. A missing, corrupt, or divergent managed projection is blocked under the expected
+identity; delivery-only drift is a nonblocking, best-effort projection diagnostic.
 
 ## Publication Boundary
 
@@ -103,11 +103,11 @@ than attaching old processes. An ambiguous or unwritable project gets one open p
 Attention in Assistant home and remains unscheduled. If Assistant home itself cannot be validated
 or written, startup fails closed and an external supervisor alerts the operator.
 
-If a durable C1 ref exists but a managed integration or delivery projection is missing, partial, or
-inconsistent, HOPI creates or reuses project-target Attention and keeps the Project unscheduled.
-Managed ownership does not make canonical documents disposable, so the MVP performs no destructive
-repair. Delivery recovery performs only the same verified fast-forward of the linked clean checkout;
-all other checkout states remain untouched.
+If a durable C1 ref exists but a managed integration projection is missing, partial, or inconsistent,
+HOPI creates or reuses project-target Attention and keeps the Project unscheduled. Managed ownership
+does not make canonical documents disposable, so the MVP performs no destructive repair. Delivery
+recovery performs only the same verified fast-forward of the linked clean checkout; all other
+checkout states remain untouched and nonblocking because they do not own canonical truth.
 
 ## Internal Attention
 
@@ -536,8 +536,9 @@ runnable.
 - Startup validates every root before enabling control loops. Ambiguous project truth creates or
   reuses project-target Attention; invalid Assistant-home truth fails closed to the supervisor.
 - Ordinary documents provide process-crash recovery. Durable Inbox acknowledgement and the `C1`
-  ref are the two stronger persistence boundaries. Any inconsistent managed or delivery projection
-  blocks the Project without destructive checkout mutation.
+  ref are the two stronger persistence boundaries. An inconsistent managed projection blocks the
+  Project; an inconsistent delivery projection remains a nonblocking diagnostic, and neither path
+  destructively mutates the checkout.
 
 ## Derived Goal Kanban
 
@@ -652,8 +653,8 @@ outcome. Other state and document changes do not participate in this runtime tra
 - `work.attempts >= profile.maxAttempts` is never ready and gains targeted Attention.
 - An Engineering Work's integration commit is the unique reachable durable-ref `C1` carrying its
   qualified Work trailer; the same tree contains Work `done` and its Evidence references.
-- Any post-C1 managed or delivery projection anomaly creates project-target Attention and keeps the
-  Project unscheduled. HOPI retries only safe managed materialization and the guarded delivery
-  fast-forward; it never repairs individual checkout paths.
+- Any post-C1 managed projection anomaly creates project-target Attention and keeps the Project
+  unscheduled. Delivery-only anomalies remain visible diagnostics while HOPI retries only the
+  guarded fast-forward; it never repairs individual checkout paths.
 - Goal Kanban columns, the cancelled archive filter, and the single primary badge are read-only
   projections and own no transition.

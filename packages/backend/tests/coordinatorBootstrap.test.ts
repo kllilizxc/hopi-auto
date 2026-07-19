@@ -21,7 +21,7 @@ afterEach(async () => {
 })
 
 describe('bootstrapCoordinator', () => {
-  test('blocks a dirty delivery checkout without changing it', async () => {
+  test('keeps a dirty delivery checkout unchanged without blocking the Project', async () => {
     const fixture = await setup()
     await Bun.write(join(fixture.repoRoot, 'local.txt'), 'dirty user checkout\n')
     const legitimate = join(fixture.projectRoot, '.hopi', 'notes.tmp.keep')
@@ -35,8 +35,10 @@ describe('bootstrapCoordinator', () => {
 
     const result = await fixture.bootstrap()
 
-    expect([...result.eligibleProjectIds]).toEqual([])
-    expect([...result.blockedProjectIds]).toEqual(['P-1'])
+    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
+    expect([...result.blockedProjectIds]).toEqual([])
+    expect([...(await fixture.workspace.readWorkspace()).attentions.values()]).toEqual([])
+    expect(await Bun.file(join(fixture.repoRoot, 'local.txt')).text()).toBe('dirty user checkout\n')
     expect(await Bun.file(legitimate).exists()).toBe(true)
     expect(await Bun.file(abandoned).exists()).toBe(false)
   })
@@ -98,17 +100,19 @@ describe('bootstrapCoordinator', () => {
     ).toHaveLength(1)
   })
 
-  test('repairs a regressed managed ref but refuses to roll back the delivery checkout', async () => {
+  test('repairs a regressed managed ref without blocking on a newer delivery checkout', async () => {
     const fixture = await setup(true)
+    const deliveryHead = await git(fixture.repoRoot, ['rev-parse', 'HEAD'])
     const parent = await git(fixture.projectRoot, ['rev-parse', `${HOPI_RELEASE_REF}^`])
     await git(fixture.projectRoot, ['update-ref', HOPI_RELEASE_REF, parent])
 
     const result = await fixture.bootstrap()
 
-    expect([...result.blockedProjectIds]).toEqual(['P-1'])
-    expect([...(await fixture.workspace.readWorkspace()).attentions.values()][0]?.body).toContain(
-      'cannot fast-forward',
-    )
+    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
+    expect([...result.blockedProjectIds]).toEqual([])
+    expect(await git(fixture.projectRoot, ['rev-parse', 'HEAD'])).toBe(parent)
+    expect(await git(fixture.repoRoot, ['rev-parse', 'HEAD'])).toBe(deliveryHead)
+    expect([...(await fixture.workspace.readWorkspace()).attentions.values()]).toEqual([])
   })
 
   test('fails closed when Assistant-home truth is invalid', async () => {

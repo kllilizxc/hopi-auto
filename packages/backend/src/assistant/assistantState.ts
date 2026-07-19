@@ -5,6 +5,7 @@ import type { GoalPackage } from '../domain/goalPackage'
 import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
+import { inspectDeliveryProjection } from '../runtime/c1Integrator'
 import {
   EvidenceArtifactResolutionError,
   evidenceArtifactUrl,
@@ -273,22 +274,26 @@ export function createAssistantStateReader(options: {
               }
             }),
           )
+          const repos = project.repos
+            ? await Promise.all(
+                project.repos.map(async (repo) => ({
+                  ...(repo.repoId ? { repoId: repo.repoId } : {}),
+                  ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
+                  projectPath: repo.projectPath,
+                  integrationRoot: repo.integrationRoot,
+                  ...(repo.deliveryBranch ? { deliveryBranch: repo.deliveryBranch } : {}),
+                  ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
+                  ...(repo.repoId && repo.repoPath && repo.deliveryBranch
+                    ? { delivery: await deliveryProjection(repo) }
+                    : {}),
+                })),
+              )
+            : undefined
           return {
             projectId: project.projectId,
             projectRoot: project.projectRoot,
             ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
-            ...(project.repos
-              ? {
-                  repos: project.repos.map((repo) => ({
-                    ...(repo.repoId ? { repoId: repo.repoId } : {}),
-                    ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
-                    projectPath: repo.projectPath,
-                    integrationRoot: repo.integrationRoot,
-                    ...(repo.deliveryBranch ? { deliveryBranch: repo.deliveryBranch } : {}),
-                    ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
-                  })),
-                }
-              : {}),
+            ...(repos ? { repos } : {}),
             ...(modelSettings
               ? {
                   codingDefaults: modelSettings.codingDefaults,
@@ -556,6 +561,47 @@ async function releaseHead(projectRoot: string) {
   })
   const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
   return exitCode === 0 ? stdout.trim() : null
+}
+
+async function deliveryProjection(repo: {
+  repoId?: string
+  repoPath?: string
+  integrationRoot: string
+  deliveryBranch?: string
+  primary?: boolean
+}) {
+  if (!repo.repoId || !repo.repoPath || !repo.deliveryBranch) {
+    return { status: 'pending' as const, commit: null, reason: 'Delivery binding is incomplete' }
+  }
+  const desired = await releaseHead(repo.integrationRoot)
+  if (!desired) {
+    return {
+      status: 'pending' as const,
+      commit: null,
+      reason: `Repo ${repo.repoId} managed release is unavailable`,
+    }
+  }
+  try {
+    const inspected = await inspectDeliveryProjection(
+      {
+        repoId: repo.repoId,
+        integrationRoot: repo.integrationRoot,
+        checkoutRoot: repo.repoPath,
+        deliveryBranch: repo.deliveryBranch,
+        primary: repo.primary ?? false,
+      },
+      desired,
+    )
+    return inspected.status === 'current'
+      ? inspected
+      : { status: inspected.status, commit: inspected.commit, reason: inspected.reason }
+  } catch (error) {
+    return {
+      status: 'pending' as const,
+      commit: null,
+      reason: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 function boundedText(value: string, limit: number) {

@@ -221,10 +221,10 @@ candidate's first parent. Recovery never rolls back the primary C1, never re-run
 Reviewer, and never invents a Work state. Until all projections match, the Project is ineligible even
 though the Work document inside the durable C1 is already `done`.
 
-Delivery checkouts follow the same durable manifest but are more restrictive projections: recovery
-may only repeat a same-Repo, same-branch, clean, ancestry-proven fast-forward. One checkout that is
-dirty, detached, switched, or divergent blocks the Project without rolling back already projected
-Repos or the primary C1.
+Delivery checkouts follow the same durable manifest but are more restrictive, best-effort
+projections: recovery may only repeat a same-Repo, same-branch, clean, ancestry-proven fast-forward.
+A checkout that is dirty, detached, switched, or divergent remains untouched and reports delivery
+pending without blocking the Project or rolling back managed Repo projections or the primary C1.
 
 This is a fixed Project release projection protocol, not a promise of simultaneous physical Git ref
 updates or deployment atomicity. External deployment remains outside HOPI unless a reviewed Project
@@ -259,7 +259,7 @@ The implementation is complete only when automated tests cover:
 - a target advance or merge conflict in any Repo rejects before the primary boundary
 - a crash after primary C1 but before zero, one, or all secondary projections converges on restart
 - an unexpected secondary ref value blocks the Project without rollback
-- dirty, switched, detached, or divergent delivery checkouts block without destructive repair, and a
+- dirty, switched, detached, or divergent delivery checkouts remain nonblocking and unchanged, and a
   later safe state converges by fast-forward
 - Project prepare and Preview receive the correct multi-Repo runtime manifest
 - the UI manages Repo links and shows Work Repo scope without a Repo workflow

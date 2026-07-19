@@ -128,7 +128,11 @@ describe('multi-Repo C1', () => {
 
     const recovered = await fixture.integrator.integrate(fixture.integrationInput)
 
-    expect(recovered).toEqual({ kind: 'already_integrated', commit: interrupted.commit })
+    expect(recovered).toEqual({
+      kind: 'already_integrated',
+      commit: interrupted.commit,
+      deliveryIssues: [],
+    })
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
     expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
       interrupted.commit,
@@ -243,14 +247,18 @@ describe('multi-Repo C1', () => {
     )
   })
 
-  test('recovers a partial multi-Repo delivery after one checkout becomes clean', async () => {
+  test('keeps one multi-Repo delivery pending and recovers it after checkout becomes clean', async () => {
     const fixture = await createFixture(['primary', 'api'])
     const api = fixture.repo('api')
     await Bun.write(join(api.repoPath, 'local.txt'), 'local state\n')
 
-    const blocked = await fixture.integrator.integrate(fixture.integrationInput)
+    const integrated = await fixture.integrator.integrate(fixture.integrationInput)
 
-    expect(blocked.kind).toBe('blocked_after_boundary')
+    expect(integrated.kind).toBe('integrated')
+    if (integrated.kind !== 'integrated') throw new Error('Expected integrated C1')
+    expect(integrated.deliveryIssues).toEqual([
+      { repoId: 'api', reason: 'Repo api delivery checkout is dirty' },
+    ])
     expect(await sourceValue(fixture.repo('primary').repoPath)).toBe(2)
     expect(await sourceValue(api.repoPath)).toBe(1)
     await rm(join(api.repoPath, 'local.txt'))

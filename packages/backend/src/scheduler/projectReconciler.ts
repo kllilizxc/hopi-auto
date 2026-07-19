@@ -685,7 +685,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           completedWork: application.work,
         })
         if (integration.kind === 'integrated' || integration.kind === 'already_integrated') {
-          await attempt?.finish({ outcome, application: integration.kind })
+          const recordedOutcome =
+            integration.deliveryIssues.length > 0
+              ? {
+                  ...outcome,
+                  summary: [
+                    outcome.summary,
+                    `Delivery pending: ${integration.deliveryIssues.map((issue) => issue.reason).join('; ')}`,
+                  ].join('\n\n'),
+                }
+              : outcome
+          await attempt?.finish({ outcome: recordedOutcome, application: integration.kind })
           try {
             await options.onReleaseUpdated?.({
               projectId: options.projectId,

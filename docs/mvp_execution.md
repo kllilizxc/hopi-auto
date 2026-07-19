@@ -1138,10 +1138,10 @@ Consecutive internal handoffs are also bounded so a feedback loop cannot consume
 
 Before Reconciler starts, Coordinator fully validates the Assistant home and every linked project.
 It validates the Repo binding and release ref, then validates the stable managed integration
-worktree, delivery checkout, and Project package. Missing or inconsistent projection truth creates
-workspace project Attention. A dirty delivery checkout blocks automatic release projection rather
-than being reset or overwritten. Invalid Assistant-home truth still
-fails closed to supervisor intervention.
+worktree and Project package. Missing or inconsistent managed projection truth creates workspace
+project Attention. Delivery checkout drift only prevents its own guarded fast-forward: it remains
+visible as delivery pending but never makes the Project ineligible and is never reset or overwritten.
+Invalid Assistant-home truth still fails closed to supervisor intervention.
 Reconciliation, dispatch, integration, and delivery never race this startup scan or proceed from
 missing original intent.
 

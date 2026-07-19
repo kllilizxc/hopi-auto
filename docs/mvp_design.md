@@ -533,10 +533,11 @@ validates every root, never reattaches the old child, and preserves the task bra
 published attempt count. Its runtime Attempt is marked interrupted for UI history. Evidence without
 a Work gate remains unconsumed and a later attempt uses a new Run, so a process crash may undercount
 one canonical recovery attempt. An Attention-producing outcome leaves Work
-unchanged by design until a new Run follows resolution. Any inconsistency after the C1 ref boundary
-creates workspace project Attention. Delivery recovery may reattempt the one recorded clean
-fast-forward, but it never repairs checkout content or changes branches. Managed-root ownership does
-not authorize destructive reconstruction of newer canonical documents.
+unchanged by design until a new Run follows resolution. Any managed-projection inconsistency after
+the C1 ref boundary creates workspace project Attention. Delivery recovery may reattempt the one
+recorded clean fast-forward, but delivery drift is nonblocking and it never repairs checkout content
+or changes branches. Managed-root ownership does not authorize destructive reconstruction of newer
+canonical documents.
 Invalid Assistant-home state requires supervisor intervention. Inbox turn state, qualified Goal
 Input path and digest, qualified Work integration trailers, Work references to
 immutable Evidence, Attention identity and `notifiedAt`, and current semantic state prevent

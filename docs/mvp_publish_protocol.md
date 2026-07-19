@@ -370,12 +370,14 @@ checkout only when every guard holds:
 5. `git merge --ff-only` with hooks disabled succeeds, and the resulting HEAD equals the accepted
    commit with a clean index and working tree
 
-Already-equal clean delivery is idempotent. A detached or changed branch, dirty checkout, divergent
-HEAD, failed fast-forward, or mismatched final tree is a post-boundary projection failure: C1 remains
-durable, the Project gains Attention, and no Work retry is published. Startup and blocked-project
-reconciliation re-run this same proof and fast-forward; they never switch branches, stash, commit,
-merge, rebase, reset, force-update, or delete checkout content. Multi-Repo delivery may be physically
-partial after a stop and converges Repo by Repo from the durable primary manifest.
+Already-equal clean delivery is idempotent. Delivery is a best-effort projection, not Project
+authority: a detached or changed branch, dirty checkout, divergent HEAD, failed fast-forward, or
+mismatched final tree leaves that checkout unchanged and is reported as delivery pending. It does
+not create Project Attention, make the Project ineligible, change Work or Goal truth, or invalidate
+the durable C1. Startup and reconciliation retry the same guarded fast-forward when it becomes safe;
+they never switch branches, stash, commit, merge, rebase, reset, force-update, or delete checkout
+content. Multi-Repo delivery may therefore remain partial while managed Repo projections and the
+durable primary manifest stay authoritative.
 
 ## Git Audit
 
@@ -461,7 +463,8 @@ The implementation must cover:
 - ref-update error rereads old/C1/other and respectively fails safely, treats C1 as integrated, or
   blocks; C1 never produces a Work failure
 - a clean target advance after Reviewer staging rebuilds C1 without incrementing `attempts`
-- post-ref managed-worktree or delivery mismatch blocks without destructive checkout mutation
+- post-ref managed-worktree mismatch blocks, while delivery mismatch remains nonblocking; neither
+  path destructively mutates the checkout
 - invalid project and Assistant-home handling follow the documented failure boundary
 
 ## Deferred

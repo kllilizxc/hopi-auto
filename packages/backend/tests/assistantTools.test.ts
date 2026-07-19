@@ -1056,6 +1056,41 @@ describe('Assistant HOPI tools', () => {
     )
   })
 
+  test('derives nonblocking delivery status from the current checkout', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({ eventId: 'EV-delivery', content: 'Read delivery.' })
+
+    const current = await fixture.tools.executeForEvent('EV-delivery', 'hopi_read_state', {
+      projectId: 'P-1',
+    })
+    expect(current.value).toMatchObject({
+      projects: [
+        {
+          available: true,
+          repos: [{ repoId: 'primary', delivery: { status: 'current' } }],
+        },
+      ],
+    })
+
+    await git(fixture.repoRoot, ['switch', '-c', 'local-experiment'])
+    const pending = await fixture.tools.executeForEvent('EV-delivery', 'hopi_read_state', {
+      projectId: 'P-1',
+    })
+    expect(pending.value).toMatchObject({
+      projects: [
+        {
+          available: true,
+          repos: [
+            {
+              repoId: 'primary',
+              delivery: { status: 'pending', reason: expect.stringContaining('expected main') },
+            },
+          ],
+        },
+      ],
+    })
+  })
+
   test('limits Reflection to one internal handoff and lets only main expose it', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

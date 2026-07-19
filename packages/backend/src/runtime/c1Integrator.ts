@@ -36,11 +36,29 @@ export interface C1IntegrationInput {
 }
 
 export type C1IntegrationResult =
-  | { kind: 'integrated'; commit: string; recoveredUncertainUpdate: boolean }
-  | { kind: 'already_integrated'; commit: string }
+  | {
+      kind: 'integrated'
+      commit: string
+      recoveredUncertainUpdate: boolean
+      deliveryIssues: readonly DeliveryProjectionIssue[]
+    }
+  | {
+      kind: 'already_integrated'
+      commit: string
+      deliveryIssues: readonly DeliveryProjectionIssue[]
+    }
   | { kind: 'rejected'; reason: string }
   | { kind: 'blocked'; reason: string }
   | { kind: 'blocked_after_boundary'; commit: string; reason: string }
+
+export interface DeliveryProjectionIssue {
+  repoId: string
+  reason: string
+}
+
+export type DeliveryProjectionStatus =
+  | { status: 'current'; commit: string }
+  | { status: 'pending'; commit: string; reason: string; canFastForward: boolean }
 
 export interface C1FaultHooks {
   updateRef?(input: {
@@ -106,7 +124,12 @@ export function createC1Integrator(
       if (existing[0]) {
         await validateIntegratedCommit(store, input, existing[0])
         try {
-          await recoverProjectProjection(projectLayout, existing[0], faultHooks)
+          const deliveryIssues = await recoverProjectProjection(
+            projectLayout,
+            existing[0],
+            faultHooks,
+          )
+          return { kind: 'already_integrated', commit: existing[0], deliveryIssues }
         } catch (error) {
           return {
             kind: 'blocked_after_boundary',
@@ -114,7 +137,6 @@ export function createC1Integrator(
             reason: `Existing C1 is not materialized: ${errorMessage(error)}`,
           }
         }
-        return { kind: 'already_integrated', commit: existing[0] }
       }
 
       await mkdir(temporaryRoot, { recursive: true })
@@ -289,8 +311,12 @@ export function createC1Integrator(
               nextProject,
               faultHooks,
             )
-            await materializeDeliveryProjections(projectLayout, nextProject, commit)
-            return { kind: 'integrated', commit, recoveredUncertainUpdate }
+            const deliveryIssues = await materializeDeliveryProjections(
+              projectLayout,
+              nextProject,
+              commit,
+            )
+            return { kind: 'integrated', commit, recoveredUncertainUpdate, deliveryIssues }
           } catch (error) {
             return {
               kind: 'blocked_after_boundary',
@@ -606,7 +632,7 @@ async function recoverProjectProjection(
     await materializeSecondaryRepo(repo, expected ?? null, desired)
     await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
   }
-  await materializeDeliveryProjections(layout, nextProject, commit)
+  return materializeDeliveryProjections(layout, nextProject, commit)
 }
 
 export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout) {
@@ -666,14 +692,15 @@ export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout)
     }
     await materializeSecondaryRepo(repo, expected ?? null, desired)
   }
-  await materializeDeliveryProjections(layout, currentProject, target)
+  return materializeDeliveryProjections(layout, currentProject, target)
 }
 
 async function materializeDeliveryProjections(
   layout: C1ProjectLayout,
   project: ProjectDocument,
   primaryCommit: string,
-) {
+): Promise<DeliveryProjectionIssue[]> {
+  const issues: DeliveryProjectionIssue[] = []
   for (const repo of layout.repos) {
     if (!repo.checkoutRoot && !repo.deliveryBranch) continue
     if (!repo.checkoutRoot || !repo.deliveryBranch) {
@@ -681,11 +708,45 @@ async function materializeDeliveryProjections(
     }
     const desired = repo.primary ? primaryCommit : repoRelease(project, repo.repoId)
     if (!desired) throw new C1IntegrationError(`Repo ${repo.repoId} has no delivery commit`)
-    await materializeDeliveryCheckout(repo, desired)
+    const issue = await materializeDeliveryCheckout(repo, desired)
+    if (issue) issues.push({ repoId: repo.repoId, reason: issue })
   }
+  return issues
 }
 
 async function materializeDeliveryCheckout(repo: C1ProjectRepo, desired: string) {
+  const state = await inspectDeliveryProjection(repo, desired)
+  if (state.status === 'current') return null
+  if (!state.canFastForward) return state.reason
+
+  const checkoutRoot = repo.checkoutRoot
+  const deliveryBranch = repo.deliveryBranch
+  if (!checkoutRoot || !deliveryBranch) {
+    throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
+  }
+  const merge = await gitResult(checkoutRoot, [
+    '-c',
+    'core.hooksPath=/dev/null',
+    'merge',
+    '--ff-only',
+    '--no-edit',
+    desired,
+  ])
+  if (merge.exitCode !== 0) {
+    return `Repo ${repo.repoId} delivery fast-forward failed: ${merge.stderr || merge.stdout}`
+  }
+
+  const materialized = await inspectDeliveryProjection(repo, desired)
+  if (materialized.status !== 'current') {
+    return `Repo ${repo.repoId} delivery checkout does not exactly materialize ${desired}: ${materialized.reason}`
+  }
+  return null
+}
+
+export async function inspectDeliveryProjection(
+  repo: C1ProjectRepo,
+  desired: string,
+): Promise<DeliveryProjectionStatus> {
   const checkoutRoot = repo.checkoutRoot
   const deliveryBranch = repo.deliveryBranch
   if (!checkoutRoot || !deliveryBranch) {
@@ -701,11 +762,15 @@ async function materializeDeliveryCheckout(repo: C1ProjectRepo, desired: string)
     )
   }
 
+  const current = await git(checkoutRoot, ['rev-parse', 'HEAD'])
   const branch = await gitResult(checkoutRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
   if (branch.exitCode !== 0 || branch.stdout !== deliveryBranch) {
-    throw new C1IntegrationError(
-      `Repo ${repo.repoId} delivery checkout is on ${branch.stdout || 'detached HEAD'}, expected ${deliveryBranch}`,
-    )
+    return {
+      status: 'pending',
+      commit: current,
+      reason: `Repo ${repo.repoId} delivery checkout is on ${branch.stdout || 'detached HEAD'}, expected ${deliveryBranch}`,
+      canFastForward: false,
+    }
   }
   const status = await git(checkoutRoot, [
     'status',
@@ -714,50 +779,29 @@ async function materializeDeliveryCheckout(repo: C1ProjectRepo, desired: string)
     '--untracked-files=all',
   ])
   if (status) {
-    throw new C1IntegrationError(`Repo ${repo.repoId} delivery checkout is dirty`)
-  }
-  const current = await git(checkoutRoot, ['rev-parse', 'HEAD'])
-  const ancestor = await gitResult(checkoutRoot, ['merge-base', '--is-ancestor', current, desired])
-  if (ancestor.exitCode !== 0) {
-    throw new C1IntegrationError(
-      `Repo ${repo.repoId} delivery branch ${deliveryBranch} cannot fast-forward to ${desired}`,
-    )
-  }
-  if (current !== desired) {
-    const merge = await gitResult(checkoutRoot, [
-      '-c',
-      'core.hooksPath=/dev/null',
-      'merge',
-      '--ff-only',
-      '--no-edit',
-      desired,
-    ])
-    if (merge.exitCode !== 0) {
-      throw new C1IntegrationError(
-        `Repo ${repo.repoId} delivery fast-forward failed: ${merge.stderr || merge.stdout}`,
-      )
+    return {
+      status: 'pending',
+      commit: current,
+      reason: `Repo ${repo.repoId} delivery checkout is dirty`,
+      canFastForward: false,
     }
   }
-  const head = await git(checkoutRoot, ['rev-parse', 'HEAD'])
-  const finalBranch = await gitResult(checkoutRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
-  const finalStatus = await git(checkoutRoot, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all',
-  ])
-  const indexTree = await git(checkoutRoot, ['write-tree'])
-  const desiredTree = await git(checkoutRoot, ['show', '-s', '--format=%T', desired])
-  if (
-    head !== desired ||
-    finalBranch.exitCode !== 0 ||
-    finalBranch.stdout !== deliveryBranch ||
-    finalStatus ||
-    indexTree !== desiredTree
-  ) {
-    throw new C1IntegrationError(
-      `Repo ${repo.repoId} delivery checkout does not exactly materialize ${desired}`,
-    )
+  if (current === desired) return { status: 'current', commit: current }
+
+  const ancestor = await gitResult(checkoutRoot, ['merge-base', '--is-ancestor', current, desired])
+  if (ancestor.exitCode !== 0) {
+    return {
+      status: 'pending',
+      commit: current,
+      reason: `Repo ${repo.repoId} delivery branch ${deliveryBranch} cannot fast-forward to ${desired}`,
+      canFastForward: false,
+    }
+  }
+  return {
+    status: 'pending',
+    commit: current,
+    reason: `Repo ${repo.repoId} delivery checkout can fast-forward to ${desired}`,
+    canFastForward: true,
   }
 }
 
