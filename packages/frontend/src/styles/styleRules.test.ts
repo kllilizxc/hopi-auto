@@ -53,6 +53,15 @@ test('dense Kanban columns scroll without shrinking their Work cards', async () 
   expect(kanbanCardRules.some((rule) => rule[1]?.includes('scrollbar-gutter: stable'))).toBe(true)
 })
 
+test('Goal execution diagnostics style the nested Disclosure trigger', async () => {
+  const source = await Bun.file(new URL('../index.css', import.meta.url)).text()
+
+  expect(source).toContain(
+    '.goal-execution-cost > .app-disclosure__heading > .app-disclosure__trigger',
+  )
+  expect(source).not.toContain('.goal-execution-cost > .app-disclosure__trigger')
+})
+
 test('Working states share one centered indicator implementation', async () => {
   const source = await Bun.file(new URL('./ui.css', import.meta.url)).text()
   const applicationSource = await Bun.file(new URL('../index.css', import.meta.url)).text()
@@ -289,26 +298,48 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
   expect(assistant).not.toContain('Responding to')
 })
 
-test('peer-view navigation reuses the Project tab rail with one overflow Select', async () => {
+test('Project and title-level Goal navigation reuse one peer switcher', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()
+  const switcher = await Bun.file(new URL('../components/PeerSwitcher.tsx', import.meta.url)).text()
   const board = await Bun.file(new URL('../pages/BoardView.tsx', import.meta.url)).text()
+  const docs = await Bun.file(new URL('../pages/GoalDocsPage.tsx', import.meta.url)).text()
   const tabs = await Bun.file(new URL('../components/ui/Tabs.tsx', import.meta.url)).text()
 
-  expect(layout).toContain('selectProjectShortcuts(')
-  expect(layout).toContain("'project-switcher__tabs'")
+  expect(layout).toContain('<PeerSwitcher')
+  expect(layout).not.toContain('aria-label="Current Goal"')
+  expect(switcher).toContain('<AppTabs')
+  expect(switcher).toContain('<SelectField')
+  expect(switcher).toContain("variant === 'compact' && 'project-switcher__tabs'")
+  expect(switcher).toContain("variant === 'headline'")
+  expect(switcher).toContain('...items.filter((item) => item.id === selectedKey)')
+  expect(board).toContain('variant="headline"')
+  expect(docs).toContain('variant="headline"')
   expect(layout).toContain('className="workspace-tabs"')
   expect(layout).not.toContain('<AppTabs.Indicator')
   expect(board).toContain('<AppTabs.List className="work-detail-tabs"')
   expect(board).not.toContain('<AppTabs.ListContainer')
   expect(tabs).toContain('<HeroTabs.Indicator className="app-tabs__indicator" />')
-  expect(layout).toContain('className="project-switcher__more"')
-  expect(layout).not.toContain('placeholder={`More ${overflowProjects.length}`}')
-  expect(layout).toContain('if (window.matchMedia(SINGLE_PROJECT_SHORTCUT_QUERY).matches) return 1')
-  expect(layout).toContain('if (window.matchMedia(NARROW_PROJECT_SHORTCUT_QUERY).matches) return 2')
+  expect(switcher).toContain("variant === 'compact' && 'project-switcher__more'")
+  expect(switcher).toContain('if (window.matchMedia(SINGLE_SHORTCUT_QUERY).matches) return 1')
+  expect(switcher).toContain('if (window.matchMedia(NARROW_SHORTCUT_QUERY).matches) return 2')
   expect(layout).toContain('const [recentProjects] = useState(readRecentProjects)')
   expect(layout).not.toContain('setRecentProjects(')
   expect(styles).toContain('.project-switcher__tabs.tabs')
+  expect(styles).toContain('.peer-switcher--headline .app-tabs__list.tabs__list')
+  expect(styles).toMatch(
+    /\.peer-switcher--headline \.peer-switcher__tabs\.tabs\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*calc\(100% - 36px\);[^}]*flex:\s*0 1 auto;/,
+  )
+  expect(styles).toMatch(
+    /\.peer-switcher--headline \.app-tabs__list\.tabs__list\s*\{[^}]*width:\s*fit-content;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/,
+  )
+  expect(styles).toMatch(
+    /\.peer-switcher--headline \.peer-switcher__tab\.tabs__tab\[data-selected="true"\]\s*\{[^}]*font-size:\s*clamp\(22px, 2\.4vw, 30px\);/,
+  )
+  expect(styles).toMatch(/\.peer-switcher--headline \.app-tabs__indicator\s*\{\s*display:\s*none;/)
+  expect(styles).toMatch(
+    /\.peer-switcher--headline \.peer-switcher__more \.app-select__indicator\s*\{[^}]*position:\s*relative;[^}]*top:\s*8px;[^}]*transform:\s*none;/,
+  )
   expect(styles).toContain('.app-tabs__list.tabs__list')
   expect(styles).toContain('.app-tabs__indicator.tabs__indicator')
   expect(styles).toContain('.app-tabs__tab.tabs__tab[data-pressed="true"]')

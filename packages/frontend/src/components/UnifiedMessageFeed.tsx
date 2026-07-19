@@ -424,6 +424,7 @@ export function AssistantMessageText({ text }: { text: string }) {
     if (match.index > cursor) content.push(text.slice(cursor, match.index))
     content.push(
       <AppLink
+        className="assistant-message-link"
         href={href}
         key={`${match.index}:${href}`}
         target="_blank"

@@ -144,6 +144,14 @@ Assistant home and project Git are not one atomic store. HOPI uses a simple idem
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
+From the first Goal effect in one Assistant turn until that turn is handled or fails, Coordinator
+holds a process-local dispatch barrier for every Goal touched by the turn. It may persist each tool
+effect immediately, but it cannot admit Planner, Generator, or Reviewer against an intermediate
+combination of those effects. A turn may touch several Goals and therefore add several scoped
+barriers; unrelated Goals remain schedulable. Settlement releases all of them and wakes ordinary
+reconciliation. This is an execution fence over one already-durable Inbox turn, not another
+canonical status or a transaction spanning Assistant home and Project Git.
+
 Known product controls use the same sequence without a model call. Coordinator temporarily excludes
 their newly admitted pending receipt from speaking dispatch until the request publishes its handled
 acknowledgement. The exclusion is process-local and covers the whole receive/effect/acknowledge
@@ -271,24 +279,19 @@ dynamic resource scheduling.
 The profile has no hooks, expression language, inheritance, project variables, arbitrary actions,
 or workflow editor.
 
-### Project coding defaults
+### Home agent model settings
 
-The fixed profile decides which responsibility runs; Project coding defaults decide only which
-configured agent transport and model execute that responsibility. A `projects.yml` link may contain
-`codingDefaults`. When absent, the Project inherits Assistant-home adapter defaults.
-
-Resolution for Planner, Generator, and Reviewer is:
-
-1. an explicit Home role configuration retains authority for its transport and explicit fields
-2. the owning Project override supplies defaults, including missing Codex model or reasoning fields
-   when the explicit role uses compatible Codex defaults
-3. otherwise Assistant-home `defaults` apply
+The fixed profile decides which responsibility runs; Home agent settings decide which configured
+transport and model execute each role. Projects do not own or inherit model settings. Assistant,
+Planner, Generator, and Reviewer each resolve from one Home-wide role entry, falling back only to
+Assistant-home `defaults` when that role has no explicit entry.
 
 The Home settings surface exposes Assistant, Planner, Generator, and Reviewer in one panel. Saving
 a workflow role writes or removes only that role's existing `runtime/agent-adapters.json.roles`
-override; it does not copy the choice into Projects or Work. Removing an override restores the
-normal per-Project resolution above. Compatible advanced adapter fields remain intact when only the
-model or reasoning effort changes.
+override; it does not copy the choice into Projects or Work. Removing an override restores the Home
+default. Compatible advanced adapter fields remain intact when only the model or reasoning effort
+changes. UI, API, and Assistant tool mutations all address one of these four roles; there is no
+Project-scoped or Assistant-only settings path.
 
 The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
 configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits compatible Home
@@ -296,8 +299,8 @@ defaults. The speaking Assistant's resumable session belongs to Home rather than
 Reflection remains a fresh snapshot assessment. Responsibility sessions instead belong to one
 `Work + responsibility` pair. Saving Assistant settings affects the next speaking or Reflection
 invocation and invalidates an incompatible speaking session.
-Saving Project settings affects only responsibility Runs dispatched afterward; an already-started
-Run keeps its resolved immutable command. Neither setting changes the workflow profile, capacities,
+Saving a workflow role affects only responsibility Runs dispatched afterward; an already-started Run
+keeps its resolved immutable command. Agent settings do not change the workflow profile, capacities,
 retry policy, Work stage, or Goal revision.
 
 Pass result values are:
@@ -475,6 +478,15 @@ HOPI does not infer a Goal-level loop from Run count, similar summaries, or unch
 not stop normal model judgment with an arbitrary repetition threshold. A proven deterministic retry
 defect is repaired at its owning dispatch or recovery boundary.
 
+The same read boundary exposes a Goal/Work execution-cost projection. It groups Runs by
+responsibility and reports elapsed time, model messages, tool calls, observed tool wall time, and
+transport-reported input, cached-input, output, reasoning-output, turn, and monetary fields when the
+selected vendor actually emits them. Time outside paired tool intervals is labeled model/overhead
+remainder rather than exact inference time. Missing vendor facts remain unavailable, and HOPI never
+applies a current price table or current Home role model to historical Runs. This projection is derived
+from Attempt manifests, normalized events, and raw transcripts; it creates no budget, lifecycle,
+retry, or scheduling authority.
+
 Generator and Reviewer may start short-lived local services when implementation or material
 verification requires them. Their workspace-write Codex transport includes network execution so
 loopback services and dependency-backed checks work in either Engineering responsibility; Planner
@@ -503,6 +515,16 @@ recovery Generator also receive the latest owning-Work Evidence when present. Pl
 makes each Engineering Work complete for outcome, scope, dependencies, Repo coverage, and measurable
 acceptance, but cites canonical design paths instead of copying durable design contracts. It repeats
 only a boundary whose omission would make execution or review materially ambiguous.
+
+The contract is minimal as well as complete. Every owned path, acceptance criterion, and proof
+obligation must protect the requested outcome, an accepted compatibility promise, a material safety
+boundary, durable persistence, or a credible regression. Planner distinguishes acceptance of the
+current deliverable from completeness of a reusable validator or policy surface. It does not turn a
+one-time content rewrite into a general parser, mutation corpus, schema migration, or infrastructure
+project unless the Goal explicitly requests that reusable enforcement or the existing system already
+treats it as the durable boundary. When reusable enforcement is required, Planner states its finite
+accepted input grammar and material invariants instead of demanding correctness for unbounded
+hypothetical forms.
 
 Exact paths are defined once and reused by name inside the prompt. Content hashes remain in the
 audit manifest and semantic guards, not in model prose. The immutable authority snapshot remains
@@ -555,7 +577,12 @@ accepted authority, so HOPI does not text-deduplicate the canonical documents. T
 not repeat an Input body already represented by its exact `Accepted Inbox Instruction <event>` in the
 current Goal contract. A latest resolved Attention and its resolution Input remain staged for exact
 provenance, but that resolution Input is not promoted into the expanded Planning Inputs unless the
-Planning Work itself accepted it.
+Planning Work itself accepted it. Even then, its description is evidence of the condition before
+settlement, not a current blocker: Planner rereads the current Attention and Work state and never
+recreates a resolved Assistant-owned Attention solely because its accepted Input requested retention.
+When settlement requested a final reassessment and every substantive Work is terminal with no current
+targeted Attention, Planner proposes normal targetless completion instead of handing the historical
+control problem back to Assistant.
 
 If Assistant adopted reference images with that instruction, the same publication installs the
 Goal-local immutable assets and records their exact paths and purposes in both
@@ -591,6 +618,14 @@ source, or contend for the same exclusive external resource, Planner leaves both
 capacity may run them concurrently. Shared read-only context, broad semantic relation, or an
 anticipated integration order does not create `dependsOn`. Planner does not split a cohesive Work
 merely to fill available capacity.
+
+When Planner rewrites an existing nonterminal Engineering Work, its dependency set is monotonic:
+every existing `dependsOn` edge remains and newly discovered predecessors are added alongside it.
+Transitive coverage by a new predecessor does not erase historical ordering. If an accepted current
+Input explicitly narrows or relaxes delivery, Planner does remove superseded objective, acceptance,
+and proof clauses from the nonterminal Work instead of carrying an obsolete contract into review;
+stable identity, dependency history, Evidence references, and still-authoritative safety or
+persistence requirements remain. Terminal Work remains immutable.
 
 Work cohesion is judged by proof boundary, not only by product label or shared user story. A Work is
 normally cohesive when its outcome follows one canonical fact chain and can be assessed with one
@@ -653,7 +688,7 @@ proposal only a document it intends to replace. It does not mirror unchanged Goa
 their absence means unchanged, never deleted.
 
 A stable Work branch is the cumulative implementation lineage for that Work ID. Planner may revise
-its current objective and dependencies while preserving that delta, because Coordinator will
+its current objective and add dependencies while preserving that delta, because Coordinator will
 synchronize it with the release before dispatch. If the accepted plan explicitly rejects reuse of
 the old checkpoint or source delta, Planner does not rewrite the same Work into a nominally fresh
 responsibility and does not stage an Assistant worktree-repair request. It creates a distinct
@@ -667,7 +702,12 @@ an authority file in place. Run-local `result.json` starts as a zero-byte missin
 must be replaced wholesale with the one required JSON object; the example in the prompt is not
 prewritten content. Leaving it empty remains a visible failed Run rather than a fabricated default.
 New Attention proposals use the fixed parseable `createdAt` placeholder from the Run contract;
-Coordinator replaces it with publication time.
+Coordinator replaces it with publication time. A responsibility-proposed Attention ID is a readable
+identity suggestion, not persistence authority. If that ID is already occupied by canonical
+Attention history omitted from the sparse context, Coordinator preserves the proposal's target and
+body and allocates the first free numeric-suffixed ID before publication. This collision handling is
+deterministic, consumes no retry, and does not expose resolved Attention history merely to reserve
+names.
 
 The Planner process starts in its Run root because `context.md`, `repos.json`, `result.json`, and the
 sparse overlay are siblings there. A canonical proposal path is written exactly once beneath the
@@ -723,6 +763,13 @@ stable and the Project's existing test or validator stack can express it, Genera
 regression at the nearest owning boundary; otherwise its result explains why an ephemeral proof is
 stronger. HOPI adds no checklist artifact or new structured repair protocol.
 
+A repair Run still owns the complete Work, not only the latest rejection. After the final relevant
+change, Generator reassesses every acceptance criterion materially affected by that change. When
+the Work changes an operator-facing runtime or interaction path, it exercises the candidate's
+primary path directly from the task worktree when the existing entrypoint permits it; focused tests
+alone are enough only when they are stronger for the accepted behavior. This remains proportionate
+model judgment rather than a mandatory browser checklist.
+
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every
 visual detail is a requirement.
@@ -748,10 +795,12 @@ the same Work to `generate`; invalid design returns `attention` for Assistant ma
 stage at `review` while Coordinator immediately attempts deterministic integration under the same
 Work lease.
 
-Before Reviewer starts, Coordinator rematerializes any dirty HOPI-managed task checkout from its
-stable task-branch checkpoint. "Clean" means `git status` is empty at the exact task HEAD; the Work's
-committed delta from `hopi/release` remains present. This makes review proof describe exactly the
-candidate C1 can integrate. The task checkout is disposable and the delivery checkout is untouched. A Reviewer
+Before every Reviewer Run, Coordinator discards and rematerializes the HOPI-managed task checkout
+from its stable task-branch checkpoint, even when `git status` reports clean. Git clean status does
+not prove a stable materialization under line-ending conversion or other worktree-local changes.
+The Work's committed delta from `hopi/release` remains present, and the rebuilt files are materialized
+from that exact checkpoint under HOPI's fixed Git configuration. This makes review proof
+describe exactly the candidate C1 can integrate. The task checkout is disposable and the delivery checkout is untouched. A Reviewer
 that writes source produces an invalid Run: Coordinator discards that Run's checkout delta and
 retries Reviewer without returning Work to Generator or consuming a business recovery attempt.
 
@@ -776,6 +825,15 @@ Reviewer decides the proof plan before installing optional tools. It reuses the 
 entrypoint and existing test/browser stack, does not install competing harnesses after decisive proof
 already exists, and does not rerun an unchanged passing check. Helper-only changes normally stop at
 focused tests; an operator-reported visual or interaction path receives one direct runtime exercise.
+
+Review is bounded by the accepted contract and material risk. A defect in the requested deliverable,
+an accepted input form, an explicit reusable enforcement boundary, or a material integrity/safety
+invariant can reject. A malformed hypothetical variant outside the stated finite grammar cannot
+expand a one-time deliverable into validator-completeness Work; Reviewer records such a limitation
+without rejection when it is useful. Presentation preferences are not silently promoted into parser
+requirements. If broad reusable validation is genuinely required but its accepted grammar is absent
+or contradictory, Reviewer returns Attention for missing authority instead of inventing an unlimited
+standard.
 
 Reviewer orders cheap, high-risk canonical/recomputation probes before expensive broad or browser
 proof when both are material. After finding a decisive implementation defect, it performs a bounded
@@ -1254,6 +1312,14 @@ still-current linked Attention. Targeted Attention remains open. Completion reso
 acknowledgement publication. A crash between roots leaves a complete public reply and an
 unacknowledged Attention; ordinary Inbox recovery finishes the acknowledgement. HOPI never records
 delivery before the message exists.
+
+Completion delivery includes the deliverable, not merely a lifecycle announcement. Before
+publishing a completed Goal update, speaking Assistant reads that exact Goal with bounded Evidence
+enabled. When any referenced Evidence artifact resolves, the public message must include at least
+one relevant browser-facing `operatorUrl`; an internal inspection path is never a user link. If no
+artifact resolves, the update says that no linked artifact was produced. The notification boundary
+rejects a linkless completion while an available artifact exists, so this guarantee does not depend
+on the operator asking a second time and adds no completion or delivery state.
 
 The same canonical reference is the UI navigation identity. Opening a **Needs you** projection loads
 conversation history until it finds the handled public Assistant turn carrying that reference, then

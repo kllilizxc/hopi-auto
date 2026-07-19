@@ -2,6 +2,7 @@ import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import {
+  type RoleExecutionIdentity,
   type RoleRunResult,
   STORED_PASS_RESULTS,
   type StoredPassResultKind,
@@ -11,16 +12,25 @@ import {
   AGENT_TRANSCRIPT_TRANSPORTS,
   type AgentRuntimeEvent,
 } from '../agent/runtimeEvents'
+import { codingReasoningEffortSchema } from '../domain/projectCodingDefaults'
 import { stableIdSchema } from '../domain/stableId'
 import { readDurableJsonLines } from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 import { cleanupRunScratch } from './runArtifacts'
+import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
 import { legacyRunStoragePath, runStoragePath, runStorageRoot } from './runPaths'
 
 export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
 const nullableResultSchema = z.enum(STORED_PASS_RESULTS).nullable()
+const roleExecutionIdentitySchema = z
+  .object({
+    transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
+    model: z.string().min(1).nullable(),
+    reasoningEffort: codingReasoningEffortSchema.nullable().default(null),
+  })
+  .strict()
 const attemptManifestSchema = z
   .object({
     version: z.literal(1),
@@ -29,6 +39,7 @@ const attemptManifestSchema = z
     workId: stableIdSchema,
     runId: stableIdSchema,
     responsibility: z.enum(RESPONSIBILITIES),
+    execution: roleExecutionIdentitySchema.nullable().default(null),
     startedAt: z.string().datetime(),
     endedAt: z.string().datetime().nullable(),
     status: z.enum(RUN_ATTEMPT_STATUSES),
@@ -132,6 +143,7 @@ export interface FinishRunAttemptInput {
 
 export interface RunAttemptRecorder {
   record(event: AgentRuntimeEvent): Promise<void>
+  setExecution(execution: RoleExecutionIdentity): Promise<void>
   finish(input: FinishRunAttemptInput): Promise<void>
   interrupt(error: unknown): Promise<void>
 }
@@ -164,6 +176,12 @@ export interface RunAttemptStore {
     workId: string,
     runId: string,
   ): Promise<StoredRunAttemptEvent[] | null>
+  readDiagnostics(
+    projectId: string,
+    goalId: string,
+    workId: string,
+    runId: string,
+  ): Promise<RunAttemptDiagnostics | null>
   interruptRunningAttempts(): Promise<number>
 }
 
@@ -173,6 +191,7 @@ export function createRunAttemptStore(
 ): RunAttemptStore {
   const attemptsRoot = runStorageRoot(homeRoot)
   const now = options.now ?? (() => new Date())
+  const finishedDiagnostics = new Map<string, RunAttemptDiagnostics>()
 
   return {
     async start(input) {
@@ -182,13 +201,14 @@ export function createRunAttemptStore(
         throw new Error(`Run root does not match Attempt identity: ${input.runRoot}`)
       }
 
-      const manifest: RunAttemptSummary = {
+      let manifest: RunAttemptSummary = {
         version: 1,
         projectId: input.projectId,
         goalId: input.goalId,
         workId: input.workId,
         runId: input.runId,
         responsibility: input.responsibility,
+        execution: null,
         startedAt: now().toISOString(),
         endedAt: null,
         status: 'running',
@@ -231,6 +251,11 @@ export function createRunAttemptStore(
 
       return {
         record: enqueue,
+        async setExecution(execution) {
+          if (closed) return
+          manifest = { ...manifest, execution }
+          await writeManifest(manifestPath, manifest)
+        },
         async finish({ outcome, application }) {
           const endedAt = now().toISOString()
           await close(
@@ -320,6 +345,21 @@ export function createRunAttemptStore(
       const summary = await readSummary(root, projectId, goalId, workId, runId)
       if (!summary) return null
       return readEvents(join(root, 'events.jsonl'))
+    },
+
+    async readDiagnostics(projectId, goalId, workId, runId) {
+      assertIds(projectId, goalId, workId, runId)
+      const cacheKey = `${projectId}\u0000${goalId}\u0000${workId}\u0000${runId}`
+      const cached = finishedDiagnostics.get(cacheKey)
+      if (cached) return cached
+      const root = await locateRunRoot(homeRoot, projectId, goalId, workId, runId)
+      if (!root) return null
+      const summary = await readSummary(root, projectId, goalId, workId, runId)
+      if (!summary) return null
+      const events = await readEvents(join(root, 'events.jsonl'))
+      const diagnostics = await readRunAttemptDiagnostics(root, summary, events, now())
+      if (summary.endedAt) finishedDiagnostics.set(cacheKey, diagnostics)
+      return diagnostics
     },
 
     async interruptRunningAttempts() {
@@ -540,6 +580,7 @@ async function readLegacySummaryWithFallback(
     version: 1,
     ...parsedIdentity.data,
     responsibility,
+    execution: null,
     startedAt: contextStats.mtime.toISOString(),
     endedAt: resultStats?.mtime.toISOString() ?? contextStats.mtime.toISOString(),
     status: source.trim() ? 'finished' : 'interrupted',

@@ -2,17 +2,23 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ConfigurableAgentRole } from '../src/agent/adapterConfig'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import type { InboxContext } from '../src/domain/assistantWorkspaceDocuments'
 import { goalAttentionReference } from '../src/domain/attentionReference'
 import {
+  parseGoalDocument,
   parseWorkDocument,
   renderAttentionDocument,
   renderEvidenceDocument,
+  renderGoalDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
-import { normalizeProjectCodingDefaults } from '../src/domain/projectCodingDefaults'
+import {
+  type ProjectCodingDefaults,
+  normalizeProjectCodingDefaults,
+} from '../src/domain/projectCodingDefaults'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
@@ -196,37 +202,35 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('configures Assistant and Project models and exposes current settings in state', async () => {
+  test('configures Home-wide role models without adding settings to Projects', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({
       eventId: 'EV-models',
-      content: 'Use Claude for Assistant and a smaller Codex model for P-1.',
+      content: 'Use Claude for Assistant and a smaller Codex model for Generator.',
     })
 
     expect(
       await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
-        scope: 'assistant',
+        role: 'assistant',
         codingDefaults: { transport: 'claude', model: 'sonnet' },
       }),
     ).toMatchObject({
       changed: true,
       value: {
-        scope: 'assistant',
+        role: 'assistant',
         codingDefaults: { transport: 'claude', model: 'sonnet' },
         inherited: false,
       },
     })
     expect(
       await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
-        scope: 'project',
-        projectId: 'P-1',
+        role: 'generator',
         codingDefaults: { transport: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' },
       }),
     ).toMatchObject({
       changed: true,
       value: {
-        scope: 'project',
-        projectId: 'P-1',
+        role: 'generator',
         codingDefaults: {
           transport: 'codex',
           model: 'gpt-5.3-codex',
@@ -247,26 +251,22 @@ describe('Assistant HOPI tools', () => {
           projectId: 'P-1',
           primaryRepoId: 'primary',
           repos: [{ repoId: 'primary', primary: true }],
-          codingDefaults: {
-            transport: 'codex',
-            model: 'gpt-5.3-codex',
-            reasoningEffort: 'high',
-          },
-          codingDefaultsInherited: false,
         },
       ],
     })
+    expect((state.value as { projects: unknown[] }).projects[0]).not.toHaveProperty(
+      'codingDefaults',
+    )
 
     expect(
       await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
-        scope: 'project',
-        projectId: 'P-1',
+        role: 'generator',
         codingDefaults: null,
       }),
     ).toMatchObject({ changed: true, value: { inherited: true } })
     expect(
       await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
-        scope: 'assistant',
+        role: 'assistant',
         codingDefaults: null,
       }),
     ).toMatchObject({ changed: true, value: { inherited: true } })
@@ -323,6 +323,9 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readGoal('G-优化整体前端样式'))?.attributes.title).toBe(
       '优化整体前端样式',
     )
+    expect(fixture.goalEffects).toEqual([
+      { eventId: 'EV-readable', projectId: 'P-1', goalId: 'G-优化整体前端样式' },
+    ])
   })
 
   test('creates a Goal and preserves the source turn as Goal Input', async () => {
@@ -1075,6 +1078,9 @@ describe('Assistant HOPI tools', () => {
     expect(resolved?.attributes.resolvedAt).not.toBeNull()
     expect(resolved?.body).toContain('## Resolution')
     expect(fixture.restoredProjectIds).toEqual(['P-1'])
+    expect(fixture.projectDispatchEffects).toEqual([
+      { eventId: 'EV-project-repaired', projectId: 'P-1' },
+    ])
   })
 
   test('requires a live per-turn capability for MCP calls', async () => {
@@ -1233,6 +1239,13 @@ describe('Assistant HOPI tools', () => {
     })
     expect(fixture.tools.notificationMessage(mainToken)).toBe('Choose a release window.')
     expect(fixture.tools.notificationIntent(mainToken)).toBe('request')
+    await fixture.tools.execute(mainToken, 'hopi_request_user', {
+      message: 'Choose a release window after reviewing the deployment risk.',
+    })
+    expect(fixture.tools.notificationMessage(mainToken)).toBe(
+      'Choose a release window after reviewing the deployment risk.',
+    )
+    expect(fixture.tools.notificationIntent(mainToken)).toBe('request')
     expect((await fixture.workspace.readEvent(event.attributes.id))?.attributes).toMatchObject({
       visibility: 'internal',
       status: 'pending',
@@ -1242,7 +1255,7 @@ describe('Assistant HOPI tools', () => {
     ).toMatchObject({ notifiedAt: null, resolvedAt: null })
 
     await fixture.workspace.handleEvent(event.attributes.id, {
-      reply: 'Choose a release window.',
+      reply: 'Choose a release window after reviewing the deployment risk.',
       disposition: 'operator-requested',
       expose: true,
     })
@@ -1336,6 +1349,36 @@ describe('Assistant HOPI tools', () => {
       operatorRequest: null,
       resolvedAt: null,
     })
+  })
+
+  test('requires an available artifact link in every completed Goal notification', async () => {
+    const fixture = await setup()
+    const completion = await publishCompletedGoalArtifact(fixture)
+    const reference = goalAttentionReference('P-1', 'G-1', completion.attentionId)
+    const event = await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-completed-artifact',
+      content: 'The Goal completed successfully.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+    const token = fixture.tools.issue(event.attributes.id)
+
+    await expect(
+      fixture.tools.execute(token, 'hopi_notify_user', {
+        message: 'The Goal is complete.',
+      }),
+    ).rejects.toThrow('Include at least one relevant operatorUrl')
+    expect(fixture.tools.notificationMessage(token)).toBeNull()
+
+    const state = await fixture.tools.execute(token, 'hopi_read_state', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      includeEvidence: true,
+    })
+    expect(JSON.stringify(state.value)).toContain(completion.operatorUrl)
+    await fixture.tools.execute(token, 'hopi_notify_user', {
+      message: `The Goal is complete. [Open the deliverable](${completion.operatorUrl})`,
+    })
+    expect(fixture.tools.notificationMessage(token)).toContain(completion.operatorUrl)
   })
 
   test('reads current control state without inlining durable history', async () => {
@@ -1641,18 +1684,22 @@ async function setup(
   const interruptedWorkTargets: Array<{ goalId: string; workId: string }> = []
   const restoredProjectIds: string[] = []
   const topologyChangedEventIds: string[] = []
-  let assistantCodingDefaults = normalizeProjectCodingDefaults()
-  let assistantCodingDefaultsInherited = true
-  const readAssistantModelSettings = async () => ({
-    codingDefaults: assistantCodingDefaults,
-    inherited: assistantCodingDefaultsInherited,
-  })
-  const readProjectModelSettings = async (projectId: string) => {
-    const project = await home.readProject(projectId)
-    return {
-      codingDefaults: project.codingDefaults ?? normalizeProjectCodingDefaults(),
-      inherited: project.codingDefaults === undefined,
-    }
+  const goalEffects: Array<{ eventId: string; projectId: string; goalId: string }> = []
+  const projectDispatchEffects: Array<{ eventId: string; projectId: string }> = []
+  const defaultCodingDefaults = normalizeProjectCodingDefaults()
+  const roleModelSettings = new Map<
+    ConfigurableAgentRole,
+    { codingDefaults: ProjectCodingDefaults; inherited: boolean }
+  >(
+    (['assistant', 'planner', 'generator', 'reviewer'] as const).map((role) => [
+      role,
+      { codingDefaults: defaultCodingDefaults, inherited: true },
+    ]),
+  )
+  const readAgentRoleModelSettings = async (role: ConfigurableAgentRole) => {
+    const current = roleModelSettings.get(role)
+    if (!current) throw new Error(`Unknown role: ${role}`)
+    return { ...current, configurable: true }
   }
   const projects = new Map([
     [
@@ -1707,8 +1754,7 @@ async function setup(
     publisher,
     attempts,
     activeRuns: options.activeRuns,
-    readAssistantCodingDefaults: readAssistantModelSettings,
-    readProjectCodingDefaults: readProjectModelSettings,
+    readAssistantCodingDefaults: () => readAgentRoleModelSettings('assistant'),
   })
   const tools = createAssistantTools({
     home,
@@ -1717,15 +1763,22 @@ async function setup(
     preview: createPreviewManager(homeRoot),
     projects,
     state,
-    readAssistantCodingDefaults: readAssistantModelSettings,
-    readProjectCodingDefaults: readProjectModelSettings,
-    updateAssistantCodingDefaultsForTurn: async (_eventId, input) => {
-      assistantCodingDefaults = normalizeProjectCodingDefaults(input ?? undefined)
-      assistantCodingDefaultsInherited = input === null
+    readAgentRoleCodingDefaults: readAgentRoleModelSettings,
+    updateAgentRoleCodingDefaultsForTurn: async (_eventId, role, input) => {
+      roleModelSettings.set(role, {
+        codingDefaults: normalizeProjectCodingDefaults(input ?? undefined),
+        inherited: input === null,
+      })
     },
     onProjectTopologyChanged: (eventId) => topologyChangedEventIds.push(eventId),
     onProjectAttentionResolved: (projectId) => {
       restoredProjectIds.push(projectId)
+    },
+    onGoalEffect: (eventId, projectId, goalId) => {
+      goalEffects.push({ eventId, projectId, goalId })
+    },
+    onProjectDispatchEffect: (eventId, projectId) => {
+      projectDispatchEffects.push({ eventId, projectId })
     },
   })
   return {
@@ -1742,6 +1795,8 @@ async function setup(
     interruptedWorkTargets,
     restoredProjectIds,
     topologyChangedEventIds,
+    goalEffects,
+    projectDispatchEffects,
   }
 }
 
@@ -1789,6 +1844,84 @@ async function publishEngineeringWork(
       }),
     },
   })
+}
+
+async function publishCompletedGoalArtifact(fixture: Awaited<ReturnType<typeof setup>>) {
+  await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+  await finishInitialPlanning(fixture.goalStore, 'G-1')
+  await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-deliverable')
+  const runId = 'R-deliverable'
+  const evidenceId = 'E-deliverable'
+  const artifactName = 'deliverable.md'
+  const artifactRoot = join(runStoragePath(fixture.homeRoot, runId), 'artifacts')
+  await mkdir(artifactRoot, { recursive: true })
+  await Bun.write(join(artifactRoot, artifactName), '# Delivered result\n')
+
+  const workPath = fixture.goalStore.paths.workDocument('G-1', 'W-deliverable')
+  const workSource = await Bun.file(fixture.goalStore.paths.absolute(workPath)).text()
+  const work = parseWorkDocument(workSource)
+  work.attributes.stage = 'done'
+  work.attributes.evidenceRefs = [evidenceId]
+  await fixture.goalStore.publishGoal('G-1', {
+    supportingWrites: [
+      {
+        path: fixture.goalStore.paths.evidenceDocument('G-1', evidenceId),
+        expectedHash: null,
+        content: renderEvidenceDocument({
+          attributes: {
+            id: evidenceId,
+            createdAt: '2026-07-19T00:00:00Z',
+            producerRun: `project:P-1/goal:G-1/work:W-deliverable/run:${runId}`,
+            coordinatorCheck: null,
+            owner: 'project:P-1/goal:G-1/work:W-deliverable',
+            artifacts: [`artifact:${runId}/${artifactName}`],
+          },
+          body: '## Summary\n\nThe requested deliverable is complete.\n',
+        }),
+      },
+    ],
+    gateWrite: {
+      path: workPath,
+      expectedHash: await hashBytes(new TextEncoder().encode(workSource)),
+      content: renderWorkDocument(work),
+    },
+  })
+
+  const attentionId = 'A-completion'
+  const goalPath = fixture.goalStore.paths.goalDocument('G-1')
+  const goalSource = await Bun.file(fixture.goalStore.paths.absolute(goalPath)).text()
+  const goal = parseGoalDocument(goalSource)
+  goal.attributes.lifecycle = 'done'
+  goal.attributes.completionAttentionId = attentionId
+  await fixture.goalStore.publishGoal('G-1', {
+    supportingWrites: [
+      {
+        path: fixture.goalStore.paths.attentionDocument('G-1', attentionId),
+        expectedHash: null,
+        content: renderAttentionDocument({
+          attributes: {
+            id: attentionId,
+            target: null,
+            createdAt: '2026-07-19T00:01:00Z',
+            resolvedAt: null,
+            notifiedAt: null,
+            operatorRequest: null,
+          },
+          body: '## Completion\n\nThe Goal is complete with linked Evidence.\n',
+        }),
+      },
+    ],
+    gateWrite: {
+      path: goalPath,
+      expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
+      content: renderGoalDocument(goal),
+    },
+  })
+
+  return {
+    attentionId,
+    operatorUrl: `/api/projects/P-1/goals/G-1/evidence/${evidenceId}/artifacts/0`,
+  }
 }
 
 async function git(cwd: string, args: string[]) {

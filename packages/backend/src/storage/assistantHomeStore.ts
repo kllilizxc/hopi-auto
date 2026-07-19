@@ -20,7 +20,6 @@ import {
   type ProjectRepoLink,
 } from '../domain/project'
 import {
-  type ProjectCodingDefaults,
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from '../domain/projectCodingDefaults'
@@ -95,9 +94,21 @@ const projectLinkSchema = z
     repos: z
       .array(projectRepoLinkSchema.extend({ deliveryBranch: z.string().min(1) }).strict())
       .min(1),
+  })
+  .strict()
+
+const legacyConfiguredProjectLinkSchema = projectLinkSchema
+  .extend({
     codingDefaults: projectCodingDefaultsInputSchema
       .transform((value) => normalizeProjectCodingDefaults(value))
       .optional(),
+  })
+  .strict()
+
+const legacyConfiguredProjectLinksDocumentSchema = z
+  .object({
+    version: z.literal(3),
+    projects: z.array(legacyConfiguredProjectLinkSchema),
   })
   .strict()
 
@@ -170,11 +181,6 @@ export interface RebindProjectReposInput {
   repos: ProjectRepoLink[]
 }
 
-export interface UpdateProjectSettingsInput {
-  projectId: string
-  codingDefaults: ProjectCodingDefaults | null
-}
-
 export interface AssistantHomeStore {
   paths: AssistantHomePaths
   initialize(): Promise<AssistantHomeDocument>
@@ -186,7 +192,6 @@ export interface AssistantHomeStore {
   rebindProject(input: RebindProjectInput): Promise<LinkedProject>
   rebindRepo(input: RebindRepoInput): Promise<LinkedProject>
   rebindRepos(input: RebindProjectReposInput): Promise<LinkedProject>
-  updateProjectSettings(input: UpdateProjectSettingsInput): Promise<LinkedProject>
   validateProject(projectId: string): Promise<LinkedProject>
 }
 
@@ -602,48 +607,6 @@ export function createAssistantHomeStore(
         return presentProject(paths, updatedLink)
       })
     },
-    async updateProjectSettings(input) {
-      assertStableId(input.projectId, 'projectId')
-      await this.initialize()
-      return withFileLock(paths.mutationLockPath, async () => {
-        const links = await readProjectLinks(paths.projectLinksPath)
-        assertUniqueProjectLinks(links.projects)
-        const link = links.projects.find((entry) => entry.projectId === input.projectId)
-        if (!link) {
-          throw new AssistantHomeStoreError(
-            'project_not_found',
-            `Project is not linked: ${input.projectId}`,
-          )
-        }
-
-        const codingDefaults = input.codingDefaults
-          ? normalizeProjectCodingDefaults(input.codingDefaults)
-          : undefined
-        if (sameCodingDefaults(link.codingDefaults, codingDefaults)) {
-          return presentProject(paths, link)
-        }
-        const updatedLink = codingDefaults
-          ? { ...link, codingDefaults }
-          : {
-              projectId: link.projectId,
-              primaryRepoId: link.primaryRepoId,
-              repos: link.repos,
-            }
-        links.projects = links.projects.map((entry) =>
-          entry.projectId === input.projectId ? updatedLink : entry,
-        )
-
-        await publishYamlFile(
-          publisher,
-          { id: 'assistant-home', path: paths.rootDir },
-          paths.projectLinksPath,
-          links,
-          projectLinksDocumentSchema,
-          'Project links',
-        )
-        return presentProject(paths, updatedLink)
-      })
-    },
     async validateProject(projectId) {
       const project = await this.readProject(projectId)
       const projectDocument = await readAndValidateProjectDocument(paths, project)
@@ -1039,19 +1002,17 @@ function presentProject(paths: AssistantHomePaths, link: ProjectLink): LinkedPro
   }
 }
 
-function sameCodingDefaults(
-  left: ProjectCodingDefaults | undefined,
-  right: ProjectCodingDefaults | undefined,
-) {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
 async function ensureProjectLinksDocument(path: string) {
   const existing = await readRawProjectLinks(path)
   if (existing) {
     const normalized = await normalizeProjectLinks(existing)
     assertUniqueProjectLinks(normalized.projects)
-    if (existing.version !== 3) await writeYamlAtomically(path, normalized)
+    if (
+      existing.version !== 3 ||
+      existing.projects.some((project) => 'codingDefaults' in project)
+    ) {
+      await writeYamlAtomically(path, normalized)
+    }
     return normalized
   }
 
@@ -1128,6 +1089,7 @@ async function readRawProjectLinks(path: string) {
     path,
     z.union([
       projectLinksDocumentSchema,
+      legacyConfiguredProjectLinksDocumentSchema,
       legacyMultiRepoProjectLinksDocumentSchema,
       legacyProjectLinksDocumentSchema,
     ]),
@@ -1138,10 +1100,20 @@ async function readRawProjectLinks(path: string) {
 async function normalizeProjectLinks(
   raw:
     | z.infer<typeof projectLinksDocumentSchema>
+    | z.infer<typeof legacyConfiguredProjectLinksDocumentSchema>
     | z.infer<typeof legacyMultiRepoProjectLinksDocumentSchema>
     | z.infer<typeof legacyProjectLinksDocumentSchema>,
 ): Promise<ProjectLinksDocument> {
-  if (raw.version === 3) return raw
+  if (raw.version === 3) {
+    return {
+      version: 3,
+      projects: raw.projects.map((project) => ({
+        projectId: project.projectId,
+        primaryRepoId: project.primaryRepoId,
+        repos: project.repos,
+      })),
+    }
+  }
   const projects =
     raw.version === 2
       ? raw.projects
@@ -1149,7 +1121,6 @@ async function normalizeProjectLinks(
           projectId: project.projectId,
           primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
           repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
-          ...(project.codingDefaults ? { codingDefaults: project.codingDefaults } : {}),
         }))
   return {
     version: 3,

@@ -214,9 +214,12 @@ describe('ConfiguredRoleRunner', () => {
       'console.log(JSON.stringify({type:"thread.started",thread_id:"thread-generator"})); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"continued",artifacts:[]}))',
     )
     const sessions: string[] = []
+    const executions: string[] = []
     const runner = new ConfiguredRoleRunner({
       resolveConfig: () => ({
         transport: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
         binary,
         cwdMode: 'root',
         sandbox: 'workspace-write',
@@ -225,12 +228,18 @@ describe('ConfiguredRoleRunner', () => {
     })
 
     const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
+      onExecution: (execution) => {
+        executions.push(
+          `${execution.transport}:${execution.model}:${execution.reasoningEffort ?? 'none'}`,
+        )
+      },
       onSession: (session) => {
         sessions.push(`${session.transport}:${session.sessionId}`)
       },
     })
 
     expect(result).toMatchObject({ result: 'success', summary: 'continued' })
+    expect(executions).toEqual(['codex:gpt-5.6-sol:xhigh'])
     expect(sessions).toEqual(['codex:thread-generator'])
   })
 

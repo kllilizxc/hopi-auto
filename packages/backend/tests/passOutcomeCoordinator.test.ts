@@ -445,6 +445,64 @@ describe('PassOutcomeCoordinator', () => {
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
   })
 
+  test('publishes a fresh completion Attention when resolved history occupies the proposed ID', async () => {
+    const fixture = await createFixture()
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-completion')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: attentionPath,
+          expectedHash: null,
+          content: renderAttentionDocument({
+            attributes: {
+              id: 'A-completion',
+              target: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              resolvedAt: '2026-07-10T01:00:00Z',
+              notifiedAt: '2026-07-10T00:30:00Z',
+            },
+            body: '## Prior completion\n\nThe earlier completion was reopened.\n',
+          }),
+        },
+      ],
+    })
+    const context = await fixture.stage('plan-initial', 'run-reused-completion-id', 'planner')
+    const stagedPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedPath), { recursive: true })
+    await Bun.write(
+      stagedPath,
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-completion',
+          target: null,
+          createdAt: '2099-12-31T23:59:59Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Completion\n\nThe revised Goal is complete.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-reused-completion-id', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.attentions.get('A-completion')?.attributes.resolvedAt).not.toBeNull()
+    expect(goalPackage.attentions.get('A-completion-2')).toMatchObject({
+      attributes: {
+        id: 'A-completion-2',
+        target: null,
+        createdAt: '2026-07-11T00:00:00.000Z',
+        resolvedAt: null,
+        notifiedAt: null,
+      },
+      body: '## Completion\n\nThe revised Goal is complete.\n',
+    })
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
+  })
+
   test('finishes Planning from an empty sparse proposal when the existing DAG is complete', async () => {
     const fixture = await createFixture()
     const engineeringPath = fixture.store.paths.workDocument('goal-1', 'W-existing')

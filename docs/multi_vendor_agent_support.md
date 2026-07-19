@@ -34,14 +34,15 @@ results, and UI state never branch by vendor.
 | OpenCode | native session resume | local file arguments | injected MCP and permission config | optional model and variant |
 
 Reflection uses the same configured transport and model but always starts a disposable session.
-Responsibility Runs may use any supported transport independently through Project defaults or Home
-role overrides. `process` remains a responsibility-only escape hatch and cannot run Assistant or
-Reflection because it has no guaranteed conversation, MCP, or session contract.
+Responsibility Runs may use any supported transport independently through Home-wide role settings.
+`process` remains a responsibility-only escape hatch and cannot run Assistant or Reflection because
+it has no guaranteed conversation, MCP, or session contract.
 
 ## Configuration Rules
 
-Home `assistant` configuration owns speaking Assistant and Reflection. Project `codingDefaults`
-owns only Planner, Generator, and Reviewer defaults. Editing one never silently changes the other.
+Home `assistant` configuration owns speaking Assistant and Reflection. Home `roles` owns Planner,
+Generator, and Reviewer overrides; missing entries use Home `defaults`. Projects own no model
+configuration.
 
 The UI accepts free-form model identifiers because valid catalogs are vendor- and account-specific.
 It preserves compatible advanced fields when changing a model. Switching transport drops

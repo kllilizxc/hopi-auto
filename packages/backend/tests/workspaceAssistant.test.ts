@@ -576,7 +576,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('copy complete canonical IDs')
     expect(seen[0]?.prompt).toContain('select it from Work Evidence artifacts')
     expect(seen[0]?.prompt).toContain('includeEvidence: true')
-    expect(seen[0]?.prompt).toContain('Link the returned operatorUrl in Markdown')
+    expect(seen[0]?.prompt).toContain('For every completed Goal update')
+    expect(seen[0]?.prompt).toContain('Link at least one relevant returned operatorUrl in Markdown')
+    expect(seen[0]?.prompt).toContain('if none resolves, say no linked artifact was produced')
     expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
     expect(seen[0]?.prompt).toContain('every remainingAttentionRefs value returned by tools')
     expect(seen[0]?.prompt).toContain('Work retry/cancel settles only Attention targeted exactly')
@@ -594,6 +596,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds',
     )
+    expect(seen[0]?.prompt).toContain(
+      'Every hopi_request_user message must stand alone in the visible conversation',
+    )
+    expect(seen[0]?.prompt).toContain('concise never means stripping the context needed to decide')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
@@ -953,8 +959,12 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-settlement')
 
     expect(prompts).toHaveLength(2)
+    expect(prompts[0]).toContain('A hopi_request_user message is the complete public turn')
+    expect(prompts[0]).toContain('material cause, blocking consequence, exact need')
     expect(prompts[1]).toContain('[Attention settlement correction')
     expect(prompts[1]).toContain(reference)
+    expect(prompts[1]).toContain('one proportional, self-contained request')
+    expect(prompts[1]).toContain('non-obvious alternative effects')
     expect(sessions).toEqual([null, 'thread-settlement'])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
       status: 'handled',
@@ -968,6 +978,58 @@ describe('WorkspaceAssistant conversation', () => {
       operatorRequest: expect.stringContaining('/event:EV-settlement'),
       resolvedAt: null,
     })
+  })
+
+  test('publishes only the revised final notification after Attention correction', async () => {
+    let calls = 0
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        calls += 1
+        if (calls === 1) {
+          await tools.execute(input.toolToken, 'hopi_notify_user', {
+            message: 'The blocker is still being investigated.',
+          })
+          return { reply: '', session: codexSession('thread-revised-notification') }
+        }
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
+          scope: 'goal',
+          projectId: 'P-1',
+          goalId: 'G-1',
+          attentionId: 'A-revised-notification',
+          resolution: 'The correction run established and applied the internal continuation.',
+        })
+        await tools.execute(input.toolToken, 'hopi_notify_user', {
+          message: 'The blocker was cleared and internal work has resumed.',
+        })
+        return { reply: '', session: codexSession('thread-revised-notification') }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-revised-notification')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-revised-notification',
+      content: 'Reassess and continue this blocker.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-revised-notification'],
+      },
+    })
+
+    await fixture.assistant.process('EV-revised-notification')
+
+    expect(calls).toBe(2)
+    expect(
+      (await fixture.workspace.readEvent('EV-revised-notification'))?.attributes,
+    ).toMatchObject({
+      status: 'handled',
+      visibility: 'public',
+      disposition: 'notified',
+      reply: 'The blocker was cleared and internal work has resumed.',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-revised-notification')
+        ?.attributes.resolvedAt,
+    ).not.toBeNull()
   })
 
   test('does not let prior informational delivery silently settle Assistant-owned Attention', async () => {
@@ -1337,15 +1399,12 @@ async function setup(
     preview,
     projects,
     state,
-    readAssistantCodingDefaults: async () => ({
+    readAgentRoleCodingDefaults: async () => ({
       codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
       inherited: true,
+      configurable: true,
     }),
-    readProjectCodingDefaults: async () => ({
-      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      inherited: true,
-    }),
-    updateAssistantCodingDefaultsForTurn: async () => undefined,
+    updateAgentRoleCodingDefaultsForTurn: async () => undefined,
   })
   const assistant = createWorkspaceAssistant({
     homeRoot,

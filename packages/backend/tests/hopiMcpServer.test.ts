@@ -105,7 +105,8 @@ describe('HOPI MCP server', () => {
     const client = new Client({ name: 'hopi-internal-test', version: '1.0.0' })
     await client.connect(transport)
 
-    const names = (await client.listTools()).tools.map((tool) => tool.name)
+    const tools = (await client.listTools()).tools
+    const names = tools.map((tool) => tool.name)
     expect(names).toContain('hopi_request_planning')
     expect(names).toContain('hopi_notify_user')
     expect(names).toContain('hopi_request_user')
@@ -113,6 +114,12 @@ describe('HOPI MCP server', () => {
     expect(names).not.toContain('hopi_manage_project')
     expect(names).not.toContain('hopi_configure_model')
     expect(names).toHaveLength(10)
+    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
+      'complete public turn',
+    )
+    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
+      'material cause',
+    )
   })
 
   test('limits Reflection to state read and one handoff tool', async () => {

@@ -70,8 +70,6 @@ export interface ProjectSummary {
   repoPath: string
   projectPath: string
   guidance: string | null
-  codingDefaults: ProjectCodingDefaults
-  codingDefaultsInherited: boolean
   preview: PreviewSession | null
   openAttentionCount: number
   goals: GoalSummary[]
@@ -209,8 +207,6 @@ export interface AssistantFeedChanges {
 export interface AppSnapshot {
   home: {
     homeId: string
-    assistantCodingDefaults: ProjectCodingDefaults
-    assistantCodingDefaultsInherited: boolean
     agentRoleCodingDefaults: Record<ConfigurableAgentRole, AgentRoleCodingSettings>
   }
   projects: ProjectSummary[]
@@ -283,6 +279,11 @@ export interface RunAttemptSummary {
   workId: string
   runId: string
   responsibility: Responsibility
+  execution: {
+    transport: AgentRuntimeTransport
+    model: string | null
+    reasoningEffort: CodingReasoningEffort | null
+  } | null
   startedAt: string
   endedAt: string | null
   status: RunAttemptStatus
@@ -290,6 +291,65 @@ export interface RunAttemptSummary {
   summary: string | null
   exitCode: number | null
   application: string | null
+  diagnostics?: RunAttemptDiagnostics | null
+}
+
+export interface RunTokenUsage {
+  inputTokens: number | null
+  cachedInputTokens: number | null
+  cacheCreationInputTokens: number | null
+  outputTokens: number | null
+  reasoningOutputTokens: number | null
+}
+
+export interface RunAttemptDiagnostics {
+  elapsedMs: number
+  modelMessages: number
+  toolCalls: number
+  commandCalls: number
+  observedToolWallTimeMs: number
+  observedCommandWallTimeMs: number
+  modelAndOverheadWallTimeMs: number
+  turns: number | null
+  vendorReportedCostUsd: number | null
+  tokenUsage: RunTokenUsage | null
+}
+
+export interface RunCostSummary {
+  runs: number
+  elapsedMs: number
+  modelMessages: number
+  runsWithTurnCount: number
+  reportedTurns: number
+  toolCalls: number
+  commandCalls: number
+  observedToolWallTimeMs: number
+  observedCommandWallTimeMs: number
+  modelAndOverheadWallTimeMs: number
+  runsWithTokenUsage: number
+  inputTokens: number
+  cachedInputTokens: number
+  cacheCreationInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+  runsWithVendorReportedCost: number
+  vendorReportedCostUsd: number
+  outcomes: {
+    success: number
+    rejected: number
+    failed: number
+    interrupted: number
+    stale: number
+  }
+}
+
+export interface GoalExecutionCost {
+  projectId: string
+  goalId: string
+  summary: RunCostSummary
+  byWork: Array<{ workId: string; summary: RunCostSummary }>
+  byResponsibility: Array<{ responsibility: Responsibility; summary: RunCostSummary }>
+  runs: Array<RunAttemptSummary & { diagnostics: RunAttemptDiagnostics }>
 }
 
 export type RunAttemptEvent =

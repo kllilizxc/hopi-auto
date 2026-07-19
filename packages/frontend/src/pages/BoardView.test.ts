@@ -3,6 +3,7 @@ import type { RunAttemptSummary } from '../lib/api'
 import {
   attemptOutcomeBreakdown,
   attemptOutcomeSummary,
+  attemptModelLabel,
   attemptStatus,
   compactLaneRenderWindow,
   shouldShowWorkProgress,
@@ -15,6 +16,7 @@ const attempt: RunAttemptSummary = {
   workId: 'W-1',
   runId: 'R-1',
   responsibility: 'planner',
+  execution: null,
   startedAt: '2026-07-16T00:00:00.000Z',
   endedAt: '2026-07-16T00:01:00.000Z',
   status: 'finished',
@@ -236,6 +238,29 @@ test('Work card footers show Attempt count, blockers, and Done completion time',
   expect(card).toContain('Completed {completedAt}')
   expect(card).not.toContain('work.repos.map')
   expect(card).not.toContain('visibleBadge')
+})
+
+test('Work detail shows the execution model captured by the selected Attempt', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+  const detail = source.slice(source.indexOf('function WorkDetail'), source.indexOf('function WorkContract'))
+
+  expect(detail).toContain('<small>Model</small>')
+  expect(detail).toContain('{attemptModelLabel(selectedAttempt)}')
+  expect(detail).toContain('<AttemptDiagnosticFacts')
+  expect(detail).not.toContain('<small>Stage</small>')
+  expect(detail).not.toContain('<small>Responsibility</small>')
+  expect(detail).not.toContain('<small>Repositories</small>')
+  expect(source).toContain("if (!attempt.execution) return 'not recorded'")
+  expect(
+    attemptModelLabel({
+      ...attempt,
+      execution: {
+        transport: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+      },
+    }),
+  ).toBe('gpt-5.6-sol · xhigh')
 })
 
 test('Needs you stays out of the Board banner and belongs to the Assistant message', async () => {

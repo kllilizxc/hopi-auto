@@ -153,9 +153,9 @@ Alignment is complete only when:
    clean selected-Repo target advances, recovers secondary release projections, fails invalid
    projects closed, and completes only from Planner proof. Reflection routes Attention through the
    speaking Assistant; an optional webhook mirrors only its handled public replies.
-7. The restored React UI exposes Assistant, its separate Home model setting, Project, Goal
+7. The restored React UI exposes Assistant, Home-wide model settings by role, Project, Goal
    contract/design, Pause/Resume, Waiting for Assistant, completion updates, four-column Kanban,
-   cancelled archive, Project model defaults, Repo add and rebind, Work Repo badges, Work Attempt
+   cancelled archive, Repo add and rebind, Work Repo badges, Work Attempt
    message streams, an on-demand Reflection debug stream, and managed-target Preview; Bun serves it
    through one backend process.
 8. The old server, stores, Assistant Actions, decision/planning-request graph, merger, per-Run
@@ -201,8 +201,8 @@ Alignment is complete only when:
   `passOutcomeCoordinator.test.ts`, `projectReconciler.test.ts`, and `goalController.test.ts`
 - portable image adoption and exact role image input: `assistantTools.test.ts`,
   `roleContextStager.test.ts`, `vendorTransport.test.ts`, and `passOutcomeCoordinator.test.ts`
-- Project model persistence, inheritance, role resolution, and API: `assistantHomeStore.test.ts`,
-  `adapterConfig.test.ts`, `mvpServer.test.ts`
+- Home role model persistence, fallback, resolution, and API: `adapterConfig.test.ts`,
+  `assistantTools.test.ts`, `mvpServer.test.ts`
 - runtime Attempt persistence, raw transcript capture, restart interruption, bounded diagnostic
   paths, and API: `roleRunner.test.ts`, `runAttemptStore.test.ts`, `assistantTools.test.ts`,
   `projectReconciler.test.ts`, and `mvpServer.test.ts`

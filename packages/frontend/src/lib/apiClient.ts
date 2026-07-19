@@ -8,6 +8,7 @@ import type {
   GoalBoardDetail,
   GoalDetail,
   GoalDocsDetail,
+  GoalExecutionCost,
   GoalDocumentView,
   PreviewStartResult,
   ProjectDirectorySelection,
@@ -16,6 +17,7 @@ import type {
   RunAttemptDetail,
   RunAttemptEvent,
   RunAttemptSummary,
+  RunCostSummary,
   WorkDocumentView,
 } from './apiTypes'
 
@@ -93,6 +95,10 @@ export function readGoalBoard(projectId: string, goalId: string) {
   return apiRequest<GoalBoardDetail>(`${goalPath(projectId, goalId)}?view=board`)
 }
 
+export function readGoalExecutionCost(projectId: string, goalId: string) {
+  return apiRequest<GoalExecutionCost>(`${goalPath(projectId, goalId)}/execution-cost`)
+}
+
 export function readGoalDocs(projectId: string, goalId: string) {
   return apiRequest<GoalDocsDetail>(`${goalPath(projectId, goalId)}?view=docs`)
 }
@@ -109,7 +115,9 @@ export function readWorkDocument(projectId: string, goalId: string, workId: stri
 }
 
 export function readWorkAttempts(projectId: string, goalId: string, workId: string) {
-  return apiRequest<{ attempts: RunAttemptSummary[] }>(attemptPath(projectId, goalId, workId))
+  return apiRequest<{ attempts: RunAttemptSummary[]; summary: RunCostSummary }>(
+    attemptPath(projectId, goalId, workId),
+  )
 }
 
 export function readWorkAttempt(projectId: string, goalId: string, workId: string, runId: string) {
@@ -191,16 +199,6 @@ export function rebindProjectRepo(
   )
 }
 
-export function updateProjectSettings(
-  projectId: string,
-  codingDefaults: ProjectCodingDefaults | null,
-) {
-  return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/settings`, {
-    method: 'PATCH',
-    body: { codingDefaults },
-  })
-}
-
 export function rebindProjectRepos(
   projectId: string,
   repos: Array<{ repoId: string; repoPath: string; projectPath?: string }>,
@@ -208,13 +206,6 @@ export function rebindProjectRepos(
   return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/rebind`, {
     method: 'POST',
     body: { repos },
-  })
-}
-
-export function updateAssistantSettings(codingDefaults: ProjectCodingDefaults | null) {
-  return apiRequest<AppSnapshot>('/api/assistant/settings', {
-    method: 'PATCH',
-    body: { codingDefaults },
   })
 }
 

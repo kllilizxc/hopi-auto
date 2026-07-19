@@ -422,6 +422,13 @@ Reflection in the same speaking turn. Later completion, blocking, or decision-wo
 reported through the existing read-only Reflection path. This keeps one rule for every
 long-running effect and avoids a second progress-watching workflow inside conversation.
 
+Asynchrony begins after the speaking turn settles, not between related tool calls inside that turn.
+The first Goal effect installs a process-local barrier for that Goal; later calls in the same turn
+may extend the barrier to other Goals. Coordinator admits no responsibility Run for a touched Goal
+until the final reply is durable or the turn fails, then wakes normal reconciliation. This prevents
+a Planner from observing `request_planning` before a later Attention resolution in the same turn,
+without blocking unrelated Goals or adding a canonical phase.
+
 The acceptance reply also identifies where the effect landed when that target is not the preferred
 page Goal. Durable publication proves the effect happened; naming the returned Goal ID lets the
 operator find its scoped Kanban without adding auto-navigation, prose parsing, or an effect ledger.
@@ -461,6 +468,14 @@ thread receives the ordinary tool surface plus `notify_user` for a concise infor
 be selected by the model. Tool choice, rather than parsing message prose, owns the operator-wait
 transition.
 
+Every `request_user` message is a self-contained decision request, not merely a list of choices. It
+preserves enough material cause and consequence from the internal brief for the operator to
+understand what changed, why HOPI cannot safely continue, what answer or action is needed, and the
+non-obvious effect of viable alternatives. It includes a recommendation when HOPI has one. This is
+expressed proportionally in ordinary language: concise means omitting irrelevant history, internal
+IDs, and process narration, not omitting the causal context needed to decide. HOPI does not add a
+request schema, prose parser, or frontend reconstruction rule.
+
 When a Reflection brief exists specifically to deliver Attention, Coordinator augments its ordinary
 Inbox context with every exact Assistant-owned canonical reference selected from the immutable snapshot.
 Goal-local and workspace Attention use the same mechanism; the model does not own identity copying.
@@ -473,6 +488,12 @@ resolved. The optional webhook
 then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It
 does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
 documents instead of adding a notification ledger or parsing brief text.
+
+Those tools update one turn-local final-message slot; they do not publish at call time. A later
+successful call in the same speaking turn may revise both its text and intent after fresh state or
+an Attention-settlement correction changes the conclusion. Only the final slot is copied into the
+handled Inbox reply, so revision never creates duplicate operator messages. A failed later call
+leaves the last valid slot intact.
 
 An internal handoff carrying Assistant-owned Attention cannot finish as a no-op. Before publishing
 the turn as handled, Coordinator verifies that every attached still-current reference was resolved,

@@ -196,6 +196,37 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(clean.path, 'test-results', 'output.txt')).exists()).toBe(false)
   })
 
+  test('rematerializes a Git-clean Reviewer checkout with checkpoint line endings', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-clean-conversion'))
+    await Bun.write(join(repoPath, 'artifact.txt'), 'first\nsecond\n')
+    await git(repoPath, ['add', 'artifact.txt'])
+    await git(repoPath, ['commit', '-m', 'add canonical artifact'])
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    await git(prepared.path, ['config', 'core.autocrlf', 'true'])
+    await Bun.write(join(prepared.path, 'artifact.txt'), 'first\r\nsecond\r\n')
+    await git(prepared.path, ['update-index', '--assume-unchanged', 'artifact.txt'])
+
+    expect(await git(prepared.path, ['status', '--porcelain'])).toBe('')
+    expect(await Bun.file(join(prepared.path, 'artifact.txt')).text()).toBe('first\r\nsecond\r\n')
+
+    const rematerialized = await manager.prepareClean(input)
+
+    expect(await git(rematerialized.path, ['status', '--porcelain'])).toBe('')
+    expect(await Bun.file(join(rematerialized.path, 'artifact.txt')).text()).toBe('first\nsecond\n')
+  })
+
   test('fast-forwards an unchanged stable task branch to the current release', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo-fast-forward'))

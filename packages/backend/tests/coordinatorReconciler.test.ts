@@ -94,6 +94,130 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)
   })
 
+  test('holds the contextual Goal until the Assistant turn settles without blocking other Goals', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-goal-turn',
+      content: 'Revise this Goal.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+    const packages = new Map(['G-1', 'G-2'].map((goalId) => [goalId, engineeringPackage(goalId)]))
+    let finishAssistant: (() => void) | undefined
+    const assistantGate = new Promise<void>((resolve) => {
+      finishAssistant = resolve
+    })
+    const dispatched: string[] = []
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          await assistantGate
+          await fixture.workspace.handleEvent(eventId, {
+            reply: 'Accepted.',
+            disposition: 'tool:request_planning',
+          })
+          return { kind: 'answered' as const, eventId }
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => [...packages.keys()],
+            readPackage: async (goalId: string) => requirePackage(packages, goalId),
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal(goalId: string) {
+              dispatched.push(goalId)
+              const goalPackage = requirePackage(packages, goalId)
+              const work = goalPackage.works.get('W-1')
+              if (!work) throw new Error(`Missing Work for ${goalId}`)
+              work.attributes.stage = 'done'
+              goalPackage.goal.attributes.lifecycle = 'paused'
+              return {
+                kind: 'pass_finished' as const,
+                workId: 'W-1',
+                runId: `R-${goalId}`,
+                result: 'success' as const,
+                application: 'published' as const,
+              }
+            },
+          } as ProjectReconciler,
+        },
+      ],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    await Bun.sleep(0)
+    expect(dispatched).toEqual(['G-2'])
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+
+    finishAssistant?.()
+    await coordinator.waitForIdle()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    await coordinator.waitForIdle()
+    expect(dispatched).toEqual(['G-2', 'G-1'])
+  })
+
+  test('rechecks a dynamically protected Goal after candidate scanning', async () => {
+    const fixture = await workspaceFixture()
+    const packages = new Map(['G-1', 'G-2'].map((goalId) => [goalId, engineeringPackage(goalId)]))
+    let markSecondScan: (() => void) | undefined
+    const secondScan = new Promise<void>((resolve) => {
+      markSecondScan = resolve
+    })
+    let releaseSecondScan: (() => void) | undefined
+    const secondScanGate = new Promise<void>((resolve) => {
+      releaseSecondScan = resolve
+    })
+    const dispatched: string[] = []
+    const project = (projectId: string, goalId: string, hold = false) => ({
+      projectId,
+      store: {
+        async listGoalIds() {
+          if (hold) {
+            markSecondScan?.()
+            await secondScanGate
+          }
+          return [goalId]
+        },
+        readPackage: async () => requirePackage(packages, goalId),
+      } as unknown as GoalPackageStore,
+      reconciler: {
+        interruptRuns: () => undefined,
+        liveWorkIds: () => new Set<string>(),
+        async reconcileGoal() {
+          dispatched.push(goalId)
+          return { kind: 'wait' as const, decision: { kind: 'wait' as const, reasons: [] } }
+        },
+      } as ProjectReconciler,
+    })
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [project('P-1', 'G-1'), project('P-2', 'G-2', true)],
+    })
+
+    const tick = coordinator.reconcileOnce()
+    await secondScan
+    coordinator.protectAssistantGoal('EV-late-effect', 'P-1', 'G-1')
+    releaseSecondScan?.()
+
+    expect(await tick).toEqual({ kind: 'passes_started', count: 1 })
+    await coordinator.waitForIdle()
+    expect(dispatched).toEqual(['G-2'])
+    coordinator.settleAssistantTurn('EV-late-effect')
+  })
+
   test('turns one terminal Assistant failure into event-target Attention without retrying', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Unsafe ambiguity.' })

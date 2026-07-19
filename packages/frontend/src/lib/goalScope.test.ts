@@ -13,7 +13,7 @@ import {
   rememberRecentGoal,
   rememberGoalViewState,
   resolveProjectGoalId,
-  selectProjectShortcuts,
+  selectPeerShortcuts,
   type GoalPreferenceStorage,
 } from './goalScope'
 
@@ -86,14 +86,26 @@ describe('recent workspace navigation', () => {
     ]
 
     expect(
-      selectProjectShortcuts(projects, 'P-second', 2).map((project) => project.projectId),
+      selectPeerShortcuts(projects, 'P-second', 2, (project) => project.projectId).map(
+        (project) => project.projectId,
+      ),
     ).toEqual(['P-recent', 'P-second'])
     expect(
-      selectProjectShortcuts(projects, 'P-current', 2).map((project) => project.projectId),
+      selectPeerShortcuts(projects, 'P-current', 2, (project) => project.projectId).map(
+        (project) => project.projectId,
+      ),
     ).toEqual(['P-current', 'P-recent'])
-    expect(selectProjectShortcuts(projects, 'P-current', 1)).toEqual([
-      { projectId: 'P-current' },
-    ])
+    expect(
+      selectPeerShortcuts(projects, 'P-current', 1, (project) => project.projectId),
+    ).toEqual([{ projectId: 'P-current' }])
+    expect(
+      selectPeerShortcuts(
+        [{ id: 'G-recent' }, { id: 'G-current' }, { id: 'G-other' }],
+        'G-current',
+        1,
+        (goal) => goal.id,
+      ),
+    ).toEqual([{ id: 'G-current' }])
   })
 
   test('migrates the previous single-Project preference into visit history', () => {

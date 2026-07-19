@@ -16,7 +16,6 @@ import { readGoalBoard, readGoalDocs, readShellState, type AttentionView } from 
 import {
   buildGoalRoute,
   findNewestUnseenGoal,
-  orderGoalsByRecency,
   orderProjectsByRecency,
   readGoalRouteState,
   readRecentGoal,
@@ -24,7 +23,6 @@ import {
   rememberRecentProject,
   rememberRecentGoal,
   resolveProjectGoalId,
-  selectProjectShortcuts,
   type GoalSurface,
 } from '../lib/goalScope'
 import { goalBoardQueryKey, goalDocsQueryKey } from '../lib/queryKeys'
@@ -37,7 +35,8 @@ import {
   preloadProjectHomePage,
 } from '../routeModules'
 import { cn, projectDisplayName } from '../lib/utils'
-import { AppAlert, AppRouterLink, AppTabs, IconButton, SelectField } from './ui'
+import { PeerSwitcher } from './PeerSwitcher'
+import { AppAlert, AppRouterLink, AppTabs, IconButton } from './ui'
 
 const AssistantPanel = lazy(() =>
   loadAssistantPanel().then((module) => ({
@@ -47,12 +46,11 @@ const AssistantPanel = lazy(() =>
 
 interface ShellContextValue {
   openAssistant: (attention?: AttentionView) => void
+  selectGoal: (goalId: string) => void
+  warmGoal: (goalId: string) => void
 }
 
 const COMPACT_WORKSPACE_QUERY = '(max-width: 1280px)'
-const NARROW_PROJECT_SHORTCUT_QUERY = '(max-width: 1180px)'
-const SINGLE_PROJECT_SHORTCUT_QUERY =
-  '(max-width: 660px), (max-width: 900px) and (max-height: 560px)'
 
 const ShellContext = createContext<ShellContextValue | null>(null)
 
@@ -78,30 +76,6 @@ function useCompactWorkspace() {
   return compact
 }
 
-function projectShortcutLimit() {
-  if (typeof window === 'undefined') return 3
-  if (window.matchMedia(SINGLE_PROJECT_SHORTCUT_QUERY).matches) return 1
-  if (window.matchMedia(NARROW_PROJECT_SHORTCUT_QUERY).matches) return 2
-  return 3
-}
-
-function useProjectShortcutLimit() {
-  const [limit, setLimit] = useState(projectShortcutLimit)
-
-  useEffect(() => {
-    const media = [
-      window.matchMedia(SINGLE_PROJECT_SHORTCUT_QUERY),
-      window.matchMedia(NARROW_PROJECT_SHORTCUT_QUERY),
-    ]
-    const update = () => setLimit(projectShortcutLimit())
-    update()
-    media.forEach((query) => query.addEventListener('change', update))
-    return () => media.forEach((query) => query.removeEventListener('change', update))
-  }, [])
-
-  return limit
-}
-
 export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -112,13 +86,9 @@ export function Layout() {
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantActivated, setAssistantActivated] = useState(false)
   const [recentProjects] = useState(readRecentProjects)
-  const [recentGoal, setRecentGoal] = useState(() =>
-    routeScope ? readRecentGoal(routeScope.projectId) : null,
-  )
   const knownGoalIds = useRef<Map<string, Set<string>> | null>(null)
   const goalNavigationRequest = useRef(0)
   const compactWorkspace = useCompactWorkspace()
-  const projectShortcutCount = useProjectShortcutLimit()
   const assistantDocked = !compactWorkspace
   const shouldRenderAssistant = assistantDocked || assistantActivated
   const snapshotQuery = useQuery({
@@ -137,7 +107,7 @@ export function Layout() {
     if (routeProjectId && routeGoalId && routeGoalExists) {
       const visitedAt = new Date()
       rememberRecentProject(routeProjectId, undefined, visitedAt)
-      setRecentGoal(rememberRecentGoal(routeProjectId, routeGoalId, undefined, visitedAt))
+      rememberRecentGoal(routeProjectId, routeGoalId, undefined, visitedAt)
     }
   }, [routeGoalExists, routeGoalId, routeProjectId])
 
@@ -155,10 +125,9 @@ export function Layout() {
       const previous = previousGoalIds.get(item.projectId)
       const newest = findNewestUnseenGoal(item.goals, item.projectId, previous)
       if (!newest) continue
-      const preference = rememberRecentGoal(item.projectId, newest.id, undefined, observedAt)
-      if (item.projectId === routeProjectId) setRecentGoal(preference)
+      rememberRecentGoal(item.projectId, newest.id, undefined, observedAt)
     }
-  }, [routeProjectId, snapshot])
+  }, [snapshot])
 
   useEffect(() => {
     goalNavigationRequest.current += 1
@@ -171,49 +140,10 @@ export function Layout() {
     setAssistantOpen(true)
     setAssistantRequest((value) => value + 1)
   }, [])
-  const shellContext = useMemo(() => ({ openAssistant }), [openAssistant])
   const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'board'
   const orderedProjects = useMemo(
     () => orderProjectsByRecency(snapshot?.projects ?? [], recentProjects),
     [recentProjects, snapshot?.projects],
-  )
-  const projectShortcuts = useMemo(
-    () =>
-      routeProjectId
-        ? selectProjectShortcuts(orderedProjects, routeProjectId, projectShortcutCount)
-        : [],
-    [orderedProjects, projectShortcutCount, routeProjectId],
-  )
-  const projectShortcutIds = useMemo(
-    () => new Set(projectShortcuts.map((item) => item.projectId)),
-    [projectShortcuts],
-  )
-  const overflowProjects = useMemo(
-    () => orderedProjects.filter((item) => !projectShortcutIds.has(item.projectId)),
-    [orderedProjects, projectShortcutIds],
-  )
-  const overflowProjectOptions = useMemo(
-    () =>
-      overflowProjects.map((item) => ({
-        label: projectDisplayName(item),
-        value: item.projectId,
-      })),
-    [overflowProjects],
-  )
-  const orderedGoals = useMemo(
-    () =>
-      routeProjectId
-        ? orderGoalsByRecency(project?.goals ?? [], routeProjectId, recentGoal)
-        : [],
-    [project?.goals, recentGoal, routeProjectId],
-  )
-  const goalOptions = useMemo(
-    () =>
-      orderedGoals.map((item) => ({
-        label: item.title,
-        value: item.id,
-      })),
-    [orderedGoals],
   )
   const prepareGoalSurface = useCallback(
     async (scope: { projectId: string; goalId: string }, nextSurface: GoalSurface) => {
@@ -291,6 +221,24 @@ export function Layout() {
       navigate(`/projects/${encodeURIComponent(projectId)}/goals/new`)
     },
     [goalForProject, navigate, navigateToGoalSurface, surface],
+  )
+  const warmGoal = useCallback(
+    (goalId: string) => {
+      if (routeProjectId) warmGoalSurface({ projectId: routeProjectId, goalId }, surface)
+    },
+    [routeProjectId, surface, warmGoalSurface],
+  )
+  const selectGoal = useCallback(
+    (goalId: string) => {
+      if (routeProjectId && goalId !== routeGoalId) {
+        navigateToGoalSurface({ projectId: routeProjectId, goalId }, surface)
+      }
+    },
+    [navigateToGoalSurface, routeGoalId, routeProjectId, surface],
+  )
+  const shellContext = useMemo(
+    () => ({ openAssistant, selectGoal, warmGoal }),
+    [openAssistant, selectGoal, warmGoal],
   )
 
   if (!routeScope) {
@@ -386,68 +334,18 @@ export function Layout() {
         >
           <header className="workspace-topbar">
             <div className="workspace-switchers">
-              <div className="project-switcher">
-                <span className="app-select__label">Project</span>
-                <div className="project-switcher__controls">
-                  {projectShortcuts.length ? (
-                    <AppTabs
-                      aria-label="Recent Projects"
-                      className={cn(
-                        'project-switcher__tabs',
-                        `project-switcher__tabs--${projectShortcuts.length}`,
-                      )}
-                      selectedKey={routeScope.projectId}
-                      onSelectionChange={(key) => {
-                        const projectId = String(key)
-                        if (projectId !== routeScope.projectId) navigateToProject(projectId)
-                      }}
-                    >
-                      <AppTabs.List>
-                        {projectShortcuts.map((item) => {
-                          const label = projectDisplayName(item)
-                          return (
-                            <AppTabs.Tab
-                              id={item.projectId}
-                              key={item.projectId}
-                              onFocus={() => warmProject(item.projectId)}
-                              onPointerDown={() => warmProject(item.projectId)}
-                              onPointerEnter={() => warmProject(item.projectId)}
-                            >
-                              <span title={label}>{label}</span>
-                            </AppTabs.Tab>
-                          )
-                        })}
-                      </AppTabs.List>
-                    </AppTabs>
-                  ) : (
-                    <span className="project-switcher__placeholder">
-                      {snapshot ? 'No Projects' : 'Loading…'}
-                    </span>
-                  )}
-                  {overflowProjects.length > 0 && (
-                    <SelectField
-                      aria-label="More Projects"
-                      className="project-switcher__more"
-                      onValueChange={navigateToProject}
-                      options={overflowProjectOptions}
-                      popoverClassName="project-switcher__popover"
-                      value={null}
-                    />
-                  )}
-                </div>
-              </div>
-              <SelectField
-                aria-label="Current Goal"
-                disabled={!project}
-                label="Goal"
-                onValueChange={(nextGoalId) =>
-                  navigateToGoalSurface(
-                    { projectId: routeScope.projectId, goalId: nextGoalId },
-                    surface,
-                  )
-                }
-                options={goalOptions}
-                value={routeScope.goalId}
+              <PeerSwitcher
+                ariaLabel="Recent Projects"
+                items={orderedProjects.map((item) => ({
+                  id: item.projectId,
+                  label: projectDisplayName(item),
+                }))}
+                label="Project"
+                moreAriaLabel="More Projects"
+                onSelectionChange={navigateToProject}
+                onWarm={warmProject}
+                placeholder={snapshot ? 'No Projects' : 'Loading…'}
+                selectedKey={routeScope.projectId}
               />
             </div>
 

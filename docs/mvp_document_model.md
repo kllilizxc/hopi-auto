@@ -193,7 +193,7 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 required before Coordinator starts and travels with every lossless Assistant-home export; the
 filesystem path of Assistant home is only a current machine binding.
 
-Each `projects.yml` link owns `{ projectId, primaryRepoId, repos, codingDefaults? }`. Each Repo entry
+Each `projects.yml` link owns `{ projectId, primaryRepoId, repos }`. Each Repo entry
 owns a stable `repoId`, its current-machine `repoPath` Git-checkout binding, the `deliveryBranch`
 recorded from that checkout at link time, and an optional portable `projectPath` relative to the Git
 root. Missing `projectPath` means `.`. Coordinator derives one Repo-adjacent managed integration
@@ -214,17 +214,11 @@ projects:
       - repoId: api
         repoPath: /home/operator/Code/product-api
         deliveryBranch: main
-    codingDefaults:
-      transport: codex
-      model: gpt-5.4
-      reasoningEffort: xhigh
 ```
 
-`codingDefaults` is optional. Its absence means inherit `runtime/agent-adapters.json.defaults` from
-Assistant home. A Codex override stores `transport`, non-empty `model`, and `reasoningEffort`;
-Claude and OpenCode store `transport` plus an optional non-empty `model`. The link owns this fact;
-`project.yml`, Goal documents, and runtime indexes do not duplicate it. Editing it does not change a
-Goal contract revision or any Work document.
+Legacy Project `codingDefaults` are discarded during Assistant-home initialization. They are not
+merged into Home settings because multiple Project values cannot deterministically define one
+Home-wide role. `project.yml`, Goal documents, and runtime indexes do not duplicate model settings.
 
 `runtime/agent-adapters.json.assistant` separately owns the Home-wide speaking Assistant and
 Reflection adapter. It uses the same Codex, Claude, or OpenCode transport shapes but always runs from
@@ -235,13 +229,14 @@ allowed only for responsibility adapters and is not a configurable Assistant tra
 
 `runtime/agent-adapters.json.roles` may separately override `planner`, `generator`, and `reviewer`.
 The Home agent-settings panel edits these existing role entries rather than introducing a second
-settings document. A missing role entry means inherit the owning Project's `codingDefaults`, then
-Home `defaults`; removing a role override restores that inheritance. Role settings affect only
-future responsibility Runs and never rewrite a Project link, Goal, Work, or active Run command.
+settings document. A missing role entry means inherit Home `defaults`; removing a role override
+restores that fallback. Role settings affect only future responsibility Runs and never rewrite a
+Project link, Goal, Work, or active Run command.
 
 Version 1 `{ projectId, repoPath }` and version 2 multi-Repo links migrate by recording each linked
 checkout's current symbolic branch and relocating its registered managed worktrees without changing
 their branch, index, or working tree. A detached legacy checkout is ambiguous and blocks migration.
+A version 3 link carrying legacy `codingDefaults` is rewritten without that field.
 A missing Engineering Work `repos` field still means the Project primary Repo. Newly published links
 and Engineering Work always use the explicit form.
 
@@ -316,10 +311,20 @@ identity or isolation:
   scratch/
 ```
 
-`attempt.json` records the responsibility, timing, process result, and Coordinator application for
-that one Run. `events.jsonl` is an append-only stream of normalized model messages and tool events
-used by the Work-detail UI. `transcript.log` preserves each raw stdout/stderr line before vendor
-normalization or display truncation. These files are runtime observability, not canonical authority.
+`attempt.json` records the responsibility, timing, process result, Coordinator application, and the
+small execution identity resolved for that one Run: transport, configured model, and Codex reasoning
+effort when applicable. RoleRunner
+captures this identity before launching the process, so a later Home role model change cannot rewrite
+history. Older or non-model Attempts may have no execution identity, and an older identity may retain
+its model without a recorded reasoning effort; the UI reports those absences instead of substituting
+current configuration. `events.jsonl` is an append-only stream of normalized
+model messages and tool events used by the Work-detail UI. `transcript.log` preserves each raw
+stdout/stderr line before vendor normalization or display truncation. These files are runtime
+observability, not canonical authority.
+The Goal/Work execution-cost view is computed from these records at read time. Vendor-reported usage
+remains vendor-reported, paired tool-event timestamps support observed tool duration, and the
+remaining Attempt wall time is explicitly approximate model/overhead time. The projection is not
+written back into Goal, Work, Evidence, or retry state.
 `scratch/` is a disposable writable temp root exposed to the responsibility process. It lets build
 tools and short-lived local services operate inside the existing Run capability without granting
 another source root; it is never source, Evidence, or Preview state. Reusable tool caches live at

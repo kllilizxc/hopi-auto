@@ -54,7 +54,9 @@ import {
   classifyProjectDirectory,
   initializeEmptyGitRepository,
 } from './runtime/projectDirectory'
+import type { RunAttemptDiagnostics } from './runtime/runAttemptDiagnostics'
 import type { RunAttemptSummary } from './runtime/runAttemptStore'
+import { type RunCostEntry, summarizeRunCosts } from './runtime/runCostProjection'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 
@@ -115,10 +117,7 @@ const rebindProjectSchema = z.union([
   z.object({ repos: z.array(projectRepoSchema).min(1) }).strict(),
   repoPathSchema,
 ])
-const projectSettingsSchema = z
-  .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
-  .strict()
-const assistantSettingsSchema = z
+const agentRoleSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
 const CONFIGURABLE_AGENT_ROLES = ['assistant', ...WORKFLOW_ROLE_KEYS] as const
@@ -290,15 +289,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
         }
-        if (request.method === 'PATCH' && url.pathname === '/api/assistant/settings') {
-          const body = await parseBody(request, assistantSettingsSchema)
-          await runtime.updateAssistantCodingDefaults(
-            body.codingDefaults === null
-              ? null
-              : normalizeProjectCodingDefaults(body.codingDefaults),
-          )
-          return json(await presentState(runtime))
-        }
         if (
           request.method === 'PATCH' &&
           parts.length === 4 &&
@@ -307,7 +297,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           parts[3] === 'settings'
         ) {
           const role = configurableAgentRoleSchema.parse(requirePart(parts, 2))
-          const body = await parseBody(request, assistantSettingsSchema)
+          const body = await parseBody(request, agentRoleSettingsSchema)
           await runtime.updateAgentRoleCodingDefaults(
             role,
             body.codingDefaults === null
@@ -431,24 +421,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(await presentState(await nextRuntime))
         }
         if (
-          request.method === 'PATCH' &&
-          parts.length === 4 &&
-          parts[0] === 'api' &&
-          parts[1] === 'projects' &&
-          parts[3] === 'settings'
-        ) {
-          const projectId = requirePart(parts, 2)
-          const body = await parseBody(request, projectSettingsSchema)
-          await runtime.home.updateProjectSettings({
-            projectId,
-            codingDefaults:
-              body.codingDefaults === null
-                ? null
-                : normalizeProjectCodingDefaults(body.codingDefaults),
-          })
-          return json(await presentState(runtime))
-        }
-        if (
           request.method === 'POST' &&
           parts.length === 4 &&
           parts[0] === 'api' &&
@@ -534,9 +506,27 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               attemptRoute.goalId,
               attemptRoute.workId,
             )
+            const diagnostics: Array<RunAttemptDiagnostics | null> = []
+            for (const attempt of attempts) {
+              diagnostics.push(
+                await runtime.attempts.readDiagnostics(
+                  attemptRoute.projectId,
+                  attemptRoute.goalId,
+                  attemptRoute.workId,
+                  attempt.runId,
+                ),
+              )
+            }
+            const presentedAttempts = attempts.map((attempt, index) => ({
+              ...presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
+              diagnostics: diagnostics[index] ?? null,
+            }))
             return json({
-              attempts: attempts.map((attempt) =>
-                presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
+              attempts: presentedAttempts,
+              summary: summarizeRunCosts(
+                presentedAttempts.flatMap((attempt) =>
+                  attempt.diagnostics ? [{ ...attempt, diagnostics: attempt.diagnostics }] : [],
+                ),
               ),
             })
           }
@@ -565,9 +555,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               }),
             )
           }
-          return json(
-            presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
-          )
+          return json({
+            ...presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
+            diagnostics: await runtime.attempts.readDiagnostics(
+              attemptRoute.projectId,
+              attemptRoute.goalId,
+              attemptRoute.workId,
+              attemptRoute.runId,
+            ),
+          })
         }
 
         const evidenceArtifactRoute = matchEvidenceArtifactRoute(parts)
@@ -636,6 +632,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
 
         const goalRoute = matchGoalRoute(parts)
+        if (goalRoute && request.method === 'GET' && goalRoute.action === 'execution-cost') {
+          return json(
+            await presentGoalExecutionCost(runtime, goalRoute.projectId, goalRoute.goalId),
+          )
+        }
         if (goalRoute && request.method === 'GET' && goalRoute.action === null) {
           return json(
             await presentGoal(
@@ -824,11 +825,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
     ConfigurableAgentRole,
     Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
   >
-  const assistantModelSettings = agentRoleSettings.assistant
   const projects = []
   const goalAttentions = []
   for (const project of runtime.projects.values()) {
-    const modelSettings = await runtime.readProjectCodingDefaults(project.projectId)
     const projectAttention = [...workspace.attentions.values()].find(
       (attention) =>
         attention.attributes.target === `project:${project.projectId}` &&
@@ -898,8 +897,6 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       repoPath: project.repoPath,
       projectPath: project.projectPath,
       guidance: await readProjectGuidance(project.sourceRoot),
-      codingDefaults: modelSettings.codingDefaults,
-      codingDefaultsInherited: modelSettings.inherited,
       preview: runtime.preview.inspect(project.projectId),
       openAttentionCount: goalOpenAttentionCount + (projectAttention ? 1 : 0),
       goals,
@@ -908,8 +905,6 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
   return {
     home: {
       ...home,
-      assistantCodingDefaults: assistantModelSettings.codingDefaults,
-      assistantCodingDefaultsInherited: assistantModelSettings.inherited,
       agentRoleCodingDefaults: agentRoleSettings,
     },
     projects,
@@ -1408,16 +1403,20 @@ async function executeDirectUserCommand(
       content: command.content,
       ...(command.context ? { context: command.context } : {}),
     })
-    const result = await runtime.assistantTools.executeForEvent(
-      event.attributes.id,
-      command.tool,
-      command.input,
-    )
-    await runtime.workspace.handleEvent(event.attributes.id, {
-      reply: command.reply,
-      disposition: command.disposition,
-    })
-    return result
+    try {
+      const result = await runtime.assistantTools.executeForEvent(
+        event.attributes.id,
+        command.tool,
+        command.input,
+      )
+      await runtime.workspace.handleEvent(event.attributes.id, {
+        reply: command.reply,
+        disposition: command.disposition,
+      })
+      return result
+    } finally {
+      runtime.coordinator.settleAssistantTurn(event.attributes.id)
+    }
   })
 }
 
@@ -1534,6 +1533,44 @@ async function presentGoal(
       ...evidence.attributes,
       body: evidence.body,
     })),
+  }
+}
+
+async function presentGoalExecutionCost(runtime: MvpRuntime, projectId: string, goalId: string) {
+  const project = requireProject(runtime.projects, projectId)
+  await project.store.readPackage(goalId)
+  const attemptsByWork = await runtime.attempts.listGoal(projectId, goalId)
+  const entries: RunCostEntry[] = []
+  for (const [workId, attempts] of attemptsByWork) {
+    for (const attempt of attempts) {
+      const diagnostics = await runtime.attempts.readDiagnostics(
+        projectId,
+        goalId,
+        workId,
+        attempt.runId,
+      )
+      if (diagnostics) entries.push({ ...attempt, diagnostics })
+    }
+  }
+  const byWork = [...attemptsByWork.keys()].map((workId) => {
+    const scoped = entries.filter((entry) => entry.workId === workId)
+    return { workId, summary: summarizeRunCosts(scoped) }
+  })
+  const byResponsibility = (['planner', 'generator', 'reviewer'] as const).map(
+    (responsibility) => ({
+      responsibility,
+      summary: summarizeRunCosts(
+        entries.filter((entry) => entry.responsibility === responsibility),
+      ),
+    }),
+  )
+  return {
+    projectId,
+    goalId,
+    summary: summarizeRunCosts(entries),
+    byWork,
+    byResponsibility,
+    runs: entries,
   }
 }
 
@@ -1663,7 +1700,8 @@ function matchGoalRoute(parts: string[]) {
     action !== 'pause' &&
     action !== 'resume' &&
     action !== 'cancel' &&
-    action !== 'reopen'
+    action !== 'reopen' &&
+    action !== 'execution-cost'
   ) {
     return null
   }

@@ -56,25 +56,19 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       const expected = worktree(input)
       await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
-      let prepared = existing
-      if (!prepared) {
-        prepared = await materialize(input, expected)
-      } else {
-        const status = await worktreeStatus(prepared.path)
-        if (status) {
-          const removed = await runGit(
-            input.projectRoot,
-            ['worktree', 'remove', '--force', expected.path],
-            true,
+      if (existing) {
+        const removed = await runGit(
+          input.projectRoot,
+          ['worktree', 'remove', '--force', expected.path],
+          true,
+        )
+        if (removed.exitCode !== 0) {
+          throw new StableWorktreeError(
+            `Cannot rematerialize Work checkout ${input.workId}: ${removed.stderr || removed.stdout}`,
           )
-          if (removed.exitCode !== 0) {
-            throw new StableWorktreeError(
-              `Cannot discard dirty Work checkout ${input.workId}: ${removed.stderr || removed.stdout}`,
-            )
-          }
-          prepared = await materialize(input, expected)
         }
       }
+      const prepared = await materialize(input, expected)
       return synchronize(input, prepared)
     },
     async inspect(input) {

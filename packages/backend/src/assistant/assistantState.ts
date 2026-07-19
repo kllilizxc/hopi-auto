@@ -106,10 +106,6 @@ export function createAssistantStateReader(options: {
     codingDefaults: ProjectCodingDefaults
     inherited: boolean
   }>
-  readProjectCodingDefaults?: (projectId: string) => Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
   now?: () => Date
   staleAfterMs?: number
 }): AssistantStateReader {
@@ -140,7 +136,6 @@ export function createAssistantStateReader(options: {
 
       const projects = await Promise.all(
         selected.map(async (project) => {
-          const modelSettings = await options.readProjectCodingDefaults?.(project.projectId)
           const projectAttention = workspaceAttentions.find(
             (attention) =>
               attention.target === `project:${project.projectId}` && attention.resolvedAt === null,
@@ -294,12 +289,6 @@ export function createAssistantStateReader(options: {
             projectRoot: project.projectRoot,
             ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
             ...(repos ? { repos } : {}),
-            ...(modelSettings
-              ? {
-                  codingDefaults: modelSettings.codingDefaults,
-                  codingDefaultsInherited: modelSettings.inherited,
-                }
-              : {}),
             available: !projectAttentionOpen,
             releaseHead: await releaseHead(project.projectRoot),
             goals,

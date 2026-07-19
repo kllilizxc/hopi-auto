@@ -359,8 +359,8 @@ Final artifact:
 `/home/kllilizxc/Code/hopi-auto/test-artifacts/configuration-rebind-2026-07-13T18-26-42-566Z-33f19738`
 
 `bun run e2e:config:020` passed with a production Server, two real Git Repos, one linked secondary
-Repo, distinct Home and Project coding defaults, a secondary Repo rebind, and a complete Server
-restart. The Home Assistant remains Codex `gpt-5.4`/low while the Project remains OpenCode
+Repo, distinct Home-wide Assistant and Generator model settings, a secondary Repo rebind, and a
+complete Server restart. The Assistant remains Codex `gpt-5.4`/low while Generator remains OpenCode
 `openai/gpt-5`; the primary Repo path is unchanged and only the secondary Repo points to its new
 checkout after restart.
 

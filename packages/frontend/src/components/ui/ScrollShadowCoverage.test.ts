@@ -4,7 +4,7 @@ const scrollSurfaceChecks = [
   {
     file: '../../pages/BoardView.tsx',
     patterns: [
-      /<AppScrollShadow className="kanban-scroll"/,
+      /<AppScrollShadow\s+className="kanban-scroll"/,
       /<AppScrollShadow className="kanban-cards"/,
       /<AppScrollShadow className="fact-grid work-fact-strip"/,
       /<AppScrollShadow className="work-contract-pane"/,

@@ -223,11 +223,8 @@ export function updateAgentRoleCodingDefaults(
 export function resolveRoleTransportConfig(
   config: AgentAdapterConfig,
   role: WorkflowRoleKey,
-  projectDefaults?: ProjectCodingDefaults,
 ): RoleTransportConfig {
-  const defaults = projectDefaults
-    ? normalizeProjectCodingDefaults(projectDefaults)
-    : config.defaults
+  const defaults = config.defaults
   const override = config.roles[role]
   if (override) {
     return resolveExplicitTransportConfig(defaults, override)

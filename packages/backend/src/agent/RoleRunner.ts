@@ -1,10 +1,11 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaults'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
-import type { AgentRuntimeEvent } from './runtimeEvents'
+import type { AgentRuntimeEvent, AgentTranscriptTransport } from './runtimeEvents'
 import {
   type AssistantTransport,
   type VendorSession,
@@ -52,8 +53,15 @@ export interface RoleRunResult {
   failureKind?: 'operational'
 }
 
+export interface RoleExecutionIdentity {
+  transport: AgentTranscriptTransport
+  model: string | null
+  reasoningEffort: ProjectCodingReasoningEffort | null
+}
+
 export interface RoleRunObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
+  onExecution?(execution: RoleExecutionIdentity): Promise<void> | void
   onHeartbeat?(): Promise<void> | void
   onSession?(session: VendorSession): Promise<void> | void
   onSessionInvalid?(): Promise<void> | void
@@ -79,6 +87,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     const config = await this.resolveConfig(input)
+    await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
     let session = transport && input.session?.transport === transport ? input.session : null
     if (input.session && !session) {
@@ -180,6 +189,15 @@ export class ConfiguredRoleRunner implements RoleRunner {
       return failedResult(`${input.responsibility} cannot return ${parsed.value.result}`, exitCode)
     }
     return { ...parsed.value, exitCode }
+  }
+}
+
+function roleExecutionIdentity(config: RoleTransportConfig): RoleExecutionIdentity {
+  if ('cmd' in config) return { transport: 'process', model: null, reasoningEffort: null }
+  return {
+    transport: config.transport,
+    model: config.model ?? null,
+    reasoningEffort: config.transport === 'codex' ? (config.reasoningEffort ?? null) : null,
   }
 }
 

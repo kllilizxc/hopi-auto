@@ -577,15 +577,12 @@ async function setup(
     publisher,
     preview: createPreviewManager(temporaryRoot),
     state,
-    readAssistantCodingDefaults: async () => ({
+    readAgentRoleCodingDefaults: async () => ({
       codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
       inherited: true,
+      configurable: true,
     }),
-    readProjectCodingDefaults: async () => ({
-      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      inherited: true,
-    }),
-    updateAssistantCodingDefaultsForTurn: async () => undefined,
+    updateAgentRoleCodingDefaultsForTurn: async () => undefined,
   })
   const reflection = createAssistantReflection({
     homeRoot: temporaryRoot,

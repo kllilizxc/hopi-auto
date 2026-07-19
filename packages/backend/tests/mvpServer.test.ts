@@ -146,6 +146,7 @@ describe('MVP server', () => {
       workId: 'W-1',
       runId: 'R-1',
       responsibility: 'reviewer',
+      execution: null,
       startedAt: '2026-07-11T00:00:00Z',
       endedAt: '2026-07-11T00:05:00Z',
       status: 'finished',
@@ -409,7 +410,7 @@ describe('MVP server', () => {
             token: input.toolToken,
             name: 'hopi_configure_model',
             arguments: {
-              scope: 'assistant',
+              role: 'assistant',
               codingDefaults: { transport: 'claude', model: 'sonnet' },
             },
           }),
@@ -418,7 +419,7 @@ describe('MVP server', () => {
         expect(await modelResponse.json()).toMatchObject({
           changed: true,
           value: {
-            scope: 'assistant',
+            role: 'assistant',
             codingDefaults: { transport: 'claude', model: 'sonnet' },
           },
         })
@@ -455,8 +456,12 @@ describe('MVP server', () => {
       if (reply && topologyVisible) {
         expect(state).toMatchObject({
           home: {
-            assistantCodingDefaults: { transport: 'claude', model: 'sonnet' },
-            assistantCodingDefaultsInherited: false,
+            agentRoleCodingDefaults: {
+              assistant: {
+                codingDefaults: { transport: 'claude', model: 'sonnet' },
+                inherited: false,
+              },
+            },
           },
         })
         break
@@ -703,7 +708,7 @@ describe('MVP server', () => {
       }),
     )
     expect(
-      await request(base, '/api/assistant/settings', {
+      await request(base, '/api/agent-roles/assistant/settings', {
         method: 'PATCH',
         body: {
           codingDefaults: {
@@ -714,11 +719,15 @@ describe('MVP server', () => {
       }),
     ).toMatchObject({
       home: {
-        assistantCodingDefaults: {
-          transport: 'opencode',
-          model: 'anthropic/claude-sonnet-4-5',
+        agentRoleCodingDefaults: {
+          assistant: {
+            codingDefaults: {
+              transport: 'opencode',
+              model: 'anthropic/claude-sonnet-4-5',
+            },
+            inherited: false,
+          },
         },
-        assistantCodingDefaultsInherited: false,
       },
     })
     expect(await Bun.file(assistantSessionPath).exists()).toBe(false)
@@ -731,7 +740,7 @@ describe('MVP server', () => {
       }),
     )
     expect(
-      await request(base, '/api/assistant/settings', {
+      await request(base, '/api/agent-roles/assistant/settings', {
         method: 'PATCH',
         body: {
           codingDefaults: {
@@ -742,9 +751,13 @@ describe('MVP server', () => {
       }),
     ).toMatchObject({
       home: {
-        assistantCodingDefaults: {
-          transport: 'opencode',
-          model: 'openai/gpt-5.4',
+        agentRoleCodingDefaults: {
+          assistant: {
+            codingDefaults: {
+              transport: 'opencode',
+              model: 'openai/gpt-5.4',
+            },
+          },
         },
       },
     })
@@ -786,30 +799,6 @@ describe('MVP server', () => {
     expect(await Bun.file(assistantSessionPath).json()).toMatchObject({
       transport: 'opencode',
       sessionId: 'opencode-session',
-    })
-    expect(
-      await request(base, '/api/projects/P-1/settings', {
-        method: 'PATCH',
-        body: {
-          codingDefaults: {
-            transport: 'codex',
-            model: 'gpt-5.3-codex',
-            reasoningEffort: 'high',
-          },
-        },
-      }),
-    ).toMatchObject({
-      projects: [
-        {
-          projectId: 'P-1',
-          codingDefaults: {
-            transport: 'codex',
-            model: 'gpt-5.3-codex',
-            reasoningEffort: 'high',
-          },
-          codingDefaultsInherited: false,
-        },
-      ],
     })
     const created = await request(base, '/api/projects/P-1/goals', {
       method: 'POST',
@@ -942,9 +931,31 @@ describe('MVP server', () => {
       role: 'planner',
       content: 'Planning the Engineering Work DAG.',
     })
+    await Bun.write(
+      join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'transcript.log'),
+      'stdout: {"type":"turn.completed","usage":{"input_tokens":400,"cached_input_tokens":250,"output_tokens":30,"reasoning_output_tokens":10}}\n',
+    )
     expect(
       await request(base, '/api/projects/P-1/goals/G-1/works/plan-initial/attempts'),
-    ).toMatchObject({ attempts: [{ runId: 'R-1', status: 'running' }] })
+    ).toMatchObject({
+      attempts: [
+        {
+          runId: 'R-1',
+          status: 'running',
+          diagnostics: { tokenUsage: { inputTokens: 400, cachedInputTokens: 250 } },
+        },
+      ],
+      summary: { runs: 1, runsWithTokenUsage: 1, inputTokens: 400 },
+    })
+    expect(await request(base, '/api/projects/P-1/goals/G-1/execution-cost')).toMatchObject({
+      goalId: 'G-1',
+      summary: { runs: 1, inputTokens: 400 },
+      byResponsibility: [
+        { responsibility: 'planner', summary: { runs: 1 } },
+        { responsibility: 'generator', summary: { runs: 0 } },
+        { responsibility: 'reviewer', summary: { runs: 0 } },
+      ],
+    })
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
       works: [{ id: 'plan-initial', runAttemptCount: 1 }],
     })
@@ -1063,7 +1074,6 @@ describe('MVP server', () => {
       projects: [
         {
           projectId: 'P-1',
-          codingDefaults: { model: 'gpt-5.3-codex' },
           goals: [{ id: 'G-1', createdAt: expect.any(String) }],
         },
       ],

@@ -22,10 +22,7 @@ import {
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
 import type { LinkedProjectRepo } from '../domain/project'
-import type {
-  ProjectCodingDefaults,
-  ProjectCodingDefaultsInput,
-} from '../domain/projectCodingDefaults'
+import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
 import { PublicationCoordinator } from '../publication/publisher'
 import { createCoordinatorReconciler } from '../scheduler/coordinatorReconciler'
@@ -81,16 +78,7 @@ export interface MvpRuntime {
     repoPath: string,
     projectPath?: string,
   ): Promise<void>
-  readProjectCodingDefaults(projectId: string): Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
-  readAssistantCodingDefaults(): Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
   readAgentRoleCodingDefaults(role: ConfigurableAgentRole): Promise<AgentRoleCodingSettings>
-  updateAssistantCodingDefaults(input: ProjectCodingDefaultsInput | null): Promise<void>
   updateAgentRoleCodingDefaults(
     role: ConfigurableAgentRole,
     input: ProjectCodingDefaultsInput | null,
@@ -129,15 +117,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     options.roleRunner ??
     new ConfiguredRoleRunner({
       resolveConfig: async (input) => {
-        const [adapterConfig, project] = await Promise.all([
-          readAdapterConfig(),
-          home.readProject(input.projectId),
-        ])
-        return resolveRoleTransportConfig(
-          adapterConfig,
-          input.responsibility,
-          project.codingDefaults,
-        )
+        return resolveRoleTransportConfig(await readAdapterConfig(), input.responsibility)
       },
     })
   const linkedProjects = await home.listProjects()
@@ -236,9 +216,11 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     attempts,
     activeRuns: () => readActiveRuns(),
     readAssistantCodingDefaults: readAssistantModelSettings,
-    readProjectCodingDefaults,
   })
   let restoreProjectEligibility: (projectId: string) => Promise<void> = async () => undefined
+  let protectAssistantGoal: (eventId: string, projectId: string, goalId: string) => void = () =>
+    undefined
+  let protectAssistantProject: (eventId: string, projectId: string) => void = () => undefined
   const assistantTools = createAssistantTools({
     home,
     workspace,
@@ -246,11 +228,12 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     publisher,
     preview,
     state: assistantState,
-    readAssistantCodingDefaults: readAssistantModelSettings,
-    readProjectCodingDefaults,
-    updateAssistantCodingDefaultsForTurn: updateAssistantModelSettingsForTurn,
+    readAgentRoleCodingDefaults: readAgentRoleModelSettings,
+    updateAgentRoleCodingDefaultsForTurn: updateAgentRoleModelSettingsForTurn,
     onProjectTopologyChanged: (eventId) => topologyChangedEvents.add(eventId),
     onProjectAttentionResolved: (projectId) => restoreProjectEligibility(projectId),
+    onGoalEffect: (eventId, projectId, goalId) => protectAssistantGoal(eventId, projectId, goalId),
+    onProjectDispatchEffect: (eventId, projectId) => protectAssistantProject(eventId, projectId),
   })
   await migrateLegacyAttentionOwnership({ workspace, projects })
   const assistant = createWorkspaceAssistant({
@@ -299,6 +282,10 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     delivery,
   })
   readActiveRuns = () => coordinator.activeRuns()
+  protectAssistantGoal = (eventId, projectId, goalId) =>
+    coordinator.protectAssistantGoal(eventId, projectId, goalId)
+  protectAssistantProject = (eventId, projectId) =>
+    coordinator.protectAssistantProject(eventId, projectId)
   wakeCoordinator = () => coordinator.wake()
   restoreProjectEligibility = async (projectId) => {
     const project = requireProject(projects, projectId)
@@ -347,17 +334,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
   }
 
-  async function readProjectCodingDefaults(projectId: string) {
-    const [project, adapterConfig] = await Promise.all([
-      home.readProject(projectId),
-      readAdapterConfig(),
-    ])
-    return {
-      codingDefaults: project.codingDefaults ?? adapterConfig.defaults,
-      inherited: project.codingDefaults === undefined,
-    }
-  }
-
   async function readAssistantModelSettings() {
     return readAssistantCodingDefaults(await readAdapterConfig())
   }
@@ -389,6 +365,18 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     if (await writeAssistantModelSettings(input)) assistantSessionResetEvents.add(eventId)
   }
 
+  async function updateAgentRoleModelSettingsForTurn(
+    eventId: string,
+    role: ConfigurableAgentRole,
+    input: ProjectCodingDefaultsInput | null,
+  ) {
+    if (role === 'assistant') {
+      await updateAssistantModelSettingsForTurn(eventId, input)
+      return
+    }
+    await updateAgentRoleModelSettings(role, input)
+  }
+
   async function writeAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
     const current = await readAdapterConfig()
     const previousTransport = resolveAssistantTransportConfig(current).transport
@@ -414,10 +402,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     attempts,
     rebindProject,
     rebindRepo,
-    readProjectCodingDefaults,
-    readAssistantCodingDefaults: readAssistantModelSettings,
     readAgentRoleCodingDefaults: readAgentRoleModelSettings,
-    updateAssistantCodingDefaults: updateAssistantModelSettings,
     updateAgentRoleCodingDefaults: updateAgentRoleModelSettings,
   }
 }

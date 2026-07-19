@@ -46,7 +46,6 @@ import {
   rebindProjectRepo,
   selectProjectDirectory,
   updateAgentRoleSettings,
-  updateProjectSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
 import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
@@ -441,8 +440,7 @@ function AgentSettingsPanel({
         <StatusChip size="sm">{selected.inherited ? 'Default' : 'Custom'}</StatusChip>
       </div>
       <p className="panel-intro">
-        Configure the model used by each role. Workflow roles use each Project default until
-        overridden here.
+        Configure the Home-wide model used by each role. Projects share these settings.
       </p>
       <div className="assistant-settings-current">
         <small>{selected.inherited && role !== 'assistant' ? 'Home fallback' : 'Current model'}</small>
@@ -541,11 +539,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   const projectName = projectDisplayName(project)
   const [showRepoManager, setShowRepoManager] = useState(false)
   const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
-  const [showModelSettings, setShowModelSettings] = useState(false)
   const [nextRepoPath, setNextRepoPath] = useState('')
   const [newRepoId, setNewRepoId] = useState('')
   const [newRepoPath, setNewRepoPath] = useState('')
-  const [modelDraft, setModelDraft] = useState(() => codingDefaultsToDraft(project.codingDefaults))
   const firstGoal = project.goals[0]
   const linkRepoMutation = useMutation({
     mutationFn: () =>
@@ -565,14 +561,6 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
     onSuccess: async () => {
       setEditingRepoId(null)
       setNextRepoPath('')
-      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
-    },
-  })
-  const settingsMutation = useMutation({
-    mutationFn: (codingDefaults: ProjectCodingDefaults | null) =>
-      updateProjectSettings(project.projectId, codingDefaults),
-    onSuccess: async () => {
-      setShowModelSettings(false)
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
@@ -699,95 +687,6 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </div>
 
-      <div className="project-model-row">
-        <Cpu />
-        <span>
-          <small>{project.codingDefaultsInherited ? 'Home default' : 'Project default'}</small>
-          <strong>{formatCodingDefaults(project.codingDefaults)}</strong>
-        </span>
-        <AppButton
-          variant="ghost"
-          type="button"
-          onClick={() => {
-            setModelDraft(codingDefaultsToDraft(project.codingDefaults))
-            setShowModelSettings((value) => !value)
-          }}
-        >
-          <Settings2 /> Configure
-        </AppButton>
-      </div>
-
-      {showModelSettings && (
-        <AppForm
-          className="project-model-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            settingsMutation.mutate(modelDraftToCodingDefaults(modelDraft))
-          }}
-        >
-          <SelectField
-            label="Agent"
-            onValueChange={(transport) =>
-              setModelDraft((current) =>
-                changeDraftTransport(current, transport as CodingAgentTransport),
-              )
-            }
-            options={[
-              { label: 'Codex', value: 'codex' },
-              { label: 'Claude', value: 'claude' },
-              { label: 'OpenCode', value: 'opencode' },
-            ]}
-            value={modelDraft.transport}
-          />
-          <AppTextField
-            label="Model"
-            onValueChange={(model) => setModelDraft((current) => ({ ...current, model }))}
-            placeholder={modelDraft.transport === 'codex' ? 'gpt-5.4' : 'Provider default'}
-            value={modelDraft.model}
-          />
-          {modelDraft.transport === 'codex' && (
-            <SelectField
-              label="Reasoning"
-              onValueChange={(reasoningEffort) =>
-                setModelDraft((current) => ({
-                  ...current,
-                  reasoningEffort: reasoningEffort as CodingReasoningEffort,
-                }))
-              }
-              options={[
-                { label: 'Low', value: 'low' },
-                { label: 'Medium', value: 'medium' },
-                { label: 'High', value: 'high' },
-                { label: 'xHigh', value: 'xhigh' },
-              ]}
-              value={modelDraft.reasoningEffort}
-            />
-          )}
-          <div className="project-model-actions">
-            <AppButton
-              className="text-button"
-              variant="ghost"
-              type="button"
-              disabled={settingsMutation.isPending || project.codingDefaultsInherited}
-              onClick={() => settingsMutation.mutate(null)}
-            >
-              Use Home default
-            </AppButton>
-            <AppButton
-              className="secondary-button"
-              type="submit"
-              disabled={
-                settingsMutation.isPending ||
-                (modelDraft.transport === 'codex' && !modelDraft.model.trim())
-              }
-            >
-              {settingsMutation.isPending ? <AppSpinner size="sm" /> : <Settings2 />}
-              Save model
-            </AppButton>
-          </div>
-        </AppForm>
-      )}
-
       <div className="project-goal-list">
         {project.goals.length ? (
           project.goals.map((goal) => (
@@ -815,11 +714,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </div>
 
-      {(linkRepoMutation.error || rebindRepoMutation.error || settingsMutation.error) && (
+      {(linkRepoMutation.error || rebindRepoMutation.error) && (
         <AppAlert className="inline-error">
-          {linkRepoMutation.error?.message ??
-            rebindRepoMutation.error?.message ??
-            settingsMutation.error?.message}
+          {linkRepoMutation.error?.message ?? rebindRepoMutation.error?.message}
         </AppAlert>
       )}
 

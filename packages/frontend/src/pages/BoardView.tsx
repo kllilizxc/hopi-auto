@@ -1,9 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   ChevronDown,
@@ -31,6 +26,7 @@ import {
 import { Navigate, useParams } from 'react-router-dom'
 import { useShell } from '../components/Layout'
 import { MessageFeedSkeleton } from '../components/MessageFeedSkeleton'
+import { PeerSwitcher } from '../components/PeerSwitcher'
 import {
   AppAlert,
   AppBreathingIndicator,
@@ -56,11 +52,14 @@ import {
   type GoalControl,
   type KanbanColumn,
   type RunAttemptDetail,
+  type RunAttemptDiagnostics,
   type RunAttemptEvent,
   type RunAttemptSummary,
+  type RunCostSummary,
   type WorkCardView,
   controlGoal,
   readGoalBoard,
+  readGoalExecutionCost,
   readShellState,
   readWorkAttempt,
   readWorkAttemptEvents,
@@ -78,7 +77,9 @@ import {
   writeMessageStreamSnapshot,
 } from '../lib/messageStreamCache'
 import {
+  orderGoalsByRecency,
   readGoalViewState,
+  readRecentGoal,
   rememberGoalViewState,
   type GoalViewLane,
   type GoalViewState,
@@ -140,9 +141,7 @@ export function compactLaneRenderWindow(selectedLane: GoalViewLane | null) {
     COLUMNS.findIndex((column) => column.id === (selectedLane ?? 'Plan')),
   )
   return new Set(
-    COLUMNS.filter((_, index) => Math.abs(index - selectedIndex) <= 1).map(
-      (column) => column.id,
-    ),
+    COLUMNS.filter((_, index) => Math.abs(index - selectedIndex) <= 1).map((column) => column.id),
   )
 }
 
@@ -212,13 +211,7 @@ async function prepareWorkActivity(
   const attempts = cached ?? queryClient.getQueryData<{ attempts: RunAttemptSummary[] }>(queryKey)
   const latestAttempt = attempts?.attempts[0]
   if (latestAttempt) {
-    await prepareAttemptMessageStream(
-      queryClient,
-      projectId,
-      goalId,
-      workId,
-      latestAttempt.runId,
-    )
+    await prepareAttemptMessageStream(queryClient, projectId, goalId, workId, latestAttempt.runId)
   }
 }
 
@@ -260,9 +253,7 @@ function useGoalViewState(projectId: string | undefined, goalId: string | undefi
       if (!projectId || !goalId) return
       setSnapshot((previous) => {
         const base =
-          previous.scopeKey === scopeKey
-            ? previous.state
-            : readGoalViewState(projectId, goalId)
+          previous.scopeKey === scopeKey ? previous.state : readGoalViewState(projectId, goalId)
         const state = rememberGoalViewState(projectId, goalId, change(base))
         return { scopeKey, state }
       })
@@ -292,9 +283,10 @@ function useCompactKanban() {
 export function BoardView() {
   const { projectId, goalId } = useParams()
   const queryClient = useQueryClient()
-  const { openAssistant } = useShell()
+  const { openAssistant, selectGoal, warmGoal } = useShell()
   const [selectedWork, setSelectedWork] = useState<WorkCardView | null>(null)
   const [repairPrompt, setRepairPrompt] = useState<string | null>(null)
+  const [executionCostOpen, setExecutionCostOpen] = useState(false)
   const [goalViewState, updateGoalViewState] = useGoalViewState(projectId, goalId)
   const compactKanban = useCompactKanban()
   const kanbanRef = useRef<HTMLDivElement | null>(null)
@@ -314,6 +306,13 @@ export function BoardView() {
     queryFn: () => readGoalBoard(projectId ?? '', goalId ?? ''),
     enabled: Boolean(projectId && goalId),
     refetchInterval: boardPollInterval,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
+  })
+  const executionCostQuery = useQuery({
+    queryKey: ['goal-execution-cost', projectId, goalId],
+    queryFn: () => readGoalExecutionCost(projectId ?? '', goalId ?? ''),
+    enabled: Boolean(projectId && goalId && executionCostOpen),
+    refetchInterval: executionCostOpen ? 5_000 : false,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
   const worksByColumn = useMemo(() => {
@@ -480,9 +479,7 @@ export function BoardView() {
   const error = projectQuery.error ?? goalQuery.error ?? controlMutation.error
 
   if ((!goal || project === undefined) && (projectQuery.isLoading || goalQuery.isLoading)) {
-    return (
-      <AppLoadingNotice detail="Reading the latest projection…" label="Loading Goal" />
-    )
+    return <AppLoadingNotice detail="Reading the latest projection…" label="Loading Goal" />
   }
   if (!goal || !project) {
     return (
@@ -514,6 +511,11 @@ export function BoardView() {
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
   const mutationError =
     previewStartMutation.error ?? previewStopMutation.error ?? previewRepairMutation.error
+  const goalPeers = orderGoalsByRecency(
+    project.goals,
+    projectId,
+    readRecentGoal(projectId),
+  ).map((item) => ({ id: item.id, label: item.title }))
 
   const runControl = (control: GoalControl) => {
     controlMutation.mutate(control)
@@ -523,12 +525,20 @@ export function BoardView() {
     <div className="board-page">
       <header className="board-header">
         <div className="goal-title-block">
-          <div>
-            <span className="eyebrow">
-              <span title={projectId}>{projectDisplayName(project)}</span> / {goalId}
-            </span>
-            <h1>{goal.goal.title}</h1>
-          </div>
+          <PeerSwitcher
+            ariaLabel={`${projectDisplayName(project)} Goals`}
+            items={goalPeers}
+            label={
+              <>
+                <span title={projectId}>{projectDisplayName(project)}</span> / Goals
+              </>
+            }
+            moreAriaLabel="More Goals"
+            onSelectionChange={selectGoal}
+            onWarm={warmGoal}
+            selectedKey={goalId}
+            variant="headline"
+          />
         </div>
 
         <div className="board-actions">
@@ -650,7 +660,49 @@ export function BoardView() {
         </div>
       </section>
 
-      <AppScrollShadow className="kanban-scroll"
+      <AppDisclosure
+        className="goal-execution-cost"
+        isExpanded={executionCostOpen}
+        onExpandedChange={setExecutionCostOpen}
+        summary={
+          <>
+            <span>
+              <strong>Execution cost</strong>
+              <small>Read-only Run diagnostics</small>
+            </span>
+            <span>
+              {executionCostQuery.data
+                ? executionCostHeadline(executionCostQuery.data.summary)
+                : 'Open to calculate'}
+            </span>
+          </>
+        }
+      >
+        {executionCostQuery.error ? (
+          <AppAlert className="goal-execution-cost__error">
+            {(executionCostQuery.error as Error).message}
+          </AppAlert>
+        ) : !executionCostQuery.data ? (
+          <div className="goal-execution-cost__loading">
+            <AppSpinner size="sm" /> Reading Attempt diagnostics
+          </div>
+        ) : (
+          <div className="goal-execution-cost__roles">
+            {executionCostQuery.data.byResponsibility.map(({ responsibility, summary }) => (
+              <div key={responsibility}>
+                <small>{responsibility}</small>
+                <strong>{summary.runs} Runs</strong>
+                <span>{executionCostHeadline(summary)}</span>
+                <span>{formatTokenCoverage(summary)}</span>
+                <span>{formatRunOutcomes(summary)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </AppDisclosure>
+
+      <AppScrollShadow
+        className="kanban-scroll"
         ref={kanbanRef}
         orientation="horizontal"
         onScroll={handleKanbanScroll}
@@ -776,7 +828,8 @@ const WorkCard = memo(function WorkCard({
     hasAgentPlan: Boolean(work.agentPlan),
     running,
   })
-  const completedAt = work.stage === 'done' && work.completedAt ? formatTime(work.completedAt) : null
+  const completedAt =
+    work.stage === 'done' && work.completedAt ? formatTime(work.completedAt) : null
 
   return (
     <article
@@ -888,11 +941,7 @@ function WorkProgress({
   const hasSubtasks = items.length > 0
   const total = hasSubtasks ? items.length : 1
   const completed = hasSubtasks ? items.filter((item) => item.completed).length : 0
-  const currentIndex = running
-    ? hasSubtasks
-      ? items.findIndex((item) => !item.completed)
-      : 0
-    : -1
+  const currentIndex = running ? (hasSubtasks ? items.findIndex((item) => !item.completed) : 0) : -1
   const segments = hasSubtasks
     ? items.map((item, index) => ({
         key: `${plan?.planId ?? 'plan'}:${item.text}`,
@@ -1101,17 +1150,17 @@ function WorkDetail({
                 </div>
               </header>
               <AppScrollShadow className="fact-grid work-fact-strip" orientation="horizontal">
-                <span>
-                  <small>Stage</small>
-                  <strong>{work.stage}</strong>
-                </span>
-                <span>
-                  <small>Responsibility</small>
-                  <strong>{work.projection.responsibility ?? 'none'}</strong>
-                </span>
-                <span>
-                  <small>Repositories</small>
-                  <strong>{work.repos?.join(', ') ?? 'project docs'}</strong>
+                <span className="work-fact-model">
+                  <small>Model</small>
+                  <strong
+                    title={
+                      selectedAttempt?.execution
+                        ? `Transport: ${selectedAttempt.execution.transport}; reasoning effort: ${selectedAttempt.execution.reasoningEffort ?? 'not recorded'}`
+                        : undefined
+                    }
+                  >
+                    {attemptModelLabel(selectedAttempt)}
+                  </strong>
                 </span>
                 <span>
                   <small>Revision</small>
@@ -1125,6 +1174,10 @@ function WorkDetail({
                   <small>Not before</small>
                   <strong>{work.notBefore ?? 'now'}</strong>
                 </span>
+                <AttemptDiagnosticFacts
+                  summary={attemptsQuery.data?.summary ?? null}
+                  diagnostics={selectedAttempt?.diagnostics ?? null}
+                />
               </AppScrollShadow>
               <div className="work-detail-body">
                 <AppTabs.Panel className="work-detail-tab-panel" id="activity">
@@ -1134,6 +1187,7 @@ function WorkDetail({
                       goalId={goalId}
                       workId={work.id}
                       attempts={attempts}
+                      costSummary={attemptsQuery.data?.summary ?? null}
                       selectedAttempt={selectedAttempt}
                       loading={attemptsQuery.isLoading}
                       error={attemptsQuery.error as Error | null}
@@ -1337,6 +1391,7 @@ function AttemptHistory({
   goalId,
   workId,
   attempts,
+  costSummary,
   selectedAttempt,
   loading,
   error,
@@ -1347,6 +1402,7 @@ function AttemptHistory({
   goalId: string
   workId: string
   attempts: RunAttemptSummary[]
+  costSummary: RunCostSummary | null
   selectedAttempt: RunAttemptSummary | null
   loading: boolean
   error: Error | null
@@ -1355,12 +1411,7 @@ function AttemptHistory({
 }) {
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: selectedAttempt?.runId ?? 'no-attempt',
-    queryKey: workAttemptEventsQueryKey(
-      projectId,
-      goalId,
-      workId,
-      selectedAttempt?.runId ?? null,
-    ),
+    queryKey: workAttemptEventsQueryKey(projectId, goalId, workId, selectedAttempt?.runId ?? null),
     readPage: (input) =>
       readWorkAttemptEvents(projectId, goalId, workId, selectedAttempt?.runId ?? '', input),
     getItemId: runEventId,
@@ -1389,6 +1440,7 @@ function AttemptHistory({
           <div>
             <h2>Attempts</h2>
             <p>{outcomeSummary}</p>
+            {costSummary && <p>{executionCostHeadline(costSummary)}</p>}
           </div>
           <CountBadge>{attempts.length}</CountBadge>
         </div>
@@ -1470,7 +1522,9 @@ function AttemptHistory({
                 isLoadingOlder={eventStream.isLoadingOlder}
                 onLoadOlder={eventStream.loadOlder}
                 emptyState={
-                  <div className="attempt-feed-empty">This Attempt predates live event capture.</div>
+                  <div className="attempt-feed-empty">
+                    This Attempt predates live event capture.
+                  </div>
                 }
               />
             </Suspense>
@@ -1481,10 +1535,72 @@ function AttemptHistory({
   )
 }
 
+function AttemptDiagnosticFacts({
+  summary,
+  diagnostics,
+}: {
+  summary: RunCostSummary | null
+  diagnostics: RunAttemptDiagnostics | null
+}) {
+  if (!summary || !diagnostics) return null
+  return (
+    <>
+      <span title="Selected Attempt elapsed wall time">
+        <small>Attempt elapsed</small>
+        <strong>{formatDuration(diagnostics.elapsedMs)}</strong>
+        <em>
+          {diagnostics.turns !== null
+            ? `${diagnostics.turns} vendor turns`
+            : `${diagnostics.modelMessages} model messages`}
+        </em>
+      </span>
+      <span title="Vendor-reported input tokens; cached input is a reported subset">
+        <small>Work tokens</small>
+        <strong>
+          {summary.runsWithTokenUsage > 0
+            ? formatCompactNumber(summary.inputTokens)
+            : 'Unavailable'}
+        </strong>
+        <em>{formatTokenCoverage(summary)}</em>
+      </span>
+      <span title="Unique normalized tool calls in this Attempt">
+        <small>Attempt tools</small>
+        <strong>{diagnostics.toolCalls}</strong>
+        <em>{diagnostics.commandCalls} commands</em>
+      </span>
+      <span title="Attempt elapsed time outside paired tool intervals; includes model and runtime overhead">
+        <small>Model / overhead</small>
+        <strong>{formatDuration(diagnostics.modelAndOverheadWallTimeMs)}</strong>
+        <em>{formatDuration(diagnostics.observedToolWallTimeMs)} observed tools</em>
+      </span>
+      <span title="Only shown when the selected vendor reports a monetary amount">
+        <small>Vendor cost</small>
+        <strong>
+          {summary.runsWithVendorReportedCost > 0
+            ? `$${summary.vendorReportedCostUsd.toFixed(4)}`
+            : 'Unavailable'}
+        </strong>
+        <em>
+          {summary.runsWithVendorReportedCost} / {summary.runs} Runs reported
+        </em>
+      </span>
+    </>
+  )
+}
+
 export function attemptStatus(attempt: RunAttemptSummary) {
   if (attempt.status === 'running') return 'working'
   if (attempt.application === 'stale') return 'stale'
   return attempt.result ?? attempt.status
+}
+
+export function attemptModelLabel(attempt: RunAttemptSummary | null) {
+  if (!attempt) return 'not started'
+  if (!attempt.execution) return 'not recorded'
+  const model = attempt.execution.model ?? `${attempt.execution.transport} default`
+  return attempt.execution.reasoningEffort
+    ? `${model} · ${attempt.execution.reasoningEffort}`
+    : model
 }
 
 export function attemptOutcomeBreakdown(attempts: RunAttemptSummary[]) {
@@ -1510,6 +1626,43 @@ export function attemptOutcomeSummary(attempts: RunAttemptSummary[]) {
   ].filter((part): part is string => part !== null)
 
   return parts.length > 0 ? parts.join(' · ') : 'Messages and tool activity'
+}
+
+export function executionCostHeadline(summary: RunCostSummary) {
+  const modelActivity = summary.runsWithTurnCount
+    ? `${summary.reportedTurns} turns`
+    : `${summary.modelMessages} model messages`
+  return `${summary.runs} Runs · ${modelActivity} · ${summary.toolCalls} tools · ${formatDuration(summary.elapsedMs)}`
+}
+
+function formatTokenCoverage(summary: RunCostSummary) {
+  if (summary.runsWithTokenUsage === 0)
+    return `Tokens unavailable · 0 / ${summary.runs} Runs reported`
+  return `${formatCompactNumber(summary.cachedInputTokens)} cached · ${formatCompactNumber(summary.outputTokens)} output · ${summary.runsWithTokenUsage} / ${summary.runs} Runs reported`
+}
+
+function formatRunOutcomes(summary: RunCostSummary) {
+  const parts = [
+    summary.outcomes.rejected ? `${summary.outcomes.rejected} rejected` : null,
+    summary.outcomes.failed ? `${summary.outcomes.failed} failed` : null,
+    summary.outcomes.interrupted ? `${summary.outcomes.interrupted} interrupted` : null,
+    summary.outcomes.stale ? `${summary.outcomes.stale} stale` : null,
+  ].filter((part): part is string => Boolean(part))
+  return parts.length ? parts.join(' · ') : `${summary.outcomes.success} successful`
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat([], { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
+function formatDuration(milliseconds: number) {
+  if (milliseconds < 1_000) return `${Math.round(milliseconds)}ms`
+  const seconds = milliseconds / 1_000
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`
+  const minutes = seconds / 60
+  if (minutes < 60) return `${minutes.toFixed(minutes < 10 ? 1 : 0)}m`
+  const hours = minutes / 60
+  return `${hours.toFixed(hours < 10 ? 1 : 0)}h`
 }
 
 function attemptStatusTone(attempt: RunAttemptSummary) {

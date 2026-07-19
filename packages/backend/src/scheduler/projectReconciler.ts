@@ -491,6 +491,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           },
           {
             onEvent: (event) => attempt?.record(event),
+            onExecution: (execution) => attempt?.setExecution(execution).catch(() => undefined),
             onSession: (nextSession) =>
               responsibilitySessions.write(
                 sessionKey,

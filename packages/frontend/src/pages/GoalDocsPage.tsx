@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Bot, FileText, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
+import { useShell } from '../components/Layout'
+import { PeerSwitcher } from '../components/PeerSwitcher'
 import {
   AppAlert,
   AppBreathingIndicator,
@@ -18,12 +20,14 @@ import {
   STABLE_QUERY_NOTIFY_PROPS,
 } from '../lib/queryPerformance'
 import { goalDocsQueryKey } from '../lib/queryKeys'
+import { orderGoalsByRecency, readRecentGoal } from '../lib/goalScope'
 import { cn, formatTime, projectDisplayName } from '../lib/utils'
 
 const CONTRACT_KEY = '__goal_contract__'
 
 export function GoalDocsPage() {
   const { projectId, goalId } = useParams()
+  const { selectGoal, warmGoal } = useShell()
   const [selectedDocument, setSelectedDocument] = useState(CONTRACT_KEY)
   const goalQuery = useQuery({
     queryKey: goalDocsQueryKey(projectId, goalId),
@@ -79,16 +83,32 @@ export function GoalDocsPage() {
   const project = projectQuery.data
   const selectedPath = selectedDesign?.path ?? 'goal.md'
   const selectedContent = selectedDesign ? documentQuery.data?.content : goal.goal.body
+  const goalPeers = project
+    ? orderGoalsByRecency(project.goals, projectId, readRecentGoal(projectId)).map((item) => ({
+        id: item.id,
+        label: item.title,
+      }))
+    : [{ id: goalId, label: goal.goal.title }]
 
   return (
     <div className="docs-page">
       <header className="docs-header">
-        <div>
-          <span className="eyebrow">
-            <span title={projectId}>{project ? projectDisplayName(project) : projectId}</span> /{' '}
-            {goalId}
-          </span>
-          <h1>Goal Design</h1>
+        <div className="docs-title-block">
+          <PeerSwitcher
+            ariaLabel={`${project ? projectDisplayName(project) : projectId} Goals`}
+            items={goalPeers}
+            label={
+              <>
+                <span title={projectId}>{project ? projectDisplayName(project) : projectId}</span> /{' '}
+                Goals
+              </>
+            }
+            moreAriaLabel="More Goals"
+            onSelectionChange={selectGoal}
+            onWarm={warmGoal}
+            selectedKey={goalId}
+            variant="headline"
+          />
           <p>Canonical documents are the durable design and traceability surface.</p>
         </div>
       </header>

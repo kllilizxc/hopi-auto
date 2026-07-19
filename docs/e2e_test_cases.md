@@ -879,9 +879,12 @@ Actions:
 6. Run one focused configured-provider turn that calls `hopi_notify_user({ message })`; confirm the
    informational message records delivery but remains **Waiting for Assistant** and receives a
    correction turn rather than becoming **Needs you**.
-7. Run the actionable variant with `hopi_request_user({ message })`; confirm **Needs you** points at
-   that exact public event. Send an unrelated Goal message and confirm it does not clear the request,
-   then use its Reply control and confirm only that correlated response returns ownership to Assistant.
+7. Run the actionable variant with `hopi_request_user({ message })`; confirm its public message is
+   independently understandable from the visible conversation, including the material cause,
+   blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
+   one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
+   and confirm it does not clear the request, then use its Reply control and confirm only that
+   correlated response returns ownership to Assistant.
 8. In the poisoned-history variant, retain one older blocked internal turn, create an independent
    Assistant-owned Goal Attention, restart at one boundary, and let the system converge.
 
@@ -894,6 +897,8 @@ Pass conditions:
 - Public input receives speaking priority without cancelling the read-only Reflection model process.
 - A stale handoff is discarded before publication.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
+- A direct operator request contains enough causal context to decide without exposing the internal
+  Reflection brief; it is not only a choice list or bare question.
 - Informational delivery never projects **Needs you**; only `request_user` installs
   `operatorRequest`.
 - Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
@@ -920,7 +925,7 @@ the asserted ownership boundary.
 | ------- | ----------------------------------------------------------------------------------------------------- |
 | Risk    | UI configuration changes only presentation, corrupts identity, or affects the wrong Agent scope.      |
 | Reality | Real browser and Git; deterministic runner command capture, plus a small live vendor canary.          |
-| Fixture | Two local Repos, one movable checkout, and Home/project model defaults that are observably different. |
+| Fixture | Two local Repos, one movable checkout, and distinct Home-wide Assistant and Generator settings.        |
 | Cost    | Zero for browser contract; low for vendor canary.                                                     |
 
 Actions:
@@ -928,13 +933,13 @@ Actions:
 1. Cancel the system directory chooser and verify no draft or Project is created.
 2. Select two checkouts of one Git Repo and verify submission fails before any Project link exists.
 3. Remove the duplicate, select a second Repo, choose the primary, and create the Project once.
-4. Set a Home Assistant model and a different Project coding default.
+4. Set distinct Home-wide Assistant and Generator models.
 5. Move one checkout, rebind only that Repo through Linked Projects, then reload the server and UI.
 
 Pass conditions:
 
 - Project and Repo identities remain stable and one Repo is primary.
-- Assistant uses Home settings while Planner, Generator, and Reviewer use Project settings.
+- Assistant and Generator use their selected Home-wide role settings.
 - The actual adapter command, not only the label, contains the selected transport/model.
 - Rebind updates only the selected Repo after validation and preserves both checkout branches and content.
 - Reload presents the same links and settings from durable documents.
@@ -946,10 +951,10 @@ Primary invariants: `INV-01`, `INV-05`, `INV-14`.
 Current implementation: `packages/backend/tests/e2e/configurationRebind.e2e.ts`
 (`bun run e2e:config:020`) drives the Coordinator-host chooser through Browser Harness. It proves
 cancel is inert, duplicate Git identity is rejected before any Project link exists, and two distinct
-Repos are submitted behind one Project creation gate. The same Run configures distinct Home Assistant
-and Project coding defaults, rebinds one Repo, restarts the Coordinator, reloads the UI, and retains
-nine screenshots. Adapter-command construction remains in the vendor/configuration Contract tests
-because repeating the same choice through a model would not add another execution boundary.
+Repos are submitted behind one Project creation gate. The same Run configures distinct Home-wide
+Assistant and Generator settings, rebinds one Repo, restarts the Coordinator, reloads the UI, and
+retains nine screenshots. Adapter-command construction remains in the vendor/configuration Contract
+tests because repeating the same choice through a model would not add another execution boundary.
 
 ### HOPI-E2E-030: Project And Assistant-Home Migration
 

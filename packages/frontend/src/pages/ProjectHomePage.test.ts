@@ -20,6 +20,15 @@ test('Assistant settings use a safe default when an older API omits coding defau
   expect(formatCodingDefaults(undefined)).toBe('gpt-5.4 · xhigh')
 })
 
+test('model settings are Home-wide by role and absent from Project cards', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+
+  expect(source).toContain('Projects share these settings.')
+  expect(source).not.toContain('updateProjectSettings')
+  expect(source).not.toContain('project-model-row')
+  expect(source).not.toContain('Project default')
+})
+
 test('Project paths display the selected Git subdirectory without changing the Repo root', () => {
   expect(scopedRepoPath('/home/me/Code/mono', 'apps/new-product')).toBe(
     '/home/me/Code/mono/apps/new-product',

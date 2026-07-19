@@ -91,6 +91,17 @@ const linksSchema = z
                 .strict(),
             )
             .min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+const legacyConfiguredLinksSchema = z
+  .object({
+    version: z.literal(3),
+    projects: z.array(
+      linksSchema.shape.projects.element
+        .extend({
           codingDefaults: projectCodingDefaultsInputSchema
             .transform((value) => normalizeProjectCodingDefaults(value))
             .optional(),
@@ -147,20 +158,28 @@ export async function readAndValidateAssistantWorkspace(
   const home = parseYaml(await requiredText(candidate, paths.homeDocument), homeSchema, 'home.yml')
   const rawLinks = parseYaml(
     await requiredText(candidate, paths.projectLinks),
-    z.union([linksSchema, legacyMultiRepoLinksSchema, legacyLinksSchema]),
+    z.union([
+      linksSchema,
+      legacyConfiguredLinksSchema,
+      legacyMultiRepoLinksSchema,
+      legacyLinksSchema,
+    ]),
     'projects.yml',
   )
-  const links: { projects: ProjectLink[] } =
-    rawLinks.version === 3 || rawLinks.version === 2
-      ? rawLinks
-      : {
-          projects: rawLinks.projects.map((project) => ({
+  const links: { projects: ProjectLink[] } = {
+    projects:
+      rawLinks.version === 1
+        ? rawLinks.projects.map((project) => ({
             projectId: project.projectId,
             primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
             repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
-            ...(project.codingDefaults ? { codingDefaults: project.codingDefaults } : {}),
+          }))
+        : rawLinks.projects.map((project) => ({
+            projectId: project.projectId,
+            primaryRepoId: project.primaryRepoId,
+            repos: project.repos,
           })),
-        }
+  }
   if (new Set(links.projects.map((project) => project.projectId)).size !== links.projects.length) {
     throw invalid('projects.yml contains duplicate projectId values')
   }

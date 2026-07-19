@@ -14,7 +14,7 @@ A Project contains one or more Repos with stable `repoId` values and exactly one
 The primary Repo is the existing Project control boundary:
 
 - its managed integration worktree contains the canonical `.hopi` package
-- its root `AGENTS.md` is the Project model entrypoint
+- its root `AGENTS.md` is the Project agent-instruction entrypoint
 - its `scripts/hopi/preview` is the one Project Preview adapter
 - its `hopi/release` ref is the one logical C1 boundary
 
@@ -234,9 +234,9 @@ adapter implements it under the normal approval policy.
 
 Linked Projects shows one primary Repo and a list of secondary Repos. The MVP supports selecting
 multiple Repos before Project creation, adding a secondary Repo later, and rebinding one or all
-moved Repos. Primary switching after creation and Repo removal are deferred. Project model settings
-remain Project-level. The speaking Assistant exposes these same Project and Repo operations when the
-operator supplies their paths; the host directory picker remains only a UI input mechanism. A
+moved Repos. Primary switching after creation and Repo removal are deferred. Model settings remain
+Home-wide by agent role. The speaking Assistant exposes these same Project and Repo operations when
+the operator supplies their paths; the host directory picker remains only a UI input mechanism. A
 topology mutation made during an Assistant turn persists first and schedules one runtime rebuild
 after that turn settles, rather than interrupting the speaking session mid-call.
 

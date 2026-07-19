@@ -24,7 +24,10 @@ import {
 } from '../testRunArtifact'
 
 export interface LiveState {
-  home: { homeId: string; assistantCodingDefaults: ProjectCodingDefaults }
+  home: {
+    homeId: string
+    agentRoleCodingDefaults: { assistant: { codingDefaults: ProjectCodingDefaults } }
+  }
   projects: Array<{
     projectId: string
     repos: Array<{ repoId: string; integrationRoot: string; primary: boolean }>
@@ -965,7 +968,7 @@ export async function configureProjectInBrowser(
     secondaryRepoId: string
     secondaryRepoPath: string
     assistantModel: string
-    projectModel: string
+    generatorModel: string
   },
 ) {
   const url = `${harness.baseUrl}/projects`
@@ -976,7 +979,7 @@ export async function configureProjectInBrowser(
     conflict: await screenshotTarget(harness, '04-project-duplicate-rejected.png'),
     linked: await screenshotTarget(harness, '05-project-multi-repo-linked.png'),
     assistantConfigured: await screenshotTarget(harness, '06-assistant-model-configured.png'),
-    projectConfigured: await screenshotTarget(harness, '07-project-model-configured.png'),
+    generatorConfigured: await screenshotTarget(harness, '07-generator-model-configured.png'),
   }
   const values = Object.fromEntries(
     Object.entries(input).map(([key, value]) => [key, browserUtf8Expression(value)]),
@@ -1069,36 +1072,39 @@ export async function configureProjectInBrowser(
     `assistant_visible = wait_js(${JSON.stringify(`document.querySelector('.assistant-settings-current strong')?.textContent?.includes(${values.assistantModel})`)})`,
     'require_step("assistant_model_visible", assistant_visible)',
     captureScreenshotLine(screenshots.assistantConfigured, 'target'),
-    `configured_open = page_js(${JSON.stringify("(() => { const button = document.querySelector('.project-model-row button'); if (!button) return false; button.click(); return true })()")})`,
-    'require_step("project_configuration_open", configured_open)',
-    `wait_js(${JSON.stringify("Boolean(document.querySelector('.project-model-form .app-select__trigger'))")})`,
-    `hopi_audit_note("select Claude for Project coding agents", scenario=${JSON.stringify(harness.scenario)})`,
-    `page_js(${JSON.stringify("document.querySelector('.project-model-form .app-select__trigger')?.click()")})`,
+    `configured_open = page_js(${JSON.stringify("(() => { const button = document.querySelectorAll('.assistant-settings-form .app-select__trigger')[0]; if (!button) return false; button.click(); return true })()")})`,
+    'require_step("role_configuration_open", configured_open)',
+    `role_options_visible = wait_js(${JSON.stringify("[...document.querySelectorAll('[role=option]')].some((option) => option.textContent?.includes('Generator'))")})`,
+    'require_step("role_options_visible", role_options_visible)',
+    `role_selected = page_js(${JSON.stringify("(() => { const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.textContent?.includes('Generator')); if (!option) return false; option.click(); return true })()")})`,
+    'require_step("generator_role_selected", role_selected)',
+    `hopi_audit_note("select Claude for Home Generator role", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("document.querySelectorAll('.assistant-settings-form .app-select__trigger')[1]?.click()")})`,
     `options_visible = wait_js(${JSON.stringify("[...document.querySelectorAll('[role=option]')].some((option) => option.textContent?.includes('Claude'))")})`,
-    'require_step("project_agent_options_visible", options_visible)',
+    'require_step("generator_agent_options_visible", options_visible)',
     `agent_selected = page_js(${JSON.stringify("(() => { const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.textContent?.includes('Claude')); if (!option) return false; option.click(); return true })()")})`,
-    'require_step("project_agent_selected", agent_selected)',
+    'require_step("generator_agent_selected", agent_selected)',
     'time.sleep(0.25)',
-    `project_filled = page_js(${JSON.stringify(
+    `generator_filled = page_js(${JSON.stringify(
       [
         '(() => {',
-        "  const input = document.querySelector('.project-model-form input')",
+        "  const input = document.querySelector('.assistant-settings-form input')",
         "  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set",
-        "  if (!input || !setter) return { ok: false, reason: 'missing Project model input' }",
-        `  setter.call(input, ${values.projectModel})`,
+        "  if (!input || !setter) return { ok: false, reason: 'missing Generator model input' }",
+        `  setter.call(input, ${values.generatorModel})`,
         "  input.dispatchEvent(new Event('input', { bubbles: true }))",
         '  return { ok: true }',
         '})()',
       ].join('\n'),
     )})`,
-    'require_step("project_model_filled", project_filled.get("ok"))',
-    `hopi_audit_note("save Project coding model", scenario=${JSON.stringify(harness.scenario)})`,
-    `page_js(${JSON.stringify("[...document.querySelectorAll('.project-model-form button')].find((candidate) => candidate.textContent?.includes('Save model'))?.click()")})`,
-    `project_model_visible = wait_js(${JSON.stringify(`document.querySelector('.project-model-row strong')?.textContent?.includes(${values.projectModel})`)})`,
-    'require_step("project_model_visible", project_model_visible)',
-    captureScreenshotLine(screenshots.projectConfigured, 'target'),
-    `hopi_audit_note("HOPI Project linking and model configuration completed", scenario=${JSON.stringify(harness.scenario)})`,
-    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"cancelled": cancelled, "primarySelected": primary_selected, "duplicateSelected": duplicate_selected, "conflictVisible": conflict_visible, "conflictAtomic": conflict_atomic, "duplicateRemoved": duplicate_removed, "oneRepoRemains": one_repo_remains, "finalSelection": final_selection, "repoIdsReady": repo_ids_ready, "linked": linked, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "agentSelected": agent_selected, "projectFilled": project_filled, "projectModelVisible": project_model_visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'require_step("generator_model_filled", generator_filled.get("ok"))',
+    `hopi_audit_note("save Home Generator model", scenario=${JSON.stringify(harness.scenario)})`,
+    `page_js(${JSON.stringify("[...document.querySelectorAll('.assistant-settings-form button')].find((candidate) => candidate.textContent?.trim().endsWith('Save'))?.click()")})`,
+    `generator_model_visible = wait_js(${JSON.stringify(`document.querySelector('.assistant-settings-current strong')?.textContent?.includes(${values.generatorModel})`)})`,
+    'require_step("generator_model_visible", generator_model_visible)',
+    captureScreenshotLine(screenshots.generatorConfigured, 'target'),
+    `hopi_audit_note("HOPI Project linking and Home role configuration completed", scenario=${JSON.stringify(harness.scenario)})`,
+    'print("HOPI_E2E_CONFIGURATION=" + json.dumps({"cancelled": cancelled, "primarySelected": primary_selected, "duplicateSelected": duplicate_selected, "conflictVisible": conflict_visible, "conflictAtomic": conflict_atomic, "duplicateRemoved": duplicate_removed, "oneRepoRemains": one_repo_remains, "finalSelection": final_selection, "repoIdsReady": repo_ids_ready, "linked": linked, "assistantFilled": assistant_filled, "assistantVisible": assistant_visible, "configuredOpen": configured_open, "roleSelected": role_selected, "agentSelected": agent_selected, "generatorFilled": generator_filled, "generatorModelVisible": generator_model_visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -1122,8 +1128,9 @@ export async function configureProjectInBrowser(
     'linked',
     'assistantVisible',
     'configuredOpen',
+    'roleSelected',
     'agentSelected',
-    'projectModelVisible',
+    'generatorModelVisible',
   ]) {
     if (evidence[field] !== true) {
       throw new Error(
@@ -1153,7 +1160,7 @@ export async function rebindProjectInBrowser(
     repoId: string
     repoPath: string
     assistantModel: string
-    projectModel: string
+    generatorModel: string
   },
 ) {
   const url = `${harness.baseUrl}/projects`
@@ -1212,7 +1219,8 @@ export async function rebindProjectInBrowser(
     'switch_tab(target)',
     `goto_url(${pythonUtf8Expression(url)})`,
     'wait_for_load()',
-    `reloaded = wait_js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.title === ${values.projectId}); const moved = [...(card?.querySelectorAll('.project-repo-path') ?? [])].some((element) => element.title === ${values.repoPath}); return Boolean(card && moved && document.body.innerText.includes(${values.assistantModel}) && card.textContent?.includes(${values.projectModel})) })()`)})`,
+    `page_js(${JSON.stringify(`fetch('/api/state').then((response) => response.json()).then((state) => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.title === ${values.projectId}); const moved = [...(card?.querySelectorAll('.project-repo-path') ?? [])].some((element) => element.title === ${values.repoPath}); const assistant = state.home?.agentRoleCodingDefaults?.assistant?.codingDefaults?.model === ${values.assistantModel}; const generator = state.home?.agentRoleCodingDefaults?.generator?.codingDefaults?.model === ${values.generatorModel}; window.__hopiConfigurationReloaded = Boolean(card && moved && assistant && generator) })`)})`,
+    `reloaded = wait_js(${JSON.stringify('window.__hopiConfigurationReloaded === true')})`,
     'require_step("configuration_reloaded", reloaded)',
     captureScreenshotLine(screenshots.reloaded, 'target'),
     `hopi_audit_note("HOPI Project Rebind survived browser reload", scenario=${JSON.stringify(harness.scenario)})`,

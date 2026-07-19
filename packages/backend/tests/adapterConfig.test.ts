@@ -58,7 +58,7 @@ describe('agent adapter config normalization', () => {
     })
   })
 
-  test('preserves explicit legacy overrides while adding project defaults', () => {
+  test('preserves explicit legacy overrides while adding Home defaults', () => {
     expect(
       normalizeAgentAdapterConfig({
         version: 1,
@@ -114,7 +114,7 @@ describe('agent adapter config normalization', () => {
     })
   })
 
-  test('uses Project defaults for workflow roles without changing the workspace Assistant', () => {
+  test('uses Home defaults and explicit Home role overrides for workflow roles', () => {
     const config = normalizeAgentAdapterConfig({
       version: 3,
       defaults: {
@@ -131,18 +131,12 @@ describe('agent adapter config normalization', () => {
         },
       },
     })
-    const projectDefaults = {
-      transport: 'codex' as const,
-      model: 'gpt-5.3-codex',
-      reasoningEffort: 'high' as const,
-    }
-
-    expect(resolveRoleTransportConfig(config, 'generator', projectDefaults)).toMatchObject({
+    expect(resolveRoleTransportConfig(config, 'generator')).toMatchObject({
       transport: 'codex',
-      model: 'gpt-5.3-codex',
-      reasoningEffort: 'high',
+      model: 'gpt-5.4',
+      reasoningEffort: 'xhigh',
     })
-    expect(resolveRoleTransportConfig(config, 'reviewer', projectDefaults)).toMatchObject({
+    expect(resolveRoleTransportConfig(config, 'reviewer')).toMatchObject({
       transport: 'claude',
       model: 'claude-review',
     })

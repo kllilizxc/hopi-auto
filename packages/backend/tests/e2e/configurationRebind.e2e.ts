@@ -59,7 +59,7 @@ try {
       secondaryRepoId: 'api',
       secondaryRepoPath: secondaryRoot,
       assistantModel: 'gpt-5.4',
-      projectModel: 'claude-sonnet-4-6',
+      generatorModel: 'claude-sonnet-4-6',
     },
   )
   await rename(secondaryRoot, movedSecondaryRoot)
@@ -70,7 +70,7 @@ try {
       repoId: 'api',
       repoPath: movedSecondaryRoot,
       assistantModel: 'gpt-5.4',
-      projectModel: 'claude-sonnet-4-6',
+      generatorModel: 'claude-sonnet-4-6',
     },
   )
   const rebound = await requestJson<StateView>(baseUrl, '/api/state')
@@ -113,14 +113,17 @@ try {
 }
 
 function assertState(state: StateView) {
-  assert.deepEqual(state.home.assistantCodingDefaults, {
+  assert.deepEqual(state.home.agentRoleCodingDefaults.assistant.codingDefaults, {
     transport: 'codex',
     model: 'gpt-5.4',
     reasoningEffort: 'xhigh',
   })
+  assert.deepEqual(state.home.agentRoleCodingDefaults.generator.codingDefaults, {
+    transport: 'claude',
+    model: 'claude-sonnet-4-6',
+  })
   const project = state.projects.find((candidate) => candidate.projectId === PROJECT_ID)
   assert.ok(project)
-  assert.deepEqual(project.codingDefaults, { transport: 'claude', model: 'claude-sonnet-4-6' })
   assert.equal(project.primaryRepoId, 'web')
   assert.equal(project.repos.find((repo) => repo.repoId === 'web')?.repoPath, primaryRoot)
   assert.equal(project.repos.find((repo) => repo.repoId === 'api')?.repoPath, movedSecondaryRoot)
@@ -137,11 +140,15 @@ async function initializeRepo(root: string) {
 }
 
 interface StateView {
-  home: { assistantCodingDefaults: unknown }
+  home: {
+    agentRoleCodingDefaults: {
+      assistant: { codingDefaults: unknown }
+      generator: { codingDefaults: unknown }
+    }
+  }
   projects: Array<{
     projectId: string
     primaryRepoId: string
-    codingDefaults: unknown
     repos: Array<{ repoId: string; repoPath: string }>
   }>
 }

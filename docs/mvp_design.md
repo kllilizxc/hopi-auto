@@ -229,6 +229,13 @@ A responsibility adapter may emit a structured Agent plan while executing one At
 normalizes that vendor event into a transport-independent runtime snapshot whose items contain only
 display text and completion state. The snapshot is observability, not workflow authority:
 
+- plan items describe outcome, decision, or dependency boundaries that materially change what
+  remains to be achieved. Supporting reads, setup, routine checks, result serialization, and other
+  operations with no independently meaningful outcome stay folded into the owning item. Independent
+  operations may be batched. HOPI imposes no simple/complex classification and no minimum or maximum
+  item count; it preserves the model's proportionate plan instead of rewriting or hiding items by
+  keyword;
+
 - it never creates Work, changes a Work stage, satisfies a dependency, or contributes Evidence;
 - the latest snapshot from the latest running Attempt replaces earlier snapshots instead of merging
   them across retries, resumed sessions, responsibilities, or Runs;
@@ -347,10 +354,15 @@ The MVP UI contains:
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
    Work hidden by default behind an archive filter.
 
-Every peer-view tab surface uses one shared tab rail and sliding selection indicator. Project
-shortcuts, Kanban/Goal docs navigation, and Activity/Work contract therefore differ only in layout
-constraints, never in tab interaction or selected-state styling. Attempt history and document
-indexes remain lists because they select records rather than peer views.
+Every peer-view tab surface uses one shared tab rail. Project shortcuts, Goal switching,
+Kanban/Goal docs navigation, and Activity/Work contract share selection, keyboard, overflow, and
+navigation behavior while using only the visual variant required by their hierarchy. Goal switching
+is rendered once in the Goal surface's title slot rather than duplicated in the global shell: the
+selected Goal is the page title, nearby Goals are smaller muted peers beside it, and additional Goals
+remain available through the same overflow control. This title variant has no rail border or
+background. The compact Project rail and ordinary content tabs retain their sliding selected
+indicator. Attempt history and document indexes remain lists because they select records rather than
+peer views.
 
 Browser-local Goal view state contains only presentation preferences: expanded Work progress rows
 and the currently snapped compact Lane, keyed by stable Project and Goal identity. Re-entry restores
@@ -400,9 +412,14 @@ Kanban is read-only: it has no drag-to-transition or direct status mutation. A c
 canonical Work, Evidence, dependency, timing, and error facts. Only the running title and current
 segment fill carry restrained status motion; the title uses the Lane color while the card surface
 remains still. Reduced-motion keeps the title as a static emphasis. Opening a card also lists each
-runtime Attempt and its normalized live message/tool stream;
-that diagnostic stream is not another workflow authority. A separate polished Diagnostics product
-is deferred.
+runtime Attempt and its normalized live message/tool stream. The detail header shows the execution
+model and reasoning effort captured for the selected Attempt; switching Attempts switches that
+value, while older records without a captured execution show an explicit unavailable value rather
+than today's Home role setting. One horizontally scrollable fact strip combines that execution
+identity with revision/recovery timing and the selected Attempt's cost diagnostics. It omits Stage,
+Responsibility, and Repositories because the Lane, Attempt list, and Work contract already own that
+context. The diagnostic stream is not another workflow authority. A separate polished Diagnostics
+product is deferred.
 
 Active Goals reconcile without manual Start until they complete, pause, cancel, reach
 `notBefore`, or need Attention.

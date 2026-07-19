@@ -617,8 +617,10 @@ const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'Retry means another invocation in the same Work lineage; it does not rebuild, reset, or prove synchronization. For an unchanged task-branch defect in an internal Reflection handoff, request Planning instead. Claim repair only after later state or Attempt evidence proves it.',
   'set_not_before only defers dispatch; it never terminates Work or clears a Planning guard. Cancel Work only when the operator or accepted plan explicitly abandons it, never as operational recovery. After Work control, trust the returned stage, notBefore, terminal, and failedPredicates instead of inferring success from the requested operation.',
   'If a referenced Attention still blocks, keep ownership with Assistant while HOPI can repair or schedule it. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply. Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds and its reference is no longer returned as open.',
+  'hopi_notify_user and hopi_request_user update one turn-local final public-message slot; a later successful call may revise it after fresh state changes the conclusion. Only the final slot is published when the turn ends.',
+  'Every hopi_request_user message must stand alone in the visible conversation: preserve enough material cause and consequence to explain what changed, why HOPI cannot continue, the exact answer or action needed, and any non-obvious effect of viable alternatives. Include a recommendation when one exists. Be proportional; concise never means stripping the context needed to decide.',
   'Read state at current page scope by omitting IDs; for another explicit scope copy complete canonical IDs. Follow exact returned document or diagnostic paths only when their body is needed; never scan runtime history broadly.',
-  'When asked for a report, output, preview, or other deliverable, call hopi_read_state for that Goal with includeEvidence: true and select it from Work Evidence artifacts. Link the returned operatorUrl in Markdown; never substitute inspectionPath, a design, Work, plan, or latest-Attempt path for the deliverable.',
+  'For every completed Goal update, and whenever asked for a report, output, preview, or other deliverable, call hopi_read_state for that exact Goal with includeEvidence: true and select it from Work Evidence artifacts. Link at least one relevant returned operatorUrl in Markdown when available; if none resolves, say no linked artifact was produced. Never substitute inspectionPath, a design, Work, plan, or latest-Attempt path for the deliverable.',
   'Adopt only task-relevant current images through the references field of the Goal tool already needed, with a concise purpose. Keep unrelated images in conversation and use returned Goal-local paths in authority.',
   'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
 ] as const
@@ -667,6 +669,8 @@ function renderTurn(event: InboxEventDocument, preference: AssistantPreferenceDo
       '[Internal Reflection handoff. This is not operator input.]',
       'Re-read current state and referenced Attention. Resolve what code and authority can answer; change design or request Planning when needed. Ask the operator only for a decision or external action Assistant cannot supply.',
       'If stale or already resolved, finish silently. Use hopi_notify_user only for a concise informational update alongside real internal progress. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply; all other output stays hidden.',
+      'A hopi_request_user message is the complete public turn. Translate the brief into a self-contained decision request with the material cause, blocking consequence, exact need, alternative effects when non-obvious, and a recommendation when one exists. Do not expose irrelevant internal IDs or process narration.',
+      'If the brief reports Goal completion, read the exact Goal with includeEvidence: true before notifying. Include a relevant available operatorUrl in Markdown; when none resolves, explicitly say no linked artifact was produced.',
       renderPreference(preference, false),
       renderOperatorReplyContract(),
       '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',
@@ -692,7 +696,7 @@ function renderAttentionSettlementCorrection(references: readonly string[]) {
     '[Attention settlement correction for the current internal turn.]',
     'The previous response left the exact Assistant-owned Attention references below open without a durable internal continuation or actionable operator request.',
     references.join('\n'),
-    'Re-read current state. Resolve each blocker that is now false or superseded. Otherwise create the durable internal repair/retry/planning effect that continues it. Only if one exact decision, authorization, or external action remains, call hopi_request_user with one concise question. hopi_notify_user alone does not settle this check. Do not finish as a no-op.',
+    'Re-read current state. Resolve each blocker that is now false or superseded. Otherwise create the durable internal repair/retry/planning effect that continues it. Only if one exact decision, authorization, or external action remains, call hopi_request_user with one proportional, self-contained request that preserves the material cause, blocking consequence, exact need, non-obvious alternative effects, and a recommendation when one exists. hopi_notify_user alone does not settle this check. Do not finish as a no-op.',
   ].join('\n\n')
 }
 

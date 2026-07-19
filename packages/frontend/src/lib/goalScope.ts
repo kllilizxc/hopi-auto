@@ -176,19 +176,18 @@ export function orderProjectsByRecency<T extends { projectId: string }>(
   return stableOrder(projects, (project) => visitedAtByProject.get(project.projectId) ?? 0)
 }
 
-export function selectProjectShortcuts<T extends { projectId: string }>(
-  orderedProjects: readonly T[],
-  currentProjectId: string,
+export function selectPeerShortcuts<T>(
+  items: readonly T[],
+  selectedId: string,
   limit: number,
+  getId: (item: T) => string,
 ) {
   if (limit <= 0) return []
-  const shortcuts = orderedProjects.slice(0, limit)
-  if (shortcuts.some((project) => project.projectId === currentProjectId)) return shortcuts
+  const shortcuts = items.slice(0, limit)
+  if (shortcuts.some((item) => getId(item) === selectedId)) return shortcuts
 
-  const currentProject = orderedProjects.find(
-    (project) => project.projectId === currentProjectId,
-  )
-  return currentProject ? [currentProject, ...shortcuts.slice(0, limit - 1)] : shortcuts
+  const selected = items.find((item) => getId(item) === selectedId)
+  return selected ? [selected, ...shortcuts.slice(0, limit - 1)] : shortcuts
 }
 
 export function orderGoalsByRecency<T extends { id: string; createdAt?: string | null }>(

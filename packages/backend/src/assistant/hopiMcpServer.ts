@@ -39,7 +39,7 @@ if (mode !== 'reflection') {
       'hopi_configure_model',
       {
         description:
-          'Set or inherit Assistant or Project coding defaults on explicit request; never changes Goal delivery.',
+          'Set or inherit one Assistant, Planner, Generator, or Reviewer model on explicit request; never changes Goal delivery.',
         inputSchema: assistantToolSchemas.hopi_configure_model,
       },
       (args) => callTool('hopi_configure_model', args),
@@ -130,7 +130,7 @@ if (mode !== 'reflection') {
       'hopi_notify_user',
       {
         description:
-          'Publish one concise informational update after this internal Reflection turn completes. This never asks the operator to act and never creates Needs you. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
+          'Set or revise the one concise informational update published after this internal Reflection turn completes. A later successful notify_user or request_user call replaces this turn-local final-message slot; only the final slot is shown. This never asks the operator to act and never creates Needs you. For a completed Goal, first read that exact Goal with includeEvidence: true and include a relevant available operatorUrl in Markdown; if no artifact resolves, say that no linked artifact was produced. A linkless completion is rejected while an available Evidence artifact exists. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
         inputSchema: assistantToolSchemas.hopi_notify_user,
       },
       (args) => callTool('hopi_notify_user', args),
@@ -140,7 +140,7 @@ if (mode !== 'reflection') {
       'hopi_request_user',
       {
         description:
-          'Ask for one exact operator decision, authorization, or external action that HOPI cannot supply. This transfers referenced open Attention to Needs you after the complete message is durable. Never use for status, diagnostics, or an issue Assistant can repair internally.',
+          'Set or revise the one request for an exact operator decision, authorization, or external action that HOPI cannot supply. A later successful notify_user or request_user call replaces this turn-local final-message slot; only the final slot is shown. The message is the complete public turn: make it independently understandable by preserving the material cause, why progress is blocked, the exact need, non-obvious alternative effects, and a recommendation when one exists. This transfers referenced open Attention to Needs you after the message is durable. Never use for status, diagnostics, or an issue Assistant can repair internally.',
         inputSchema: assistantToolSchemas.hopi_request_user,
       },
       (args) => callTool('hopi_request_user', args),

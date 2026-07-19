@@ -474,44 +474,26 @@ describe('createAssistantHomeStore', () => {
     ).rejects.toMatchObject({ code: 'project_conflict' })
   })
 
-  test('persists and clears one Project coding-default override in projects.yml', async () => {
+  test('removes legacy Project coding defaults during Home initialization', async () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     await store.linkProject({ projectId: 'P-1', repoPath })
-
-    const configured = await store.updateProjectSettings({
-      projectId: 'P-1',
+    const links = (await readYaml(store.paths.projectLinksPath)) as {
+      version: 3
+      projects: Array<Record<string, unknown>>
+    }
+    links.projects[0] = {
+      ...links.projects[0],
       codingDefaults: {
         transport: 'codex',
         model: 'gpt-5.3-codex',
         reasoningEffort: 'high',
       },
-    })
+    }
+    await Bun.write(store.paths.projectLinksPath, JSON.stringify(links))
 
-    expect(configured.codingDefaults).toEqual({
-      transport: 'codex',
-      model: 'gpt-5.3-codex',
-      reasoningEffort: 'high',
-    })
-    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
-      projects: [
-        {
-          projectId: 'P-1',
-          codingDefaults: {
-            transport: 'codex',
-            model: 'gpt-5.3-codex',
-            reasoningEffort: 'high',
-          },
-        },
-      ],
-    })
+    await store.initialize()
 
-    const inherited = await store.updateProjectSettings({
-      projectId: 'P-1',
-      codingDefaults: null,
-    })
-
-    expect(inherited.codingDefaults).toBeUndefined()
     expect(await readYaml(store.paths.projectLinksPath)).not.toHaveProperty(
       'projects.0.codingDefaults',
     )

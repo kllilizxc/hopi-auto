@@ -63,7 +63,7 @@ export const assistantToolSchemas = {
       includeEvidence: z
         .boolean()
         .describe(
-          'Include bounded Evidence bodies and resolved artifacts only when the current user question requires exact deliverables, such as locating a report. Each resolved artifact has an internal inspectionPath and an operatorUrl; only operatorUrl may be linked in a user reply. Defaults to false.',
+          'Include bounded Evidence bodies and resolved artifacts when preparing a completed Goal update or when the current user question requires an exact deliverable, such as locating a report. Each resolved artifact has an internal inspectionPath and an operatorUrl; only operatorUrl may be linked in a user reply. Defaults to false.',
         )
         .optional(),
     })
@@ -107,25 +107,10 @@ export const assistantToolSchemas = {
   ]),
   hopi_configure_model: z
     .object({
-      scope: z.enum(['assistant', 'project']),
-      projectId: stableIdSchema.optional(),
+      role: z.enum(['assistant', 'planner', 'generator', 'reviewer']),
       codingDefaults: projectCodingDefaultsInputSchema.nullable(),
     })
-    .strict()
-    .superRefine((value, context) => {
-      if (value.scope === 'project' && !value.projectId) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Project model configuration requires projectId',
-        })
-      }
-      if (value.scope === 'assistant' && value.projectId) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Assistant model configuration does not accept projectId',
-        })
-      }
-    }),
+    .strict(),
   hopi_write_preferences: z
     .object({
       content: z.string().max(16_000),

@@ -1,5 +1,3 @@
-import type { ProjectCodingDefaults } from './projectCodingDefaults'
-
 export const HOPI_RELEASE_BRANCH = 'hopi/release'
 export const HOPI_RELEASE_REF = `refs/heads/${HOPI_RELEASE_BRANCH}`
 export const DEFAULT_PRIMARY_REPO_ID = 'primary'
@@ -20,7 +18,6 @@ export interface ProjectLink {
   projectId: string
   primaryRepoId: string
   repos: ProjectRepoLink[]
-  codingDefaults?: ProjectCodingDefaults
 }
 
 export interface ProjectLinksDocument {

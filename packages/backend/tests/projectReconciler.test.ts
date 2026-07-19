@@ -68,7 +68,11 @@ describe('ProjectReconciler', () => {
     const workAttempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     const generatorAttempt = workAttempts.find((attempt) => attempt.responsibility === 'generator')
     expect(workAttempts).toHaveLength(2)
-    expect(generatorAttempt).toMatchObject({ status: 'finished', result: 'success' })
+    expect(generatorAttempt).toMatchObject({
+      status: 'finished',
+      result: 'success',
+      execution: { transport: 'codex', model: 'gpt-test', reasoningEffort: 'xhigh' },
+    })
     expect(
       (await fixture.attempts.read('project-1', 'goal-1', 'W-1', generatorAttempt?.runId ?? ''))
         ?.events,
@@ -739,6 +743,11 @@ class DeliveryScriptRunner implements RoleRunner {
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     this.responsibilities.push(input.responsibility)
+    await observer?.onExecution?.({
+      transport: 'codex',
+      model: 'gpt-test',
+      reasoningEffort: 'xhigh',
+    })
     this.sessionsByRun.push({
       responsibility: input.responsibility,
       sessionId: input.session?.sessionId ?? null,

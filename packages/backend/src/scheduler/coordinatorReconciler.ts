@@ -40,6 +40,9 @@ export interface CoordinatorReconciler {
   wake(): void
   waitForIdle(): Promise<void>
   runDirectAssistantCommand<T>(operation: () => Promise<T>): Promise<T>
+  protectAssistantGoal(eventId: string, projectId: string, goalId: string): void
+  protectAssistantProject(eventId: string, projectId: string): void
+  settleAssistantTurn(eventId: string): void
   setProjectEligible(projectId: string, eligible: boolean): void
   interruptInternalAssistant(): void
   activeRuns(): ReadonlyMap<string, Responsibility>
@@ -66,6 +69,7 @@ export function createCoordinatorReconciler(
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const active = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
+  const assistantTurnBarriers = new Map<string, { projects: Set<string>; goals: Set<string> }>()
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopped = true
   let reconcileEpoch = 0
@@ -130,6 +134,15 @@ export function createCoordinatorReconciler(
         this.wake()
       }
     },
+    protectAssistantGoal(eventId, projectId, goalId) {
+      assistantTurnBarrier(eventId).goals.add(goalBarrierKey(projectId, goalId))
+    },
+    protectAssistantProject(eventId, projectId) {
+      assistantTurnBarrier(eventId).projects.add(projectId)
+    },
+    settleAssistantTurn(eventId) {
+      if (assistantTurnBarriers.delete(eventId)) this.wake()
+    },
     async reconcileOnce() {
       if (reconciling) return reconciling
       const epoch = reconcileEpoch
@@ -181,6 +194,10 @@ export function createCoordinatorReconciler(
         : undefined
     if (event) {
       const controller = new AbortController()
+      const context = event.attributes.context
+      if (context?.projectId && context.goalId) {
+        coordinator.protectAssistantGoal(event.attributes.id, context.projectId, context.goalId)
+      }
       const promise = options.assistant
         .process(event.attributes.id, controller.signal)
         .then(() => undefined)
@@ -193,6 +210,7 @@ export function createCoordinatorReconciler(
         })
         .finally(() => {
           assistantActive.delete(event.attributes.id)
+          coordinator.settleAssistantTurn(event.attributes.id)
           coordinator.wake()
         })
       assistantActive.set(event.attributes.id, {
@@ -215,6 +233,7 @@ export function createCoordinatorReconciler(
           ? await project.store.readReconciliationSnapshot()
           : await readReconciliationPackages(project.store)
         for (const [goalId, goalPackage] of reconciliationPackages) {
+          if (goalDispatchBlocked(project.projectId, goalId)) continue
           const liveWorkIds = new Set(
             [...active.keys()]
               .filter((key) => key.startsWith(`${project.projectId}/${goalId}/`))
@@ -266,10 +285,12 @@ export function createCoordinatorReconciler(
     // stop() may run while the asynchronous candidate scan is in progress.
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
 
-    const deterministic = candidates.find((candidate) =>
-      ['ensure_planning', 'ensure_attention', 'complete_goal', 'finish_cancellation'].includes(
-        candidate.decision.kind,
-      ),
+    const deterministic = candidates.find(
+      (candidate) =>
+        !goalDispatchBlocked(candidate.project.projectId, candidate.goalId) &&
+        ['ensure_planning', 'ensure_attention', 'complete_goal', 'finish_cancellation'].includes(
+          candidate.decision.kind,
+        ),
     )
     if (deterministic) {
       try {
@@ -297,6 +318,7 @@ export function createCoordinatorReconciler(
     const reserved = { ...passCounts }
     for (const candidate of candidates) {
       if (candidate.decision.kind !== 'dispatch') continue
+      if (goalDispatchBlocked(candidate.project.projectId, candidate.goalId)) continue
       const responsibility = candidate.decision.responsibility
       const limit = options.concurrency[responsibility]
       if (reserved[responsibility] >= limit) continue
@@ -340,7 +362,28 @@ export function createCoordinatorReconciler(
     return { kind: 'idle' }
   }
 
+  function assistantTurnBarrier(eventId: string) {
+    let barrier = assistantTurnBarriers.get(eventId)
+    if (!barrier) {
+      barrier = { projects: new Set(), goals: new Set() }
+      assistantTurnBarriers.set(eventId, barrier)
+    }
+    return barrier
+  }
+
+  function goalDispatchBlocked(projectId: string, goalId: string) {
+    const key = goalBarrierKey(projectId, goalId)
+    for (const barrier of assistantTurnBarriers.values()) {
+      if (barrier.projects.has(projectId) || barrier.goals.has(key)) return true
+    }
+    return false
+  }
+
   return coordinator
+}
+
+function goalBarrierKey(projectId: string, goalId: string) {
+  return `${projectId}\u0000${goalId}`
 }
 
 async function readReconciliationPackages(store: GoalPackageStore) {

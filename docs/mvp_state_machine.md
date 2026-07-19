@@ -54,13 +54,13 @@ unchanged.
 Stable identity is explicit: event `(homeId, eventId)`, Goal `(projectId, goalId)`, Work
 `(projectId, goalId, workId)`, producer Run `(projectId, goalId, workId, runId)`, Goal-local
 Attention `(projectId, goalId, attentionId)`, and workspace Attention `(homeId, attentionId)`.
-Each Assistant-home project link retains expected `{ projectId, primaryRepoId, repos,
-codingDefaults? }`, where every Repo owns a stable ID and local path.
-`codingDefaults` selects defaults for future responsibility Runs but is not lifecycle state. The
-selected checkout locates the Repo but is never a canonical root. Its symbolic branch at link time
-is retained as the delivery branch. Coordinator derives Repo-adjacent stable integration and task
-worktrees. A missing, corrupt, or divergent managed projection is blocked under the expected
-identity; delivery-only drift is a nonblocking, best-effort projection diagnostic.
+Each Assistant-home project link retains expected `{ projectId, primaryRepoId, repos }`, where every
+Repo owns a stable ID and local path. Agent model settings are Home-wide configuration and are not
+Project or lifecycle state. The selected checkout locates the Repo but is never a canonical root.
+Its symbolic branch at link time is retained as the delivery branch. Coordinator derives
+Repo-adjacent stable integration and task worktrees. A missing, corrupt, or divergent managed
+projection is blocked under the expected identity; delivery-only drift is a nonblocking,
+best-effort projection diagnostic.
 
 ## Publication Boundary
 
@@ -504,6 +504,7 @@ ready(work) :=
   and work.attempts < profile.maxAttempts
   and no open targeted Attention covers its project, Goal, or Work
   and no active Run owns the Work lease
+  and no unsettled Assistant turn has touched the Goal
   and capacity exists for pass(work.kind, work.stage)
 ```
 
@@ -645,11 +646,16 @@ outcome. Other state and document changes do not participate in this runtime tra
   acknowledging the handoff.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in
   multiple Goals only through explicit successful HOPI tool calls.
+- From its first Goal effect until settlement, one Assistant turn installs a process-local barrier
+  for each touched Goal. No responsibility Run may be admitted against that Goal's intermediate
+  turn state; unrelated Goals remain eligible, and restart reconstructs progress from the pending
+  durable Inbox turn rather than persisting another workflow state.
 - A home project link retains the expected project ID used for validation and project-target
   Attention when the linked package is unreadable.
 - Terminal Goal and Work state cannot be overwritten by an old Run.
 - `dependsOn` is permanent and is the only execution-order and conflict-avoidance DAG between
-  Engineering Work. Cancelling a prerequisite first cancels every nonterminal dependent.
+  Engineering Work. A Planner rewrite may add but never remove an existing edge. Cancelling a
+  prerequisite first cancels every nonterminal dependent.
 - `completionAttentionId` is present exactly while Goal lifecycle is `done`. Only final Planner
   success may create the Goal's one open unclaimed targetless completion proposal; Coordinator may
   only claim it after structural guards pass. Completion creates no second document or

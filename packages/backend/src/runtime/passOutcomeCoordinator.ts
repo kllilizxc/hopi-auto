@@ -73,7 +73,13 @@ export function createPassOutcomeCoordinator(
       let proposal: PassProposal
       try {
         proposal = await readPassProposal(store, publisher, input)
-        proposal = normalizeNewAttentionTimestamps(proposal, evidence.attributes.createdAt)
+        proposal = normalizeNewAttentions(
+          store,
+          input.goalId,
+          current,
+          proposal,
+          evidence.attributes.createdAt,
+        )
       } catch (error) {
         const invalidProposal = asPassProposalError(error)
         if (!invalidProposal) throw error
@@ -221,29 +227,55 @@ interface PassPublication {
   ): Promise<void> | void
 }
 
-function normalizeNewAttentionTimestamps(proposal: PassProposal, createdAt: string): PassProposal {
+function normalizeNewAttentions(
+  store: GoalPackageStore,
+  goalId: string,
+  current: GoalPackage,
+  proposal: PassProposal,
+  createdAt: string,
+): PassProposal {
   if (proposal.newAttentions.length === 0) return proposal
 
-  const sources = new Map<string, string>()
+  const occupiedIds = new Set(current.attentions.keys())
+  const reservedIds = new Set([
+    ...occupiedIds,
+    ...proposal.newAttentions.map((attention) => attention.document.attributes.id),
+  ])
+  const replacements = new Map<string, { path: string; source: string }>()
   const newAttentions = proposal.newAttentions.map((attention) => {
+    const proposedId = attention.document.attributes.id
+    const id = occupiedIds.has(proposedId)
+      ? allocateFreshAttentionId(proposedId, reservedIds)
+      : proposedId
+    reservedIds.add(id)
     const document: AttentionDocument = {
       attributes: {
         ...attention.document.attributes,
+        id,
         createdAt,
         operatorRequest: attention.document.attributes.operatorRequest ?? null,
       },
       body: attention.document.body,
     }
+    const path = store.paths.attentionDocument(goalId, id)
     const source = renderAttentionDocument(document)
-    sources.set(attention.path, source)
-    return { ...attention, document, source }
+    replacements.set(attention.path, { path, source })
+    return { path, document, source }
   })
   const changedWrites = proposal.changedWrites.map((write) => {
-    const source = sources.get(write.path)
-    return source === undefined ? write : { ...write, content: source }
+    const replacement = replacements.get(write.path)
+    return replacement === undefined
+      ? write
+      : { ...write, path: replacement.path, content: replacement.source }
   })
 
   return { ...proposal, changedWrites, newAttentions }
+}
+
+function allocateFreshAttentionId(proposedId: string, reservedIds: ReadonlySet<string>) {
+  let suffix = 2
+  while (reservedIds.has(`${proposedId}-${suffix}`)) suffix += 1
+  return `${proposedId}-${suffix}`
 }
 
 async function readPassProposal(

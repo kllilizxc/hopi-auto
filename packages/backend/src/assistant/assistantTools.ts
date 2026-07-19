@@ -1,3 +1,4 @@
+import type { AgentRoleCodingSettings, ConfigurableAgentRole } from '../agent/adapterConfig'
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
@@ -21,11 +22,7 @@ import {
 import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { inboxEventReference } from '../domain/inboxEventReference'
 import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
-import {
-  type ProjectCodingDefaults,
-  type ProjectCodingDefaultsInput,
-  normalizeProjectCodingDefaults,
-} from '../domain/projectCodingDefaults'
+import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
 import { deriveReadableId } from '../domain/stableId'
 import { deriveWorkProjection } from '../domain/workProjection'
@@ -47,7 +44,7 @@ import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
-import type { AssistantStateReader } from './assistantState'
+import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import {
   type AssistantToolName,
   type MainAssistantToolName,
@@ -103,20 +100,16 @@ export function createAssistantTools(options: {
   publisher: PublicationCoordinator
   preview: PreviewManager
   state: AssistantStateReader
-  readAssistantCodingDefaults(): Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
-  readProjectCodingDefaults(projectId: string): Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
-  updateAssistantCodingDefaultsForTurn(
+  readAgentRoleCodingDefaults(role: ConfigurableAgentRole): Promise<AgentRoleCodingSettings>
+  updateAgentRoleCodingDefaultsForTurn(
     eventId: string,
+    role: ConfigurableAgentRole,
     input: ProjectCodingDefaultsInput | null,
   ): Promise<void>
   onProjectTopologyChanged?: (eventId: string) => void
   onProjectAttentionResolved?: (projectId: string) => void | Promise<void>
+  onGoalEffect?: (eventId: string, projectId: string, goalId: string) => void
+  onProjectDispatchEffect?: (eventId: string, projectId: string) => void
   now?: () => Date
 }): AssistantTools {
   type Capability =
@@ -369,13 +362,6 @@ export function createAssistantTools(options: {
       if (!mainAssistantToolNames.includes(name as never)) {
         throw new Error(`Speaking thread cannot call ${name}`)
       }
-      if (
-        (name === 'hopi_notify_user' || name === 'hopi_request_user') &&
-        capability.notificationMessage !== null &&
-        !(capability.notificationIntent === 'inform' && name === 'hopi_request_user')
-      ) {
-        throw new Error('Assistant already supplied one operator-facing message for this turn')
-      }
       const result = await this.executeForEvent(
         capability.eventId,
         name as MainAssistantToolName,
@@ -512,37 +498,20 @@ export function createAssistantTools(options: {
         case 'hopi_configure_model': {
           assertPublicUserTurn(event, 'Model configuration')
           const args = parseAssistantToolArguments(name, input)
-          if (args.scope === 'assistant') {
-            const before = await options.readAssistantCodingDefaults()
-            await options.updateAssistantCodingDefaultsForTurn(eventId, args.codingDefaults)
-            const after = await options.readAssistantCodingDefaults()
-            const changed = !sameValue(before, after)
-            return {
-              summary: changed
-                ? 'Updated Assistant model configuration.'
-                : 'Assistant model configuration was already current.',
-              changed,
-              value: { scope: args.scope, ...after },
-            }
-          }
-
-          const projectId = args.projectId ?? ''
-          const before = await options.readProjectCodingDefaults(projectId)
-          await options.home.updateProjectSettings({
-            projectId,
-            codingDefaults:
-              args.codingDefaults === null
-                ? null
-                : normalizeProjectCodingDefaults(args.codingDefaults),
-          })
-          const after = await options.readProjectCodingDefaults(projectId)
+          const before = await options.readAgentRoleCodingDefaults(args.role)
+          await options.updateAgentRoleCodingDefaultsForTurn(
+            eventId,
+            args.role,
+            args.codingDefaults,
+          )
+          const after = await options.readAgentRoleCodingDefaults(args.role)
           const changed = !sameValue(before, after)
           return {
             summary: changed
-              ? `Updated Project ${projectId} model configuration.`
-              : `Project ${projectId} model configuration was already current.`,
+              ? `Updated ${agentRoleLabel(args.role)} model configuration.`
+              : `${agentRoleLabel(args.role)} model configuration was already current.`,
             changed,
-            value: { scope: args.scope, projectId, ...after },
+            value: { role: args.role, ...after },
           }
         }
         case 'hopi_write_preferences': {
@@ -567,6 +536,7 @@ export function createAssistantTools(options: {
           const project = requireProject(options.projects, args.projectId)
           const goalId =
             args.goalId ?? deriveReadableId('G', args.title, await project.store.listGoalIds())
+          options.onGoalEffect?.(eventId, project.projectId, goalId)
           const existing = await project.store.readGoal(goalId)
           const admission = await goalInputAdmission(
             options.workspace,
@@ -638,6 +608,7 @@ export function createAssistantTools(options: {
           for (const write of args.writes)
             assertPortableGoalText(`Design ${write.path}`, write.content)
           const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
           await requireGoal(project.store, args.goalId)
           const references = await prepareGoalReferences(
             options.workspace,
@@ -690,6 +661,7 @@ export function createAssistantTools(options: {
         case 'hopi_request_planning': {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
           await requireGoal(project.store, args.goalId)
           const admission = await goalInputAdmission(
             options.workspace,
@@ -739,6 +711,7 @@ export function createAssistantTools(options: {
         case 'hopi_control_goal': {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
           let goal = await requireGoal(project.store, args.goalId)
           let changed = false
           switch (args.operation) {
@@ -805,6 +778,7 @@ export function createAssistantTools(options: {
         case 'hopi_control_work': {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
           const goalPackage = await project.store.readPackage(args.goalId)
           const work = goalPackage.works.get(args.workId)
           if (!work) throw new Error(`Work not found: ${args.workId}`)
@@ -920,6 +894,9 @@ export function createAssistantTools(options: {
             if (projectTarget) requireProject(options.projects, projectTarget.projectId)
             const changed = attention.attributes.resolvedAt === null
             if (changed) {
+              if (projectTarget) {
+                options.onProjectDispatchEffect?.(eventId, projectTarget.projectId)
+              }
               await options.workspace.resolveAttention(args.attentionId, args.resolution, now())
               if (projectTarget) {
                 await options.onProjectAttentionResolved?.(projectTarget.projectId)
@@ -940,6 +917,7 @@ export function createAssistantTools(options: {
           }
           const project = requireProject(options.projects, args.projectId ?? '')
           const goalId = args.goalId ?? ''
+          options.onGoalEffect?.(eventId, project.projectId, goalId)
           const admission = await goalInputAdmission(
             options.workspace,
             project.store,
@@ -1003,6 +981,14 @@ export function createAssistantTools(options: {
           ) {
             throw new Error(`${name} is available only for an internal Reflection turn`)
           }
+          if (name === 'hopi_notify_user') {
+            await assertCompletionArtifactsLinked({
+              context: event.attributes.context,
+              message: args.message,
+              projects: options.projects,
+              state: options.state,
+            })
+          }
           return {
             summary:
               name === 'hopi_request_user'
@@ -1023,6 +1009,78 @@ export function createAssistantTools(options: {
       }
     },
   }
+}
+
+async function assertCompletionArtifactsLinked(input: {
+  context?: InboxContext | null
+  message: string
+  projects: ReadonlyMap<string, AssistantToolProject>
+  state: AssistantStateReader
+}) {
+  if (!input.context) return
+  const assessed = new Set<string>()
+  for (const reference of normalizeInboxAttentionReferences(input.context)) {
+    const parsed = parseAttentionReference(reference)
+    if (!parsed || parsed.scope !== 'goal') continue
+    const scope = `${parsed.projectId}/${parsed.goalId}`
+    if (assessed.has(scope)) continue
+    const project = input.projects.get(parsed.projectId)
+    if (!project) continue
+    const goalPackage = await project.store.readPackage(parsed.goalId)
+    const attention = goalPackage.attentions.get(parsed.attentionId)
+    if (
+      !attention ||
+      attention.attributes.target !== null ||
+      attention.attributes.resolvedAt !== null ||
+      goalPackage.goal.attributes.lifecycle !== 'done' ||
+      goalPackage.goal.attributes.completionAttentionId !== parsed.attentionId
+    ) {
+      continue
+    }
+    assessed.add(scope)
+    const state = await input.state.read({
+      projectId: parsed.projectId,
+      goalId: parsed.goalId,
+      includeEvidence: true,
+    })
+    const operatorUrls = availableArtifactUrls(state)
+    if (operatorUrls.length === 0 || operatorUrls.some((url) => input.message.includes(url))) {
+      continue
+    }
+    throw new Error(
+      `Completed Goal ${parsed.goalId} has available Evidence artifacts. Include at least one relevant operatorUrl in hopi_notify_user after reading the exact Goal with includeEvidence: true. Available operatorUrl values: ${operatorUrls.slice(0, 8).join(', ')}`,
+    )
+  }
+}
+
+function availableArtifactUrls(snapshot: AssistantStateSnapshot) {
+  const urls = new Set<string>()
+  for (const project of snapshot.projects) {
+    if (!isRecord(project) || !Array.isArray(project.goals)) continue
+    for (const goal of project.goals) {
+      if (!isRecord(goal) || !Array.isArray(goal.works)) continue
+      for (const work of goal.works) {
+        if (!isRecord(work) || !Array.isArray(work.evidence)) continue
+        for (const evidence of work.evidence) {
+          if (!isRecord(evidence) || !Array.isArray(evidence.artifacts)) continue
+          for (const artifact of evidence.artifacts) {
+            if (
+              isRecord(artifact) &&
+              artifact.available === true &&
+              typeof artifact.operatorUrl === 'string'
+            ) {
+              urls.add(artifact.operatorUrl)
+            }
+          }
+        }
+      }
+    }
+  }
+  return [...urls].toSorted()
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function assertPublicUserTurn(
@@ -1056,6 +1114,10 @@ function sameProjectTopology(left: LinkedProject | undefined, right: LinkedProje
 
 function sameValue(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function agentRoleLabel(role: ConfigurableAgentRole) {
+  return role.charAt(0).toUpperCase() + role.slice(1)
 }
 
 async function remainingGoalAttentionRefs(store: GoalPackageStore, goalId: string) {

@@ -32,6 +32,11 @@ describe('RunAttemptStore', () => {
       join(runRoot('R-1'), 'prompt.md'),
       '# Generator system prompt\n\nImplement the owning Work exactly.\n',
     )
+    await recorder.setExecution({
+      transport: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh',
+    })
     await recorder.record({
       kind: 'message',
       level: 'info',
@@ -75,6 +80,7 @@ describe('RunAttemptStore', () => {
       status: 'finished',
       result: 'success',
       application: 'published',
+      execution: { transport: 'codex', model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' },
     })
     expect(detail?.events.map((event) => event.kind)).toEqual([
       'message',
@@ -176,6 +182,46 @@ describe('RunAttemptStore', () => {
       endedAt: '2026-07-11T00:01:00.000Z',
       summary: 'Coordinator stopped before recording an Attempt outcome.',
     })
+  })
+
+  test('reads an older Attempt manifest without an execution identity', async () => {
+    const store = createRunAttemptStore(temporaryRoot)
+    await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-before-execution-capture',
+      responsibility: 'planner',
+      runRoot: runRoot('R-before-execution-capture'),
+    })
+    const manifestPath = join(runRoot('R-before-execution-capture'), 'attempt.json')
+    const manifest = (await Bun.file(manifestPath).json()) as Record<string, unknown>
+    manifest.execution = undefined
+    await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([{ execution: null }])
+  })
+
+  test('reads an older execution identity without inventing reasoning effort', async () => {
+    const store = createRunAttemptStore(temporaryRoot)
+    await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-before-effort-capture',
+      responsibility: 'generator',
+      runRoot: runRoot('R-before-effort-capture'),
+    })
+    const manifestPath = join(runRoot('R-before-effort-capture'), 'attempt.json')
+    const manifest = (await Bun.file(manifestPath).json()) as Record<string, unknown>
+    manifest.execution = { transport: 'codex', model: 'gpt-5.4' }
+    await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([
+      {
+        execution: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: null },
+      },
+    ])
   })
 
   test('keeps pre-recorder Run directories visible as legacy Attempts', async () => {
