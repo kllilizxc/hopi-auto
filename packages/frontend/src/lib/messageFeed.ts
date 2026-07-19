@@ -35,6 +35,14 @@ export interface MessageFeedItem {
   attachments?: MessageFeedAttachment[]
 }
 
+export interface OptimisticInboxMessage {
+  clientId: string
+  createdAt: string
+  text: string
+  eventId: string | null
+  attachments: MessageFeedAttachment[]
+}
+
 export type MessageFeedActivityEntry =
   | {
       type: 'tool_block'
@@ -244,19 +252,40 @@ function completionReference(attention: AttentionView) {
 
 export function assistantFeedEntriesToMessageFeed(
   entries: AssistantFeedEntry[],
+  optimisticMessages: readonly OptimisticInboxMessage[] = [],
 ): MessageFeedItem[] {
-  return entries
-    .flatMap((entry) => {
+  const canonicalEventIds = assistantFeedEventIds(entries)
+  return [
+    ...entries.flatMap((entry) => {
       if (entry.kind === 'completion') return [completionAttentionItem(entry.attention)]
       const items = inboxEventToMessageFeed(entry.event, { assistantPresentation: true })
       return entry.completion ? applyCompletion(items, entry.completion) : items
-    })
+    }),
+    ...optimisticMessages
+      .filter((message) => !message.eventId || !canonicalEventIds.has(message.eventId))
+      .map((message) => ({
+        id: `optimistic:${message.clientId}:user`,
+        createdAt: message.createdAt,
+        kind: 'user_message' as const,
+        role: 'user' as const,
+        text: message.text,
+        label: 'You',
+        attachments: message.attachments,
+        groupId: `optimistic:${message.clientId}`,
+      })),
+  ]
     .map((item, index) => ({ item, index }))
     .sort((left, right) => {
       const timestamp = left.item.createdAt.localeCompare(right.item.createdAt)
       return timestamp === 0 ? left.index - right.index : timestamp
     })
     .map(({ item }) => item)
+}
+
+export function assistantFeedEventIds(entries: readonly AssistantFeedEntry[]) {
+  return new Set(
+    entries.flatMap((entry) => (entry.kind === 'event' ? [entry.event.id] : [])),
+  )
 }
 
 function inboxEventToMessageFeed(

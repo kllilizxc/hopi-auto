@@ -183,6 +183,22 @@ Work reset, current Goal Input, and Attention resolution together, with resoluti
 a crash before that gate leaves the Work conservatively blocked and repeating the command completes
 it idempotently. Neither operation closes Goal, Project, or another Work's Attention.
 
+The same atomic boundary applies when the current Inbox turn carries an exact Attention reference
+targeted at the Planning Work that `Request planning` creates or refreshes. Accepting that turn into
+the Planning Work is the represented continuation of the blocker, so the tool publishes its Goal
+Input, Planning update, and that exact resolution together with the resolution as final gate. It
+does not settle an unreferenced Attention, an Attention for another Work, or Project Attention. This
+prevents the old Planning Attention from blocking the Planning pass that now owns its repair without
+adding a second model call or another recovery state.
+
+Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
+not proof that a deterministic environment defect was repaired. Speaking Assistant may describe a
+worktree as synchronized only after a later state or Attempt proves Coordinator's synchronization.
+An internal Reflection handoff that identifies an unchanged branch defect must request Planning or
+another represented effect instead of using retry as a fictional repair. Direct operator retry keeps
+the atomic settlement shortcut above because the operator instruction itself is accepted authority
+to try the same lineage again.
+
 Project-target Workspace Attention cannot be closed by a model assertion. Explicit repair such as
 Repo rebind first validates the Repo, release ref, managed root, and Project identity, then resolves
 the Assistant-home Attention. A crash between those roots leaves the project conservatively blocked;
@@ -401,6 +417,13 @@ workspace files remain available. Process transports do not resume a vendor conv
 same revision-scoped workspace. OS processes and in-flight tool calls are never reattached; recovery
 continues against retained files and starts a new Attempt log.
 
+Session rejection is a transport control-plane fact, not text classification over model content.
+RoleRunner accepts it only from a structured terminal vendor error or an explicit raw process error
+channel. Assistant prose, command output, test failures, and documents carried inside a successful
+stdout event cannot invalidate the Session merely because they contain words such as `session`,
+`missing`, or `invalid`. This keeps one completed responsibility result authoritative and prevents a
+second model pass from clearing or replacing its proposal.
+
 Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, sandbox, network, and
 writable-root configuration without loading the operator's global Codex configuration. The adapter
 also explicitly selects a ChatGPT-authenticated provider with WebSocket support disabled, so Codex
@@ -598,6 +621,15 @@ Planner reads existing documents only from the immutable authority root and copi
 proposal only a document it intends to replace. It does not mirror unchanged Goal-package files;
 their absence means unchanged, never deleted.
 
+A stable Work branch is the cumulative implementation lineage for that Work ID. Planner may revise
+its current objective and dependencies while preserving that delta, because Coordinator will
+synchronize it with the release before dispatch. If the accepted plan explicitly rejects reuse of
+the old checkpoint or source delta, Planner does not rewrite the same Work into a nominally fresh
+responsibility and does not stage an Assistant worktree-repair request. It creates a distinct
+Engineering Work and updates the nonterminal DAG monotonically; the old Work is cancelled only when
+the ordinary dependency-cancellation rules permit it, or is narrowed to a bounded consumer or
+certification responsibility when its historical identity must remain in the graph.
+
 Both writable outputs have explicit empty-file semantics. `proposal/` starts with no descendant
 files, so a responsibility creates every proposed path and its parents rather than trying to update
 an authority file in place. Run-local `result.json` starts as a zero-byte missing-result marker and
@@ -782,6 +814,26 @@ by its `repos` field. Retries reuse those branches. Task worktrees live at
 `hopi/release`. A responsibility receives one logical
 workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
+
+Immediately before Generator or Reviewer preparation, Coordinator compares each stable task branch
+with that Repo's current `hopi/release`. If release is already an ancestor, no Git mutation occurs.
+If the clean task branch is behind or divergent, Coordinator fast-forwards it or merges release into
+it with hooks and signing disabled, preserving the task delta and then verifying a clean checkout and
+release ancestry. A failed merge is aborted back to the exact prior task HEAD and ensures Planning
+with the bounded conflict diagnostic; no responsibility Run starts and the Project is not globally
+blocked. A dirty Generator checkout is preserved and also returns to Planning when synchronization
+is required, because silently resetting or merging uncheckpointed source would guess ownership.
+
+This synchronization is the implementation of dependency handoff and ordinary independent release
+advance. It adds no base-commit field, sync status, repair Work, or Assistant-side Git capability.
+When a plan requires an empty delta rather than preservation, only a new Work identity creates the
+new branch from current release.
+
+Planner treats that current Coordinator capability as execution authority. A historical Attempt
+whose dispatch predates synchronization proves the old failure and may identify a retained source
+delta, but it cannot prove that a new dispatch will repeat it. Planner may request Assistant
+worktree repair only from a current Coordinator synchronization diagnostic that aborted before the
+responsibility pass; otherwise it plans the semantic continuation under the synchronization rule.
 
 HOPI materializes managed integration and task worktrees with `core.autocrlf=false` for the checkout
 operation, regardless of the operator's global Git preference. This does not change the user Repo

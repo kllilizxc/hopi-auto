@@ -26,6 +26,11 @@ export interface PlanningContext {
   references?: readonly PlanningReference[]
 }
 
+export interface PlanningAttentionSettlement {
+  attentionIds: readonly string[]
+  resolution: string
+}
+
 export interface WorkRetrySettlement {
   acceptedInput: PlanningInputAdmission
   resolution: string
@@ -42,6 +47,7 @@ export interface GoalController {
     reason: string,
     acceptedInput?: PlanningInputAdmission,
     context?: PlanningContext,
+    settlement?: PlanningAttentionSettlement,
   ): Promise<WorkDocument>
   applyMaterialInstruction(
     goalId: string,
@@ -90,7 +96,7 @@ export function createGoalController(
   const now = options.now ?? (() => new Date())
 
   return {
-    async ensurePlanning(goalId, reason, acceptedInput, context = {}) {
+    async ensurePlanning(goalId, reason, acceptedInput, context = {}, settlement = undefined) {
       const goalPackage = await store.readPackage(goalId)
       const existing = [...goalPackage.works.values()].find(
         (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
@@ -109,7 +115,43 @@ export function createGoalController(
           ...(context.supportingWrites ?? []),
           ...(acceptedInput?.write ? [acceptedInput.write] : []),
         ]
-        if (!changed && supportingWrites.length === 0) return existing
+        const attentionWrites = await planningAttentionResolutionWrites(
+          store,
+          goalId,
+          goalPackage,
+          existing.attributes.id,
+          acceptedInput,
+          settlement,
+          now(),
+        )
+        if (!changed && supportingWrites.length === 0 && attentionWrites.length === 0) {
+          return existing
+        }
+
+        let planningWrite: PublicationWrite | null = null
+        if (changed) {
+          const path = store.paths.workDocument(goalId, existing.attributes.id)
+          const source = await Bun.file(store.paths.absolute(path)).text()
+          planningWrite = {
+            path,
+            expectedHash: await hashBytes(new TextEncoder().encode(source)),
+            content: renderWorkDocument(next),
+          }
+        }
+
+        if (attentionWrites.length > 0) {
+          const gateWrite = attentionWrites.at(-1)
+          if (!gateWrite) return next
+          await store.publishGoal(goalId, {
+            supportingWrites: [
+              ...supportingWrites,
+              ...(planningWrite ? [planningWrite] : []),
+              ...attentionWrites.slice(0, -1),
+            ],
+            gateWrite,
+          })
+          return next
+        }
 
         if (!changed) {
           const [gateWrite, ...supporting] = acceptedInput?.write
@@ -124,15 +166,10 @@ export function createGoalController(
           return existing
         }
 
-        const path = store.paths.workDocument(goalId, existing.attributes.id)
-        const source = await Bun.file(store.paths.absolute(path)).text()
+        if (!planningWrite) return next
         await store.publishGoal(goalId, {
           supportingWrites,
-          gateWrite: {
-            path,
-            expectedHash: await hashBytes(new TextEncoder().encode(source)),
-            content: renderWorkDocument(next),
-          },
+          gateWrite: planningWrite,
         })
         return next
       }
@@ -180,16 +217,28 @@ export function createGoalController(
             : []),
         ].join('\n'),
       }
+      const planningWrite: PublicationWrite = {
+        path: store.paths.workDocument(goalId, planning.attributes.id),
+        expectedHash: null,
+        content: renderWorkDocument(planning),
+      }
+      const attentionWrites = await planningAttentionResolutionWrites(
+        store,
+        goalId,
+        goalPackage,
+        planning.attributes.id,
+        acceptedInput,
+        settlement,
+        now(),
+      )
+      const attentionGate = attentionWrites.at(-1)
       await store.publishGoal(goalId, {
         supportingWrites: [
           ...(context.supportingWrites ?? []),
           ...(acceptedInput?.write ? [acceptedInput.write] : []),
+          ...(attentionGate ? [planningWrite, ...attentionWrites.slice(0, -1)] : []),
         ],
-        gateWrite: {
-          path: store.paths.workDocument(goalId, planning.attributes.id),
-          expectedHash: null,
-          content: renderWorkDocument(planning),
-        },
+        gateWrite: attentionGate ?? planningWrite,
       })
       return planning
     },
@@ -766,6 +815,54 @@ async function requireGoal(store: GoalPackageStore, goalId: string) {
   const goal = await store.readGoal(goalId)
   if (!goal) throw new GoalControllerError(`Goal not found: ${goalId}`)
   return goal
+}
+
+async function planningAttentionResolutionWrites(
+  store: GoalPackageStore,
+  goalId: string,
+  goalPackage: GoalPackage,
+  planningWorkId: string,
+  acceptedInput: PlanningInputAdmission | undefined,
+  settlement: PlanningAttentionSettlement | undefined,
+  resolvedAt: Date,
+) {
+  if (!settlement || settlement.attentionIds.length === 0) return []
+  const attentionIds = [...new Set(settlement.attentionIds)]
+  if (!acceptedInput) {
+    throw new GoalControllerError('Planning Attention settlement requires one accepted Goal Input')
+  }
+
+  const exactTarget = workAttentionTarget(store.paths.projectId, goalId, planningWorkId)
+  const writes: PublicationWrite[] = []
+  for (const attentionId of attentionIds) {
+    const current = goalPackage.attentions.get(attentionId)
+    if (!current) throw new GoalControllerError(`Goal Attention not found: ${attentionId}`)
+    if (current.attributes.target !== exactTarget || current.attributes.resolvedAt !== null)
+      continue
+
+    const path = store.paths.attentionDocument(goalId, attentionId)
+    const source = await Bun.file(store.paths.absolute(path)).text()
+    const resolved = parseAttentionDocument(source)
+    resolved.attributes.operatorRequest = null
+    resolved.attributes.resolvedAt = resolvedAt.toISOString()
+    resolved.attributes.resolutionInput = acceptedInput.path
+    resolved.body = [
+      resolved.body.trimEnd(),
+      '',
+      '## Resolution',
+      '',
+      `Answer Input: \`${acceptedInput.path}\``,
+      '',
+      settlement.resolution.trim(),
+      '',
+    ].join('\n')
+    writes.push({
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderAttentionDocument(resolved),
+    })
+  }
+  return writes
 }
 
 async function replaceGoal(store: GoalPackageStore, goalId: string, next: GoalDocument) {

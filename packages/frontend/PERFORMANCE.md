@@ -69,6 +69,9 @@ running animations and a 0.01 ms tab-indicator transition.
   the Work's small Attempt index—in a bounded browser-session LRU keyed by exact stream identity.
   Re-entry and same-tab reload render that snapshot before issuing incremental synchronization;
   cache data never crosses streams and never becomes canonical product state.
+- Reflection diagnostics are a nested lazy surface. Opening the ordinary Assistant does not load
+  Reflection list/detail code or start its queries; that boundary is crossed only when the operator
+  explicitly opens the debug stream.
 - The Board reads a card projection, not the document reader projection. For the reference 36-card
   Goal it stays below 80 KiB and never includes design content, Goal Evidence bodies, artifact lists,
   canonical Work bodies, or Goal Attention bodies. Cards retain only open Attention status and the

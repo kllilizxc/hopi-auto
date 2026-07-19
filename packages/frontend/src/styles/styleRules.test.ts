@@ -217,6 +217,9 @@ test('stream virtualization is the only authority for variable row height', asyn
   const assistant = await Bun.file(
     new URL('../components/AssistantPanel.tsx', import.meta.url),
   ).text()
+  const reflection = await Bun.file(
+    new URL('../components/ReflectionDebugPanel.tsx', import.meta.url),
+  ).text()
   const feed = await Bun.file(new URL('../components/UnifiedMessageFeed.tsx', import.meta.url)).text()
   const runRowRule = styles.match(/\.reflection-run-row\s*\{([^}]*)\}/)?.[1] ?? ''
   const messageRowRule =
@@ -224,7 +227,8 @@ test('stream virtualization is the only authority for variable row height', asyn
       /\.unified-feed-message-row,\s*\.unified-feed-action-row,\s*\.unified-feed-activity,\s*\.unified-feed-live-activity\s*\{([^}]*)\}/,
     )?.[1] ?? ''
 
-  expect(assistant).toContain('className="reflection-run-virtuoso"')
+  expect(assistant).toContain("import('./ReflectionDebugPanel')")
+  expect(reflection).toContain('className="reflection-run-virtuoso"')
   expect(feed).toContain('<Virtuoso')
   expect(runRowRule).not.toContain('content-visibility')
   expect(runRowRule).not.toContain('contain-intrinsic-size')

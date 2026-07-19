@@ -44,6 +44,7 @@ import {
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import {
   type StableWorktreeManager,
+  StableWorktreeSyncError,
   createStableWorktreeManager,
 } from '../runtime/stableWorktreeManager'
 import { TaskCheckpointError, checkpointTaskWorktree } from '../runtime/taskCheckpoint'
@@ -297,16 +298,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         const owningWork = goalPackage.works.get(workId)
         if (!owningWork) throw new Error(`Work is missing: ${workId}`)
-        const sessionKey = {
-          projectId: options.projectId,
-          goalId,
-          workId,
-          responsibility,
-        }
-        const responsibilitySession = await responsibilitySessions.open(
-          sessionKey,
-          owningWork.attributes.contractRevision,
-        )
         const selectedRepos =
           responsibility === 'planner'
             ? projectRepos
@@ -318,28 +309,41 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         if (responsibility !== 'planner' && selectedRepos.length === 0) {
           throw new Error(`Engineering Work ${workId} has no Repo workspace`)
         }
-        const worktreeEntries =
-          responsibility === 'planner'
-            ? []
-            : await Promise.all(
-                selectedRepos.map(async (repo) => {
-                  const worktreeInput = {
-                    projectRoot: repo.integrationRoot,
-                    projectId: options.projectId,
-                    goalId,
-                    workId,
-                    repoId: repo.repoId,
-                    primaryRepoId,
-                  }
-                  return {
-                    repo,
-                    worktree:
-                      responsibility === 'reviewer'
-                        ? await worktrees.prepareClean(worktreeInput)
-                        : await worktrees.prepare(worktreeInput),
-                  }
-                }),
-              )
+        let worktreeEntries: Array<{
+          repo: LinkedProjectRepo
+          worktree: Awaited<ReturnType<StableWorktreeManager['prepare']>>
+        }> = []
+        try {
+          worktreeEntries =
+            responsibility === 'planner'
+              ? []
+              : await Promise.all(
+                  selectedRepos.map(async (repo) => {
+                    const worktreeInput = {
+                      projectRoot: repo.integrationRoot,
+                      projectId: options.projectId,
+                      goalId,
+                      workId,
+                      repoId: repo.repoId,
+                      primaryRepoId,
+                    }
+                    return {
+                      repo,
+                      worktree:
+                        responsibility === 'reviewer'
+                          ? await worktrees.prepareClean(worktreeInput)
+                          : await worktrees.prepare(worktreeInput),
+                    }
+                  }),
+                )
+        } catch (error) {
+          if (!(error instanceof StableWorktreeSyncError)) throw error
+          const planning = await goalController.ensurePlanning(
+            goalId,
+            `Reassess Work ${workId}: Coordinator could not synchronize its preserved task delta with the current release. ${error.message} Create a distinct Work identity if the old delta must be discarded; do not retry the unchanged lineage.`,
+          )
+          return { kind: 'planning_ensured', workId: planning.attributes.id }
+        }
         const scopedWorktrees = await Promise.all(
           worktreeEntries.map(async (entry) => ({
             ...entry,
@@ -358,6 +362,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 path: projectRoot,
                 primary: repo.primary,
               })),
+        )
+        const sessionKey = {
+          projectId: options.projectId,
+          goalId,
+          workId,
+          responsibility,
+        }
+        const responsibilitySession = await responsibilitySessions.open(
+          sessionKey,
+          owningWork.attributes.contractRevision,
         )
         const context = await contextStager.prepare({
           projectRoot: options.projectRoot,

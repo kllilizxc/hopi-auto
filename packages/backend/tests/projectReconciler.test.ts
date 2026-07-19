@@ -16,6 +16,10 @@ import {
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import {
+  type StableWorktreeManager,
+  StableWorktreeSyncError,
+} from '../src/runtime/stableWorktreeManager'
 import { TaskCheckpointError, checkpointTaskWorktree } from '../src/runtime/taskCheckpoint'
 import { createProjectReconciler } from '../src/scheduler/projectReconciler'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -528,6 +532,35 @@ describe('ProjectReconciler', () => {
     expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 1 })
   })
 
+  test('returns a task branch synchronization conflict to Planning before dispatch', async () => {
+    const syncFailure = async () => {
+      throw new StableWorktreeSyncError('task delta conflicts with the current release')
+    }
+    const worktrees: StableWorktreeManager = {
+      prepare: syncFailure,
+      prepareClean: syncFailure,
+      inspect: async () => null,
+    }
+    const fixture = await createFixture({ worktrees })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const planning = [...goalPackage.works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+
+    expect(result).toMatchObject({ kind: 'planning_ensured', workId: planning?.attributes.id })
+    expect(fixture.runner.responsibilities).toEqual(['planner'])
+    expect(planning?.body).toContain('could not synchronize its preserved task delta')
+    expect(planning?.body).toContain('Create a distinct Work identity')
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 0,
+      evidenceRefs: [],
+    })
+  })
+
   test('keeps operational process failure out of Work attempts and backs off redispatch', async () => {
     const fixture = await createFixture({
       generatorOperationalFailure: true,
@@ -837,6 +870,7 @@ async function createFixture(
     includeSecondaryRepo?: boolean
     projectPath?: string
     operationalRetryBaseMs?: number
+    worktrees?: StableWorktreeManager
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
     onReleaseUpdated?: Parameters<typeof createProjectReconciler>[0]['onReleaseUpdated']
@@ -926,6 +960,7 @@ async function createFixture(
       publisher,
       roleRunner: runner,
       attempts,
+      worktrees: options.worktrees,
       checkpointTask: options.checkpointTask,
       operationalRetryBaseMs: options.operationalRetryBaseMs,
       onProjectBlocked: options.onProjectBlocked,

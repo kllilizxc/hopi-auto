@@ -580,10 +580,15 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
     expect(seen[0]?.prompt).toContain('every remainingAttentionRefs value returned by tools')
     expect(seen[0]?.prompt).toContain('Work retry/cancel settles only Attention targeted exactly')
+    expect(seen[0]?.prompt).toContain('Retry means another invocation in the same Work lineage')
+    expect(seen[0]?.prompt).toContain('request Planning instead')
     expect(seen[0]?.prompt).toContain(
       'for every other blocker you MUST call hopi_resolve_attention',
     )
-    expect(seen[0]?.prompt).toContain('Requesting Planning or changing a Goal never closes')
+    expect(seen[0]?.prompt).toContain(
+      'Request Planning settles only a current-turn Attention reference',
+    )
+    expect(seen[0]?.prompt).toContain('Changing a Goal never closes Attention by itself')
     expect(seen[0]?.prompt).toContain(
       'Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds',
     )

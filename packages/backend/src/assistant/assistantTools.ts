@@ -32,6 +32,7 @@ import {
 } from '../runtime/attentionDelivery'
 import type {
   GoalController,
+  PlanningAttentionSettlement,
   PlanningContext,
   PlanningInputAdmission,
 } from '../runtime/goalController'
@@ -715,6 +716,7 @@ export function createAssistantTools(options: {
               `Interpret accepted Inbox turn ${eventId} against the current Goal and design.`,
               admission,
               { supportingWrites: references.writes, references: references.planning },
+              referencedPlanningAttentionSettlement(event, project.projectId, args.goalId),
             )
           }
           return {
@@ -859,7 +861,7 @@ export function createAssistantTools(options: {
               args.notBefore === undefined ? work.attributes.notBefore : args.notBefore,
               {
                 acceptedInput: admission,
-                resolution: 'Assistant requested a fresh run after revalidating the blocker.',
+                resolution: 'Assistant requested another run in the existing Work lineage.',
               },
             )
             inputChanged = Boolean(admission.write)
@@ -1073,12 +1075,19 @@ async function ensurePlanningWithRunInvalidation(
   reason: string,
   acceptedInput?: PlanningInputAdmission,
   context: PlanningContext = {},
+  settlement?: PlanningAttentionSettlement,
 ) {
   const before = await project.store.readPackage(goalId)
   const existing = [...before.works.values()].find(
     (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
   )
-  const planning = await project.controller.ensurePlanning(goalId, reason, acceptedInput, context)
+  const planning = await project.controller.ensurePlanning(
+    goalId,
+    reason,
+    acceptedInput,
+    context,
+    settlement,
+  )
   const selectedAuthorityChanged =
     Boolean(acceptedInput?.write) || Boolean(context.supportingWrites?.length)
 
@@ -1089,6 +1098,28 @@ async function ensurePlanningWithRunInvalidation(
     project.reconciler?.interruptRuns(goalId, planning.attributes.id)
   }
   return planning
+}
+
+function referencedPlanningAttentionSettlement(
+  event: NonNullable<Awaited<ReturnType<AssistantWorkspaceStore['readEvent']>>>,
+  projectId: string,
+  goalId: string,
+): PlanningAttentionSettlement | undefined {
+  const attentionIds = event.attributes.context
+    ? normalizeInboxAttentionReferences(event.attributes.context).flatMap((reference) => {
+        const parsed = parseAttentionReference(reference)
+        return parsed?.scope === 'goal' &&
+          parsed.projectId === projectId &&
+          parsed.goalId === goalId
+          ? [parsed.attentionId]
+          : []
+      })
+    : []
+  if (attentionIds.length === 0) return undefined
+  return {
+    attentionIds,
+    resolution: 'Planning accepted this Inbox turn and now owns the represented continuation.',
+  }
 }
 
 async function prepareGoalReferences(

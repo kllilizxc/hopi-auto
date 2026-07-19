@@ -339,6 +339,7 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-13` | Accepted images remain byte-identical, and Project truth cites only adopted Goal-local assets.                                |
 | `INV-14` | Every model process retains its raw stream even when parsing, publication, or presentation fails.                             |
 | `INV-15` | At a settled boundary, every unresolved unnotified targeted Attention has an active Reflection or eligible speaking owner; an ineligible event cannot block unrelated notification. |
+| `INV-16` | Before dispatch, a stable task branch contains the current release or Planning owns an exact synchronization conflict; discarding an old task delta always uses a new Work identity. |
 
 ## Coverage Catalog
 

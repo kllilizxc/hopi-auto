@@ -27,6 +27,7 @@ export interface StableWorktreeManager {
 }
 
 export class StableWorktreeError extends Error {}
+export class StableWorktreeSyncError extends StableWorktreeError {}
 
 export function createStableWorktreeManager(homeRoot: string): StableWorktreeManager {
   const absoluteHomeRoot = resolve(homeRoot)
@@ -48,33 +49,33 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       const expected = worktree(input)
       await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
-      if (existing) return existing
-
-      return materialize(input, expected)
+      const prepared = existing ?? (await materialize(input, expected))
+      return synchronize(input, prepared)
     },
     async prepareClean(input) {
       const expected = worktree(input)
       await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
-      if (!existing) return materialize(input, expected)
-      const status = await runGit(existing.path, [
-        'status',
-        '--porcelain=v1',
-        '--untracked-files=all',
-      ])
-      if (!status.stdout) return existing
-
-      const removed = await runGit(
-        input.projectRoot,
-        ['worktree', 'remove', '--force', expected.path],
-        true,
-      )
-      if (removed.exitCode !== 0) {
-        throw new StableWorktreeError(
-          `Cannot discard dirty Work checkout ${input.workId}: ${removed.stderr || removed.stdout}`,
-        )
+      let prepared = existing
+      if (!prepared) {
+        prepared = await materialize(input, expected)
+      } else {
+        const status = await worktreeStatus(prepared.path)
+        if (status) {
+          const removed = await runGit(
+            input.projectRoot,
+            ['worktree', 'remove', '--force', expected.path],
+            true,
+          )
+          if (removed.exitCode !== 0) {
+            throw new StableWorktreeError(
+              `Cannot discard dirty Work checkout ${input.workId}: ${removed.stderr || removed.stdout}`,
+            )
+          }
+          prepared = await materialize(input, expected)
+        }
       }
-      return materialize(input, expected)
+      return synchronize(input, prepared)
     },
     async inspect(input) {
       const expected = worktree(input)
@@ -124,6 +125,93 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
     return expected
   }
 
+  async function synchronize(input: StableWorktreeInput, expected: StableWorktree) {
+    const [taskHead, releaseHead] = await Promise.all([
+      runGit(expected.path, ['rev-parse', 'HEAD']),
+      runGit(input.projectRoot, ['rev-parse', HOPI_RELEASE_REF]),
+    ])
+    if (taskHead.stdout === releaseHead.stdout) return expected
+
+    const releaseIsAncestor = await runGit(
+      expected.path,
+      ['merge-base', '--is-ancestor', releaseHead.stdout, taskHead.stdout],
+      true,
+    )
+    if (releaseIsAncestor.exitCode === 0) return expected
+    if (releaseIsAncestor.exitCode !== 1) {
+      throw new StableWorktreeError(
+        `Cannot inspect release ancestry for Work ${input.workId}: ${releaseIsAncestor.stderr || releaseIsAncestor.stdout}`,
+      )
+    }
+
+    const status = await worktreeStatus(expected.path)
+    if (status) {
+      throw new StableWorktreeSyncError(
+        `Cannot synchronize dirty Work checkout ${input.workId} with release ${releaseHead.stdout}; preserve its uncheckpointed source and replan`,
+      )
+    }
+
+    const taskIsAncestor = await runGit(
+      expected.path,
+      ['merge-base', '--is-ancestor', taskHead.stdout, releaseHead.stdout],
+      true,
+    )
+    if (taskIsAncestor.exitCode !== 0 && taskIsAncestor.exitCode !== 1) {
+      throw new StableWorktreeError(
+        `Cannot inspect task ancestry for Work ${input.workId}: ${taskIsAncestor.stderr || taskIsAncestor.stdout}`,
+      )
+    }
+
+    const mergeArgs =
+      taskIsAncestor.exitCode === 0
+        ? ['-c', 'core.hooksPath=/dev/null', 'merge', '--ff-only', releaseHead.stdout]
+        : [
+            '-c',
+            'core.hooksPath=/dev/null',
+            'merge',
+            '--no-ff',
+            '--no-edit',
+            '--no-gpg-sign',
+            '-m',
+            `hopi: synchronize ${input.goalId}/${input.workId} with release`,
+            releaseHead.stdout,
+          ]
+    const merge = await runGit(expected.path, mergeArgs, true, {
+      GIT_AUTHOR_NAME: 'HOPI Coordinator',
+      GIT_AUTHOR_EMAIL: 'hopi@local',
+      GIT_COMMITTER_NAME: 'HOPI Coordinator',
+      GIT_COMMITTER_EMAIL: 'hopi@local',
+    })
+    if (merge.exitCode !== 0) {
+      await runGit(expected.path, ['merge', '--abort'], true)
+      const [restoredHead, restoredStatus, mergeHead] = await Promise.all([
+        runGit(expected.path, ['rev-parse', 'HEAD']),
+        worktreeStatus(expected.path),
+        runGit(expected.path, ['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], true),
+      ])
+      if (restoredHead.stdout !== taskHead.stdout || restoredStatus || mergeHead.exitCode === 0) {
+        throw new StableWorktreeError(
+          `Work ${input.workId} synchronization failed and the exact prior checkout could not be restored`,
+        )
+      }
+      throw new StableWorktreeSyncError(
+        `Work ${input.workId} changes conflict with release ${releaseHead.stdout}: ${merge.stderr || merge.stdout}`,
+      )
+    }
+
+    const [nextHead, nextStatus, synchronized] = await Promise.all([
+      runGit(expected.path, ['rev-parse', 'HEAD']),
+      worktreeStatus(expected.path),
+      runGit(expected.path, ['merge-base', '--is-ancestor', releaseHead.stdout, 'HEAD'], true),
+    ])
+    if (nextStatus || synchronized.exitCode !== 0) {
+      throw new StableWorktreeError(
+        `Work ${input.workId} did not cleanly synchronize ${taskHead.stdout} with release ${releaseHead.stdout} at ${nextHead.stdout}`,
+      )
+    }
+    return expected
+  }
+
   async function migrateLegacyWorktree(input: StableWorktreeInput, expected: StableWorktree) {
     if (await pathExists(expected.path)) return
     const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
@@ -165,11 +253,21 @@ async function gitCommonDir(cwd: string) {
   return realpath(resolve(cwd, result.stdout))
 }
 
-async function runGit(cwd: string, args: string[], allowFailure = false) {
+async function worktreeStatus(path: string) {
+  return (await runGit(path, ['status', '--porcelain=v1', '--untracked-files=all'])).stdout
+}
+
+async function runGit(
+  cwd: string,
+  args: string[],
+  allowFailure = false,
+  env: Record<string, string> = {},
+) {
   const child = Bun.spawn(['git', '-c', 'core.autocrlf=false', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, ...env },
   })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),

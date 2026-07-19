@@ -417,7 +417,6 @@ async function executeProcess(
             terminalError = output.terminalError.message
             sessionInvalid ||= output.terminalError.sessionInvalid
           }
-          if (session && isExplicitSessionFailure(line)) sessionInvalid = true
         }
         await emitLine(observer, format, 'stdout', input, line)
       }),

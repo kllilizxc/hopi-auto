@@ -22,6 +22,9 @@ test('cold loads show a pre-React surface before the application script', async 
 test('product surfaces and compact Assistant load behind explicit boundaries', async () => {
   const app = await Bun.file(new URL('./App.tsx', import.meta.url)).text()
   const layout = await Bun.file(new URL('./components/Layout.tsx', import.meta.url)).text()
+  const assistant = await Bun.file(
+    new URL('./components/AssistantPanel.tsx', import.meta.url),
+  ).text()
   const build = await Bun.file(new URL('../build.ts', import.meta.url)).text()
 
   for (const page of ['BoardView', 'GoalDocsPage', 'GoalCreatePage', 'ProjectHomePage']) {
@@ -34,6 +37,8 @@ test('product surfaces and compact Assistant load behind explicit boundaries', a
   expect(layout).not.toContain("import { AssistantPanel } from './AssistantPanel'")
   expect(layout).toContain('const shouldRenderAssistant = assistantDocked || assistantActivated')
   expect(layout).toContain('setAssistantActivated(true)')
+  expect(assistant).toContain("const ReflectionDebugPanel = lazy(() =>")
+  expect(assistant).toContain("import('./ReflectionDebugPanel')")
   expect(build).toContain('splitting: true')
 })
 

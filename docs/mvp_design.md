@@ -154,6 +154,17 @@ Each engineering Work item owns one stable branch and worktree. Generator repair
 inspection, and Coordinator integration reuse it. Goal worktrees are too coarse and Run
 worktrees are too short-lived.
 
+Before admitting another responsibility pass, Coordinator synchronizes that stable task branch
+with the current Repo release while preserving its checkpointed Work delta. An already-current
+branch is reused unchanged; a clean release advance is incorporated mechanically. A dirty or
+conflicting branch that cannot be synchronized without guessing returns to Planning before a model
+pass starts. This is maintenance of the existing Work projection, not another workflow state.
+
+Work identity also bounds what may be preserved. When accepted Planning requires the old task delta
+or checkpoint not to be used at all, Planner creates a distinct Engineering Work identity and routes
+the monotonic DAG through it. Coordinator never resets the old stable branch and HOPI adds no
+`freshWorktree`, repair mode, or branch-generation field.
+
 Each Project also owns the fixed HOPI-managed integration branch `hopi/release` and one stable
 integration worktree. Task worktrees branch from that target and C1 moves only that target. Managed
 worktrees live together under a Repo-adjacent `.hopi-worktrees/<repo-name>/` root, never inside the
@@ -221,9 +232,11 @@ display text and completion state. The snapshot is observability, not workflow a
   item owns one segment; expanding the track reveals the complete current list, and the running
   segment uses a restrained pulsing full fill with a quiet same-color glow. Completed segments and
   their expanded item markers inherit the containing Lane's phase color rather than a global success
-  color. The track exists only after a non-terminal Work has started; never-started, Done, and
-  cancelled Work render no progress track. Started Work without an Agent plan uses one fallback
-  segment derived from its runtime state.
+  color. Expanded items remain a non-interactive projection rather than independent Subtask entities;
+  clicking one opens the containing Work detail, while only the progress summary toggles expansion.
+  The track exists only after a non-terminal Work has started; never-started, Done, and cancelled Work
+  render no progress track. Started Work without an Agent plan uses one fallback segment derived from
+  its runtime state.
   Attempt detail does not repeat this card-level task projection; the normalized plan event remains
   available in the Run record;
 - plan events stay out of the conversational Activity projection, because changing an internal plan

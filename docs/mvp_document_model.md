@@ -505,6 +505,10 @@ Planning Work omits engineering Git fields. For engineering Work:
   binding plus Goal and Work identity
 - each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
 - a missing disposable task checkout may be rebuilt from that Repo's stable branch after migration
+- before dispatch, Coordinator synchronizes the stable branch with the latest Repo release while
+  preserving its checkpointed Work delta; this computed projection has no document field
+- a plan that must discard the current Work delta creates a distinct Engineering Work identity;
+  neither a contract rewrite nor retry resets the old branch
 - `evidenceRefs` is an append-only ordered list of consumed Run and supporting Evidence; it
   does not map criteria through a schema or replace model judgment
 
@@ -567,7 +571,10 @@ replanning.
 
 Adding a dependency to materialized nonterminal engineering Work sets it to `generate`,
 invalidates active or unaccepted output, preserves its branch, and requires synchronization with
-the latest integration target after dependencies finish.
+the latest integration target after dependencies finish. Coordinator performs that synchronization
+before the next pass and preserves the Work delta. If accepted Planning instead forbids reuse of
+that delta, Planner assigns a new Work identity rather than asking Assistant to rebuild or reset the
+existing branch.
 
 Cancelling Work with nonterminal dependents first cancels those dependents transitively, then
 cancels the selected Work. If that cascade is not clearly intended, cancellation is not published

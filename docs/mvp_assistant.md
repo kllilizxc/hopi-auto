@@ -358,7 +358,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write preferences | Replace durable cross-Project user defaults | Assistant-home `preference.md` |
 | Create Goal | Create one Goal, record the current instruction, and start its initial Planning | Goal package and Goal Input |
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
-| Request planning | Record the current user instruction for a Goal and ensure Planning | Goal Input and Planning Work |
+| Request planning | Record the current instruction for a Goal and ensure Planning | Goal Input and Planning Work; also settles an exact referenced Attention targeted at that Planning Work |
 | Control Goal | Pause, resume, cancel, reopen, or set priority | Validated Goal/control documents |
 | Control Work | Retry, cancel, or change `notBefore` | Validated Work documents; retry/cancel also settle exact Work Attention |
 | Resolve Attention | Record an operator answer after any required Goal/Work effects | Goal Input and Attention resolution |
@@ -404,6 +404,12 @@ adopts the current turn as Goal Input and may invalidate an active Planner. Assi
 a non-blocking suggestion conversation-only unless the operator intends it to change the current plan
 or delivery. `Write design` is the corresponding explicit adoption when the requested durable effect
 is documentation rather than implementation; it does not mechanically request Planning.
+
+When that current turn references an open Attention targeted exactly at the Planning Work being
+created or refreshed, the accepted Planning continuation and Attention settlement are one gated
+publication. The resolution is the final gate, so a crash remains conservatively blocked and an
+idempotent repeat finishes it. No unreferenced, other-Work, Project, or Workspace Attention is closed
+by Planning.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
@@ -491,7 +497,8 @@ Mutation tools follow these rules:
 the Work control facts, records the current Goal Input, and resolves every open Attention targeted
 exactly at that Work in one gated publication. `Control Work: cancel` settles Attention for the Work
 it makes terminal. Neither operation closes Goal, Project, or another Work's Attention; all other
-settlement remains an explicit model judgment through `Resolve Attention`.
+settlement remains an explicit model judgment through `Resolve Attention`, except the exact
+referenced Planning-Work settlement owned by `Request planning` above.
 
 An expected domain precondition failure, such as requesting Planning for a terminal Goal before
 reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response
@@ -561,7 +568,11 @@ an indefinite loading indicator.
 
 The Assistant drawer shows one chronological conversation:
 
-- a submitted user message appears immediately
+- submitting snapshots and clears the composer immediately, then appends one memory-only optimistic
+  user row without waiting for the Inbox request. The response supplies the canonical event ID; the
+  ordinary feed sync replaces the optimistic row when that exact event appears. A rejected request
+  removes the row and restores its text, images, and reply context instead of losing the draft. No
+  optimistic row enters the browser history snapshot or any durable document
 - Conversation activity is one rebuildable tail projection, never an Inbox message, runtime event,
   or durable status row. It is rendered at most once and only after the newest conversation row.
   A running public speaking turn shows `Working`. When no public turn is running, an active

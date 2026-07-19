@@ -281,6 +281,44 @@ describe('ConfiguredRoleRunner', () => {
       'saved thread not found',
     )
   })
+
+  test('does not treat resumed model or tool content as a session failure', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeCodex(
+      fixture.root,
+      `if(Bun.argv.includes("resume")) {
+        console.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"No later than the cutoff and before the first trading session. Session alignment reports missing bars."}}))
+        await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"resumed",artifacts:[]}))
+      } else {
+        await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"unexpected rebuild",artifacts:[]}))
+      }`,
+    )
+    let invalidations = 0
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+
+    const result = await runner.run(
+      {
+        ...fixture.input('planner', fixture.proposalRoot),
+        session: { transport: 'codex', sessionId: 'thread-valid' },
+      },
+      {
+        onSessionInvalid: () => {
+          invalidations += 1
+        },
+      },
+    )
+
+    expect(result).toMatchObject({ result: 'success', summary: 'resumed' })
+    expect(invalidations).toBe(0)
+  })
 })
 
 function processRunner(code: string) {

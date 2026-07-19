@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { HOPI_RELEASE_BRANCH } from '../src/domain/project'
-import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
+import {
+  StableWorktreeSyncError,
+  createStableWorktreeManager,
+} from '../src/runtime/stableWorktreeManager'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'stable-worktree-manager')
@@ -192,6 +195,138 @@ describe('createStableWorktreeManager', () => {
     ).toBe('durable task change\n')
     expect(await Bun.file(join(clean.path, 'test-results', 'output.txt')).exists()).toBe(false)
   })
+
+  test('fast-forwards an unchanged stable task branch to the current release', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-fast-forward'))
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    const priorTaskHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+    await Bun.write(join(project.integrationRoot, 'release.txt'), 'new release source\n')
+    await git(project.integrationRoot, ['add', 'release.txt'])
+    await git(project.integrationRoot, ['commit', '-m', 'advance release'])
+    const releaseHead = await git(project.integrationRoot, ['rev-parse', 'HEAD'])
+
+    const synchronized = await manager.prepare(input)
+
+    expect(await git(synchronized.path, ['rev-parse', 'HEAD'])).toBe(releaseHead)
+    expect(await git(synchronized.path, ['status', '--porcelain'])).toBe('')
+    expect(await Bun.file(join(synchronized.path, 'release.txt')).text()).toBe(
+      'new release source\n',
+    )
+    expect(priorTaskHead).not.toBe(releaseHead)
+  })
+
+  test('merges the current release into a divergent stable task branch without losing its delta', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-divergent'))
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    await Bun.write(join(prepared.path, 'task.txt'), 'checkpointed task delta\n')
+    await git(prepared.path, ['add', 'task.txt'])
+    await git(prepared.path, ['commit', '-m', 'task checkpoint'])
+    const taskHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+    await Bun.write(join(project.integrationRoot, 'release.txt'), 'independent release delta\n')
+    await git(project.integrationRoot, ['add', 'release.txt'])
+    await git(project.integrationRoot, ['commit', '-m', 'advance release independently'])
+    const releaseHead = await git(project.integrationRoot, ['rev-parse', 'HEAD'])
+
+    const synchronized = await manager.prepare(input)
+    const synchronizedHead = await git(synchronized.path, ['rev-parse', 'HEAD'])
+
+    expect(synchronizedHead).not.toBe(taskHead)
+    expect(synchronizedHead).not.toBe(releaseHead)
+    expect(await git(synchronized.path, ['rev-parse', 'HEAD^1'])).toBe(taskHead)
+    expect(await git(synchronized.path, ['rev-parse', 'HEAD^2'])).toBe(releaseHead)
+    expect(await git(synchronized.path, ['status', '--porcelain'])).toBe('')
+    expect(await Bun.file(join(synchronized.path, 'task.txt')).text()).toBe(
+      'checkpointed task delta\n',
+    )
+    expect(await Bun.file(join(synchronized.path, 'release.txt')).text()).toBe(
+      'independent release delta\n',
+    )
+  })
+
+  test('aborts a release conflict back to the exact prior stable task checkpoint', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-conflict'))
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    await Bun.write(join(prepared.path, 'README.md'), '# Task version\n')
+    await git(prepared.path, ['add', 'README.md'])
+    await git(prepared.path, ['commit', '-m', 'change task readme'])
+    const taskHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+    await Bun.write(join(project.integrationRoot, 'README.md'), '# Release version\n')
+    await git(project.integrationRoot, ['add', 'README.md'])
+    await git(project.integrationRoot, ['commit', '-m', 'change release readme'])
+
+    expect(manager.prepare(input)).rejects.toBeInstanceOf(StableWorktreeSyncError)
+
+    expect(await git(prepared.path, ['rev-parse', 'HEAD'])).toBe(taskHead)
+    expect(await git(prepared.path, ['status', '--porcelain'])).toBe('')
+    expect(await Bun.file(join(prepared.path, 'README.md')).text()).toBe('# Task version\n')
+    expect(await gitExitCode(prepared.path, ['rev-parse', '--verify', 'MERGE_HEAD'])).not.toBe(0)
+  })
+
+  test('preserves dirty source and requests replanning when release synchronization is needed', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-dirty'))
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    const taskHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+    await Bun.write(join(prepared.path, 'unfinished.txt'), 'uncheckpointed source\n')
+    await Bun.write(join(project.integrationRoot, 'release.txt'), 'new release source\n')
+    await git(project.integrationRoot, ['add', 'release.txt'])
+    await git(project.integrationRoot, ['commit', '-m', 'advance release'])
+
+    expect(manager.prepare(input)).rejects.toBeInstanceOf(StableWorktreeSyncError)
+
+    expect(await git(prepared.path, ['rev-parse', 'HEAD'])).toBe(taskHead)
+    expect(await Bun.file(join(prepared.path, 'unfinished.txt')).text()).toBe(
+      'uncheckpointed source\n',
+    )
+    expect(await git(prepared.path, ['status', '--porcelain'])).toBe('?? unfinished.txt')
+  })
 })
 
 async function createRepo(path: string) {
@@ -223,4 +358,8 @@ async function git(cwd: string, args: string[]) {
   ])
   if (exitCode !== 0) throw new Error(`git ${args.join(' ')} failed: ${stderr.trim()}`)
   return stdout.trim()
+}
+
+async function gitExitCode(cwd: string, args: string[]) {
+  return Bun.spawn(['git', ...args], { cwd, stdout: 'ignore', stderr: 'ignore' }).exited
 }

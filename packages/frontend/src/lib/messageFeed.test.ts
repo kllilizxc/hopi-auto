@@ -11,6 +11,54 @@ import {
 } from './messageFeed'
 
 describe('unified message feed adapters', () => {
+  test('renders a submitted user message before the canonical Inbox event exists', () => {
+    const items = assistantFeedEntriesToMessageFeed([], [
+      {
+        clientId: 'client-1',
+        createdAt: '2026-07-11T08:00:00.000Z',
+        text: 'Start the next task.',
+        eventId: null,
+        attachments: [],
+      },
+    ])
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        id: 'optimistic:client-1:user',
+        kind: 'user_message',
+        text: 'Start the next task.',
+      }),
+    ])
+  })
+
+  test('replaces an optimistic user message with its exact canonical Inbox event', () => {
+    const canonical: AssistantFeedEntry = {
+      kind: 'event',
+      id: 'event:EV-server',
+      occurredAt: '2026-07-11T08:00:01.000Z',
+      event: inboxEvent({
+        id: 'EV-server',
+        receivedAt: '2026-07-11T08:00:01.000Z',
+        body: 'Start the next task.',
+      }),
+      completion: null,
+    }
+    const items = assistantFeedEntriesToMessageFeed([canonical], [
+      {
+        clientId: 'client-1',
+        createdAt: '2026-07-11T08:00:00.000Z',
+        text: 'Start the next task.',
+        eventId: 'EV-server',
+        attachments: [],
+      },
+    ])
+
+    expect(items.filter((item) => item.kind === 'user_message')).toEqual([
+      expect.objectContaining({ id: 'inbox:EV-server:user', text: 'Start the next task.' }),
+    ])
+    expect(items.some((item) => item.id.startsWith('optimistic:'))).toBe(false)
+  })
+
   test('moves a linked completion Attention into the stream without duplicating its reply', () => {
     const completion = completionAttention()
     const items = assistantEventsToMessageFeed(

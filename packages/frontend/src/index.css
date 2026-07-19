@@ -5646,12 +5646,14 @@ samp {
   position: relative;
   z-index: 2;
   margin-top: 12px;
+  pointer-events: none;
 }
 
 .agent-plan__trigger {
   display: block;
   border-radius: 7px;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .agent-plan__trigger:focus-visible {

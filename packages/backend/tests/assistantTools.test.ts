@@ -887,6 +887,47 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
+  test('atomically refreshes Planning and settles its exact referenced Attention', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await fixture.controller.ensureResponsibilityFailureAttention(
+      'G-1',
+      'plan-initial',
+      'planner',
+      'The current implementation lineage needs a new represented plan.',
+    )
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-replan-attention',
+      content: 'Create a distinct Engineering Work instead of retrying the old lineage.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      },
+    })
+
+    const planned = await fixture.tools.executeForEvent(
+      'EV-replan-attention',
+      'hopi_request_planning',
+      {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        materialContractChange: false,
+      },
+    )
+
+    expect(planned.value).toMatchObject({ remainingAttentionRefs: [] })
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-replan-attention.md')
+    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolutionInput: expect.stringContaining('/EV-replan-attention.md'),
+    })
+    expect(goalPackage.attentions.get(attention.attributes.id)?.body).toContain(
+      'Planning accepted this Inbox turn',
+    )
+  })
+
   test('surfaces a superseded Work Attention after material Planning until Assistant settles it', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

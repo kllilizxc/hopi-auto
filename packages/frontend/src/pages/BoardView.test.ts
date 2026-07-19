@@ -183,11 +183,14 @@ test('progress belongs only to started non-terminal Work', () => {
 
 test('Work cards own the collapsible subtask projection without duplicating it in detail', async () => {
   const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const card = source.slice(
     source.indexOf('function WorkCard'),
     source.indexOf('function WorkDetail'),
   )
   const detail = source.slice(source.indexOf('function WorkDetail'))
+  const planRule = styles.match(/\.agent-plan--card\s*\{([^}]*)\}/)?.[1] ?? ''
+  const triggerRule = styles.match(/\.agent-plan__trigger\s*\{([^}]*)\}/)?.[1] ?? ''
 
   expect(card).toContain('<WorkProgress')
   expect(card).toContain('plan={work.agentPlan}')
@@ -200,6 +203,8 @@ test('Work cards own the collapsible subtask projection without duplicating it i
   expect(card).toContain('agent-plan__segment-progress')
   expect(card).toContain('agent-plan__current-indicator')
   expect(card).not.toContain('<Check />')
+  expect(planRule).toContain('pointer-events: none')
+  expect(triggerRule).toContain('pointer-events: auto')
   expect(detail).not.toContain('AgentPlanChecklist')
   expect(detail).not.toContain('latestAgentPlan')
   expect(detail).not.toContain('activePlan')

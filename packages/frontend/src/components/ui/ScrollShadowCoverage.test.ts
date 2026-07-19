@@ -13,10 +13,11 @@ const scrollSurfaceChecks = [
   },
   {
     file: '../AssistantPanel.tsx',
-    patterns: [
-      /className="composer-images"[\s\S]*?orientation="horizontal"/,
-      /Scroller: AppScrollShadow/,
-    ],
+    patterns: [/className="composer-images"[\s\S]*?orientation="horizontal"/],
+  },
+  {
+    file: '../ReflectionDebugPanel.tsx',
+    patterns: [/Scroller: AppScrollShadow/],
   },
   {
     file: '../UnifiedMessageFeed.tsx',
