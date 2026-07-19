@@ -1,12 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  AlertCircle,
-  ArrowDown,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  MessageSquareReply,
-} from 'lucide-react'
+import { AlertCircle, ArrowDown, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   Virtuoso,
   type Components,
@@ -21,6 +14,7 @@ import {
   type MessageFeedItem,
 } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
+import { MessageFeedSkeleton } from './MessageFeedSkeleton'
 import {
   AppButton,
   AppBreathingIndicator,
@@ -53,6 +47,8 @@ interface UnifiedMessageFeedProps {
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
+
+export { MessageFeedSkeleton } from './MessageFeedSkeleton'
 const INITIAL_BOTTOM_LOCATION = { index: 'LAST', align: 'end' } as const
 const MESSAGE_FEED_AUTO_FOLLOW_DISTANCE = 160
 const FEED_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -309,34 +305,6 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   )
 }, messageFeedPropsEqual)
 
-export function MessageFeedSkeleton({
-  density = 'comfortable',
-}: {
-  density?: 'comfortable' | 'compact'
-}) {
-  return (
-    <div
-      className={cn('message-feed-skeleton', `message-feed-skeleton--${density}`)}
-      role="status"
-      aria-label="Loading messages"
-    >
-      <div className="message-feed-skeleton__row assistant" aria-hidden="true">
-        <span className="message-feed-skeleton__meta" />
-        <span className="message-feed-skeleton__line wide" />
-        <span className="message-feed-skeleton__line medium" />
-      </div>
-      <div className="message-feed-skeleton__row user" aria-hidden="true">
-        <span className="message-feed-skeleton__line medium" />
-        <span className="message-feed-skeleton__line short" />
-      </div>
-      <div className="message-feed-skeleton__row assistant compact" aria-hidden="true">
-        <span className="message-feed-skeleton__meta" />
-        <span className="message-feed-skeleton__line wide" />
-      </div>
-    </div>
-  )
-}
-
 function messageFeedPropsEqual(
   previous: UnifiedMessageFeedProps,
   next: UnifiedMessageFeedProps,
@@ -410,7 +378,6 @@ function MessageRow({
               onClick={onReply}
               aria-label="Reply to this request"
             >
-              <MessageSquareReply />
               Reply
             </AppButton>
           </div>
@@ -418,7 +385,9 @@ function MessageRow({
         {isUser && item.text.trim() ? (
           <div className="unified-feed-message__bubble">{item.text}</div>
         ) : !isUser ? (
-          <div className="unified-feed-message__text">{item.text}</div>
+          <div className="unified-feed-message__text">
+            <AssistantMessageText text={item.text} />
+          </div>
         ) : null}
         {item.attachments && item.attachments.length > 0 ? (
           <div className="unified-feed-message__attachments">
@@ -445,6 +414,40 @@ function MessageRow({
   )
 }
 
+export function AssistantMessageText({ text }: { text: string }) {
+  const content: ReactNode[] = []
+  const linkPattern = /\[([^\]\n]+)\]\(([^\s)]+)\)/g
+  let cursor = 0
+  for (const match of text.matchAll(linkPattern)) {
+    const href = match[2]
+    if (!href || !isSafeAssistantLink(href) || match.index === undefined) continue
+    if (match.index > cursor) content.push(text.slice(cursor, match.index))
+    content.push(
+      <AppLink
+        href={href}
+        key={`${match.index}:${href}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {match[1]}
+      </AppLink>,
+    )
+    cursor = match.index + match[0].length
+  }
+  if (cursor < text.length) content.push(text.slice(cursor))
+  return <>{content}</>
+}
+
+function isSafeAssistantLink(href: string) {
+  if (href.startsWith('/api/') || href.startsWith('/projects/')) return true
+  try {
+    const protocol = new URL(href).protocol
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
   const [expanded, setExpanded] = useState(false)
   const details = item.details ?? []
@@ -456,7 +459,9 @@ function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
           <strong>{item.label ?? 'Action required'}</strong>
           <time>{formatFeedTimestamp(item.createdAt)}</time>
         </header>
-        <p>{item.text}</p>
+        <p>
+          <AssistantMessageText text={item.text} />
+        </p>
         {details.length > 0 ? (
           <>
             <AppButton variant="ghost" type="button" onClick={() => setExpanded((current) => !current)}>
@@ -486,7 +491,9 @@ function SystemUpdateRow({ item }: { item: MessageFeedItem }) {
           <strong>{item.label ?? 'System update'}</strong>
           <time>{formatFeedTimestamp(item.createdAt)}</time>
         </header>
-        <p>{item.text}</p>
+        <p>
+          <AssistantMessageText text={item.text} />
+        </p>
       </div>
     </article>
   )

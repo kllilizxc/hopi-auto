@@ -31,8 +31,9 @@ import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
+import { migrateLegacyAttentionOwnership } from './attentionOwnershipMigration'
 import { createCompletionStructureVerifier } from './completionVerifier'
-import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
+import { bootstrapCoordinator } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
@@ -69,8 +70,13 @@ export interface MvpRuntime {
   coordinator: ReturnType<typeof createCoordinatorReconciler>
   preview: ReturnType<typeof createPreviewManager>
   attempts: ReturnType<typeof createRunAttemptStore>
-  rebindProject(projectId: string, repoPath: string): Promise<void>
-  rebindRepo(projectId: string, repoId: string, repoPath: string): Promise<void>
+  rebindProject(projectId: string, repoPath: string, projectPath?: string): Promise<void>
+  rebindRepo(
+    projectId: string,
+    repoId: string,
+    repoPath: string,
+    projectPath?: string,
+  ): Promise<void>
   readProjectCodingDefaults(projectId: string): Promise<{
     codingDefaults: ProjectCodingDefaults
     inherited: boolean
@@ -89,6 +95,7 @@ export interface CreateMvpRuntimeOptions {
   reflectionRunner?: AssistantModelRunner
   assistantToolUrl?: () => string
   attentionTransport?: AttentionTransport
+  onProjectTopologyChanged?: () => void
   start?: boolean
 }
 
@@ -104,6 +111,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const responsibilitySessions = createResponsibilitySessionStore(options.homeRoot)
   const assistantConversation = createAssistantConversationStore(options.homeRoot)
   await assistantConversation.interruptRunning()
+  const topologyChangedEvents = new Set<string>()
+  const assistantSessionResetEvents = new Set<string>()
   const attentions = createWorkspaceAttentionController(workspace)
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
   const readAdapterConfig = () => readAndMigrateAgentAdapterConfig(adapterPath)
@@ -216,16 +225,24 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     publisher,
     attempts,
     activeRuns: () => readActiveRuns(),
+    readAssistantCodingDefaults: readAssistantModelSettings,
+    readProjectCodingDefaults,
   })
   let restoreProjectEligibility: (projectId: string) => void = () => undefined
   const assistantTools = createAssistantTools({
+    home,
     workspace,
     projects,
     publisher,
     preview,
     state: assistantState,
+    readAssistantCodingDefaults: readAssistantModelSettings,
+    readProjectCodingDefaults,
+    updateAssistantCodingDefaultsForTurn: updateAssistantModelSettingsForTurn,
+    onProjectTopologyChanged: (eventId) => topologyChangedEvents.add(eventId),
     onProjectAttentionResolved: (projectId) => restoreProjectEligibility(projectId),
   })
+  await migrateLegacyAttentionOwnership({ workspace, projects })
   const assistant = createWorkspaceAssistant({
     homeRoot: options.homeRoot,
     workspace,
@@ -234,6 +251,12 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     runner: assistantRunner,
     resolveToolUrl:
       options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
+    onTurnSettled: async (eventId) => {
+      if (assistantSessionResetEvents.delete(eventId)) {
+        await assistantConversation.clearSession()
+      }
+      if (topologyChangedEvents.delete(eventId)) options.onProjectTopologyChanged?.()
+    },
   })
   let wakeCoordinator: () => void = () => undefined
   const reflection = createAssistantReflection({
@@ -261,51 +284,32 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       projectId: project.projectId,
       store: project.store,
       reconciler: project.reconciler,
-      recover: () => recoverRuntimeProject(project),
     })),
     concurrency: profile.concurrency,
     delivery,
   })
   readActiveRuns = () => coordinator.activeRuns()
   wakeCoordinator = () => coordinator.wake()
-  restoreProjectEligibility = (projectId) => {
-    const project = projects.get(projectId)
-    if (!project) return
-    coordinator.setProjectEligible(projectId, false)
-    void recoverRuntimeProject(project)
-      .then(() => coordinator.setProjectEligible(projectId, true))
-      .catch(async (error) => {
-        await attentions.ensureProjectAttention(
-          projectId,
-          `Project recovery validation failed: ${errorMessage(error)}`,
-        )
-      })
-  }
+  restoreProjectEligibility = (projectId) => coordinator.setProjectEligible(projectId, true)
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
-  async function rebindProject(projectId: string, repoPath: string) {
-    await home.rebindProject({ projectId, repoPath })
+  async function rebindProject(projectId: string, repoPath: string, projectPath?: string) {
+    await home.rebindProject({ projectId, repoPath, ...(projectPath ? { projectPath } : {}) })
   }
 
-  async function recoverRuntimeProject(project: MvpProjectRuntime) {
-    await recoverCoordinatorProject(home, {
-      projectId: project.projectId,
-      projectRoot: project.projectRoot,
-      primaryRepoId: project.primaryRepoId,
-      repos: project.repos.map((repo) => ({
-        repoId: repo.repoId,
-        integrationRoot: repo.integrationRoot,
-        checkoutRoot: repo.repoPath,
-        deliveryBranch: repo.deliveryBranch,
-        primary: repo.primary,
-      })),
-      store: project.store,
+  async function rebindRepo(
+    projectId: string,
+    repoId: string,
+    repoPath: string,
+    projectPath?: string,
+  ) {
+    await home.rebindRepo({
+      projectId,
+      repoId,
+      repoPath,
+      ...(projectPath ? { projectPath } : {}),
     })
-  }
-
-  async function rebindRepo(projectId: string, repoId: string, repoPath: string) {
-    await home.rebindRepo({ projectId, repoId, repoPath })
   }
 
   async function readProjectCodingDefaults(projectId: string) {
@@ -324,13 +328,22 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   }
 
   async function updateAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
+    if (await writeAssistantModelSettings(input)) await assistantConversation.clearSession()
+  }
+
+  async function updateAssistantModelSettingsForTurn(
+    eventId: string,
+    input: ProjectCodingDefaultsInput | null,
+  ) {
+    if (await writeAssistantModelSettings(input)) assistantSessionResetEvents.add(eventId)
+  }
+
+  async function writeAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
     const current = await readAdapterConfig()
     const previousTransport = resolveAssistantTransportConfig(current).transport
     const next = updateAssistantCodingDefaults(current, input)
     await writeAgentAdapterConfig(adapterPath, next)
-    if (resolveAssistantTransportConfig(next).transport !== previousTransport) {
-      await assistantConversation.clearSession()
-    }
+    return resolveAssistantTransportConfig(next).transport !== previousTransport
   }
 
   return {
@@ -354,10 +367,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     readAssistantCodingDefaults: readAssistantModelSettings,
     updateAssistantCodingDefaults: updateAssistantModelSettings,
   }
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function requireProject(

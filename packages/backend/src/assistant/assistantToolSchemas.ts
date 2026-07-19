@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { projectCodingDefaultsInputSchema } from '../domain/projectCodingDefaults'
+import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
 
 const goalReferences = z
@@ -15,6 +17,8 @@ const goalReferences = z
 
 export const mainAssistantToolNames = [
   'hopi_read_state',
+  'hopi_manage_project',
+  'hopi_configure_model',
   'hopi_write_preferences',
   'hopi_create_goal',
   'hopi_write_design',
@@ -24,7 +28,16 @@ export const mainAssistantToolNames = [
   'hopi_resolve_attention',
   'hopi_control_preview',
   'hopi_notify_user',
+  'hopi_request_user',
 ] as const
+
+const projectRepoSchema = z
+  .object({
+    repoId: stableIdSchema,
+    repoPath: z.string().trim().min(1),
+    projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+  })
+  .strict()
 
 export const reflectionAssistantToolNames = ['hopi_read_state', 'hopi_handoff_to_main'] as const
 
@@ -47,8 +60,72 @@ export const assistantToolSchemas = {
           'Exact canonical Goal ID, including its G- prefix. Omit to use current page context.',
         )
         .optional(),
+      includeEvidence: z
+        .boolean()
+        .describe(
+          'Include bounded Evidence bodies and resolved artifacts only when the current user question requires exact deliverables, such as locating a report. Each resolved artifact has an internal inspectionPath and an operatorUrl; only operatorUrl may be linked in a user reply. Defaults to false.',
+        )
+        .optional(),
     })
     .strict(),
+  hopi_manage_project: z.discriminatedUnion('operation', [
+    z
+      .object({
+        operation: z.literal('initialize_repository'),
+        path: z.string().trim().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        operation: z.literal('link_project'),
+        projectId: stableIdSchema.optional(),
+        primaryRepoId: stableIdSchema,
+        repos: z.array(projectRepoSchema).min(1),
+      })
+      .strict(),
+    projectRepoSchema
+      .extend({ operation: z.literal('link_repo'), projectId: stableIdSchema })
+      .strict(),
+    z
+      .object({
+        operation: z.literal('rebind_project'),
+        projectId: stableIdSchema,
+        repoPath: z.string().trim().min(1),
+        projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+      })
+      .strict(),
+    projectRepoSchema
+      .extend({ operation: z.literal('rebind_repo'), projectId: stableIdSchema })
+      .strict(),
+    z
+      .object({
+        operation: z.literal('rebind_repos'),
+        projectId: stableIdSchema,
+        repos: z.array(projectRepoSchema).min(1),
+      })
+      .strict(),
+  ]),
+  hopi_configure_model: z
+    .object({
+      scope: z.enum(['assistant', 'project']),
+      projectId: stableIdSchema.optional(),
+      codingDefaults: projectCodingDefaultsInputSchema.nullable(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.scope === 'project' && !value.projectId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Project model configuration requires projectId',
+        })
+      }
+      if (value.scope === 'assistant' && value.projectId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Assistant model configuration does not accept projectId',
+        })
+      }
+    }),
   hopi_write_preferences: z
     .object({
       content: z.string().max(16_000),
@@ -149,6 +226,7 @@ export const assistantToolSchemas = {
     })
     .strict(),
   hopi_notify_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
+  hopi_request_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
   hopi_handoff_to_main: z
     .object({
       brief: z.string().trim().min(1).max(12_000),

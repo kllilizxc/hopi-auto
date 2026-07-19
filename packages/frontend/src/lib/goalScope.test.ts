@@ -5,11 +5,13 @@ import {
   orderGoalsByRecency,
   orderProjectsByRecency,
   readGoalRouteState,
+  readGoalViewState,
   readRecentGoal,
   readRecentGoalId,
   readRecentProjects,
   rememberRecentProject,
   rememberRecentGoal,
+  rememberGoalViewState,
   resolveProjectGoalId,
   selectProjectShortcuts,
   type GoalPreferenceStorage,
@@ -190,5 +192,33 @@ describe('recent workspace navigation', () => {
     expect(readRecentProjects(unavailableStorage)).toEqual([])
     expect(() => rememberRecentProject('P-1', unavailableStorage)).not.toThrow()
     expect(() => rememberRecentGoal('P-1', 'G-1', unavailableStorage)).not.toThrow()
+  })
+
+  test('keeps presentation state isolated by Project and Goal', () => {
+    const values = new Map<string, string>()
+    const storage: GoalPreferenceStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    }
+
+    rememberGoalViewState(
+      'P-1',
+      'G-1',
+      { expandedWorkIds: ['work-a', 'work-b', 'work-a'], mobileLane: 'Review' },
+      storage,
+    )
+
+    expect(readGoalViewState('P-1', 'G-1', storage)).toEqual({
+      expandedWorkIds: ['work-a', 'work-b'],
+      mobileLane: 'Review',
+    })
+    expect(readGoalViewState('P-1', 'G-2', storage)).toEqual({
+      expandedWorkIds: [],
+      mobileLane: null,
+    })
+    expect(readGoalViewState('P-2', 'G-1', storage)).toEqual({
+      expandedWorkIds: [],
+      mobileLane: null,
+    })
   })
 })

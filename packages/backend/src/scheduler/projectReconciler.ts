@@ -38,6 +38,7 @@ import { preserveRunArtifacts } from '../runtime/runArtifacts'
 import {
   type RunAttemptRecorder,
   type RunAttemptStore,
+  type RunAttemptSummary,
   createRunAttemptStore,
 } from '../runtime/runAttemptStore'
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
@@ -211,10 +212,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
       await readSoftwareDeliveryProfile()
       const goalPackage = await options.store.readPackage(goalId)
+      const attemptSnapshot = await attempts.snapshot()
       for (const work of goalPackage.works.values()) {
         if (isWorkTerminal(work.attributes)) continue
         const episode = operationalFailureEpisode(
-          await attempts.list(options.projectId, goalId, work.attributes.id),
+          attemptSnapshot.list(options.projectId, goalId, work.attributes.id),
           latestResolvedWorkAttentionAt(goalPackage, options.projectId, goalId, work.attributes.id),
         )
         if (episode.count < maxOperationalFailures) continue
@@ -389,6 +391,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             projectRoot: preparationProjectRoot,
             runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
             timeoutMs: options.preparationTimeoutMs,
+            goalId,
             primaryRepoId,
             repoRoots: scopedWorktrees.map(({ repo, projectRoot }) => ({
               repoId: repo.repoId,
@@ -583,8 +586,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         if (outcome.failureKind === 'operational') {
           await attempt?.finish({ outcome, application: 'operational_failure' })
           const currentGoalPackage = await options.store.readPackage(goalId)
+          const currentAttemptSnapshot = await attempts.snapshot()
           const persistedEpisode = operationalFailureEpisode(
-            await attempts.list(options.projectId, goalId, workId),
+            currentAttemptSnapshot.list(options.projectId, goalId, workId),
             latestResolvedWorkAttentionAt(currentGoalPackage, options.projectId, goalId, workId),
           )
           const failureCount = Math.max(
@@ -865,10 +869,7 @@ function scheduleOperationalRetry(
   retries.set(key, { failures, retryAt: observedAt.getTime() + delay })
 }
 
-function operationalFailureEpisode(
-  attempts: Awaited<ReturnType<RunAttemptStore['list']>>,
-  after: string | null,
-) {
+function operationalFailureEpisode(attempts: readonly RunAttemptSummary[], after: string | null) {
   let count = 0
   let latestSummary = ''
   for (const attempt of attempts) {

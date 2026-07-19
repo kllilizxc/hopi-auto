@@ -227,7 +227,11 @@ function normalizeNewAttentionTimestamps(proposal: PassProposal, createdAt: stri
   const sources = new Map<string, string>()
   const newAttentions = proposal.newAttentions.map((attention) => {
     const document: AttentionDocument = {
-      attributes: { ...attention.document.attributes, createdAt },
+      attributes: {
+        ...attention.document.attributes,
+        createdAt,
+        operatorRequest: attention.document.attributes.operatorRequest ?? null,
+      },
       body: attention.document.body,
     }
     const source = renderAttentionDocument(document)
@@ -863,7 +867,11 @@ function validateNewAttention(
   if (path !== store.paths.attentionDocument(input.goalId, document.attributes.id)) {
     throw new PassProposalError(`Attention identity does not match proposal path: ${path}`)
   }
-  if (document.attributes.resolvedAt !== null || document.attributes.notifiedAt !== null) {
+  if (
+    document.attributes.resolvedAt !== null ||
+    document.attributes.notifiedAt !== null ||
+    (document.attributes.operatorRequest ?? null) !== null
+  ) {
     throw new PassProposalError('New Attention must be open and unnotified')
   }
   if (document.attributes.target !== null) {

@@ -1,5 +1,6 @@
 import { appendFile, chmod, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { BoundedLineTail } from './boundedLineTail'
 import {
   type ProjectPreparationRepoRoot,
   type ProjectPreparer,
@@ -45,7 +46,7 @@ export interface PreviewManager {
 interface PreviewOperation {
   session: PreviewSession
   process: ReturnType<typeof Bun.spawn> | null
-  logs: string[]
+  logs: BoundedLineTail
   ready: Promise<string>
   signalReady(endpoint: string): void
   streams: Promise<void>[]
@@ -153,7 +154,7 @@ export function createPreviewManager(
         startup.kind === 'timeout'
           ? `Preview adapter did not become ready within ${startupTimeoutMs}ms`
           : `Preview adapter exited with code ${startup.exitCode}`
-      return repairRequired('startup_failed', paths.adapter, operation.logs.join('\n'))
+      return repairRequired('startup_failed', paths.adapter, operation.logs.text())
     }
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
@@ -217,7 +218,7 @@ export function createPreviewManager(
     return repairRequired(
       operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
       paths.adapter,
-      operation.logs.join('\n'),
+      operation.logs.text(),
     )
   }
 
@@ -258,7 +259,7 @@ export function createPreviewManager(
       const operation: PreviewOperation = {
         session,
         process: null,
-        logs: [],
+        logs: new BoundedLineTail(),
         ready,
         signalReady,
         streams: [],

@@ -232,6 +232,43 @@ describe('PreviewManager', () => {
     expect(result.prompt).toContain('terminal setup Goal')
   })
 
+  test('bounds returned startup logs while preserving the complete Preview transcript', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        'for (let index = 0; index < 250; index += 1) console.error(`preview-${String(index).padStart(3, "0")}`)',
+        'process.exit(2)',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), { startupTimeoutMs: 2_000 })
+
+    const result = await manager.start({ projectId: 'P-1', projectRoot })
+
+    expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+    expect(result.logs).not.toContain('preview-000')
+    expect(result.logs).toContain('preview-249')
+    const previewRoot = join(temporaryRoot, 'home', '.hopi', 'runtime', 'preview')
+    const sessions = await Array.fromAsync(
+      new Bun.Glob('**/preview.log').scan({
+        cwd: previewRoot,
+        onlyFiles: true,
+      }),
+    )
+    expect(sessions).toHaveLength(1)
+    const transcript = await Bun.file(join(previewRoot, sessions[0] as string)).text()
+    expect(transcript).toContain('preview-000')
+    expect(transcript).toContain('preview-249')
+  })
+
   test('waits for the adapter ready signal instead of treating an alive process as running', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')

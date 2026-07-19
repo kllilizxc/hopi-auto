@@ -1,0 +1,11 @@
+export const loadBoardView = () => import('./pages/BoardView')
+export const loadGoalDocsPage = () => import('./pages/GoalDocsPage')
+export const loadGoalCreatePage = () => import('./pages/GoalCreatePage')
+export const loadProjectHomePage = () => import('./pages/ProjectHomePage')
+export const loadAssistantPanel = () => import('./components/AssistantPanel')
+
+export const preloadBoardView = () => void loadBoardView()
+export const preloadGoalDocsPage = () => void loadGoalDocsPage()
+export const preloadGoalCreatePage = () => void loadGoalCreatePage()
+export const preloadProjectHomePage = () => void loadProjectHomePage()
+export const preloadAssistantPanel = () => void loadAssistantPanel()

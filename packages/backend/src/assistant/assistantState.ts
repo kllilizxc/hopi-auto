@@ -1,10 +1,21 @@
 import { stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { isWorkTerminal } from '../domain/canonicalDocuments'
+import { type WorkDocument, isWorkTerminal } from '../domain/canonicalDocuments'
+import type { GoalPackage } from '../domain/goalPackage'
+import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
+import {
+  EvidenceArtifactResolutionError,
+  evidenceArtifactUrl,
+  resolveEvidenceArtifact,
+} from '../runtime/evidenceArtifacts'
 import type { Responsibility } from '../runtime/roleContextStager'
-import type { RunAttemptStore, RunAttemptSummary } from '../runtime/runAttemptStore'
+import type {
+  RunAttemptSnapshot,
+  RunAttemptStore,
+  RunAttemptSummary,
+} from '../runtime/runAttemptStore'
 import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -14,6 +25,16 @@ export const DEFAULT_ATTEMPT_STALE_AFTER_MS = 10 * 60 * 1_000
 export interface AssistantStateProject {
   projectId: string
   projectRoot: string
+  sourceRoot?: string
+  primaryRepoId?: string
+  repos?: readonly {
+    repoId?: string
+    repoPath?: string
+    integrationRoot: string
+    projectPath: string
+    deliveryBranch?: string
+    primary?: boolean
+  }[]
   store: GoalPackageStore
   reconciler?: {
     operationallyDeferredWorkIds?(goalId: string, observedAt?: Date): ReadonlySet<string>
@@ -21,7 +42,11 @@ export interface AssistantStateProject {
 }
 
 export interface AssistantStateReader {
-  read(input?: { projectId?: string; goalId?: string }): Promise<AssistantStateSnapshot>
+  read(input?: {
+    projectId?: string
+    goalId?: string
+    includeEvidence?: boolean
+  }): Promise<AssistantStateSnapshot>
 }
 
 export interface AssistantStateSnapshot {
@@ -30,6 +55,8 @@ export interface AssistantStateSnapshot {
   activeRuns: AssistantStateActiveRun[]
   workspaceAttentions: unknown[]
   projects: unknown[]
+  assistantCodingDefaults?: ProjectCodingDefaults
+  assistantCodingDefaultsInherited?: boolean
 }
 
 export interface AssistantStateActiveRun {
@@ -46,6 +73,7 @@ interface DigestWorkspaceAttention {
   createdAt: string
   resolvedAt: string | null
   notifiedAt: string | null
+  operatorRequest?: string | null
   body: string
 }
 
@@ -73,6 +101,14 @@ export function createAssistantStateReader(options: {
   publisher: PublicationCoordinator
   attempts: RunAttemptStore
   activeRuns?: () => ReadonlyMap<string, Responsibility>
+  readAssistantCodingDefaults?: () => Promise<{
+    codingDefaults: ProjectCodingDefaults
+    inherited: boolean
+  }>
+  readProjectCodingDefaults?: (projectId: string) => Promise<{
+    codingDefaults: ProjectCodingDefaults
+    inherited: boolean
+  }>
   now?: () => Date
   staleAfterMs?: number
 }): AssistantStateReader {
@@ -83,7 +119,11 @@ export function createAssistantStateReader(options: {
   return {
     async read(input = {}) {
       const observedAt = now()
-      const workspace = await options.workspace.readWorkspace()
+      const [workspace, assistantModelSettings, attemptSnapshot] = await Promise.all([
+        options.workspace.readWorkspace(),
+        options.readAssistantCodingDefaults?.(),
+        options.attempts.snapshot(),
+      ])
       const activeRuns = options.activeRuns?.() ?? new Map<string, Responsibility>()
       const activeCounts = responsibilityCounts(activeRuns)
       const activeRunViews: AssistantStateActiveRun[] = []
@@ -99,6 +139,7 @@ export function createAssistantStateReader(options: {
 
       const projects = await Promise.all(
         selected.map(async (project) => {
+          const modelSettings = await options.readProjectCodingDefaults?.(project.projectId)
           const projectAttention = workspaceAttentions.find(
             (attention) =>
               attention.target === `project:${project.projectId}` && attention.resolvedAt === null,
@@ -152,7 +193,8 @@ export function createAssistantStateReader(options: {
                       goalId,
                       workId: work.attributes.id,
                       activeResponsibility: activeRuns.get(key) ?? null,
-                      attempts: options.attempts,
+                      attemptSnapshot,
+                      attemptStore: options.attempts,
                       observedAt,
                       staleAfterMs,
                     })
@@ -168,6 +210,17 @@ export function createAssistantStateReader(options: {
                             : null,
                       })
                     }
+                    const evidence = input.goalId
+                      ? input.includeEvidence
+                        ? await readWorkEvidence({
+                            homeRoot,
+                            project,
+                            goalId,
+                            work,
+                            goalPackage,
+                          })
+                        : readWorkEvidenceIndex({ project, goalId, work, goalPackage })
+                      : null
                     return {
                       attributes: work.attributes,
                       path: project.store.paths.absolute(
@@ -175,6 +228,7 @@ export function createAssistantStateReader(options: {
                       ),
                       projection: projectionByWork.get(work.attributes.id) ?? null,
                       runtime,
+                      ...(evidence ? { evidence } : {}),
                     }
                   }),
               )
@@ -222,6 +276,25 @@ export function createAssistantStateReader(options: {
           return {
             projectId: project.projectId,
             projectRoot: project.projectRoot,
+            ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
+            ...(project.repos
+              ? {
+                  repos: project.repos.map((repo) => ({
+                    ...(repo.repoId ? { repoId: repo.repoId } : {}),
+                    ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
+                    projectPath: repo.projectPath,
+                    integrationRoot: repo.integrationRoot,
+                    ...(repo.deliveryBranch ? { deliveryBranch: repo.deliveryBranch } : {}),
+                    ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
+                  })),
+                }
+              : {}),
+            ...(modelSettings
+              ? {
+                  codingDefaults: modelSettings.codingDefaults,
+                  codingDefaultsInherited: modelSettings.inherited,
+                }
+              : {}),
             available: !projectAttentionOpen,
             releaseHead: await releaseHead(project.projectRoot),
             goals,
@@ -240,9 +313,88 @@ export function createAssistantStateReader(options: {
         ),
         workspaceAttentions,
         projects,
+        ...(assistantModelSettings
+          ? {
+              assistantCodingDefaults: assistantModelSettings.codingDefaults,
+              assistantCodingDefaultsInherited: assistantModelSettings.inherited,
+            }
+          : {}),
       }
     },
   }
+}
+
+function readWorkEvidenceIndex(input: {
+  project: AssistantStateProject
+  goalId: string
+  work: WorkDocument
+  goalPackage: GoalPackage
+}) {
+  return input.work.attributes.evidenceRefs.map((evidenceId) => {
+    const evidence = input.goalPackage.evidence.get(evidenceId)
+    if (!evidence) throw new Error(`Work references missing Evidence: ${evidenceId}`)
+    return {
+      id: evidence.attributes.id,
+      producerRun: evidence.attributes.producerRun,
+      artifactCount: evidence.attributes.artifacts.length,
+      path: input.project.store.paths.absolute(
+        input.project.store.paths.evidenceDocument(input.goalId, evidenceId),
+      ),
+    }
+  })
+}
+
+async function readWorkEvidence(input: {
+  homeRoot: string
+  project: AssistantStateProject
+  goalId: string
+  work: WorkDocument
+  goalPackage: GoalPackage
+}) {
+  return Promise.all(
+    input.work.attributes.evidenceRefs.map(async (evidenceId) => {
+      const evidence = input.goalPackage.evidence.get(evidenceId)
+      if (!evidence) throw new Error(`Work references missing Evidence: ${evidenceId}`)
+      const artifacts = await Promise.all(
+        evidence.attributes.artifacts.map(async (reference, artifactIndex) => {
+          try {
+            const artifact = await resolveEvidenceArtifact({
+              homeRoot: input.homeRoot,
+              project: input.project,
+              reference,
+            })
+            return {
+              reference,
+              available: true,
+              fileName: artifact.fileName,
+              inspectionPath: artifact.path,
+              operatorUrl: evidenceArtifactUrl({
+                projectId: input.project.projectId,
+                goalId: input.goalId,
+                evidenceId,
+                artifactIndex,
+              }),
+            }
+          } catch (error) {
+            return {
+              reference,
+              available: false,
+              unavailableReason:
+                error instanceof EvidenceArtifactResolutionError ? error.code : 'resolution_failed',
+            }
+          }
+        }),
+      )
+      return {
+        attributes: evidence.attributes,
+        body: boundedText(evidence.body, 2_000),
+        path: input.project.store.paths.absolute(
+          input.project.store.paths.evidenceDocument(input.goalId, evidenceId),
+        ),
+        artifacts,
+      }
+    }),
+  )
 }
 
 async function readWorkRuntime(input: {
@@ -252,11 +404,12 @@ async function readWorkRuntime(input: {
   goalId: string
   workId: string
   activeResponsibility: Responsibility | null
-  attempts: RunAttemptStore
+  attemptSnapshot: RunAttemptSnapshot
+  attemptStore: RunAttemptStore
   observedAt: Date
   staleAfterMs: number
 }) {
-  const latest = (await input.attempts.list(input.projectId, input.goalId, input.workId))[0] ?? null
+  const latest = input.attemptSnapshot.list(input.projectId, input.goalId, input.workId)[0] ?? null
   const runRoot = latest
     ? await existingRunRoot(
         input.homeRoot,
@@ -266,12 +419,20 @@ async function readWorkRuntime(input: {
         latest.runId,
       )
     : null
-  const detail = latest
-    ? await input.attempts.read(input.projectId, input.goalId, input.workId, latest.runId)
-    : null
   const paths = runRoot ? await existingRunPaths(runRoot) : {}
+  const runningEvents =
+    latest?.status === 'running'
+      ? ((await input.attemptStore.readEvents(
+          input.projectId,
+          input.goalId,
+          input.workId,
+          latest.runId,
+        )) ?? [])
+      : []
   const lastActivityAt = latest
-    ? await latestActivity(latest, detail?.events ?? [], paths.transcript ?? null)
+    ? latest.status === 'running'
+      ? await latestActivity(latest, runningEvents, paths.transcript ?? null)
+      : (latest.endedAt ?? latest.startedAt)
     : null
   const stale = Boolean(
     input.activeResponsibility &&

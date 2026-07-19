@@ -35,6 +35,7 @@ const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
+const recoveryBlocker = join(repoRoot, 'local-recovery-blocker.txt')
 const roleRuns: Array<{ runId: string; responsibility: string; status: string }> = []
 const assistantToolResults: Array<{ attentionId: string; changed: boolean }> = []
 let attentionToResolve = ''
@@ -72,6 +73,7 @@ const assistantRunner: AssistantModelRunner = {
   async run(input, observer) {
     const mode = input.toolMode ?? 'main'
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
+      await rm(recoveryBlocker, { force: true })
       const response = await callAssistantTool(input, observer, 'hopi_resolve_attention', {
         scope: 'workspace',
         attentionId: attentionToResolve,
@@ -115,6 +117,7 @@ try {
     'The Project environment needs Agent inspection before execution can continue.',
   )
   attentionToResolve = original.attributes.id
+  await Bun.write(recoveryBlocker, 'Remove this external checkout change before recovery.\n')
 
   server = createServer({ rootDir: homeRoot, port: 0, roleRunner, assistantRunner })
   ownTestRunServer(testRun, server)
@@ -130,6 +133,8 @@ try {
   const initialBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'project-blocked',
   })
+  assert.equal(initialBrowser.view?.projectBlocked, true)
+  assert.match(initialBrowser.view?.projectAttentionBody ?? '', /needs Agent inspection/)
 
   const assistantBrowser = await sendAssistantMessage(context, USER_MESSAGE, {
     evidencePrefix: 'project-resolve',
@@ -149,16 +154,28 @@ try {
   const resumedBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'project-resumed',
   })
+  assert.equal(resumedBrowser.view?.projectBlocked, false)
+  assert.equal(resumedBrowser.view?.projectAttentionBody, null)
   const assistantReplyBrowser = await captureAssistantReply(context, ASSISTANT_REPLY)
 
   releasePlanner?.()
   reblocked = await waitForValue(
     () => requestJson<GoalView>(context.baseUrl, goalPath()),
-    (value) =>
-      value.projectAttention !== null &&
-      value.projectAttention.id !== original.attributes.id &&
-      value.projectAttention.body.includes('Task checkpoint failed'),
-    { timeoutMs: 60_000, description: 'a new Project Attention from the next execution boundary' },
+    (value) => {
+      const work = value.works.find((candidate) => candidate.id === WORK_ID)
+      return (
+        value.projectAttention !== null &&
+        value.projectAttention.id !== original.attributes.id &&
+        value.projectAttention.body.includes('Task checkpoint failed') &&
+        work?.projection.primaryBadge === 'waiting' &&
+        work.projection.failedPredicates.length === 1 &&
+        work.projection.failedPredicates[0] === 'project_ineligible'
+      )
+    },
+    {
+      timeoutMs: 60_000,
+      description: 'the stable Project-blocked state after the admitted Generator Run drains',
+    },
   )
   assertWorkIsProjectBlocked(reblocked)
   assert.equal(
@@ -171,6 +188,8 @@ try {
   const reblockedBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'project-reblocked',
   })
+  assert.equal(reblockedBrowser.view?.projectBlocked, true)
+  assert.match(reblockedBrowser.view?.projectAttentionBody ?? '', /Task checkpoint failed/)
   assert.deepEqual(assistantToolResults, [{ attentionId: original.attributes.id, changed: true }])
   assert.deepEqual(
     await checkoutSnapshot(repoRoot),

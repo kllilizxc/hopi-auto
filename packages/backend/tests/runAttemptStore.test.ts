@@ -58,7 +58,11 @@ describe('RunAttemptStore', () => {
       vendorEventType: 'item.updated',
     })
     await recorder.finish({
-      outcome: { result: 'success', summary: 'Implementation verified.', exitCode: 0 },
+      outcome: {
+        result: 'success',
+        summary: 'Implementation verified.',
+        exitCode: 0,
+      },
       application: 'published',
     })
 
@@ -93,6 +97,61 @@ describe('RunAttemptStore', () => {
     expect(detail?.runPrompt).toBe(
       '# Generator system prompt\n\nImplement the owning Work exactly.\n',
     )
+  })
+
+  test('groups real Attempt history for one Goal with a single runtime scan', async () => {
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    for (const input of [
+      { projectId: 'P-1', goalId: 'G-1', workId: 'W-1', runId: 'R-1' },
+      { projectId: 'P-1', goalId: 'G-1', workId: 'W-2', runId: 'R-2' },
+      { projectId: 'P-1', goalId: 'G-2', workId: 'W-1', runId: 'R-3' },
+    ]) {
+      await store.start({
+        ...input,
+        responsibility: 'generator',
+        runRoot: runRoot(input.runId),
+      })
+    }
+
+    const attemptsByWork = await store.listGoal('P-1', 'G-1')
+
+    expect([...attemptsByWork.keys()].sort()).toEqual(['W-1', 'W-2'])
+    expect(attemptsByWork.get('W-1')?.map((attempt) => attempt.runId)).toEqual(['R-1'])
+    expect(attemptsByWork.get('W-2')?.map((attempt) => attempt.runId)).toEqual(['R-2'])
+  })
+
+  test('builds one immutable Attempt snapshot for many Work lookups', async () => {
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    for (let index = 0; index < 96; index += 1) {
+      const runId = `R-${index}`
+      await store.start({
+        projectId: 'P-1',
+        goalId: index < 64 ? 'G-1' : 'G-2',
+        workId: `W-${index % 16}`,
+        runId,
+        responsibility: 'generator',
+        runRoot: runRoot(runId),
+      })
+    }
+
+    const snapshot = await store.snapshot()
+    expect(snapshot.listGoal('P-1', 'G-1').size).toBe(16)
+    expect(snapshot.list('P-1', 'G-1', 'W-0')).toHaveLength(4)
+
+    await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-0',
+      runId: 'R-later',
+      responsibility: 'generator',
+      runRoot: runRoot('R-later'),
+    })
+    expect(snapshot.list('P-1', 'G-1', 'W-0')).toHaveLength(4)
+    expect((await store.snapshot()).list('P-1', 'G-1', 'W-0')).toHaveLength(5)
   })
 
   test('marks a running Attempt interrupted when a new Coordinator starts', async () => {
@@ -131,6 +190,7 @@ describe('RunAttemptStore', () => {
       `${JSON.stringify({ result: 'reject', summary: 'Visual regression.', artifacts: [] })}\n`,
     )
     const store = createRunAttemptStore(temporaryRoot)
+    const snapshot = await store.snapshot()
 
     expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([
       {
@@ -140,6 +200,9 @@ describe('RunAttemptStore', () => {
         result: 'reject',
         summary: 'Visual regression.',
       },
+    ])
+    expect(snapshot.list('P-1', 'G-1', 'W-1')).toMatchObject([
+      { runId: 'R-legacy', responsibility: 'reviewer', result: 'reject' },
     ])
     expect((await store.read('P-1', 'G-1', 'W-1', 'R-legacy'))?.events).toEqual([])
     expect((await store.read('P-1', 'G-1', 'W-1', 'R-legacy'))?.runPrompt).toBeNull()

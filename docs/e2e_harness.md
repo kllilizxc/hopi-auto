@@ -76,9 +76,11 @@ within that Run are issued serially. Product responsibilities may remain concurr
 screenshot collection adds no coverage and can corrupt the evidence chain itself. Keeping the chain
 inside the Test Run also prevents an earlier Run from invalidating later evidence.
 
-The first Browser Harness script in each Test Run reloads the configured named daemon. That
-idempotent initialization may retry before any browser action if the host is still releasing its IPC
-endpoint. The shared executor then records the tabs that existed before each script and closes every
+The first Browser Harness script in each Test Run reloads the configured named daemon and completes
+one read-only `list_tabs` readiness probe. That idempotent initialization may retry before any browser
+action if the host is still releasing its IPC endpoint or the freshly started daemon is not yet
+reachable. Reload and probe output share one retained log. The shared executor then records the tabs
+that existed before each script and closes every
 tab the script created, including on failure. This keeps browser-process resources bounded across
 repeated regressions without making scenarios manage infrastructure. A script may contain several
 ordered actions and is never retried after failure because a missing response cannot prove whether a
@@ -94,6 +96,11 @@ client may change the globally active tab even while a Test Run is waiting. Glob
 is therefore presentation only, never execution authority. Before the first consequential action,
 the script also waits for the exact control to become enabled; a failed semantic wait aborts the
 script instead of consuming later fixture inputs or replaying any click.
+
+Browser assertions locate an entity through an existing stable semantic identity such as a canonical
+ID in `title` or a canonical route in `href`; a human-facing display name is presentation, not test
+identity. Visible copy is asserted only when that copy is itself the behavior under test. The Harness
+does not add product-only selectors when the rendered product already carries the required identity.
 
 ## Live Execution And Artifact Inspection
 
@@ -191,6 +198,12 @@ The Project adapter creates one committed Git fixture and verifies its integrate
 Project's own command. The initial adapter contains a failing `bun test` for a small TypeScript bug.
 It also verifies that the delivery checkout retains its recorded branch and clean status while its
 HEAD and content fast-forward exactly to the accepted release.
+
+All scenarios that cross accepted C1 use one shared delivery assertion: the recorded branch is
+unchanged, the checkout is clean, its initial HEAD remains an ancestor, and final HEAD equals
+`hopi/release`. Scenarios that never cross C1 instead compare the complete checkout snapshot. Keeping
+those two boundaries distinct prevents presentation, recovery, or cancellation cases from silently
+redefining delivery semantics.
 
 ## First Live Scenario
 
@@ -327,6 +340,12 @@ deterministic Assistant reply. It proves visible interaction, HTTP admission, ca
 durability, Assistant scheduling, retained checkpoint screenshots, and browser audit integrity
 without spending model tokens. It is explicit because Browser Harness is a host capability rather
 than a portable unit-test dependency.
+
+Browser evidence must assert the visible semantic state that owns the case, not merely that the page
+or Kanban mounted. The shared Kanban inspection therefore records Project-blocked visibility and its
+rendered reason alongside title and progress; Attention recovery cases assert those fields at each
+transition. Screenshots remain review evidence, but they are not the only detector of stale or raced
+UI state.
 
 `bun run e2e` runs live Agents and therefore consumes configured provider capacity. It is explicit,
 retains its evidence, and is not part of the default per-edit check.

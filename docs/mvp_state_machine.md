@@ -1,7 +1,7 @@
 # HOPI MVP State Machine
 
 Status: accepted derived reference
-Last updated: 2026-07-16
+Last updated: 2026-07-19
 
 This document visualizes the lifecycle rules accepted in [the MVP design](./mvp_design.md). It is
 not a second source of truth. Schemas belong to [the document model](./mvp_document_model.md),
@@ -13,19 +13,19 @@ Assistant behavior to [the Assistant design](./mvp_assistant.md), execution beha
 
 The operator-facing product has **Assistant**, **Project**, and **Goal**. Project is stable context
 without a workflow lifecycle. Attention is an internal control document. Targeted Attention blocks
-its target and projects as **Waiting for Assistant** or **Needs you** from the existing delivery
-fact; targetless Attention appears as a normal Goal completion update. It is not another product
-concept.
+its target and projects as **Waiting for Assistant** or **Needs you** from its explicit current
+operator-request pointer; delivery alone never transfers ownership to the operator. Targetless
+Attention appears as a normal Goal completion update. It is not another product concept.
 
 Five internal document types have these minimal durable control fields:
 
-| Entity | Durable discriminator | Values |
-| --- | --- | --- |
-| Goal | `lifecycle` | `active \| paused \| done \| cancelled` |
-| Planning Work | `stage` | `plan \| done \| cancelled` |
-| Engineering Work | `stage` | `generate \| review \| done \| cancelled` |
-| Attention | `resolvedAt` | `null` while open; timestamp when resolved |
-| Inbox turn | `status` | `pending \| handled` |
+| Entity           | Durable discriminator | Values                                     |
+| ---------------- | --------------------- | ------------------------------------------ |
+| Goal             | `lifecycle`           | `active \| paused \| done \| cancelled`    |
+| Planning Work    | `stage`               | `plan \| done \| cancelled`                |
+| Engineering Work | `stage`               | `generate \| review \| done \| cancelled`  |
+| Attention        | `resolvedAt`          | `null` while open; timestamp when resolved |
+| Inbox turn       | `status`              | `pending \| handled`                       |
 
 Work also stores `kind`, permanent `dependsOn`, `notBefore`, `contractRevision`, top-level
 `attempts: 0`, and append-only `evidenceRefs`; Engineering Work additionally stores its non-empty
@@ -113,11 +113,12 @@ all other checkout states remain untouched.
 
 Attention has no `kind`, `status`, or stored scope:
 
-| Field | Meaning |
-| --- | --- |
-| `target` | One canonical reference, or `null` for Goal completion |
-| `resolvedAt` | `null` while open; resolution time otherwise |
-| `notifiedAt` | Attention-linked complete public Assistant reply acknowledgement, otherwise `null` |
+| Field             | Meaning                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `target`          | One canonical reference, or `null` for Goal completion                                      |
+| `resolvedAt`      | `null` while open; resolution time otherwise                                                |
+| `notifiedAt`      | Attention-linked complete public Assistant reply acknowledgement, otherwise `null`          |
+| `operatorRequest` | Exact public Assistant event currently awaiting an operator reply, otherwise `null`         |
 
 Storage path derives scope. Goal-local Attention may target only its owning Goal or Work, or use
 `target: null` for that Goal's completion. Workspace Attention may target an Inbox event or linked
@@ -132,10 +133,10 @@ Goal-wide control scope rather than a responsibility-selected alternative.
 
 Every open Attention with a non-null target has exactly the same kernel behavior:
 
-- it appears as **Waiting for Assistant** while `notifiedAt` is null and **Needs you** after a
-  speaking reply is delivered while the Attention remains unresolved
+- it appears as **Waiting for Assistant** while `operatorRequest` is null and **Needs you** only
+  while `operatorRequest` identifies the exact unanswered public Assistant request
 - it blocks its target and deterministic descendants
-- it remains open after notification
+- it remains open after informational notification or an operator request
 - it resolves only after an answer or verified condition change
 
 A project target covers its Goals and Work; a Goal target covers its Work; a Work or event target
@@ -148,10 +149,14 @@ deliverable completion update only when its Goal is `done` and points to it, and
 delivery is acknowledged. A Goal has at most one open targetless Attention not yet claimed by
 `completionAttentionId`.
 
-`notifiedAt` records speaking-Assistant delivery, not resolution. The complete public reply is
-durable before acknowledgement, and recovery uses only its exact Inbox references. A materially
-different message uses a new Attention ID. An optional webhook is an at-least-once mirror of the
-already handled reply and has its own Inbox acknowledgement; it never delivers raw Attention.
+`notifiedAt` records speaking-Assistant delivery, not operator ownership or resolution. An
+informational notification may set it while `operatorRequest` remains null. A request for an exact
+decision or external action atomically records the complete handled public event reference in
+`operatorRequest`; an exact operator reply clears that pointer before Assistant continues. The
+complete public reply is durable before either acknowledgement, and recovery uses only exact Inbox
+references. A materially different message uses a new Attention ID. An optional webhook is an
+at-least-once mirror of the already handled reply and has its own Inbox acknowledgement; it never
+delivers raw Attention.
 
 ## Complete Control Loop
 
@@ -174,11 +179,13 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|public final reply or notify_user message| HR[Publish complete reply and mark turn handled]
+    CE -->|public final reply, notify_user, or request_user| HR[Publish complete reply and mark turn handled]
     HR --> AL{Linked Attention?}
-    AL -->|yes| NA[Publish Attention notifiedAt after reply]
+    AL -->|inform| NA[Publish Attention notifiedAt after reply]
+    AL -->|request| OR[Publish notifiedAt plus operatorRequest]
     AL -->|no| D
     NA --> D
+    OR --> D
     CE -->|bounded unsafe failure| TA[Prepare targeted Attention]
     TA --> PUB[Publish supporting writes then optional one gate]
     PUB --> D
@@ -250,7 +257,9 @@ Public user turns are selected before internal Reflection turns, with receipt or
 each class. Reflection never enters the publication path directly. Its one optional brief is ordinary
 pending Inbox input to the speaking thread, which rereads current truth before choosing any HOPI tool.
 A hidden internal turn remains absent from the conversation projection unless the speaking thread
-supplies an explicit operator message through `notify_user`; internal narration is never promoted.
+supplies an explicit informational message through `notify_user` or an actionable question through
+`request_user`; internal narration is never promoted. Only `request_user` transfers current
+Attention ownership to the operator.
 
 ## Reflection Runtime Lifecycle
 
@@ -262,31 +271,32 @@ stateDiagram-v2
     Baseline --> Running : urgent signal or settled changed snapshot
     Deferred --> Deferred : newer automatic progress coalesces
     Deferred --> Running : urgent signal or quiescent idle tick
-    Running --> Assessed : no handoff and no unnotified Attention
+    Running --> Assessed : no handoff and no Assistant-owned Attention
     Running --> HandedOff : one internal brief
-    Running --> HandedOff : fallback for unnotified Attention
-    Running --> Backoff : model failure below ceiling
-    Running --> Exhausted : model failure reaches ceiling
+    Running --> HandedOff : fallback for Assistant-owned Attention
+    Running --> Backoff : model transport failure
     Assessed --> Deferred : later digest; automatic progress remains
     Assessed --> Running : later eligible digest
     HandedOff --> Deferred : later automatic progress
     HandedOff --> Running : later eligible digest after speaking-thread effects
     HandedOff --> Running : prior turn is Attention-blocked; newer state still needs assessment
     HandedOff --> HandedOff : eligible internal Inbox turn remains pending
-    Backoff --> Running : retry delay elapsed
-    Exhausted --> Running : semantic digest changed
+    Backoff --> Backoff : newer semantic state coalesces
+    Backoff --> Running : retry delay elapsed; assess latest digest
     Running --> Running : newer state coalesces
 ```
 
-`Baseline`, `Deferred`, `Running`, `Assessed`, `HandedOff`, `Backoff`, and `Exhausted` are explanatory runtime labels only.
+`Baseline`, `Deferred`, `Running`, `Assessed`, `HandedOff`, and `Backoff` are explanatory runtime labels only.
 They are not stored workflow states, Kanban columns, or scheduling guards. At most one Reflection is
 running; a newer snapshot replaces queued older snapshots. A quiescent idle tick begins and ends
 without an active responsibility Run, so a Run completion racing an older scan cannot prematurely
 settle Reflection. Deferred means only that HOPI can still make deterministic progress; it creates no
 timer, queue record, or canonical field. User input has speaking priority but does not cancel the
 read-only snapshot; a stale prepared handoff is discarded by digest comparison. Successful
-assessments suppress repetition for that digest, failure retries are bounded, and bounded internal
-handoffs prevent self-triggering loops. `HandedOff` remains the explanatory state while its one
+assessments suppress repetition for that digest. Model transport failures retain one exponential
+backoff across newer digests and probe only at the capped interval after repeated failure, so state
+continues to coalesce without restarting an outage storm. Bounded internal handoffs prevent
+self-triggering loops. `HandedOff` remains the explanatory state while its one
 durable internal Inbox turn is eligible and pending. Event-target Attention makes that turn
 ineligible: it remains durable for later revalidation but cannot suppress a newer semantic state.
 A handled speaking turn resets the consecutive-handoff chain; only a new handoff whose immediate
@@ -424,11 +434,11 @@ stateDiagram-v2
 
 Dispatch never changes stage. Responsibility is a pure function of Work kind and stage:
 
-| Pass | Stage | Accepted result and effect |
-| --- | --- | --- |
-| Planner | `plan` | `success -> done`; `fail -> retry` |
-| Generator | `generate` | `success -> review`; `attention -> Assistant`; `fail -> retry` |
-| Reviewer | `review` | success -> C1; reject -> generate; attention -> Assistant; fail -> retry |
+| Pass      | Stage      | Accepted result and effect                                               |
+| --------- | ---------- | ------------------------------------------------------------------------ |
+| Planner   | `plan`     | `success -> done`; `fail -> retry`                                       |
+| Generator | `generate` | `success -> review`; `attention -> Assistant`; `fail -> retry`           |
+| Reviewer  | `review`   | success -> C1; reject -> generate; attention -> Assistant; fail -> retry |
 
 After every Generator Run, Coordinator may create a task-branch source savepoint. The savepoint has
 no state-machine meaning and may preserve partial output from any result. Artifacts and Evidence are
@@ -516,6 +526,9 @@ runnable.
 - Consecutive `operational_failure` Attempt records form a derived runtime episode after the latest
   resolved Work-target Attention. The third failure creates ordinary Work-target Attention; resolving
   that exact Attention starts a fresh episode. There is no stored operational counter or failure kind.
+- Explicit Work retry publishes the attempt reset, current Goal Input, and resolution of open
+  Attention targeted exactly at that Work in one gated operation. Work cancellation likewise settles
+  only Attention for Work it makes terminal. Neither action closes broader or unrelated Attention.
 - `attention` leaves Work stage and attempts unchanged. Speaking Assistant may request Planning;
   reconciliation uses ordinary readiness plus Planning and Attention guards.
 - Targeted Attention remains the only durable operator block. It stays open until answered or its
@@ -531,32 +544,36 @@ runnable.
 Goal Kanban is a retained product view, not a diagnostic state machine. Its four active columns are
 direct projections of Work kind and stage:
 
-| Column | Cards |
-| --- | --- |
-| `Plan` | Planning Work at `plan` |
-| `Build` | Engineering Work at `generate` |
-| `Review` | Engineering Work at `review` |
-| `Done` | Work at `done` |
+| Column   | Cards                          |
+| -------- | ------------------------------ |
+| `Plan`   | Planning Work at `plan`        |
+| `Build`  | Engineering Work at `generate` |
+| `Review` | Engineering Work at `review`   |
+| `Done`   | Work at `done`                 |
 
 Cancelled Work is hidden by default and available through a **Show cancelled** archive filter. It
 is not an active workflow column.
 
 Each nonterminal card shows exactly one primary badge, chosen by this priority:
 
-| Badge | Derivation |
-| --- | --- |
-| `Needs you` | Open targeted Attention covers the Work or Goal and `notifiedAt` is set |
-| `Waiting for Assistant` | Open unnotified targeted Attention covers the Work or Goal |
-| `working` | A live Run owns the Work lease |
-| `scheduled` | Nonterminal Work has a future `notBefore` |
-| `queued` | `ready(work)` and no live Run |
-| `waiting` | A non-stage readiness predicate is false |
+| Badge                   | Derivation                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `Needs you`             | Open targeted Attention covers the Work or Goal and `operatorRequest` is non-null |
+| `Waiting for Assistant` | Open targeted Attention covers the Work or Goal and `operatorRequest` is null     |
+| `working`               | A live Run owns the Work lease                                          |
+| `scheduled`             | Nonterminal Work has a future `notBefore`                               |
+| `queued`                | `ready(work)` and no live Run                                           |
+| `waiting`               | A non-stage readiness predicate is false                                |
 
 The first matching badge wins, so cards do not accumulate competing status labels. Terminal and
-cancelled cards receive no readiness badge. The board is read-only: no drag operation edits stage,
-dependencies, priority, or lifecycle. Assistant conversation is the general control entry;
-explicit **Pause** and **Resume** remain available on Goal. A separate Diagnostics surface is
-deferred beyond MVP.
+cancelled cards receive no readiness badge. Each card footer displays `Attempts N`, where `N` is the
+number of persisted runtime Attempt records for that Work rather than the canonical reviewed-repair
+counter. When a nonterminal, non-running Work is not ready, the footer also displays one concise
+`Blocked by …` projection from the failed readiness predicates. `live_run` and `terminal` are not
+blockers. Exact Repo scope and the full predicate list remain in Work detail instead of competing
+for card space. The board is read-only: no drag operation edits stage, dependencies, priority, or
+lifecycle. Assistant conversation is the general control entry; explicit **Pause** and **Resume**
+remain available on Goal. A separate Diagnostics surface is deferred beyond MVP.
 
 P2 Preview adds no canonical state. Coordinator starts the reviewed primary Project adapter against
 the complete managed `hopi/release` Repo projection and keeps its process, logs, health, and endpoint
@@ -597,12 +614,19 @@ outcome. Other state and document changes do not participate in this runtime tra
   may dispatch, publish a returning result, or enter `C1`. Planning Work never appears in
   Engineering `dependsOn`.
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
-  non-null target always blocks; `notifiedAt` derives whether its badge is **Waiting for Assistant**
-  or **Needs you**. A null target is Goal completion and never blocks.
+  non-null target always blocks; its nullable exact `operatorRequest` pointer derives whether its
+  badge is **Waiting for Assistant** or **Needs you**. `notifiedAt` is delivery history only. A null
+  target is Goal completion and never blocks.
 - Operational exhaustion reuses ordinary Work-target Attention and is derived from Attempt history;
-  it adds no Work field, Attention identity convention, Kanban state, or generic Attention-closing retry.
+  it adds no Work field, Attention identity convention, or Kanban state. Explicit Work retry settles
+  only the exact Work blocker as part of that control operation.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
+- An internal Attention handoff becomes handled only after its Assistant-owned references are
+  resolved, receive a durable internal continuation effect, or are transferred through an explicit
+  `request_user` event. Informational `notify_user` delivery alone does not transfer ownership. One same-session correction run repairs an initial model
+  omission; another omission follows ordinary Assistant failure recovery rather than silently
+  acknowledging the handoff.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in
   multiple Goals only through explicit successful HOPI tool calls.
 - A home project link retains the expected project ID used for validation and project-target

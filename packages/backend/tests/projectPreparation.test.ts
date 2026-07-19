@@ -91,6 +91,22 @@ describe('ProjectPreparer', () => {
     expect(result.logs).toContain(`api=${api}`)
   })
 
+  test('passes the exact owning Goal only for an Engineering preparation', async () => {
+    const fixture = await createFixture()
+    await writeAdapter(fixture.repo, 'console.log(`goal=${process.env.HOPI_GOAL_ID ?? "none"}`)')
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'add prepare'])
+
+    const result = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: fixture.runtime,
+      goalId: 'G-北京-ai-调研',
+    })
+
+    expect(result.kind).toBe('ready')
+    expect(result.logs).toContain('goal=G-北京-ai-调研')
+  })
+
   test('does not run over uncheckpointed Generator source', async () => {
     const fixture = await createFixture()
     await writeAdapter(fixture.repo, 'throw new Error("must not run")')

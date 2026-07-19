@@ -695,7 +695,7 @@ Actions:
 1. Dispatch Engineering into an executable that exits before producing a semantic role result.
 2. Observe bounded backoff and restart Coordinator between failures.
 3. Reach operational exhaustion and inspect Work projection and Assistant notification.
-4. Repair the external condition and request retry through the public Assistant/tool boundary.
+4. Repair the external condition and request one Work retry through the public Assistant/tool boundary.
 5. Let the same Work begin a fresh episode and complete.
 
 Pass conditions:
@@ -705,7 +705,8 @@ Pass conditions:
 - The fixed ceiling creates or reuses one ordinary Work-target Attention.
 - Kanban shows a direct blocker rather than an infinite spinner or invented failure stage.
 - Raw stdout/stderr is present for every failed process.
-- Resolving the exact blocker starts one new episode; success clears the projection without deleting history.
+- One Work retry records the Input and atomically resolves only its exact blocker.
+- The resolved blocker starts one new episode; success clears the projection without deleting history.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-10`, `INV-14`.
 
@@ -713,6 +714,8 @@ Current implementation: `packages/backend/tests/browser/operationalRecovery.brow
 (`bun run e2e:browser:014`) uses a real failing child process, restarts the production Server between
 failures, retains raw stdout/stderr, renders and answers the blocker through the browser, and completes
 the same Planning Work in a fresh episode through deterministic Planner, Generator, Reviewer, and C1.
+The Assistant fixture intentionally calls only `hopi_control_work: retry`; the test asserts that the
+original Work Attention resolves without a second model tool call.
 
 ### HOPI-E2E-015: Pause And Resume During An Active Run
 
@@ -862,19 +865,24 @@ Primary invariants: `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
 | ------- | ----------------------------------------------------------------------------------------------------- |
 | Risk    | Reflection wakes on noise, speaks directly, duplicates handoffs, delays a new public user message, or lets one failed historical handoff silence later Attention. |
 | Reality | Real Reflection and persistent speaking Assistant with controlled semantic state transitions.         |
-| Fixture | One normal progressing Goal, one deterministic transition to unnotified targeted Attention, and a variant with an older Reflection turn blocked by event-target Attention. |
+| Fixture | One normal progressing Goal, one deterministic transition to Assistant-owned targeted Attention, and a variant with an older Reflection turn blocked by event-target Attention. |
 | Cost    | Medium to high depending on the number of semantic digests.                                           |
 
 Actions:
 
 1. Observe normal Planning through delivery progress without injecting user messages.
 2. Confirm ordinary intermediate state coalesces until a settled boundary.
-3. Create a real unnotified targeted Attention through product behavior.
+3. Create a real Assistant-owned targeted Attention through product behavior.
 4. While its internal speaking handoff is running, submit a new public user message.
 5. Let the public turn finish, then allow current-state revalidation and Attention notification.
-6. Run one focused configured-provider turn that must call `hopi_notify_user({ message })`.
-7. In the poisoned-history variant, retain one older blocked internal turn, create an independent
-   unnotified Goal Attention, restart at one boundary, and let the system converge.
+6. Run one focused configured-provider turn that calls `hopi_notify_user({ message })`; confirm the
+   informational message records delivery but remains **Waiting for Assistant** and receives a
+   correction turn rather than becoming **Needs you**.
+7. Run the actionable variant with `hopi_request_user({ message })`; confirm **Needs you** points at
+   that exact public event. Send an unrelated Goal message and confirm it does not clear the request,
+   then use its Reply control and confirm only that correlated response returns ownership to Assistant.
+8. In the poisoned-history variant, retain one older blocked internal turn, create an independent
+   Assistant-owned Goal Attention, restart at one boundary, and let the system converge.
 
 Pass conditions:
 
@@ -885,6 +893,10 @@ Pass conditions:
 - Public input receives speaking priority without cancelling the read-only Reflection model process.
 - A stale handoff is discarded before publication.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
+- Informational delivery never projects **Needs you**; only `request_user` installs
+  `operatorRequest`.
+- Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
+  do not.
 - The configured speaking model accepts the current notification schema; only its supplied message is public.
 - Debug UI distinguishes `Completed: sent` from `Completed: no action`.
 - Same-Goal, another-Goal, another-Project, and restart variants all notify the new Attention once

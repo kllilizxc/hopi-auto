@@ -36,6 +36,7 @@ export interface LiveState {
     body: string
     resolvedAt: string | null
     notifiedAt: string | null
+    operatorRequest: string | null
     projectId?: string
     goalId?: string
   }>
@@ -60,6 +61,7 @@ export interface LiveGoalDetail {
     target: string | null
     resolvedAt: string | null
     notifiedAt: string | null
+    operatorRequest: string | null
   }>
 }
 
@@ -483,11 +485,11 @@ export function settledAttentionLivenessViolations(state: Pick<LiveState, 'atten
   return state.attentions
     .filter(
       (attention) =>
-        attention.target !== null && attention.resolvedAt === null && attention.notifiedAt === null,
+        attention.target !== null && attention.resolvedAt === null && !attention.operatorRequest,
     )
     .map(
       (attention) =>
-        `settled boundary retains unnotified targeted Attention ${attention.id} at ${attention.target}`,
+        `settled boundary retains Assistant-owned targeted Attention ${attention.id} at ${attention.target}`,
     )
 }
 
@@ -827,7 +829,7 @@ export async function inspectKanban(
     'wait_for_load()',
     'view = None',
     'for _ in range(80):',
-    "    view = js(\"\"\"(() => ({path: location.pathname, kanban: Boolean(document.querySelector('.kanban-board')), cancelledArchive: Boolean(document.querySelector('.cancelled-archive')), title: document.querySelector('.goal-title-block h1')?.textContent?.trim() || null, progress: document.querySelector('.goal-focus-strip > div:nth-child(3) strong')?.textContent?.trim() || null}))()\"\"\")",
+    "    view = js(\"\"\"(() => ({path: location.pathname, kanban: Boolean(document.querySelector('.kanban-board')), cancelledArchive: Boolean(document.querySelector('.cancelled-archive')), title: document.querySelector('.goal-title-block h1')?.textContent?.trim() || null, progress: document.querySelector('.goal-focus-strip > div:nth-child(3) strong')?.textContent?.trim() || null, projectBlocked: Boolean(document.querySelector('.project-blocked-banner')), projectAttentionBody: document.querySelector('.project-blocked-banner p')?.textContent?.trim() || null}))()\"\"\")",
     '    if view and view.get("kanban"): break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.start),
@@ -850,6 +852,8 @@ export async function inspectKanban(
       cancelledArchive?: boolean
       title?: string
       progress?: string
+      projectBlocked?: boolean
+      projectAttentionBody?: string | null
     }
     scroll?: { scrolled?: boolean; left?: number; max?: number }
     audit?: { head_hash?: string }
@@ -1523,7 +1527,7 @@ export async function inspectProjectPreviewStatus(
     'wait_for_load()',
     'projection = None',
     'for _ in range(120):',
-    `    projection = js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.textContent?.trim() === ${projectExpression}); const status = card?.querySelector('.preview-status')?.textContent?.replace(/\\s+/g, ' ').trim() || null; return { found: Boolean(card), status, settled: status === ${statusExpression} } })()`)})`,
+    `    projection = js(${JSON.stringify(`(() => { const card = [...document.querySelectorAll('.project-card')].find((candidate) => candidate.querySelector('h2')?.getAttribute('title') === ${projectExpression}); const status = card?.querySelector('.preview-status')?.textContent?.replace(/\\s+/g, ' ').trim() || null; return { found: Boolean(card), status, settled: status === ${statusExpression} } })()`)})`,
     '    if projection and projection.get("settled"): break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshot),
@@ -1760,17 +1764,61 @@ function withOwnedBrowserTabs(script: string) {
 async function reloadBrowserHarness(context: BrowserHarnessContext, browserLogName: string) {
   const attempts: string[] = []
   const command = resolveBrowserHarnessCommand()
+  const auditRoot = join(context.artifactRoot, 'browser-audit')
+  await mkdir(auditRoot, { recursive: true })
+  const browserAuditRoot = await browserWritablePath(auditRoot)
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const child = Bun.spawn([command, '--reload'], { stdout: 'pipe', stderr: 'pipe' })
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
+    const reload = Bun.spawn([command, '--reload'], { stdout: 'pipe', stderr: 'pipe' })
+    const [reloadStdout, reloadStderr, reloadExitCode] = await Promise.all([
+      new Response(reload.stdout).text(),
+      new Response(reload.stderr).text(),
+      reload.exited,
     ])
+
+    let probeStdout = ''
+    let probeStderr = ''
+    let probeExitCode = -1
+    if (reloadExitCode === 0) {
+      const probe = Bun.spawn([command], {
+        env: { ...process.env, BH_AUDIT_DIR: browserAuditRoot },
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      if (typeof probe.stdin !== 'number') {
+        probe.stdin.write(
+          'import json\nprint("HOPI_BROWSER_READY=" + json.dumps({"targets": len(list_tabs(include_chrome=True))}))\n',
+        )
+        probe.stdin.end()
+      }
+      ;[probeStdout, probeStderr, probeExitCode] = await Promise.all([
+        new Response(probe.stdout).text(),
+        new Response(probe.stderr).text(),
+        probe.exited,
+      ])
+    }
     attempts.push(
-      `attempt ${attempt}: $ ${command} --reload\nexit: ${exitCode}\n\n[stdout]\n${stdout}\n[stderr]\n${stderr}`,
+      [
+        `attempt ${attempt}: $ ${command} --reload`,
+        `exit: ${reloadExitCode}`,
+        '',
+        '[reload stdout]',
+        reloadStdout,
+        '[reload stderr]',
+        reloadStderr,
+        `[readiness probe]\nexit: ${probeExitCode}`,
+        '',
+        '[probe stdout]',
+        probeStdout,
+        '[probe stderr]',
+        probeStderr,
+      ].join('\n'),
     )
-    if (exitCode === 0) {
+    if (
+      reloadExitCode === 0 &&
+      probeExitCode === 0 &&
+      probeStdout.split(/\r?\n/).some((line) => line.startsWith('HOPI_BROWSER_READY='))
+    ) {
       await Bun.write(
         join(context.artifactRoot, `${safeSegment(browserLogName)}-daemon-reload.log`),
         attempts.join('\n\n'),
@@ -1816,6 +1864,24 @@ export async function checkoutSnapshot(repoRoot: string) {
     branch: await gitOutput(repoRoot, ['branch', '--show-current']),
     status: await gitOutputPreservingStart(repoRoot, ['status', '--porcelain']),
   }
+}
+
+export async function assertAcceptedDelivery(
+  repoRoot: string,
+  before: { head: string; branch: string; status: string },
+) {
+  const after = await checkoutSnapshot(repoRoot)
+  if (after.branch !== before.branch) {
+    throw new Error(`Accepted delivery switched branch from ${before.branch} to ${after.branch}`)
+  }
+  if (after.status !== '') throw new Error('Accepted delivery left the checkout dirty')
+  if (after.head === before.head) throw new Error('Accepted delivery did not advance the checkout')
+  const release = await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release'])
+  if (after.head !== release) {
+    throw new Error(`Accepted delivery HEAD ${after.head} does not equal hopi/release ${release}`)
+  }
+  await gitOutput(repoRoot, ['merge-base', '--is-ancestor', before.head, after.head])
+  return after
 }
 
 export async function readCodeProvenance(repoRoot: string): Promise<CodeProvenance> {

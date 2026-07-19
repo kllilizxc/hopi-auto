@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current state: active Runs, Work control facts, open Attention, latest diagnostics, and exact document/log paths. Omit IDs for current page scope; otherwise copy complete canonical IDs. Read a returned path only when its body is needed.',
+      'Read compact current state: active Runs, Work, open Attention, latest diagnostics, and exact paths. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page scope; otherwise copy complete canonical IDs.',
     inputSchema: assistantToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
@@ -25,6 +25,26 @@ server.registerTool(
 
 if (mode !== 'reflection') {
   if (mode === 'main') {
+    server.registerTool(
+      'hopi_manage_project',
+      {
+        description:
+          'Link or rebind Projects and Repos, or initialize an explicitly named empty directory. Use only operator-supplied paths.',
+        inputSchema: assistantToolSchemas.hopi_manage_project,
+      },
+      (args) => callTool('hopi_manage_project', args),
+    )
+
+    server.registerTool(
+      'hopi_configure_model',
+      {
+        description:
+          'Set or inherit Assistant or Project coding defaults on explicit request; never changes Goal delivery.',
+        inputSchema: assistantToolSchemas.hopi_configure_model,
+      },
+      (args) => callTool('hopi_configure_model', args),
+    )
+
     server.registerTool(
       'hopi_write_preferences',
       {
@@ -80,7 +100,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Retry, cancel, or schedule one Work item. This changes canonical Work control facts, never a Kanban column directly.',
+        'Retry, cancel, or schedule one Work item. Retry/cancel also settle open Attention targeted exactly at affected Work; they never close broader or unrelated Attention. This changes canonical control facts, never a Kanban column directly.',
       inputSchema: assistantToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),
@@ -111,10 +131,20 @@ if (mode !== 'reflection') {
       'hopi_notify_user',
       {
         description:
-          'Publish the supplied message after this internal Reflection turn completes. Call only when the operator should learn a useful outcome or take action. Keep the message focused on the outcome and action; omit internal IDs and process unless needed. Do not call when HOPI can continue silently.',
+          'Publish one concise informational update after this internal Reflection turn completes. This never asks the operator to act and never creates Needs you. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
         inputSchema: assistantToolSchemas.hopi_notify_user,
       },
       (args) => callTool('hopi_notify_user', args),
+    )
+
+    server.registerTool(
+      'hopi_request_user',
+      {
+        description:
+          'Ask for one exact operator decision, authorization, or external action that HOPI cannot supply. This transfers referenced open Attention to Needs you after the complete message is durable. Never use for status, diagnostics, or an issue Assistant can repair internally.',
+        inputSchema: assistantToolSchemas.hopi_request_user,
+      },
+      (args) => callTool('hopi_request_user', args),
     )
   }
 } else {

@@ -1,7 +1,25 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+} from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CursorPage } from './apiTypes'
 import type { CursorPageRequest } from './apiClient'
+import {
+  messageStreamSnapshotKey,
+  mergeTailIntoMessageHistory,
+  readMessageStreamSnapshot,
+  writeMessageStreamSnapshot,
+} from './messageStreamCache'
+import { infiniteMessageHistoryQueryKey } from './queryKeys'
+import {
+  NAVIGATION_CACHE_GC_INTERVAL_MS,
+  REFRESHING_QUERY_NOTIFY_PROPS,
+  STABLE_QUERY_NOTIFY_PROPS,
+} from './queryPerformance'
 
 interface InfiniteMessageStreamOptions<T> {
   streamKey: string
@@ -16,6 +34,28 @@ interface InfiniteMessageStreamOptions<T> {
   reportRefreshing?: boolean
 }
 
+export function prefetchInfiniteMessageStream<T>(
+  queryClient: QueryClient,
+  input: Pick<
+    InfiniteMessageStreamOptions<T>,
+    'queryKey' | 'readPage' | 'historyPageSize'
+  >,
+) {
+  return queryClient.prefetchInfiniteQuery({
+    queryKey: infiniteMessageHistoryQueryKey(input.queryKey, input.historyPageSize),
+    queryFn: ({ pageParam }) =>
+      input.readPage({
+        ...(pageParam ? { before: pageParam } : {}),
+        ...(input.historyPageSize === undefined ? {} : { limit: input.historyPageSize }),
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page: CursorPage<T>) =>
+      page.pageInfo.hasOlder ? (page.pageInfo.oldestCursor ?? undefined) : undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: NAVIGATION_CACHE_GC_INTERVAL_MS,
+  })
+}
+
 export function useInfiniteMessageStream<T>({
   streamKey,
   queryKey,
@@ -28,19 +68,26 @@ export function useInfiniteMessageStream<T>({
   tailPageSize = 100,
   reportRefreshing = false,
 }: InfiniteMessageStreamOptions<T>) {
+  const queryClient = useQueryClient()
+  const queryIdentity = messageStreamSnapshotKey(queryKey)
+  const historyQueryKey = useMemo(
+    () => infiniteMessageHistoryQueryKey(queryKey, historyPageSize),
+    [historyPageSize, queryIdentity],
+  )
+  const historySnapshotKey = messageStreamSnapshotKey(historyQueryKey)
+  const persistedHistory = useMemo(
+    () => readMessageStreamSnapshot<CursorPage<T>>(historySnapshotKey),
+    [historySnapshotKey],
+  )
   const readPageRef = useRef(readPage)
   readPageRef.current = readPage
-  const [tailState, setTailState] = useState<{ streamKey: string; items: T[] }>({
-    streamKey,
-    items: [],
-  })
   const [tailError, setTailError] = useState<Error | null>(null)
   const tailCursorRef = useRef<string | null>(null)
   const tailCountRef = useRef(0)
   const syncGenerationRef = useRef(0)
 
   const historyQuery = useInfiniteQuery({
-    queryKey: [...queryKey, 'history', historyPageSize ?? 'default'],
+    queryKey: historyQueryKey,
     queryFn: ({ pageParam }) =>
       readPageRef.current({
         ...(pageParam ? { before: pageParam } : {}),
@@ -49,8 +96,13 @@ export function useInfiniteMessageStream<T>({
     initialPageParam: null as string | null,
     getNextPageParam: (page) =>
       page.pageInfo.hasOlder ? (page.pageInfo.oldestCursor ?? undefined) : undefined,
+    initialData: persistedHistory
+      ? { pages: [persistedHistory.value], pageParams: [null] }
+      : undefined,
+    initialDataUpdatedAt: persistedHistory?.savedAt,
     enabled,
     staleTime: Number.POSITIVE_INFINITY,
+    gcTime: NAVIGATION_CACHE_GC_INTERVAL_MS,
   })
 
   const headQuery = useQuery({
@@ -63,11 +115,13 @@ export function useInfiniteMessageStream<T>({
     queryFn: () => readPageRef.current({ limit: 1 }),
     enabled: enabled && historyQuery.data !== undefined,
     refetchInterval: enabled ? refetchInterval : false,
+    notifyOnChangeProps: reportRefreshing
+      ? REFRESHING_QUERY_NOTIFY_PROPS
+      : STABLE_QUERY_NOTIFY_PROPS,
   })
 
   useEffect(() => {
     syncGenerationRef.current += 1
-    setTailState({ streamKey, items: [] })
     setTailError(null)
     tailCursorRef.current = null
     tailCountRef.current = 0
@@ -105,15 +159,11 @@ export function useInfiniteMessageStream<T>({
 
       if (generation !== syncGenerationRef.current) return
       if (additions.length > 0) {
-        setTailState((current) => ({
-          streamKey,
-          items: mergeItems(
-            current.streamKey === streamKey ? current.items : [],
-            additions,
-            getItemId,
-            compareItems,
-          ),
-        }))
+        queryClient.setQueryData<InfiniteData<CursorPage<T>, string | null>>(
+          historyQueryKey,
+          (current) =>
+            mergeTailIntoMessageHistory(current, additions, head, getItemId, compareItems),
+        )
       }
       tailCursorRef.current = head.pageInfo.newestCursor ?? nextCursor
       tailCountRef.current = head.pageInfo.totalCount
@@ -124,7 +174,14 @@ export function useInfiniteMessageStream<T>({
       if (generation !== syncGenerationRef.current) return
       setTailError(error instanceof Error ? error : new Error(String(error)))
     })
-  }, [compareItems, getItemId, headQuery.data, tailPageSize])
+  }, [
+    compareItems,
+    getItemId,
+    headQuery.data,
+    historyQueryKey,
+    queryClient,
+    tailPageSize,
+  ])
 
   const items = useMemo(() => {
     const head = headQuery.data
@@ -140,10 +197,6 @@ export function useInfiniteMessageStream<T>({
         if (keepCachedItem(item)) merged.set(getItemId(item), item)
       }
     }
-    const tailItems = tailState.streamKey === streamKey ? tailState.items : []
-    for (const item of tailItems) {
-      if (keepCachedItem(item)) merged.set(getItemId(item), item)
-    }
     for (const item of head?.items ?? []) merged.set(getItemId(item), item)
     return [...merged.values()].sort(compareItems)
   }, [
@@ -151,11 +204,31 @@ export function useInfiniteMessageStream<T>({
     getItemId,
     headQuery.data?.items,
     historyQuery.data?.pages,
-    streamKey,
-    tailState,
   ])
 
   const oldestPage = historyQuery.data?.pages.at(-1)
+  const newestPage = historyQuery.data?.pages[0]
+  useEffect(() => {
+    if (!newestPage) return
+    const timeout = window.setTimeout(() => {
+      const head = headQuery.data
+      writeMessageStreamSnapshot<CursorPage<T>>(historySnapshotKey, {
+        items,
+        pageInfo: {
+          oldestCursor: oldestPage?.pageInfo.oldestCursor ?? null,
+          newestCursor: head?.pageInfo.newestCursor ?? newestPage.pageInfo.newestCursor,
+          hasOlder: oldestPage?.pageInfo.hasOlder ?? false,
+          hasNewer: false,
+          totalCount: Math.max(
+            items.length,
+            head?.pageInfo.totalCount ?? newestPage.pageInfo.totalCount,
+          ),
+        },
+      })
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [headQuery.data, historySnapshotKey, items, newestPage, oldestPage])
+
   const loadOlder = useCallback(() => {
     if (!historyQuery.hasNextPage || historyQuery.isFetchingNextPage) return
     void historyQuery.fetchNextPage()
@@ -178,15 +251,4 @@ export function useInfiniteMessageStream<T>({
     loadOlder,
     refresh,
   }
-}
-
-function mergeItems<T>(
-  current: T[],
-  incoming: T[],
-  getItemId: (item: T) => string,
-  compareItems: (left: T, right: T) => number,
-) {
-  const merged = new Map(current.map((item) => [getItemId(item), item]))
-  for (const item of incoming) merged.set(getItemId(item), item)
-  return [...merged.values()].sort(compareItems)
 }

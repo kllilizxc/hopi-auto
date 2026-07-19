@@ -19,6 +19,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
+  assertAcceptedDelivery,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -160,15 +161,7 @@ try {
     false,
     'Terminal Work must clean every revision workspace',
   )
-  const checkoutAfter = await checkoutSnapshot(repoRoot)
-  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
-  assert.equal(checkoutAfter.status, '')
-  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
-  assert.equal(
-    checkoutAfter.head,
-    await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
-    'Only the reviewed revision may fast-forward the delivery checkout',
-  )
+  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
   await Bun.write(
     join(artifactRoot, 'design-revision-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, settled, attempts, checkoutBefore, checkoutAfter, roleRuns: roles.runs }, null, 2)}\n`,

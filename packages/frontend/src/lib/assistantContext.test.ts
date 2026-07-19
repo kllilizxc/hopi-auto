@@ -50,7 +50,12 @@ describe('Assistant automatic context', () => {
   test('binds unresolved internal Goal Attention without exposing its body', () => {
     expect(
       resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, null, [
-        attention({ projectId: 'P-1', goalId: 'G-current', id: 'A-1' }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-current',
+          id: 'A-1',
+          operatorRequest: 'home:H-1/event:EV-question',
+        }),
         attention({ projectId: 'P-1', goalId: 'G-current', id: 'A-2' }),
       ]),
     ).toEqual({
@@ -68,8 +73,18 @@ describe('Assistant automatic context', () => {
       resolveAssistantInboxContext(
         { projectId: 'P-1', goalId: 'G-current' },
         [
-          attention({ projectId: 'P-2', goalId: 'G-attention', id: 'A-1' }),
-          attention({ projectId: 'P-2', goalId: 'G-attention', id: 'A-2' }),
+          attention({
+            projectId: 'P-2',
+            goalId: 'G-attention',
+            id: 'A-1',
+            operatorRequest: 'home:H-1/event:EV-question',
+          }),
+          attention({
+            projectId: 'P-2',
+            goalId: 'G-attention',
+            id: 'A-2',
+            operatorRequest: 'home:H-1/event:EV-question',
+          }),
         ],
       ),
     ).toEqual({
@@ -79,11 +94,18 @@ describe('Assistant automatic context', () => {
         'project:P-2/goal:G-attention/attention:A-1',
         'project:P-2/goal:G-attention/attention:A-2',
       ],
+      replyTo: 'home:H-1/event:EV-question',
     })
   })
 
-  test('finds the public speaking turn that notified an exact Attention', () => {
-    const target = attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW })
+  test('finds the exact public speaking turn currently awaiting a reply', () => {
+    const target = attention({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      id: 'A-1',
+      notifiedAt: NOW,
+      operatorRequest: 'home:H-1/event:EV-public',
+    })
     const reference = 'project:P-1/goal:G-1/attention:A-1'
 
     expect(
@@ -109,12 +131,18 @@ describe('Assistant automatic context', () => {
             context: { attentionRefs: ['project:P-1/goal:G-2/attention:A-1'] },
           }),
         ],
-        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          id: 'A-1',
+          notifiedAt: NOW,
+          operatorRequest: 'home:H-1/event:EV-public',
+        }),
       ),
     ).toBeNull()
   })
 
-  test('groups only unresolved notified Attention under the exact Assistant message', () => {
+  test('groups only unresolved operator requests under the exact Assistant message', () => {
     const references = [
       'project:P-1/goal:G-1/attention:A-1',
       'project:P-1/goal:G-1/attention:A-2',
@@ -122,14 +150,34 @@ describe('Assistant automatic context', () => {
     const groups = groupNeedsYouAttentions(
       [feedEvent('EV-public', { context: { attentionRefs: references } })],
       [
-        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-1', notifiedAt: NOW }),
-        attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-2', notifiedAt: NOW }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          id: 'A-1',
+          notifiedAt: NOW,
+          operatorRequest: 'home:H-1/event:EV-public',
+        }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          id: 'A-2',
+          notifiedAt: NOW,
+          operatorRequest: 'home:H-1/event:EV-public',
+        }),
         attention({
           projectId: 'P-1',
           goalId: 'G-1',
           id: 'A-resolved',
           notifiedAt: NOW,
+          operatorRequest: null,
           resolvedAt: NOW,
+        }),
+        attention({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          id: 'A-informed',
+          notifiedAt: NOW,
+          operatorRequest: null,
         }),
         attention({ projectId: 'P-1', goalId: 'G-1', id: 'A-unnotified', notifiedAt: null }),
       ],
@@ -180,6 +228,7 @@ function attention(overrides: Partial<AttentionView>): AttentionView {
     createdAt: NOW,
     resolvedAt: null,
     notifiedAt: null,
+    operatorRequest: null,
     body: 'Needs a decision.',
     ...overrides,
   }

@@ -34,6 +34,7 @@ export function createWorkspaceAttentionController(
         createdAt: now().toISOString(),
         resolvedAt: null,
         notifiedAt: null,
+        operatorRequest: null,
       },
       body: [
         '## Needs you',

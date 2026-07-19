@@ -109,14 +109,11 @@ export async function acknowledgeGoalAttention(
   goalId: string,
   attentionId: string,
   acknowledgedAt: Date,
+  operatorRequest?: string,
 ) {
   const goalPackage = await store.readPackage(goalId)
   const current = goalPackage.attentions.get(attentionId)
-  if (
-    !current ||
-    current.attributes.resolvedAt !== null ||
-    current.attributes.notifiedAt !== null
-  ) {
+  if (!current || current.attributes.resolvedAt !== null) {
     return false
   }
   const completion = current.attributes.target === null
@@ -127,10 +124,20 @@ export async function acknowledgeGoalAttention(
   ) {
     return false
   }
+  const nextOperatorRequest = completion
+    ? null
+    : (operatorRequest ?? current.attributes.operatorRequest ?? null)
+  if (
+    current.attributes.notifiedAt !== null &&
+    (current.attributes.operatorRequest ?? null) === nextOperatorRequest
+  ) {
+    return false
+  }
   const path = store.paths.attentionDocument(goalId, attentionId)
   const source = await Bun.file(store.paths.absolute(path)).text()
   const attention = parseAttentionDocument(source)
-  attention.attributes.notifiedAt = acknowledgedAt.toISOString()
+  attention.attributes.notifiedAt ??= acknowledgedAt.toISOString()
+  attention.attributes.operatorRequest = nextOperatorRequest
   if (completion) {
     attention.attributes.resolvedAt = acknowledgedAt.toISOString()
     attention.body += '\n## Resolution\n\nCompletion update delivered.\n'
@@ -150,6 +157,38 @@ export async function acknowledgeGoalAttention(
       ) {
         throw new Error('Completion Attention is no longer deliverable')
       }
+    },
+  })
+  return true
+}
+
+export async function clearGoalAttentionOperatorRequest(
+  store: GoalPackageStore,
+  goalId: string,
+  attentionId: string,
+  expectedRequest?: string,
+) {
+  const goalPackage = await store.readPackage(goalId)
+  const current = goalPackage.attentions.get(attentionId)
+  const operatorRequest = current?.attributes.operatorRequest ?? null
+  if (
+    !current ||
+    current.attributes.resolvedAt !== null ||
+    operatorRequest === null ||
+    (expectedRequest !== undefined && operatorRequest !== expectedRequest)
+  ) {
+    return false
+  }
+  const path = store.paths.attentionDocument(goalId, attentionId)
+  const source = await Bun.file(store.paths.absolute(path)).text()
+  const attention = parseAttentionDocument(source)
+  attention.attributes.operatorRequest = null
+  await store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderAttentionDocument(attention),
     },
   })
   return true

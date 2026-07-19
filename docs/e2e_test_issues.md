@@ -265,6 +265,17 @@ Planning Work in a fresh episode through Generator, Reviewer, C1, and final Plan
 blocker remains as resolved history, no targeted blocker remains open, the user checkout is unchanged,
 and separate blocked/recovered screenshots plus all three raw process streams are retained.
 
+## 2026-07-18: HOPI-E2E-014 Atomic Work Recovery
+
+The scenario now reproduces the production omission where Assistant requested Work retry but did not
+separately resolve its Attention. The Assistant fixture calls only `hopi_control_work: retry`; the
+backend publishes Goal Input, Work reset, and exact Work Attention resolution as one gated recovery
+operation. The fresh episode then reaches Planner, Generator, Reviewer, C1, and completion.
+
+The final rerun passed at
+`/home/kllilizxc/Code/hopi-auto/test-artifacts/operational-recovery-browser-2026-07-18T02-27-08-359Z-1c24c557`
+with all blocked/recovered Kanban screenshots and raw Attempt streams retained.
+
 ## 2026-07-14: HOPI-E2E-018 Contract Execution
 
 ## 2026-07-14: HOPI-E2E-011 Multiple Instructions While Goals Run
@@ -497,6 +508,20 @@ The first retained Browser iteration is a Harness assertion failure:
 The product completed the intended resolve, dispatch, and reblock sequence, but the assertion always
 selected historical `plan-initial` after it had become `done`. The final scenario selects the current
 nonterminal Work without fixing Work count or kind.
+
+The 2026-07-17 regression first exposed two fixture weaknesses. The test placed an artificial Project
+Attention on an otherwise healthy Project and sampled the replacement Attention before the
+already-admitted Generator lease had finished settling. The fixture now keeps a real, repairable
+checkout blocker until the Assistant turn removes it, and waits for the stable `waiting` /
+`project_ineligible` projection after the admitted Run drains.
+
+Inspecting the retained screenshot then found a product regression that the state-only assertion had
+hidden. A later generic five-second recovery loop validated only managed release and delivery state,
+automatically resolved the new task-worktree checkpoint Attention, and dispatched Generator again.
+That check cannot prove repair of the fault named by an untyped Project Attention and contradicts the
+Agent-managed recovery contract. The loop is removed: safe mechanical recovery remains at startup or
+the failing boundary before Attention publication; after publication only an explicit Assistant
+resolution removes the guard. This avoids both another Attention subtype and repeated work.
 
 Claude Live artifact:
 `/Users/realizer/Code/hopi-auto/test-artifacts/project-attention-agent-recovery-2026-07-14T12-05-47-082Z-cacceffa`
@@ -1110,3 +1135,47 @@ see the blocker or reach Rebind. State presentation now degrades only the blocke
 Goal expansion: Project identity, Repo bindings, model settings, and Project Attention remain visible;
 canonical Goal authority is neither guessed nor mutated. Complete-set Rebind still rebuilds runtime
 from validated files before Goals reappear.
+
+The following full preflight reached `021` after the product had already stopped Preview with
+`release_updated`. The retained API state and screenshot both showed the correct result, but the
+Browser oracle searched a Project card whose visible heading equalled canonical ID
+`P-preview-valid`. The current UI intentionally presents the source-folder name `preview-valid` and
+retains the canonical ID in the heading's `title`. The shared Preview inspection now finds the card by
+that stable semantic identity and keeps `stopped · release updated` as the separate visible-copy
+assertion. No Preview lifecycle or UI-only test hook is added.
+
+That correction let `021` reach its final checkout assertion, which still required the delivered
+Project to equal its pre-C1 snapshot. This was the same stale boundary as `011`: only the unrelated
+missing-Preview Project must remain byte-for-byte unchanged. The accepted Project must retain its
+recorded branch and clean status while its HEAD fast-forwards from the initial commit to the exact
+`hopi/release`; the initial commit must remain an ancestor. The case now asserts those delivery facts
+instead of treating correct C1 materialization as a regression.
+
+The next child, `014`, stopped while reading failure diagnostics even though every operational Run
+had retained `transcript.log`, `events.jsonl`, `attempt.json`, and `result.json`. The case manually
+constructed the legacy nested Run path under Project, Goal, and Work after production storage had
+already converged on the Home-wide `runs/<runId>` identity. It now resolves evidence through the same
+`runStoragePath` owner as production. The raw stdout/stderr and normalized Attempt-event assertions
+remain strict; missing diagnostics are not treated as optional.
+
+The same focused retry then reached `014`'s terminal checkout assertion and exposed the third copy of
+the obsolete post-C1 rule. A repository-wide audit found the same duplicated assumption in `023` and
+several lower-frequency Live delivery cases, while conversation-only, Rebind, pre-C1 Pause, scoped
+rejection, and Project-reblock checks correctly require no checkout change. Accepted delivery is now
+owned by one shared Harness assertion over branch, cleanliness, ancestry, and exact `hopi/release`;
+only cases that actually cross C1 use it. This removes assertion drift without changing product
+delivery or weakening non-delivery isolation.
+
+## 2026-07-17: Browser daemon readiness between Regression children
+
+The complete Regression passed `020` and `030`, then `031` failed before any product action. Its
+retained reload log showed `--reload` returning success with “will restart fresh on next call”; the
+next command created a target but lost the named daemon before `switch_tab`, leaving no IPC port.
+Treating `--reload` exit alone as readiness made the first real scenario command double as the daemon
+startup probe.
+
+Browser initialization now performs one read-only `list_tabs` probe after reload and retries only
+that pre-action boundary. Scenario scripts are still never replayed after failure, because a later
+missing response cannot prove whether a click or submission happened. This adds no scenario retry
+policy or Browser state manager; it makes the existing initialization contract observable and keeps
+both reload and probe diagnostics in the Test Run.

@@ -83,7 +83,7 @@ try {
   assert.equal(event.source, 'reflection')
   assert.equal(event.visibility, 'public')
   assert.equal(event.reply, PUBLIC_MESSAGE)
-  assert.equal(event.disposition, 'tools-used')
+  assert.equal(event.disposition, 'notified')
   assert.equal(event.runtimeError, null)
 
   const toolCalls = event.runtimeEvents.filter((item) => item.entryKind === 'tool_call')

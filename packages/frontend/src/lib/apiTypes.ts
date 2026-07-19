@@ -102,9 +102,14 @@ export interface InboxEventView {
     goalId?: string
     attentionId?: string
     attentionRefs?: string[]
+    replyTo?: string
     observedDigest?: string
   } | null
-  routeClaim: { projectId: string; goalId: string; mode: 'existing' | 'create' } | null
+  routeClaim: {
+    projectId: string
+    goalId: string
+    mode: 'existing' | 'create'
+  } | null
   runtimeStatus: 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
   runtimeEvents: RunAttemptEvent[]
   runtimeError: string | null
@@ -142,10 +147,13 @@ export interface AttentionView {
   createdAt: string
   resolvedAt: string | null
   notifiedAt: string | null
+  operatorRequest: string | null
   body: string
   projectId?: string
   goalId?: string
 }
+
+export type AttentionSummaryView = Omit<AttentionView, 'body'>
 
 export type AssistantFeedEntry =
   | {
@@ -232,8 +240,10 @@ export interface WorkView {
   contractRevision: number
   evidenceRefs: string[]
   attempts: number
+  runAttemptCount: number
   body: string
   agentPlan: WorkAgentPlan | null
+  blockedBy: string | null
   projection: {
     workId: string
     column: KanbanColumn | null
@@ -243,6 +253,18 @@ export interface WorkView {
     primaryBadge: WorkBadge | null
     failedPredicates: string[]
   }
+}
+
+export type WorkCardView = Omit<WorkView, 'body'>
+
+export interface WorkDocumentView {
+  id: string
+  body: string
+}
+
+export interface GoalDocumentView {
+  path: string
+  content: string
 }
 
 export interface RunAttemptSummary {
@@ -325,6 +347,27 @@ export interface GoalDetail {
   attentions: AttentionView[]
   projectAttention: AttentionView | null
   evidence: EvidenceView[]
+}
+
+export interface GoalBoardDetail {
+  projectId: string
+  goal: GoalDetail['goal']
+  works: WorkCardView[]
+  attentions: AttentionSummaryView[]
+  projectAttention: AttentionView | null
+}
+
+export interface GoalDocsDetail {
+  projectId: string
+  goal: GoalDetail['goal']
+  design: Array<{ path: string; excerpt: string }>
+  evidence: Array<
+    Pick<EvidenceView, 'id' | 'createdAt' | 'producerRun' | 'owner'> & { excerpt: string }
+  >
+}
+
+export interface AssistantAttentionState {
+  attentions: AttentionView[]
 }
 
 export type PreviewStartResult =

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
   type MarkdownDocument,
   parseMarkdownDocument,
@@ -87,9 +88,26 @@ export const attentionAttributesSchema = z
     createdAt: timestampSchema,
     resolvedAt: timestampSchema.nullable(),
     notifiedAt: timestampSchema.nullable(),
+    operatorRequest: inboxEventReferenceSchema.nullable().optional(),
     resolutionInput: canonicalRefSchema.nullable().optional(),
   })
   .strict()
+  .superRefine((attention, context) => {
+    if (attention.target === null && attention.operatorRequest) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operatorRequest'],
+        message: 'Completion Attention cannot wait for operator input',
+      })
+    }
+    if (attention.resolvedAt !== null && attention.operatorRequest) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operatorRequest'],
+        message: 'Resolved Attention cannot wait for operator input',
+      })
+    }
+  })
 
 export const inputAttributesSchema = z
   .object({

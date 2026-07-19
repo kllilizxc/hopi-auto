@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ConfiguredRoleRunner } from '../src/agent/RoleRunner'
+import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { RoleContextBundle } from '../src/runtime/roleContextStager'
 
 const temporaryRoots: string[] = []
@@ -36,6 +37,24 @@ describe('ConfiguredRoleRunner', () => {
     const transcript = await Bun.file(join(fixture.runRoot, 'transcript.log')).text()
     expect(transcript).toContain(`stdout: raw-output-${'x'.repeat(600)}`)
     expect(transcript).toContain('stderr: raw-error-detail')
+  })
+
+  test('keeps only a bounded stderr tail in memory while preserving the raw transcript', async () => {
+    const fixture = await createFixture()
+    const runner = processRunner(
+      'for(let index=0;index<250;index+=1) console.error("stderr-"+String(index).padStart(3,"0")); process.exit(7)',
+    )
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+    const transcript = await Bun.file(join(fixture.runRoot, 'transcript.log')).text()
+
+    expect(result).toMatchObject({
+      result: 'fail',
+      summary: 'process exited with code 7: stderr-249',
+      exitCode: 7,
+    })
+    expect(transcript).toContain('stderr: stderr-000')
+    expect(transcript).toContain('stderr: stderr-249')
   })
 
   test('provides Run-scoped temp and Home-scoped cache environments', async () => {
@@ -154,6 +173,38 @@ describe('ConfiguredRoleRunner', () => {
       failureKind: 'operational',
     })
     expect(result.summary).toContain('provider quota exhausted')
+  })
+
+  test('retains a Codex model refresh timeout without using it as the failure', async () => {
+    const fixture = await createFixture()
+    const warning =
+      '2026-07-17T16:43:47.149889Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit'
+    const binary = await fakeCodex(
+      fixture.root,
+      `console.error("provider connection failed"); console.error(${JSON.stringify(warning)}); process.exit(1)`,
+    )
+    const events: AgentRuntimeEvent[] = []
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('generator', fixture.repoRoot), {
+      onEvent: (event) => {
+        events.push(event)
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    expect(result.summary).toContain('provider connection failed')
+    expect(result.summary).not.toContain('failed to refresh available models')
+    expect(events).not.toContainEqual(expect.objectContaining({ summary: warning }))
+    expect(await Bun.file(join(fixture.runRoot, 'transcript.log')).text()).toContain(warning)
   })
 
   test('captures a built-in vendor session as soon as the responsibility reports it', async () => {

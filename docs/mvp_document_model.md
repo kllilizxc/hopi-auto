@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -84,6 +84,7 @@ context:
   goalId: G-1
   attentionRefs:
     - project:P-1/goal:G-1/attention:A-1
+  replyTo: home:H-1/event:EV-question
 handledAt: null
 reply: null
 disposition: null
@@ -100,6 +101,11 @@ disposition: null
 - Goal-local: `project:<projectId>/goal:<goalId>/attention:<attentionId>`
 - workspace: `home:<homeId>/attention:<attentionId>`
 
+`replyTo` is present only on an explicit operator reply created from the Assistant message's Reply
+control. It identifies the exact handled public Assistant request event and requires matching
+`attentionRefs`. An ordinary message sent from the same Project or Goal may carry location context,
+but never guesses this pointer from currently open Attention.
+
 A Reflection handoff may contain only `attentionRefs`; a normal Goal-page turn may contain only the
 Project/Goal pair; and one turn may contain both. New writes never use a bare Attention ID. Older
 Inbox events with singular `attentionId` or local IDs in `attentionRefs` remain readable and are
@@ -115,7 +121,8 @@ was observed. Neither value is proof of a side effect; canonical documents and t
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
 finishes, Coordinator may publish `internal -> public` atomically with its handled reply when that
-Run called `notify_user`. It never moves back and a user-sourced turn can never become internal.
+Run called `notify_user` or `request_user`. It never moves back and a user-sourced turn can never
+become internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also
   becomes eligible only after its event document is durable.
@@ -466,6 +473,20 @@ The body owns the current execution objective, context, acceptance criteria, and
 references. Findings, observed results, and completion proof live in immutable Evidence and are
 linked rather than copied into Work history.
 
+When delivery persists the same fact in several Project artifacts, design names one canonical owner
+and a one-way derivation path. This does not require one monolithic file: different facts may have
+different owners in different documents or data files. Reports, summaries, API responses, and UI
+models may remain stored for auditability or efficient reading, but they are materialized projections,
+not peer authorities. Acceptance proves that each projection can be regenerated or reconciled from
+its owner instead of making duplicated values mutually attest to one another.
+
+This ownership is recorded in ordinary design prose and Work acceptance only when omission would be
+materially ambiguous; it adds no frontmatter, artifact registry, or schema-mapping DSL. At a
+deterministic persistence boundary, a closed accepted schema with unknown fields rejected is
+preferred to an open-ended list of forbidden aliases. When an external or nondeterministic fact
+cannot be recomputed, its bounded source snapshot, digest, or cited Evidence owns the fact and the
+derived claim points back to it.
+
 Valid stages:
 
 | `kind` | Stages | Terminal |
@@ -600,8 +621,9 @@ Work remains in `work/`.
 
 ### `attention/<attentionId>.md`
 
-Attention is the only durable model for something the operator must see. There is no separate
-decision entity, blocker entity, or wait relation.
+Attention is the only durable model for a blocker or completion that Assistant may need to surface.
+There is no separate decision entity or blocker entity. One nullable event reference records the
+only wait relation that affects ownership.
 
 ```yaml
 ---
@@ -610,12 +632,15 @@ target: project:P-1/goal:G-4/work:W-12
 createdAt: 2026-07-10T09:00:00Z
 resolvedAt: null
 notifiedAt: null
+operatorRequest: null
 ---
 ```
 
 `target` is exactly one canonical event, project, Goal, or Work reference, or null for completion.
-An open targeted Attention projects as **Waiting for Assistant** while `notifiedAt` is null and
-**Needs you** after notification while it remains unresolved.
+An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` is null and
+**Needs you** only while `operatorRequest` contains the exact
+`home:<homeId>/event:<eventId>` public Assistant request awaiting a reply. `notifiedAt` is independent
+delivery history and may be non-null in either projection.
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
 
@@ -684,11 +709,14 @@ after that receipt. A behavior-changing answer increments `contractRevision` and
 Work. Condition-based Attention resolves only when its condition is cleared.
 
 `notifiedAt` is null until an Attention-linked Reflection turn is durably exposed with its complete
-handled reply in the speaking Assistant conversation. Targeted Attention remains open after
-notification. Completion is marked notified and resolved in the same project publication. The
-Assistant-home reply gate is always first, so a crash cannot acknowledge delivery without leaving a
-durable public turn whose recovery can finish the exact linked Attention publications. Resolution
-facts do not change the immutable notification payload or request delivery again.
+handled reply in the speaking Assistant conversation. Informational delivery leaves
+`operatorRequest` null. An actionable request records that exact handled event in `operatorRequest`;
+only a user Inbox event whose immutable `context.replyTo` equals that pointer clears it after receipt
+is durable and before Assistant continues. Neither transition resolves the Attention. Completion is marked notified and resolved in
+the same project publication. The Assistant-home reply gate is always first, so a crash cannot
+acknowledge delivery or transfer ownership without leaving a durable public turn whose recovery can
+finish the exact linked Attention publications. Resolution facts do not change the immutable
+notification payload or request delivery again.
 
 The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` mirrors that
 handled public Assistant reply; it never delivers raw Attention and never owns `notifiedAt`.
@@ -715,6 +743,14 @@ Work through `dependsOn` and all Evidence named by those Works' append-only `evi
 resolves portable Run artifact references from that selected Evidence into one Run-local read-only
 manifest. This is a projection of existing canonical Evidence and immutable Run storage, not a new
 document type or a second source of truth.
+
+The product derives one read-only browser URL from the immutable identity
+`(Project, Goal, Evidence, artifact index)`. Resolution starts from that exact canonical Evidence
+entry and may reach either preserved Run storage or a reviewed Project-relative file in a managed
+integration root. The URL is only a transport projection: it creates no artifact registry, permits
+no arbitrary filesystem path, and never replaces the Evidence reference as authority. Missing or
+ambiguous files fail closed instead of opening a guessed location. Known image, media, document, and
+data formats use their browser-safe media type; unknown or executable content remains inert text.
 
 Corrections create new Evidence and may reference the superseded Evidence; existing Evidence is
 never edited into a different claim. Raw transcripts are runtime data, and a success claim backed

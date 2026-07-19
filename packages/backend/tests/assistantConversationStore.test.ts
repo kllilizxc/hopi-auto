@@ -34,19 +34,31 @@ describe('AssistantConversationStore session cache', () => {
       sessionId: 'legacy-thread',
     })
     expect(await Bun.file(sessionPath).json()).toEqual({
-      version: 1,
+      version: 2,
       transport: 'codex',
       sessionId: 'legacy-thread',
+      contractDigest: null,
     })
   })
 
   test('stores one disposable vendor-qualified session and discards invalid cache data', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
-    await store.writeSession({ transport: 'opencode', sessionId: 'ses-1' })
-    expect(await store.readSession()).toEqual({ transport: 'opencode', sessionId: 'ses-1' })
+    await store.writeSession({ transport: 'opencode', sessionId: 'ses-1' }, 'contract-a')
+    expect(await store.readSession('contract-a')).toEqual({
+      transport: 'opencode',
+      sessionId: 'ses-1',
+    })
 
     await Bun.write(sessionPath, '{not-json')
     expect(await store.readSession()).toBeNull()
+    expect(await Bun.file(sessionPath).exists()).toBe(false)
+  })
+
+  test('invalidates a session created under another Assistant contract', async () => {
+    const store = createAssistantConversationStore(temporaryRoot)
+    await store.writeSession({ transport: 'codex', sessionId: 'thread-old' }, 'contract-old')
+
+    expect(await store.readSession('contract-current')).toBeNull()
     expect(await Bun.file(sessionPath).exists()).toBe(false)
   })
 

@@ -829,7 +829,7 @@ describe('CoordinatorReconciler', () => {
     expect(openProjectAttentions[0]?.body).toContain('still fails C1 publication')
   })
 
-  test('retries a blocked Project projection and resolves Attention only after validation succeeds', async () => {
+  test('keeps Project Attention open until an Agent explicitly resolves it', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
@@ -839,14 +839,10 @@ describe('CoordinatorReconciler', () => {
       'P-1',
       'Delivery checkout is not ready.',
     )
-    let observedAt = new Date('2026-07-11T00:00:00Z').getTime()
-    let ready = false
-    let recoveries = 0
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
       attentions: fixture.attentions,
-      now: () => new Date(observedAt),
       projects: [
         {
           projectId: 'P-1',
@@ -857,10 +853,6 @@ describe('CoordinatorReconciler', () => {
             interruptRuns: () => undefined,
             liveWorkIds: () => new Set<string>(),
           } as unknown as ProjectReconciler,
-          async recover() {
-            recoveries += 1
-            if (!ready) throw new Error('delivery checkout remains dirty')
-          },
         },
       ],
     })
@@ -872,14 +864,11 @@ describe('CoordinatorReconciler', () => {
         .resolvedAt,
     ).toBeNull()
 
-    ready = true
-    observedAt += 5_001
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     expect(
       (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
         .resolvedAt,
-    ).not.toBeNull()
-    expect(recoveries).toBe(2)
+    ).toBeNull()
   })
 })
 

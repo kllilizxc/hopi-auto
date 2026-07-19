@@ -29,6 +29,7 @@ export interface ProjectPreparer {
     projectRoot: string
     runtimeDir: string
     timeoutMs?: number
+    goalId?: string
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
   }): Promise<ProjectPreparationResult>
@@ -97,12 +98,17 @@ export function createProjectPreparer(): ProjectPreparer {
       const lines: string[] = []
       let exitCode: number | null = null
       try {
+        const environment: Record<string, string | undefined> = {
+          ...process.env,
+          HOPI_GOAL_ID: undefined,
+        }
+        if (input.goalId) environment.HOPI_GOAL_ID = input.goalId
         const child = Bun.spawn([adapterPath], {
           cwd: projectRoot,
           stdout: 'pipe',
           stderr: 'pipe',
           env: {
-            ...process.env,
+            ...environment,
             HOPI_PROJECT_ROOT: projectRoot,
             HOPI_REPOS_FILE: reposFile,
             HOPI_PREPARE_RUNTIME_DIR: runtimeDir,

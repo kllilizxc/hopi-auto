@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
@@ -8,13 +9,16 @@ import { goalAttentionReference } from '../src/domain/attentionReference'
 import {
   parseWorkDocument,
   renderAttentionDocument,
+  renderEvidenceDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
+import { normalizeProjectCodingDefaults } from '../src/domain/projectCodingDefaults'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import type { Responsibility } from '../src/runtime/roleContextStager'
-import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { runStoragePath } from '../src/runtime/runPaths'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
@@ -32,6 +36,241 @@ afterEach(async () => {
 })
 
 describe('Assistant HOPI tools', () => {
+  test('manages Project topology only from an explicit public turn', async () => {
+    const fixture = await setup()
+    const repoRoot = await createTestRepo(join(temporaryRoot, 'api'))
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project',
+      content: 'Add this repository to P-1 as api.',
+    })
+
+    const linked = await fixture.tools.executeForEvent('EV-project', 'hopi_manage_project', {
+      operation: 'link_repo',
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: repoRoot,
+    })
+    expect(linked).toMatchObject({
+      changed: true,
+      value: {
+        operation: 'link_repo',
+        runtimeRefresh: 'after_current_turn',
+        project: {
+          projectId: 'P-1',
+          repos: [
+            { repoId: 'api', primary: false },
+            { repoId: 'primary', primary: true },
+          ],
+        },
+      },
+    })
+    expect(fixture.topologyChangedEventIds).toEqual(['EV-project'])
+    expect((await fixture.home.readProject('P-1')).repos.map((repo) => repo.repoId)).toEqual([
+      'primary',
+      'api',
+    ])
+
+    const repeated = await fixture.tools.executeForEvent('EV-project', 'hopi_manage_project', {
+      operation: 'link_repo',
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: repoRoot,
+    })
+    expect(repeated).toMatchObject({ changed: false, value: { runtimeRefresh: 'not_needed' } })
+    expect(fixture.topologyChangedEventIds).toEqual(['EV-project'])
+
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-internal-project',
+      content: 'Change Project topology without operator intent.',
+    })
+    await expect(
+      fixture.tools.executeForEvent('EV-internal-project', 'hopi_manage_project', {
+        operation: 'rebind_project',
+        projectId: 'P-1',
+        repoPath: repoRoot,
+      }),
+    ).rejects.toThrow('only from a public user turn')
+  })
+
+  test('initializes an explicitly named empty repository through Project management', async () => {
+    const fixture = await setup()
+    const repoRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-init-'))
+    try {
+      await fixture.workspace.receiveEvent({
+        eventId: 'EV-initialize',
+        content: `Initialize ${repoRoot} as a Git repository.`,
+      })
+      expect(
+        await fixture.tools.executeForEvent('EV-initialize', 'hopi_manage_project', {
+          operation: 'initialize_repository',
+          path: repoRoot,
+        }),
+      ).toMatchObject({
+        changed: true,
+        value: {
+          operation: 'initialize_repository',
+          selection: { repoPath: repoRoot, projectPath: '.' },
+        },
+      })
+      expect(await git(repoRoot, ['branch', '--show-current'])).toBe('main')
+      expect(
+        await fixture.tools.executeForEvent('EV-initialize', 'hopi_manage_project', {
+          operation: 'initialize_repository',
+          path: repoRoot,
+        }),
+      ).toMatchObject({ changed: false })
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  test('supports whole-Project, single-Repo, and complete-set rebinding', async () => {
+    const fixture = await setup()
+    const apiRepo = await createTestRepo(join(temporaryRoot, 'rebind-api'))
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-rebind',
+      content: 'Move the linked repositories to these new paths.',
+    })
+    await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
+      operation: 'link_repo',
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: apiRepo,
+    })
+
+    const movedPrimary = join(temporaryRoot, 'moved-primary')
+    const movedApi = join(temporaryRoot, 'moved-api')
+    await rename(fixture.repoRoot, movedPrimary)
+    await rename(apiRepo, movedApi)
+    expect(
+      await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
+        operation: 'rebind_repos',
+        projectId: 'P-1',
+        repos: [
+          { repoId: 'primary', repoPath: movedPrimary },
+          { repoId: 'api', repoPath: movedApi },
+        ],
+      }),
+    ).toMatchObject({ changed: true })
+
+    const finalPrimary = join(temporaryRoot, 'final-primary')
+    await rename(movedPrimary, finalPrimary)
+    const reboundPrimary = await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
+      operation: 'rebind_project',
+      projectId: 'P-1',
+      repoPath: finalPrimary,
+    })
+    expect(reboundPrimary).toMatchObject({ changed: true })
+    expect(
+      (reboundPrimary.value as { project: { repos: unknown[] } }).project.repos,
+    ).toContainEqual({
+      repoId: 'primary',
+      repoPath: finalPrimary,
+      projectPath: '.',
+      deliveryBranch: 'main',
+      primary: true,
+    })
+
+    const finalApi = join(temporaryRoot, 'final-api')
+    await rename(movedApi, finalApi)
+    const reboundApi = await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
+      operation: 'rebind_repo',
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: finalApi,
+    })
+    expect(reboundApi).toMatchObject({ changed: true })
+    expect((reboundApi.value as { project: { repos: unknown[] } }).project.repos).toContainEqual({
+      repoId: 'api',
+      repoPath: finalApi,
+      projectPath: '.',
+      deliveryBranch: 'main',
+      primary: false,
+    })
+    expect(fixture.topologyChangedEventIds).toEqual([
+      'EV-rebind',
+      'EV-rebind',
+      'EV-rebind',
+      'EV-rebind',
+    ])
+  })
+
+  test('configures Assistant and Project models and exposes current settings in state', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-models',
+      content: 'Use Claude for Assistant and a smaller Codex model for P-1.',
+    })
+
+    expect(
+      await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
+        scope: 'assistant',
+        codingDefaults: { transport: 'claude', model: 'sonnet' },
+      }),
+    ).toMatchObject({
+      changed: true,
+      value: {
+        scope: 'assistant',
+        codingDefaults: { transport: 'claude', model: 'sonnet' },
+        inherited: false,
+      },
+    })
+    expect(
+      await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
+        scope: 'project',
+        projectId: 'P-1',
+        codingDefaults: { transport: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' },
+      }),
+    ).toMatchObject({
+      changed: true,
+      value: {
+        scope: 'project',
+        projectId: 'P-1',
+        codingDefaults: {
+          transport: 'codex',
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'high',
+        },
+        inherited: false,
+      },
+    })
+
+    const state = await fixture.tools.executeForEvent('EV-models', 'hopi_read_state', {
+      projectId: 'P-1',
+    })
+    expect(state.value).toMatchObject({
+      assistantCodingDefaults: { transport: 'claude', model: 'sonnet' },
+      assistantCodingDefaultsInherited: false,
+      projects: [
+        {
+          projectId: 'P-1',
+          primaryRepoId: 'primary',
+          repos: [{ repoId: 'primary', primary: true }],
+          codingDefaults: {
+            transport: 'codex',
+            model: 'gpt-5.3-codex',
+            reasoningEffort: 'high',
+          },
+          codingDefaultsInherited: false,
+        },
+      ],
+    })
+
+    expect(
+      await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
+        scope: 'project',
+        projectId: 'P-1',
+        codingDefaults: null,
+      }),
+    ).toMatchObject({ changed: true, value: { inherited: true } })
+    expect(
+      await fixture.tools.executeForEvent('EV-models', 'hopi_configure_model', {
+        scope: 'assistant',
+        codingDefaults: null,
+      }),
+    ).toMatchObject({ changed: true, value: { inherited: true } })
+  })
+
   test('lets only a public user turn replace durable preferences without Goal effects', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({
@@ -507,7 +746,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
-  test('refuses to resolve exhausted Work Attention before its blocker changes', async () => {
+  test('atomically retries exhausted Work and resolves its exact Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const path = fixture.goalStore.paths.workDocument('G-1', 'plan-initial')
@@ -551,18 +790,101 @@ describe('Assistant HOPI tools', () => {
       operation: 'retry',
     })
     expect(retried.value).toMatchObject({
-      remainingAttentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      remainingAttentionRefs: [],
     })
     expect(
       await fixture.tools.executeForEvent('EV-1', 'hopi_resolve_attention', resolution),
-    ).toMatchObject({ changed: true, value: { remainingAttentionRefs: [] } })
+    ).toMatchObject({ changed: false, value: { remainingAttentionRefs: [] } })
     const resolvedPackage = await fixture.goalStore.readPackage('G-1')
+    expect(resolvedPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
     expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: expect.any(String),
       resolutionInput: expect.stringContaining('/EV-1.md'),
     })
     expect(resolvedPackage.inputs).toHaveLength(1)
     expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
+  })
+
+  test('settles operational Attention even when retry changes no Work fields', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await fixture.controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      3,
+      'stream disconnected before completion',
+    )
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-operational-retry',
+      content: 'Connectivity recovered. Retry the same Work.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      },
+    })
+
+    const retried = await fixture.tools.executeForEvent(
+      'EV-operational-retry',
+      'hopi_control_work',
+      {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'plan-initial',
+        operation: 'retry',
+      },
+    )
+
+    expect(retried.value).toMatchObject({ inputChanged: true, remainingAttentionRefs: [] })
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      attempts: 0,
+      notBefore: null,
+    })
+    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolutionInput: expect.stringContaining('/EV-operational-retry.md'),
+    })
+    expect(goalPackage.inputs.map((input) => input.body)).toEqual([
+      'Connectivity recovered. Retry the same Work.\n',
+    ])
+  })
+
+  test('settles exact Work Attention when cancellation makes the Work terminal', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-cancel')
+    const attention = await fixture.controller.ensureResponsibilityFailureAttention(
+      'G-1',
+      'W-cancel',
+      'generator',
+      'The current direction cannot continue.',
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-cancel-work',
+      content: 'Cancel this Work and abandon that direction.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      },
+    })
+
+    const cancelled = await fixture.tools.executeForEvent('EV-cancel-work', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-cancel',
+      operation: 'cancel',
+    })
+
+    expect(cancelled.value).toMatchObject({ inputChanged: true, remainingAttentionRefs: [] })
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.works.get('W-cancel')?.attributes.stage).toBe('cancelled')
+    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolutionInput: expect.stringContaining('/EV-cancel-work.md'),
+    })
   })
 
   test('surfaces a superseded Work Attention after material Planning until Assistant settles it', async () => {
@@ -758,7 +1080,7 @@ describe('Assistant HOPI tools', () => {
 
     const mainToken = fixture.tools.issue(event.attributes.id)
     expect(
-      await fixture.tools.execute(mainToken, 'hopi_notify_user', {
+      await fixture.tools.execute(mainToken, 'hopi_request_user', {
         message: 'Choose a release window.',
       }),
     ).toMatchObject({
@@ -770,6 +1092,7 @@ describe('Assistant HOPI tools', () => {
       },
     })
     expect(fixture.tools.notificationMessage(mainToken)).toBe('Choose a release window.')
+    expect(fixture.tools.notificationIntent(mainToken)).toBe('request')
     expect((await fixture.workspace.readEvent(event.attributes.id))?.attributes).toMatchObject({
       visibility: 'internal',
       status: 'pending',
@@ -780,15 +1103,39 @@ describe('Assistant HOPI tools', () => {
 
     await fixture.workspace.handleEvent(event.attributes.id, {
       reply: 'Choose a release window.',
-      disposition: 'tools-used',
+      disposition: 'operator-requested',
       expose: true,
     })
     expect(await fixture.tools.acknowledgeEventAttentions(event.attributes.id)).toEqual([
       'project:P-1/goal:G-1/attention:A-1',
     ])
+    const requestedAttention = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      attentionId,
+    )
+    const operatorRequest = requestedAttention?.attributes.operatorRequest
+    expect(requestedAttention?.attributes).toMatchObject({
+      notifiedAt: expect.any(String),
+      resolvedAt: null,
+    })
+    expect(operatorRequest).toContain(`/event:${event.attributes.id}`)
+    if (typeof operatorRequest !== 'string') throw new Error('Operator request was not recorded')
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-answer',
+      content: 'Tomorrow.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [goalAttentionReference('P-1', 'G-1', attentionId)],
+        replyTo: operatorRequest,
+      },
+    })
+    expect(await fixture.tools.acceptUserAttentionReply('EV-answer')).toEqual([
+      'project:P-1/goal:G-1/attention:A-1',
+    ])
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get(attentionId)?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+    ).toMatchObject({ operatorRequest: null, resolvedAt: null })
   })
 
   test('rejects notify_user for an ordinary public turn', async () => {
@@ -798,6 +1145,57 @@ describe('Assistant HOPI tools', () => {
     await expect(
       fixture.tools.executeForEvent('EV-1', 'hopi_notify_user', { message: 'Hello.' }),
     ).rejects.toThrow('only for an internal Reflection turn')
+    await expect(
+      fixture.tools.executeForEvent('EV-1', 'hopi_request_user', { message: 'Choose.' }),
+    ).rejects.toThrow('only for an internal Reflection turn')
+  })
+
+  test('keeps informational delivery owned by Assistant', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attentionId = 'A-internal-repair'
+    await fixture.goalStore.publishGoal('G-1', {
+      supportingWrites: [],
+      gateWrite: {
+        path: fixture.goalStore.paths.attentionDocument('G-1', attentionId),
+        expectedHash: null,
+        content: renderAttentionDocument({
+          attributes: {
+            id: attentionId,
+            target: 'project:P-1/goal:G-1',
+            createdAt: '2026-07-11T00:00:00Z',
+            resolvedAt: null,
+            notifiedAt: null,
+            operatorRequest: null,
+          },
+          body: 'Assistant must repair the internal invoker.\n',
+        }),
+      },
+    })
+    const reference = goalAttentionReference('P-1', 'G-1', attentionId)
+    const event = await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-info',
+      content: 'Report internal repair progress.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+    const token = fixture.tools.issue(event.attributes.id)
+    await fixture.tools.execute(token, 'hopi_notify_user', {
+      message: 'The internal repair is underway; no action is required.',
+    })
+    expect(fixture.tools.notificationIntent(token)).toBe('inform')
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'The internal repair is underway; no action is required.',
+      disposition: 'notified',
+      expose: true,
+    })
+    expect(await fixture.tools.acknowledgeEventAttentions(event.attributes.id)).toEqual([reference])
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(attentionId)?.attributes,
+    ).toMatchObject({
+      notifiedAt: expect.any(String),
+      operatorRequest: null,
+      resolvedAt: null,
+    })
   })
 
   test('reads current control state without inlining durable history', async () => {
@@ -881,8 +1279,146 @@ describe('Assistant HOPI tools', () => {
     expect(after.projects[0]?.goals[0]?.works).toEqual([])
   })
 
-  test('reads bounded Attempt diagnostics and stable local log paths', async () => {
+  test('keeps referenced Evidence compact until exact artifacts are requested', async () => {
     const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-report')
+    const runRoot = runStoragePath(fixture.homeRoot, 'R-report')
+    const runReportPath = join(runRoot, 'artifacts', '001-report.md')
+    const projectReportPath = join(
+      fixture.goalStore.paths.projectRoot,
+      'reports',
+      'stage-report.md',
+    )
+    await mkdir(join(runRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(projectReportPath, '..'), { recursive: true })
+    await Bun.write(runReportPath, '# Run report\n')
+    await Bun.write(projectReportPath, '# Project report\n')
+
+    const workPath = fixture.goalStore.paths.workDocument('G-1', 'W-report')
+    const workSource = await Bun.file(fixture.goalStore.paths.absolute(workPath)).text()
+    const work = parseWorkDocument(workSource)
+    work.attributes.stage = 'review'
+    work.attributes.evidenceRefs = ['E-report']
+    await fixture.goalStore.publishGoal('G-1', {
+      supportingWrites: [
+        {
+          path: fixture.goalStore.paths.evidenceDocument('G-1', 'E-report'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-report',
+              createdAt: '2026-07-18T00:00:00Z',
+              producerRun: 'project:P-1/goal:G-1/work:W-report/run:R-report',
+              coordinatorCheck: null,
+              owner: 'project:P-1/goal:G-1/work:W-report',
+              artifacts: ['artifact:R-report/001-report.md', 'reports/stage-report.md'],
+            },
+            body: '## Responsibility Result\n\n- Responsibility: generator\n- Result: success\n\n## Summary\n\nThe full report is attached.\n',
+          }),
+        },
+      ],
+      gateWrite: {
+        path: workPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(workSource)),
+        content: renderWorkDocument(work),
+      },
+    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-report', content: 'Where is the report?' })
+
+    const scoped = (
+      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', {
+        projectId: 'P-1',
+        goalId: 'G-1',
+      })
+    ).value as {
+      projects: Array<{
+        goals: Array<{
+          works: Array<{
+            attributes: { id: string }
+            evidence?: Array<{
+              id: string
+              producerRun: string
+              artifactCount: number
+              path: string
+            }>
+          }>
+        }>
+      }>
+    }
+    const compactEvidence = scoped.projects[0]?.goals[0]?.works.find(
+      (candidate) => candidate.attributes.id === 'W-report',
+    )?.evidence
+    expect(compactEvidence).toEqual([
+      {
+        id: 'E-report',
+        producerRun: 'project:P-1/goal:G-1/work:W-report/run:R-report',
+        artifactCount: 2,
+        path: fixture.goalStore.paths.absolute(
+          fixture.goalStore.paths.evidenceDocument('G-1', 'E-report'),
+        ),
+      },
+    ])
+    expect(JSON.stringify(scoped)).not.toContain('The full report is attached.')
+    expect(JSON.stringify(scoped)).not.toContain(runReportPath)
+
+    const detailed = (
+      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        includeEvidence: true,
+      })
+    ).value as {
+      projects: Array<{
+        goals: Array<{
+          works: Array<{
+            attributes: { id: string }
+            evidence?: Array<{
+              body: string
+              artifacts: Array<{
+                reference: string
+                available: boolean
+                fileName?: string
+                inspectionPath?: string
+                operatorUrl?: string
+              }>
+            }>
+          }>
+        }>
+      }>
+    }
+    const evidence = detailed.projects[0]?.goals[0]?.works.find(
+      (candidate) => candidate.attributes.id === 'W-report',
+    )?.evidence
+    expect(evidence?.[0]?.body).toContain('The full report is attached.')
+    expect(evidence?.[0]?.artifacts).toEqual([
+      {
+        reference: 'artifact:R-report/001-report.md',
+        available: true,
+        fileName: '001-report.md',
+        inspectionPath: runReportPath,
+        operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/0',
+      },
+      {
+        reference: 'reports/stage-report.md',
+        available: true,
+        fileName: 'stage-report.md',
+        inspectionPath: projectReportPath,
+        operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/1',
+      },
+    ])
+
+    const workspaceWide = (
+      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', { projectId: 'P-1' })
+    ).value as { projects: Array<{ goals: Array<{ works: Array<Record<string, unknown>> }> }> }
+    expect(
+      workspaceWide.projects[0]?.goals[0]?.works.every((candidate) => !('evidence' in candidate)),
+    ).toBe(true)
+  })
+
+  test('reads bounded Attempt diagnostics and stable local log paths', async () => {
+    const fixture = await setup({ trackAttemptReads: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-1')
     await mkdir(runRoot, { recursive: true })
@@ -927,6 +1463,7 @@ describe('Assistant HOPI tools', () => {
     expect(runtime.latestAttempt).toMatchObject({ runId: 'R-1', status: 'finished' })
     expect(runtime.paths.transcript).toBe(join(runRoot, 'transcript.log'))
     expect(runtime.paths.events).toBe(join(runRoot, 'events.jsonl'))
+    expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
 
     await Bun.write(join(runRoot, 'transcript.log'), 'stdout: changed raw diagnostics only\n')
     const second = await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
@@ -934,6 +1471,7 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-1',
     })
     expect((second.value as { stateDigest: string }).stateDigest).toBe(snapshot.stateDigest)
+    expect(fixture.attemptReads).toEqual({ snapshots: 2, lists: 0, eventReads: 0 })
   })
 })
 
@@ -941,6 +1479,7 @@ async function setup(
   options: {
     activeRuns?: () => ReadonlyMap<string, Responsibility>
     trackInterrupts?: boolean
+    trackAttemptReads?: boolean
   } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
@@ -961,12 +1500,29 @@ async function setup(
   const interruptedGoalIds: string[] = []
   const interruptedWorkTargets: Array<{ goalId: string; workId: string }> = []
   const restoredProjectIds: string[] = []
+  const topologyChangedEventIds: string[] = []
+  let assistantCodingDefaults = normalizeProjectCodingDefaults()
+  let assistantCodingDefaultsInherited = true
+  const readAssistantModelSettings = async () => ({
+    codingDefaults: assistantCodingDefaults,
+    inherited: assistantCodingDefaultsInherited,
+  })
+  const readProjectModelSettings = async (projectId: string) => {
+    const project = await home.readProject(projectId)
+    return {
+      codingDefaults: project.codingDefaults ?? normalizeProjectCodingDefaults(),
+      inherited: project.codingDefaults === undefined,
+    }
+  }
   const projects = new Map([
     [
       'P-1',
       {
         projectId: 'P-1',
+        primaryRepoId: linked.primaryRepoId,
+        repos: linked.repos,
         projectRoot: linked.integrationRoot,
+        sourceRoot: linked.integrationRoot,
         store: goalStore,
         controller,
         ...(options.trackInterrupts
@@ -985,7 +1541,25 @@ async function setup(
       },
     ],
   ])
-  const attempts = createRunAttemptStore(homeRoot)
+  const storedAttempts = createRunAttemptStore(homeRoot)
+  const attemptReads = { snapshots: 0, lists: 0, eventReads: 0 }
+  const attempts: RunAttemptStore = options.trackAttemptReads
+    ? {
+        ...storedAttempts,
+        async snapshot() {
+          attemptReads.snapshots += 1
+          return storedAttempts.snapshot()
+        },
+        async list(...args: Parameters<RunAttemptStore['list']>) {
+          attemptReads.lists += 1
+          return storedAttempts.list(...args)
+        },
+        async readEvents(...args: Parameters<RunAttemptStore['readEvents']>) {
+          attemptReads.eventReads += 1
+          return storedAttempts.readEvents(...args)
+        },
+      }
+    : storedAttempts
   const state = createAssistantStateReader({
     homeRoot,
     workspace,
@@ -993,25 +1567,39 @@ async function setup(
     publisher,
     attempts,
     activeRuns: options.activeRuns,
+    readAssistantCodingDefaults: readAssistantModelSettings,
+    readProjectCodingDefaults: readProjectModelSettings,
   })
   const tools = createAssistantTools({
+    home,
     workspace,
     publisher,
     preview: createPreviewManager(homeRoot),
     projects,
     state,
+    readAssistantCodingDefaults: readAssistantModelSettings,
+    readProjectCodingDefaults: readProjectModelSettings,
+    updateAssistantCodingDefaultsForTurn: async (_eventId, input) => {
+      assistantCodingDefaults = normalizeProjectCodingDefaults(input ?? undefined)
+      assistantCodingDefaultsInherited = input === null
+    },
+    onProjectTopologyChanged: (eventId) => topologyChangedEventIds.push(eventId),
     onProjectAttentionResolved: (projectId) => restoredProjectIds.push(projectId),
   })
   return {
     homeRoot,
+    repoRoot,
+    home,
     workspace,
     goalStore,
     controller,
     attempts,
+    attemptReads,
     tools,
     interruptedGoalIds,
     interruptedWorkTargets,
     restoredProjectIds,
+    topologyChangedEventIds,
   }
 }
 
@@ -1033,6 +1621,34 @@ async function finishInitialPlanning(
   })
 }
 
+async function publishEngineeringWork(
+  store: ReturnType<typeof createGoalPackageStore>,
+  goalId: string,
+  workId: string,
+) {
+  await store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path: store.paths.workDocument(goalId, workId),
+      expectedHash: null,
+      content: renderWorkDocument({
+        attributes: {
+          id: workId,
+          title: `Build ${workId}`,
+          kind: 'engineering',
+          stage: 'generate',
+          notBefore: null,
+          dependsOn: [],
+          contractRevision: 1,
+          evidenceRefs: [],
+          attempts: 0,
+        },
+        body: `Implement ${workId}.\n`,
+      }),
+    },
+  })
+}
+
 async function git(cwd: string, args: string[]) {
   const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -1041,6 +1657,18 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
+  return stdout.trim()
+}
+
+async function createTestRepo(path: string) {
+  await mkdir(path, { recursive: true })
+  await git(path, ['init', '-b', 'main'])
+  await git(path, ['config', 'user.email', 'hopi@example.test'])
+  await git(path, ['config', 'user.name', 'HOPI Test'])
+  await Bun.write(join(path, 'README.md'), '# Repo\n')
+  await git(path, ['add', '.'])
+  await git(path, ['commit', '-m', 'initial'])
+  return path
 }
 
 function pngBytes(marker = 0) {

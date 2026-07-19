@@ -48,17 +48,21 @@ The operator needs only three durable concepts:
 
 Attention remains an internal durable control document, not a separate product concept. Open
 Attention with a target is routed internally through Reflection. It appears as **Waiting for
-Assistant** before a speaking reply is delivered and **Needs you** afterward when it remains
-unresolved. Needs-you decorates the exact Assistant question and contributes to one non-zero
-Assistant-header count; Kanban does not duplicate it as a page banner. Resolution restores ordinary
-message styling. Only the speaking Assistant decides whether the operator must be asked. Targetless
-completion Attention appears as a normal Assistant and Goal update. There is no separate Attention
-page.
+Assistant** while Assistant owns the next action and **Needs you** only while its explicit
+`operatorRequest` points at an unanswered public Assistant request. Needs-you decorates that exact
+question and contributes to one non-zero floating Assistant count; Kanban does not duplicate it as
+a page banner. An informational update does not transfer ownership. An exact operator reply returns
+ownership to Assistant through immutable Inbox `replyTo` correlation, and resolution restores
+ordinary message styling. An ordinary message on the same Goal is not inferred to be a reply. Only the speaking
+Assistant decides whether the operator must be asked. Targetless completion Attention appears as a
+normal Assistant and Goal update. There is no separate Attention page.
 
 The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
 reply to complete canonical Goal-local or workspace Attention references, then `notifiedAt` records
-that durable in-app delivery. A configured webhook mirrors the already handled public reply and has
-its own Inbox acknowledgement; raw Attention is never another user channel.
+that durable in-app delivery. When the reply actually requests a decision or external action,
+`operatorRequest` additionally records its exact canonical Inbox event. A configured webhook mirrors
+the already handled public reply and has its own Inbox acknowledgement; raw Attention is never
+another user channel.
 
 Each Goal has a Kanban view for progress and troubleshooting. Its columns and cards are projections
 of Work, readiness, Runs, and Attention rather than another workflow authority.
@@ -213,9 +217,15 @@ display text and completion state. The snapshot is observability, not workflow a
 - it never creates Work, changes a Work stage, satisfies a dependency, or contributes Evidence;
 - the latest snapshot from the latest running Attempt replaces earlier snapshots instead of merging
   them across retries, resumed sessions, responsibilities, or Runs;
-- Kanban may show a compact checklist and progress count on the running Work card. That summary is
-  visually part of the card rather than a nested panel: a quiet progress track and at most three
-  rows preserve scanability, while the Attempt detail shows the complete current snapshot;
+- Kanban shows Agent plan items as one compact segmented progress track, collapsed by default. Each
+  item owns one segment; expanding the track reveals the complete current list, and the running
+  segment uses a restrained pulsing full fill with a quiet same-color glow. Completed segments and
+  their expanded item markers inherit the containing Lane's phase color rather than a global success
+  color. The track exists only after a non-terminal Work has started; never-started, Done, and
+  cancelled Work render no progress track. Started Work without an Agent plan uses one fallback
+  segment derived from its runtime state.
+  Attempt detail does not repeat this card-level task projection; the normalized plan event remains
+  available in the Run record;
 - plan events stay out of the conversational Activity projection, because changing an internal plan
   is neither Assistant speech nor a tool interaction; and
 - raw vendor transcripts remain diagnostic input only. Product UI reads the normalized event stream
@@ -284,6 +294,8 @@ The authority is split by concern rather than repeated in one large document:
 
 - Assistant receives every instruction as a normal conversation turn; selected Project or Goal is context
   only, and canonical effects occur only through HOPI tool calls.
+- UI and Assistant expose the same semantic product operations through shared domain commands;
+  pickers, navigation, and dialogs remain presentation rather than new workflow concepts.
 - Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as
   a portable Goal asset whose path and purpose live in editable design Markdown.
 - Reflection proactively assesses meaningful state changes but can only hand a brief to that same
@@ -303,8 +315,9 @@ The MVP UI contains:
 
 1. Global Assistant conversation with live model messages and tool activity, queued turns,
    Assistant-mediated clarification messages and ordinary completion updates. Internal Reflection
-   turns remain hidden unless the speaking thread explicitly promotes its reply. A header debug
-   entry may inspect disposable Reflection runtime streams on demand without adding product state.
+   turns remain hidden unless the speaking thread explicitly promotes its reply. A hidden corner
+   debug entry may inspect disposable Reflection runtime streams on demand without adding product
+   state or persistent Assistant/Reflection list headers.
    The composer supports bounded image selection and paste, and the conversation preserves image
    thumbnails with their source turns.
 2. Project switcher and overview with the Home Assistant model, Project guidance, effective
@@ -315,12 +328,56 @@ The MVP UI contains:
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
    Work hidden by default behind an archive filter.
 
-Each nonterminal card shows one primary badge derived in priority order: **Needs you**, **Waiting
-for Assistant**, `working`, `scheduled`, `queued`, then `waiting`. Terminal and cancelled cards
-receive no readiness badge.
+Every peer-view tab surface uses one shared tab rail and sliding selection indicator. Project
+shortcuts, Kanban/Goal docs navigation, and Activity/Work contract therefore differ only in layout
+constraints, never in tab interaction or selected-state styling. Attempt history and document
+indexes remain lists because they select records rather than peer views.
+
+Browser-local Goal view state contains only presentation preferences: expanded Work progress rows
+and the currently snapped compact Lane, keyed by stable Project and Goal identity. Re-entry restores
+those preferences but never treats them as Work, plan, or Lane authority. Compact startup, lazy-route
+loading, and initial Goal reads share one bottom-right non-modal loading notice; it does not replace
+the mounted shell or capture pointer input.
+
+Goal and Work-message navigation is stale-while-revalidate. Cached canonical projections render
+immediately and refresh without replacing visible content. When the target has never been read, the
+current surface remains mounted while navigation intent warms the route module and target query;
+only then does the URL and visible surface switch. Work-card and Attempt selection apply the same
+rule to Attempt summaries and paged event history. Navigation requests are ordered so a slower
+earlier preload cannot override the operator's latest selection. Direct cold URLs may use a local
+skeleton because no prior surface exists to preserve.
+
+Message history additionally keeps a bounded browser-session snapshot keyed by exact stream
+identity. Re-entry or same-tab reload may render the last successfully displayed Assistant, Attempt,
+or Reflection history and the selected Work's Attempt index synchronously while cursor
+synchronization runs in the background. These snapshots are disposable read caches: they cannot
+cross stream scopes, satisfy Evidence, or become conversation, Run, or workflow authority.
+
+Read projections are scoped to the surface that renders them. The Kanban projection contains Goal
+header facts, card facts, current Agent plans, and relevant Attention, but excludes design documents,
+Goal Evidence bodies and artifacts, canonical Work bodies, and Goal Attention bodies. Attention on
+the Board is open status and routing identity only; resolved history and readable bodies belong to
+Assistant. Goal docs polls a
+catalog of document paths and short display excerpts; it reads only the selected design body on
+demand and never transfers Work or artifact data. An opened Work contract similarly reads that
+single Work body on demand. The persistent shell projection excludes Attention bodies, which are
+read only while Assistant is visible. Active projections use the fast polling cadence, settled Goal
+projections back off, and hidden or closed live streams stop. The quantitative budgets and repeatable
+desktop/mobile profile are canonical in `packages/frontend/PERFORMANCE.md`. Compact Kanban keeps every
+Lane in the horizontal navigation geometry but mounts card lists only for the selected Lane and its
+immediate neighbors; advancing selection moves that render window before another Lane becomes
+adjacent.
+
+The projection still derives one primary badge in priority order: **Needs you**, **Waiting for
+Assistant**, `working`, `scheduled`, `queued`, then `waiting`. The card footer shows the count of
+real runtime Attempts and, only when dispatch is currently prevented, one concise `Blocked by …`
+reason derived from readiness facts. This runtime count is not the canonical Work `attempts` repair
+counter. Lane placement and segmented progress already communicate ordinary running, queued, and
+terminal state without repeating footer labels.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
-canonical Work, Evidence, dependency, timing, and error facts. A `working` badge contains one small
-spinner. Opening a card also lists each runtime Attempt and its normalized live message/tool stream;
+canonical Work, Evidence, dependency, timing, and error facts. Only the running segment's fill
+pulses; the card surface remains still. Opening a card also lists each runtime Attempt and its
+normalized live message/tool stream;
 that diagnostic stream is not another workflow authority. A separate polished Diagnostics product
 is deferred.
 

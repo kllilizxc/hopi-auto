@@ -14,7 +14,9 @@ import {
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import { runStoragePath } from '../../src/runtime/runPaths'
 import {
+  assertAcceptedDelivery,
   captureAssistantReply,
   captureCompletionUpdate,
   checkoutSnapshot,
@@ -85,20 +87,19 @@ const assistantRunner: AssistantModelRunner = {
       const message = (await Bun.file(repairFlag).exists())
         ? COMPLETION_REPLY
         : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。'
-      await callAssistantTool(input, observer, 'hopi_notify_user', { message })
+      await callAssistantTool(input, observer, 'hopi_request_user', { message })
       return assistantResult(message, mode)
     }
     if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
       const attentionId = attentionToResolve
-      await callAssistantTool(input, observer, 'hopi_resolve_attention', {
-        scope: 'goal',
+      await callAssistantTool(input, observer, 'hopi_control_work', {
         projectId: PROJECT_ID,
         goalId: GOAL_ID,
-        attentionId,
-        resolution: 'The external execution condition was repaired; continue the same Work.',
+        workId: 'plan-initial',
+        operation: 'retry',
       })
       attentionToResolve = null
-      assistantRuns.push({ eventId: input.eventId, mode, action: `resolved:${attentionId}` })
+      assistantRuns.push({ eventId: input.eventId, mode, action: `retried:${attentionId}` })
       return assistantResult(ASSISTANT_REPLY, mode)
     }
     return assistantResult(mode === 'reflection' ? '' : '没有需要执行的操作。', mode)
@@ -208,14 +209,10 @@ try {
     'Successful recovery must clear every targeted blocker',
   )
   assert.ok(
-    assistantRuns.some((run) => run.action === `resolved:${blocker.id}`),
-    'The ordinary speaking Assistant must resolve the exact blocker through its tool boundary',
+    assistantRuns.some((run) => run.action === `retried:${blocker.id}`),
+    'One Work retry must atomically resolve the exact blocker through its tool boundary',
   )
-  assert.deepEqual(
-    await checkoutSnapshot(repoRoot),
-    checkoutBefore,
-    'Operational recovery must not mutate the user checkout',
-  )
+  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
 
   const evidence = {
     status: 'passed',
@@ -225,6 +222,8 @@ try {
     restartCount,
     roleRuns,
     assistantRuns,
+    checkoutBefore,
+    checkoutAfter,
     rawFailures,
     blocker,
     settled,
@@ -331,16 +330,7 @@ function operationalAttention(goal: GoalView) {
 async function readFailureEvidence(runs: RoleRunRecord[]) {
   return Promise.all(
     runs.map(async (run) => {
-      const root = join(
-        homeRoot,
-        '.hopi',
-        'runtime',
-        'runs',
-        PROJECT_ID,
-        GOAL_ID,
-        run.workId,
-        run.runId,
-      )
+      const root = runStoragePath(homeRoot, run.runId)
       const transcript = await Bun.file(join(root, 'transcript.log')).text()
       const events = await requestJson<{ items: AttemptEvent[] }>(
         context.baseUrl,
@@ -372,7 +362,7 @@ async function readFailureEvidence(runs: RoleRunRecord[]) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_notify_user' | 'hopi_resolve_attention',
+  name: 'hopi_request_user' | 'hopi_control_work',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

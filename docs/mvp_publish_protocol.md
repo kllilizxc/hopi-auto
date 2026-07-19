@@ -197,14 +197,20 @@ Project-target Attention resolves only after deterministic repair validation.
 A read-only Reflection may only prepare one handoff brief. Coordinator confirms the observed digest
 is still current before creating one new internal pending speaking Inbox item as its single gate.
 Reflection cannot publish Project state. If the speaking thread decides the operator should see the
-eventual reply, `notify_user` records only capability-local intent. After the model returns,
-Coordinator first exposes and handles that same turn with its complete reply, then acknowledges each
-exact canonical Goal-local or workspace Attention reference from Inbox context in its owning-root
-publication. A crash before the handled gate leaves the turn internal and pending; a crash after it
-leaves a handled public turn whose normal recovery finishes any missing acknowledgement. Recovery
-never infers visibility or Attention identity from reply prose. An optional webhook mirrors only the
-handled public Inbox reply and records its independent `webhookDeliveredAt`; it never acknowledges
-raw Attention.
+eventual reply, `notify_user` records informational capability-local intent; `request_user` records
+an exact decision or external-action request. After the model returns, Coordinator first exposes and
+handles that same turn with its complete reply, then acknowledges each exact canonical Goal-local or
+workspace Attention reference from Inbox context in its owning-root publication. Both paths may set
+`notifiedAt`; only the request path also writes the handled event's canonical reference to
+`operatorRequest`. A crash before the handled gate leaves the turn internal and pending; a crash
+after it leaves a handled public turn whose normal recovery finishes any missing acknowledgement.
+Recovery never infers visibility, request intent, or Attention identity from reply prose. An optional
+webhook mirrors only the handled public Inbox reply and records its independent
+`webhookDeliveredAt`; it never acknowledges raw Attention.
+
+The operator's explicit Reply control creates a new user Inbox event whose immutable `replyTo`
+identifies that handled request event and whose `attentionRefs` identify the same canonical blockers.
+Only this exact correlation clears `operatorRequest`; a location-scoped ordinary message does not.
 
 ## Process-Crash Reconciliation
 
@@ -252,6 +258,8 @@ Attention has no type discriminator. Its control meaning is:
 - `target: null` is a non-blocking Goal completion proposal and becomes deliverable only while its
   Goal is `done` and references it through `completionAttentionId`
 - `notifiedAt` records acknowledged delivery, not resolution
+- `operatorRequest` is null while Assistant owns the next action and otherwise identifies the exact
+  unanswered public Assistant event
 
 The body carries the question, blocker explanation, or completion message. Models interpret that
 Markdown; the kernel does not parse it into an action. A materially different operator-visible

@@ -224,7 +224,7 @@
   background: currentcolor;
   box-shadow: 0 0 9px color-mix(in srgb, currentcolor 38%, transparent);
   content: "";
-  animation: app-breathe 1.6s ease-in-out infinite;
+  animation: app-breathe var(--motion-status) ease-in-out infinite;
 }
 
 @keyframes app-breathe {

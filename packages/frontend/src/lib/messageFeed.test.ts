@@ -536,6 +536,7 @@ function completionAttention(overrides: Partial<AttentionView> = {}): AttentionV
     createdAt: '2026-07-11T08:00:00.000Z',
     resolvedAt: '2026-07-11T08:01:00.000Z',
     notifiedAt: '2026-07-11T08:01:00.000Z',
+    operatorRequest: null,
     body: '## Completion\n\nGoal proof is sufficient.\n\n- Work W-1 is done.',
     projectId: 'P-1',
     goalId: 'G-1',

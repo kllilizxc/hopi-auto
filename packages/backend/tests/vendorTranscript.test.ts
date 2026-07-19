@@ -581,4 +581,15 @@ describe('normalizeProcessOutputLine', () => {
       },
     ])
   })
+
+  test('keeps the non-fatal Codex model refresh timeout out of normalized events', () => {
+    const entries = normalizeProcessOutputLine({
+      format: 'codex_jsonl',
+      stream: 'stderr',
+      role: 'generator',
+      line: '2026-07-17T16:43:47.149889Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit',
+    })
+
+    expect(entries).toEqual([])
+  })
 })

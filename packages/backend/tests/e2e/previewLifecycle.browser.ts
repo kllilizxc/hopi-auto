@@ -10,6 +10,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
+  assertAcceptedDelivery,
   captureBrowserPage,
   checkoutSnapshot,
   controlPreviewInBrowser,
@@ -222,7 +223,7 @@ try {
     (await requestJson<PreviewView>(baseUrl, `/api/projects/${MISSING_PROJECT}/preview`)).session,
     null,
   )
-  assert.deepEqual(await checkoutSnapshot(validRepo), validCheckout)
+  const deliveredCheckout = await assertAcceptedDelivery(validRepo, validCheckout)
   assert.deepEqual(await checkoutSnapshot(missingRepo), missingCheckout)
 
   await Bun.write(
@@ -238,6 +239,7 @@ try {
         manuallyStopped,
         secondStart,
         releaseProjection,
+        deliveredCheckout,
         repairBrowser,
         repairEvent,
         assistantInvocations,

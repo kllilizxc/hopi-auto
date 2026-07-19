@@ -40,13 +40,15 @@ import {
   createProject,
   initializeProjectDirectory,
   linkProjectRepo,
-  readState,
+  readShellState,
   rebindProjectRepo,
   selectProjectDirectory,
   updateAssistantSettings,
   updateProjectSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
+import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
+import { preloadBoardView, preloadGoalCreatePage } from '../routeModules'
 import { excerpt, projectDisplayName } from '../lib/utils'
 
 export function ProjectHomePage() {
@@ -58,8 +60,9 @@ export function ProjectHomePage() {
   const pickerRequestActive = useRef(false)
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
-    queryFn: readState,
-    refetchInterval: 2_000,
+    queryFn: readShellState,
+    refetchInterval: shellPollInterval,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
   const createMutation = useMutation({
     mutationFn: createProject,
@@ -759,6 +762,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             <AppRouterLink
               key={goal.id}
               to={buildGoalRoute({ projectId: project.projectId, goalId: goal.id }, 'board')}
+              onFocus={preloadBoardView}
+              onPointerDown={preloadBoardView}
+              onPointerEnter={preloadBoardView}
             >
               <span className={`goal-state-dot ${goal.lifecycle}`} />
               <span>
@@ -800,6 +806,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <AppRouterLink
           className="secondary-button"
           to={`/projects/${encodeURIComponent(project.projectId)}/goals/new`}
+          onFocus={preloadGoalCreatePage}
+          onPointerDown={preloadGoalCreatePage}
+          onPointerEnter={preloadGoalCreatePage}
         >
           <Plus /> New Goal
         </AppRouterLink>

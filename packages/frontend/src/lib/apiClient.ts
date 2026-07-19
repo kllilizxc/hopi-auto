@@ -1,9 +1,13 @@
 import type {
   AppSnapshot,
+  AssistantAttentionState,
   AssistantFeedChanges,
   AssistantFeedPage,
   CursorPage,
+  GoalBoardDetail,
   GoalDetail,
+  GoalDocsDetail,
+  GoalDocumentView,
   PreviewStartResult,
   ProjectDirectorySelection,
   ProjectCodingDefaults,
@@ -11,6 +15,7 @@ import type {
   RunAttemptDetail,
   RunAttemptEvent,
   RunAttemptSummary,
+  WorkDocumentView,
 } from './apiTypes'
 
 interface ApiOptions {
@@ -48,6 +53,14 @@ export function readState() {
   return apiRequest<AppSnapshot>('/api/state')
 }
 
+export function readShellState() {
+  return apiRequest<AppSnapshot>('/api/state?view=shell')
+}
+
+export function readAssistantAttentions() {
+  return apiRequest<AssistantAttentionState>('/api/assistant/attentions')
+}
+
 export function readAssistantFeed(input: CursorPageRequest = {}) {
   return apiRequest<AssistantFeedPage>(withPage('/api/assistant/feed', input))
 }
@@ -73,6 +86,25 @@ export function readReflectionRunEvents(reflectionId: string, input: CursorPageR
 
 export function readGoal(projectId: string, goalId: string) {
   return apiRequest<GoalDetail>(goalPath(projectId, goalId))
+}
+
+export function readGoalBoard(projectId: string, goalId: string) {
+  return apiRequest<GoalBoardDetail>(`${goalPath(projectId, goalId)}?view=board`)
+}
+
+export function readGoalDocs(projectId: string, goalId: string) {
+  return apiRequest<GoalDocsDetail>(`${goalPath(projectId, goalId)}?view=docs`)
+}
+
+export function readGoalDocument(projectId: string, goalId: string, path: string) {
+  const params = new URLSearchParams({ path })
+  return apiRequest<GoalDocumentView>(`${goalPath(projectId, goalId)}/documents?${params}`)
+}
+
+export function readWorkDocument(projectId: string, goalId: string, workId: string) {
+  return apiRequest<WorkDocumentView>(
+    `${goalPath(projectId, goalId)}/works/${encodeURIComponent(workId)}`,
+  )
 }
 
 export function readWorkAttempts(projectId: string, goalId: string, workId: string) {
@@ -203,6 +235,7 @@ export function sendInboxMessage(input: {
     goalId?: string
     attentionId?: string
     attentionRefs?: string[]
+    replyTo?: string
   }
 }) {
   if (input.images?.length) {

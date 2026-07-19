@@ -138,6 +138,14 @@
   --shadow-md: 0 18px 48px color-mix(in srgb, var(--color-black) 28%, transparent);
   --shadow-lg: 0 30px 80px color-mix(in srgb, var(--color-black) 46%, transparent);
   --shadow: var(--shadow-lg);
+  --motion-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --motion-ease: var(--motion-ease-standard);
+  --motion-fast: 140ms;
+  --motion-base: 190ms;
+  --motion-page: 220ms;
+  --motion-status: 1.6s;
 
   /* Stable HOPI aliases used by application styles. */
   --bg: var(--color-bg-app);

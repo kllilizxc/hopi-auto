@@ -95,6 +95,9 @@ export async function initializeEmptyGitRepository(
 ): Promise<Extract<ProjectDirectorySelection, { kind: 'git_repository' }>> {
   const selection = await classifyProjectDirectory(path)
   if (selection.kind === 'git_repository') {
+    if (selection.path === selection.repoPath && selection.projectPath === ROOT_PROJECT_PATH) {
+      return selection
+    }
     throw new ProjectDirectoryError(
       'initialization_failed',
       `Directory is already inside a Git repository: ${selection.repoPath}`,

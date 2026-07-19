@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Activity, ArrowLeft, Bot, ImagePlus, RefreshCw, Send, X } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Activity, ArrowLeft, Bot, ImagePlus, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import {
@@ -7,6 +7,7 @@ import {
   type AttentionView,
   type ReflectionRunSummary,
   type RunAttemptEvent,
+  readAssistantAttentions,
   readReflectionRunEvents,
   readReflectionRuns,
   sendInboxMessage,
@@ -20,13 +21,17 @@ import {
 } from '../lib/assistantContext'
 import type { GoalScope } from '../lib/goalScope'
 import { assistantFeedEntriesToMessageFeed, runEventsToMessageFeed } from '../lib/messageFeed'
+import {
+  ACTIVE_STREAM_POLL_INTERVAL_MS,
+  CANONICAL_POLL_INTERVAL_MS,
+  STABLE_QUERY_NOTIFY_PROPS,
+} from '../lib/queryPerformance'
 import { useAssistantFeedStream } from '../lib/useAssistantFeedStream'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
 import { cn, formatTime } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import {
   AppAlert,
-  AppButton,
   AppDisclosure,
   AppScrollShadow,
   AppSpinner,
@@ -75,6 +80,13 @@ export function AssistantPanel({
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const draftImagesRef = useRef<DraftImage[]>([])
+  const attentionQuery = useQuery({
+    queryKey: ['assistant-attentions'],
+    queryFn: readAssistantAttentions,
+    enabled: isOpen,
+    refetchInterval: isOpen ? CANONICAL_POLL_INTERVAL_MS : false,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
+  })
 
   useEffect(() => {
     draftImagesRef.current = draftImages
@@ -96,7 +108,10 @@ export function AssistantPanel({
 
   const assistantStream = useAssistantFeedStream({
     enabled: isOpen && !showReflectionDebug,
-    refetchInterval: isOpen && !showReflectionDebug && !assistantScrolling ? 1_000 : false,
+    refetchInterval:
+      isOpen && !showReflectionDebug && !assistantScrolling
+        ? ACTIVE_STREAM_POLL_INTERVAL_MS
+        : false,
     historyPageSize: 10,
   })
   const reflectionStream = useInfiniteMessageStream({
@@ -106,7 +121,7 @@ export function AssistantPanel({
     getItemId: reflectionRunId,
     compareItems: compareReflectionRuns,
     enabled: isOpen && showReflectionDebug,
-    refetchInterval: isOpen && showReflectionDebug ? 1_000 : false,
+    refetchInterval: isOpen && showReflectionDebug ? ACTIVE_STREAM_POLL_INTERVAL_MS : false,
     reportRefreshing: true,
   })
   const messages = useMemo(
@@ -114,16 +129,11 @@ export function AssistantPanel({
     [assistantStream.items],
   )
   const needsYouAttentions = useMemo(
-    () => (snapshot?.attentions ?? []).filter(isNeedsYouAttention),
-    [snapshot?.attentions],
+    () => (attentionQuery.data?.attentions ?? []).filter(isNeedsYouAttention),
+    [attentionQuery.data?.attentions],
   )
   const needsYouAttentionsByGroupId = useMemo(
-    () =>
-      groupNeedsYouAttentions(
-        assistantStream.items,
-        needsYouAttentions,
-        snapshot?.home.homeId,
-      ),
+    () => groupNeedsYouAttentions(assistantStream.items, needsYouAttentions, snapshot?.home.homeId),
     [assistantStream.items, needsYouAttentions, snapshot?.home.homeId],
   )
   const needsYouByGroupId = useMemo(
@@ -142,7 +152,7 @@ export function AssistantPanel({
   )
   const attentionNotificationEventId = useMemo(
     () =>
-      initialReply?.notifiedAt
+      initialReply?.operatorRequest
         ? findAttentionNotificationEventId(
             assistantStream.items,
             initialReply,
@@ -154,7 +164,7 @@ export function AssistantPanel({
 
   useEffect(() => {
     const initialNotificationMissing = Boolean(
-      initialReply?.notifiedAt && !attentionNotificationEventId,
+      initialReply?.operatorRequest && !attentionNotificationEventId,
     )
     const needsYouNotificationMissing = mappedNeedsYouCount < needsYouAttentions.length
     if (
@@ -170,15 +180,15 @@ export function AssistantPanel({
     assistantStream.isLoadingOlder,
     assistantStream.loadOlder,
     attentionNotificationEventId,
-    initialReply?.notifiedAt,
+    initialReply?.operatorRequest,
     mappedNeedsYouCount,
     needsYouAttentions.length,
   ])
 
   useEffect(() => {
-    if (!snapshot || replyAttentions.length === 0) return
+    if (!snapshot || !attentionQuery.data || replyAttentions.length === 0) return
     const openReferences = new Set(
-      snapshot.attentions.flatMap((attention) => {
+      attentionQuery.data.attentions.flatMap((attention) => {
         if (attention.resolvedAt !== null) return []
         const reference = assistantAttentionReference(attention, snapshot.home.homeId)
         return reference ? [reference] : []
@@ -191,7 +201,7 @@ export function AssistantPanel({
       })
       return next.length === current.length ? current : next
     })
-  }, [replyAttentions.length, snapshot])
+  }, [attentionQuery.data, replyAttentions.length, snapshot])
 
   const replyToNeedsYouMessage = useCallback(
     (groupId: string) => {
@@ -213,7 +223,7 @@ export function AssistantPanel({
         context: resolveAssistantInboxContext(
           scope,
           replyAttentions,
-          snapshot?.attentions,
+          attentionQuery.data?.attentions,
           snapshot?.home.homeId,
         ),
       })
@@ -227,7 +237,10 @@ export function AssistantPanel({
       setImageError(null)
       setReplyAttentions([])
       assistantStream.refresh()
-      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
+        queryClient.invalidateQueries({ queryKey: ['assistant-attentions'] }),
+      ])
     },
   })
 
@@ -277,184 +290,184 @@ export function AssistantPanel({
       className={cn('assistant-drawer', isOpen && 'open', docked && 'docked')}
       aria-hidden={!isOpen}
     >
-      <header className="assistant-header">
-        <div>
-          <span className={cn('assistant-avatar', showReflectionDebug && 'debug')}>
-            {showReflectionDebug ? <Activity /> : <Bot />}
-          </span>
-          <span className="assistant-header-copy">
-            <span className="assistant-header-title">
-              <strong>{showReflectionDebug ? 'Reflection debug' : 'Assistant'}</strong>
-              {!showReflectionDebug && needsYouAttentions.length > 0 ? (
-                <CountBadge
-                  className="assistant-needs-you-count"
-                  color="warning"
-                  aria-label={`${needsYouAttentions.length} requests need your reply`}
-                >
-                  {needsYouAttentions.length}
-                </CountBadge>
-              ) : null}
-            </span>
-            <small>{showReflectionDebug ? 'Runtime event stream' : 'Workspace conversation'}</small>
-          </span>
-        </div>
-        <div className="assistant-header-actions">
-          <IconButton
-            className={cn('reflection-debug-button', showReflectionDebug && 'active')}
-            type="button"
-            onClick={() => setShowReflectionDebug((value) => !value)}
-            aria-label={
-              showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'
-            }
-            aria-pressed={showReflectionDebug}
-            title={showReflectionDebug ? 'Back to conversation' : 'Reflection debug'}
+      <div
+        className={cn('assistant-corner-chrome', showReflectionDebug && 'reflection-open')}
+        aria-label="Assistant controls"
+      >
+        <IconButton
+          className={cn('reflection-debug-button', showReflectionDebug && 'active')}
+          type="button"
+          onClick={() => setShowReflectionDebug((value) => !value)}
+          aria-label={
+            showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'
+          }
+          aria-pressed={showReflectionDebug}
+          title={showReflectionDebug ? 'Back to conversation' : 'Reflection debug'}
+        >
+          {showReflectionDebug ? <ArrowLeft /> : <Activity />}
+        </IconButton>
+        {!showReflectionDebug && needsYouAttentions.length > 0 ? (
+          <CountBadge
+            className="assistant-needs-you-count"
+            color="warning"
+            aria-label={`${needsYouAttentions.length} requests need your reply`}
           >
-            {showReflectionDebug ? <ArrowLeft /> : <Activity />}
+            {needsYouAttentions.length}
+          </CountBadge>
+        ) : null}
+        {!docked && (
+          <IconButton type="button" onClick={onClose} aria-label="Close assistant">
+            <X />
           </IconButton>
-          {!docked && (
-            <IconButton type="button" onClick={onClose} aria-label="Close assistant">
-              <X />
-            </IconButton>
-          )}
-        </div>
-      </header>
+        )}
+      </div>
 
       {showReflectionDebug ? (
         <ReflectionDebugPanel
           runs={reflectionStream.items}
           loading={reflectionStream.isLoading}
           error={reflectionStream.error}
-          refreshing={reflectionStream.isRefreshing}
           hasMoreBefore={reflectionStream.hasMoreBefore}
           loadingOlder={reflectionStream.isLoadingOlder}
           onLoadOlder={reflectionStream.loadOlder}
-          onRefresh={reflectionStream.refresh}
         />
       ) : (
         <>
-      <div className="assistant-body">
-        <UnifiedMessageFeed
-          feedKey="workspace-assistant"
-          items={messages}
-          tailActivity={assistantStream.activity?.phase ?? null}
-          className="assistant-conversation-feed"
-          ariaLabel="Workspace Assistant conversation"
-          isLoading={assistantStream.isLoading}
-          hasMoreBefore={assistantStream.hasMoreBefore}
-          isLoadingOlder={assistantStream.isLoadingOlder}
-          onLoadOlder={assistantStream.loadOlder}
-          onScrollingChange={setAssistantScrolling}
-          focusGroupId={
-            attentionNotificationEventId ? `inbox:${attentionNotificationEventId}` : null
-          }
-          focusRequest={focusRequest}
-          needsYouByGroupId={needsYouByGroupId}
-          onReplyNeedsYou={replyToNeedsYouMessage}
-              emptyState={
-            <div className="conversation-empty">
-              {assistantStream.error ? (
-                <>
-                  <Activity />
-                  <strong>Conversation unavailable.</strong>
-                  <p>{assistantStream.error.message}</p>
-                </>
-              ) : (
-                <>
-                  <Bot />
-                  <strong>No ceremony.</strong>
-                  <p>Describe an outcome, ask a question, or change the selected Goal.</p>
-                </>
-              )}
-            </div>
+          <div className="assistant-body">
+            <UnifiedMessageFeed
+              feedKey="workspace-assistant"
+              items={messages}
+              tailActivity={assistantStream.activity?.phase ?? null}
+              className="assistant-conversation-feed"
+              ariaLabel="Workspace Assistant conversation"
+              isLoading={assistantStream.isLoading}
+              hasMoreBefore={assistantStream.hasMoreBefore}
+              isLoadingOlder={assistantStream.isLoadingOlder}
+              onLoadOlder={assistantStream.loadOlder}
+              onScrollingChange={setAssistantScrolling}
+              focusGroupId={
+                attentionNotificationEventId ? `inbox:${attentionNotificationEventId}` : null
               }
-        />
-      </div>
+              focusRequest={focusRequest}
+              needsYouByGroupId={needsYouByGroupId}
+              onReplyNeedsYou={replyToNeedsYouMessage}
+              emptyState={
+                <div className="conversation-empty">
+                  {assistantStream.error ? (
+                    <>
+                      <Activity />
+                      <strong>Conversation unavailable.</strong>
+                      <p>{assistantStream.error.message}</p>
+                    </>
+                  ) : (
+                    <>
+                      <Bot />
+                      <strong>No ceremony.</strong>
+                      <p>Describe an outcome, ask a question, or change the selected Goal.</p>
+                    </>
+                  )}
+                </div>
+              }
+            />
+          </div>
 
-      <footer className="assistant-composer">
-        {(sendMutation.error || imageError) && (
+          <footer className="assistant-composer">
+            {(sendMutation.error || imageError) && (
               <AppAlert className="inline-error">
                 {sendMutation.error?.message ?? imageError}
               </AppAlert>
-        )}
-        {replyAttentions.length > 0 && (
-          <div className="composer-context">
-            <AppButton variant="ghost" type="button" onClick={() => setReplyAttentions([])}>
-              Responding to {replyAttentions.length === 1 ? 'this request' : `${replyAttentions.length} requests`} <X />
-            </AppButton>
-          </div>
-        )}
-        {draftImages.length > 0 && (
-          <AppScrollShadow
-            className="composer-images"
-            orientation="horizontal"
-            aria-label="Attached images"
-          >
-            {draftImages.map((image) => (
-              <figure key={image.id}>
-                <img src={image.url} alt={image.file.name || 'Pasted image'} />
+            )}
+            {replyAttentions.length > 0 && (
+              <div className="composer-context">
+                <span>
+                  Replying to{' '}
+                  {replyAttentions.length === 1
+                    ? 'this request'
+                    : `${replyAttentions.length} requests`}
+                </span>
                 <IconButton
+                  className="composer-context__dismiss"
                   type="button"
-                  aria-label={`Remove ${image.file.name || 'image'}`}
-                  onClick={() => removeImage(image.id)}
-                  disabled={sendMutation.isPending}
+                  onClick={() => setReplyAttentions([])}
+                  aria-label="Clear reply context"
+                  title="Clear reply context"
                 >
                   <X />
                 </IconButton>
-              </figure>
-            ))}
-          </AppScrollShadow>
-        )}
-        <div className="composer-box">
-          <input
-            ref={fileInputRef}
-            className="composer-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            multiple
-            onChange={(event) => {
-              queueImages(Array.from(event.target.files ?? []))
-              event.target.value = ''
-            }}
-          />
-          <AppTextArea
-            ref={composerRef}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onPaste={(event) => {
-              const images = extractPastedImages(event.clipboardData)
-              if (images.length > 0) queueImages(images)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                handleSend()
-              }
-            }}
-            placeholder="Tell HOPI what should change…"
-            rows={3}
-          />
-          <IconButton
-            className="composer-image-button"
-            type="button"
-            disabled={sendMutation.isPending || draftImages.length >= MAX_DRAFT_IMAGES}
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach images"
-            title="Attach images"
-          >
-            <ImagePlus />
-          </IconButton>
-          <IconButton
-            className="send-button"
-            type="button"
-            disabled={(!input.trim() && draftImages.length === 0) || sendMutation.isPending}
-            onClick={handleSend}
-            aria-label="Send message"
-          >
-            {sendMutation.isPending ? <AppSpinner size="sm" /> : <Send />}
-          </IconButton>
-        </div>
-        <small>Paste or attach up to 4 images · Enter to send</small>
-      </footer>
+              </div>
+            )}
+            {draftImages.length > 0 && (
+              <AppScrollShadow
+                className="composer-images"
+                orientation="horizontal"
+                aria-label="Attached images"
+              >
+                {draftImages.map((image) => (
+                  <figure key={image.id}>
+                    <img src={image.url} alt={image.file.name || 'Pasted image'} />
+                    <IconButton
+                      type="button"
+                      aria-label={`Remove ${image.file.name || 'image'}`}
+                      onClick={() => removeImage(image.id)}
+                      disabled={sendMutation.isPending}
+                    >
+                      <X />
+                    </IconButton>
+                  </figure>
+                ))}
+              </AppScrollShadow>
+            )}
+            <div className="composer-box">
+              <input
+                ref={fileInputRef}
+                className="composer-file-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                onChange={(event) => {
+                  queueImages(Array.from(event.target.files ?? []))
+                  event.target.value = ''
+                }}
+              />
+              <AppTextArea
+                ref={composerRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onPaste={(event) => {
+                  const images = extractPastedImages(event.clipboardData)
+                  if (images.length > 0) queueImages(images)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    handleSend()
+                  }
+                }}
+                placeholder="Tell HOPI what should change…"
+                rows={3}
+              />
+              <IconButton
+                className="composer-image-button"
+                type="button"
+                disabled={sendMutation.isPending || draftImages.length >= MAX_DRAFT_IMAGES}
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Attach images"
+                title="Attach images"
+              >
+                <ImagePlus />
+              </IconButton>
+              <IconButton
+                className="send-button"
+                type="button"
+                disabled={(!input.trim() && draftImages.length === 0) || sendMutation.isPending}
+                onClick={handleSend}
+                aria-label="Send message"
+              >
+                {sendMutation.isPending ? <AppSpinner size="sm" /> : <Send />}
+              </IconButton>
+            </div>
+            <small>Paste or attach up to 4 images · Enter to send</small>
+          </footer>
         </>
       )}
     </section>
@@ -465,23 +478,21 @@ function ReflectionDebugPanel({
   runs,
   loading,
   error,
-  refreshing,
   hasMoreBefore,
   loadingOlder,
   onLoadOlder,
-  onRefresh,
 }: {
   runs: ReflectionRunSummary[]
   loading: boolean
   error: Error | null
-  refreshing: boolean
   hasMoreBefore: boolean
   loadingOlder: boolean
   onLoadOlder: () => void
-  onRefresh: () => void
 }) {
   const [firstItemIndex, setFirstItemIndex] = useState(100_000)
-  const previousRunsRef = useRef<{ firstId?: string; length: number }>({ length: 0 })
+  const previousRunsRef = useRef<{ firstId?: string; length: number }>({
+    length: 0,
+  })
 
   useEffect(() => {
     const previous = previousRunsRef.current
@@ -501,16 +512,6 @@ function ReflectionDebugPanel({
 
   return (
     <section className="reflection-debug-panel" aria-label="Reflection debug stream">
-      <div className="reflection-debug-toolbar">
-        <div>
-          <strong>Runtime reflections</strong>
-          <small>Read-only · refreshes every second while open</small>
-        </div>
-        <IconButton type="button" onClick={onRefresh} aria-label="Refresh reflections">
-          <RefreshCw className={cn(refreshing && 'spin')} />
-        </IconButton>
-      </div>
-
       {loading ? (
         <div className="reflection-debug-empty">
           <AppSpinner size="sm" /> Loading runtime stream
@@ -576,7 +577,7 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
     manifest.status === 'completed'
       ? manifest.handoffEventId
         ? { className: 'sent', label: 'Sent' }
-        : { className: 'no-action', label: 'No action' }
+        : { className: 'no-action', label: 'No handoff' }
       : { className: manifest.status, label: manifest.status }
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: `reflection:${manifest.reflectionId}`,
@@ -585,7 +586,7 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
     getItemId: runEventId,
     compareItems: compareRunEvents,
     enabled: open,
-    refetchInterval: open && manifest.status === 'running' ? 1_000 : false,
+    refetchInterval: open && manifest.status === 'running' ? ACTIVE_STREAM_POLL_INTERVAL_MS : false,
     tailPageSize: 200,
   })
   const messages = useMemo(
@@ -605,17 +606,17 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
       bodyClassName="reflection-run-body"
       summary={
         <>
-        <span className="reflection-status-dot" />
-        <span>
-          <strong>{manifest.reflectionId}</strong>
-          <small>{outcome.label}</small>
-        </span>
-        <time>{formatTime(manifest.startedAt)}</time>
-        {manifest.status === 'running' && <WorkingIndicator />}
+          <span className="reflection-status-dot" />
+          <span>
+            <strong>{manifest.reflectionId}</strong>
+            <small>{outcome.label}</small>
+          </span>
+          <time>{formatTime(manifest.startedAt)}</time>
+          {manifest.status === 'running' && <WorkingIndicator />}
         </>
       }
     >
-        <dl>
+      <dl>
         <div>
           <dt>Digest</dt>
           <dd>{manifest.stateDigest.slice(0, 16)}</dd>
@@ -624,25 +625,25 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
           <dt>Handoff</dt>
           <dd>{manifest.handoffEventId ?? 'none'}</dd>
         </div>
-        </dl>
-        {manifest.error && <p className="reflection-run-error">{manifest.error}</p>}
-        <UnifiedMessageFeed
-          feedKey={`reflection:${manifest.reflectionId}`}
-          items={messages}
-          density="compact"
-          className="reflection-message-feed"
-          ariaLabel={`Reflection ${manifest.reflectionId} event stream`}
-          isLoading={eventStream.isLoading}
-          hasMoreBefore={eventStream.hasMoreBefore}
-          isLoadingOlder={eventStream.isLoadingOlder}
-          onLoadOlder={eventStream.loadOlder}
-          emptyState={<span className="reflection-event-empty">No normalized events recorded.</span>}
-        />
-        <AppDisclosure className="reflection-paths" summary="Local diagnostics">
-          <code>{run.paths.transcript}</code>
-          <code>{run.paths.prompt}</code>
-          <code>{run.paths.events}</code>
-        </AppDisclosure>
+      </dl>
+      {manifest.error && <p className="reflection-run-error">{manifest.error}</p>}
+      <UnifiedMessageFeed
+        feedKey={`reflection:${manifest.reflectionId}`}
+        items={messages}
+        density="compact"
+        className="reflection-message-feed"
+        ariaLabel={`Reflection ${manifest.reflectionId} event stream`}
+        isLoading={eventStream.isLoading}
+        hasMoreBefore={eventStream.hasMoreBefore}
+        isLoadingOlder={eventStream.isLoadingOlder}
+        onLoadOlder={eventStream.loadOlder}
+        emptyState={<span className="reflection-event-empty">No normalized events recorded.</span>}
+      />
+      <AppDisclosure className="reflection-paths" summary="Local diagnostics">
+        <code>{run.paths.transcript}</code>
+        <code>{run.paths.prompt}</code>
+        <code>{run.paths.events}</code>
+      </AppDisclosure>
     </AppDisclosure>
   )
 }

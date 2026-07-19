@@ -8,7 +8,7 @@ const scrollSurfaceChecks = [
       /<AppScrollShadow className="kanban-cards"/,
       /<AppScrollShadow className="fact-grid work-fact-strip"/,
       /<AppScrollShadow className="work-contract-pane"/,
-      /<AppScrollShadow className="attempt-tabs"/,
+      /<AppScrollShadow className="attempt-list"/,
     ],
   },
   {

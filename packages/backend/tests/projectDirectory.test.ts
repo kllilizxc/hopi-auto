@@ -75,6 +75,11 @@ describe('project directory selection', () => {
       'chore: initialize repository',
     )
     expect(await git(selectedPath, ['status', '--porcelain'])).toBe('')
+    await expect(initializeEmptyGitRepository(selectedPath)).resolves.toMatchObject({
+      kind: 'git_repository',
+      repoPath: await realpath(selectedPath),
+      projectPath: '.',
+    })
   })
 
   test('never initializes a nested or non-empty repository implicitly', async () => {

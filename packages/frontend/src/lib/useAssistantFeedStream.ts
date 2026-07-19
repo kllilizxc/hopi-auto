@@ -1,7 +1,23 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { readAssistantFeed, readAssistantFeedChanges } from './apiClient'
-import type { AssistantFeedActivity, AssistantFeedEntry } from './apiTypes'
+import type {
+  AssistantFeedActivity,
+  AssistantFeedEntry,
+  AssistantFeedPage,
+} from './apiTypes'
+import {
+  mergeAssistantChangesIntoHistory,
+  messageStreamSnapshotKey,
+  readMessageStreamSnapshot,
+  writeMessageStreamSnapshot,
+} from './messageStreamCache'
+import { STABLE_QUERY_NOTIFY_PROPS } from './queryPerformance'
 
 interface UseAssistantFeedStreamOptions {
   enabled?: boolean
@@ -21,6 +37,16 @@ export function useAssistantFeedStream({
   refetchInterval = false,
   historyPageSize = 10,
 }: UseAssistantFeedStreamOptions) {
+  const queryClient = useQueryClient()
+  const historyQueryKey = useMemo(
+    () => ['assistant-feed', 'history', historyPageSize] as const,
+    [historyPageSize],
+  )
+  const historySnapshotKey = messageStreamSnapshotKey(historyQueryKey)
+  const persistedHistory = useMemo(
+    () => readMessageStreamSnapshot<AssistantFeedPage>(historySnapshotKey),
+    [historySnapshotKey],
+  )
   const cursorRef = useRef<string | null | undefined>(undefined)
   const initializedRef = useRef(false)
   const [syncState, setSyncState] = useState<AssistantFeedSyncState>({
@@ -31,7 +57,7 @@ export function useAssistantFeedStream({
   })
 
   const historyQuery = useInfiniteQuery({
-    queryKey: ['assistant-feed', 'history', historyPageSize],
+    queryKey: historyQueryKey,
     queryFn: ({ pageParam }) =>
       readAssistantFeed({
         ...(pageParam ? { before: pageParam } : {}),
@@ -40,6 +66,10 @@ export function useAssistantFeedStream({
     initialPageParam: null as string | null,
     getNextPageParam: (page) =>
       page.pageInfo.hasOlder ? (page.pageInfo.oldestCursor ?? undefined) : undefined,
+    initialData: persistedHistory
+      ? { pages: [persistedHistory.value], pageParams: [null] }
+      : undefined,
+    initialDataUpdatedAt: persistedHistory?.savedAt,
     enabled,
     staleTime: Number.POSITIVE_INFINITY,
   })
@@ -62,19 +92,24 @@ export function useAssistantFeedStream({
     queryFn: () => readAssistantFeedChanges(cursorRef.current ?? null),
     enabled: enabled && syncState.initialized,
     refetchInterval: enabled ? refetchInterval : false,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
 
   useEffect(() => {
     const changes = changesQuery.data
     if (!changes) return
     cursorRef.current = changes.syncCursor
+    queryClient.setQueryData<InfiniteData<AssistantFeedPage, string | null>>(
+      historyQueryKey,
+      (current) => mergeAssistantChangesIntoHistory(current, changes),
+    )
     setSyncState((current) => ({
       initialized: true,
       items: mergeAssistantFeedEntries(current.items, changes.items, changes.removedIds),
       removedIds: [...new Set([...current.removedIds, ...changes.removedIds])],
       activity: changes.activity,
     }))
-  }, [changesQuery.data])
+  }, [changesQuery.data, historyQueryKey, queryClient])
 
   const items = useMemo(() => {
     const historyItems = [...(historyQuery.data?.pages ?? [])]
@@ -84,6 +119,27 @@ export function useAssistantFeedStream({
   }, [historyQuery.data?.pages, syncState.items, syncState.removedIds])
 
   const oldestPage = historyQuery.data?.pages.at(-1)
+  const newestPage = historyQuery.data?.pages[0]
+  const activity = syncState.initialized ? syncState.activity : (initialPage?.activity ?? null)
+  useEffect(() => {
+    if (!newestPage) return
+    const timeout = window.setTimeout(() => {
+      writeMessageStreamSnapshot<AssistantFeedPage>(historySnapshotKey, {
+        items,
+        activity,
+        syncCursor: cursorRef.current ?? newestPage.syncCursor,
+        pageInfo: {
+          oldestCursor: oldestPage?.pageInfo.oldestCursor ?? null,
+          newestCursor: newestPage.pageInfo.newestCursor,
+          hasOlder: oldestPage?.pageInfo.hasOlder ?? false,
+          hasNewer: false,
+          totalCount: Math.max(items.length, newestPage.pageInfo.totalCount),
+        },
+      })
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [activity, historySnapshotKey, items, newestPage, oldestPage])
+
   const loadOlder = useCallback(() => {
     if (!historyQuery.hasNextPage || historyQuery.isFetchingNextPage) return
     void historyQuery.fetchNextPage()
@@ -95,9 +151,8 @@ export function useAssistantFeedStream({
 
   return {
     items,
-    activity: syncState.initialized ? syncState.activity : (initialPage?.activity ?? null),
-    error: (historyQuery.error ??
-      (items.length === 0 ? changesQuery.error : null)) as Error | null,
+    activity,
+    error: (historyQuery.error ?? (items.length === 0 ? changesQuery.error : null)) as Error | null,
     isLoading: historyQuery.isLoading,
     isLoadingOlder: historyQuery.isFetchingNextPage,
     hasMoreBefore: oldestPage?.pageInfo.hasOlder ?? false,

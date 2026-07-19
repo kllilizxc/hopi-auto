@@ -13,7 +13,12 @@ import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from './assistantWorkspaceDocuments'
-import { parseAttentionReference } from './attentionReference'
+import {
+  normalizeInboxAttentionReferences,
+  parseAttentionReference,
+  workspaceAttentionReference,
+} from './attentionReference'
+import { parseInboxEventReference } from './inboxEventReference'
 import { DEFAULT_PRIMARY_REPO_ID, type ProjectLink } from './project'
 import {
   normalizeProjectCodingDefaults,
@@ -329,6 +334,18 @@ function validateAttentionTransition(
   if (before.notifiedAt !== null && before.notifiedAt !== after.notifiedAt) {
     throw invalid(`Workspace Attention notification changed: ${before.id}`)
   }
+  const beforeOperatorRequest = before.operatorRequest ?? null
+  const afterOperatorRequest = after.operatorRequest ?? null
+  if (before.resolvedAt !== null && beforeOperatorRequest !== afterOperatorRequest) {
+    throw invalid(`Resolved Workspace Attention ownership changed: ${before.id}`)
+  }
+  if (
+    beforeOperatorRequest !== null &&
+    afterOperatorRequest !== null &&
+    beforeOperatorRequest !== afterOperatorRequest
+  ) {
+    throw invalid(`Workspace Attention operator request changed without a reply: ${before.id}`)
+  }
   if (!next.body.startsWith(previous.body)) {
     throw invalid(`Workspace Attention body was rewritten: ${before.id}`)
   }
@@ -350,6 +367,20 @@ function validateReferences(
     if (context?.projectId && !projectIds.has(context.projectId)) {
       throw invalid(`Inbox event ${event.attributes.id} has context for an unlinked Project`)
     }
+    if (context?.replyTo) {
+      const parsedReply = parseInboxEventReference(context.replyTo)
+      const repliedEvent = parsedReply ? events.get(parsedReply.eventId) : null
+      if (
+        !parsedReply ||
+        parsedReply.homeId !== homeId ||
+        !repliedEvent ||
+        repliedEvent.attributes.source !== 'reflection' ||
+        repliedEvent.attributes.visibility !== 'public' ||
+        repliedEvent.attributes.status !== 'handled'
+      ) {
+        throw invalid(`Inbox event ${event.attributes.id} replies to an invalid Assistant request`)
+      }
+    }
     for (const reference of context?.attentionRefs ?? []) {
       const parsed = parseAttentionReference(reference)
       if (!parsed) continue
@@ -364,6 +395,28 @@ function validateReferences(
   const openProjectTargets = new Set<string>()
   for (const attention of attentions.values()) {
     const { target, resolvedAt } = attention.attributes
+    const operatorRequest = attention.attributes.operatorRequest ?? null
+    if (operatorRequest) {
+      const parsedRequest = parseInboxEventReference(operatorRequest)
+      const requestEvent = parsedRequest ? events.get(parsedRequest.eventId) : null
+      const attentionReference = workspaceAttentionReference(homeId, attention.attributes.id)
+      if (
+        !parsedRequest ||
+        parsedRequest.homeId !== homeId ||
+        !requestEvent ||
+        requestEvent.attributes.source !== 'reflection' ||
+        requestEvent.attributes.visibility !== 'public' ||
+        requestEvent.attributes.status !== 'handled' ||
+        !requestEvent.attributes.context ||
+        !normalizeInboxAttentionReferences(requestEvent.attributes.context).includes(
+          attentionReference,
+        )
+      ) {
+        throw invalid(
+          `Workspace Attention ${attention.attributes.id} has an invalid operator request`,
+        )
+      }
+    }
     const eventPrefix = `home:${homeId}/event:`
     const projectPrefix = 'project:'
     if (target.startsWith(eventPrefix)) {

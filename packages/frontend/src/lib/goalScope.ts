@@ -21,8 +21,16 @@ export interface RecentGoalPreference {
   visitedAt: string
 }
 
+export type GoalViewLane = 'Plan' | 'Build' | 'Review' | 'Done'
+
+export interface GoalViewState {
+  expandedWorkIds: string[]
+  mobileLane: GoalViewLane | null
+}
+
 const RECENT_PROJECT_KEY = 'hopi.navigation.recent-project'
 const RECENT_GOAL_KEY_PREFIX = 'hopi.navigation.recent-goal.'
+const GOAL_VIEW_STATE_KEY_PREFIX = 'hopi.view.goal.'
 
 export function buildGoalRoute(scope: GoalScope | null, surface: GoalSurface) {
   if (!scope) return '/projects'
@@ -127,6 +135,37 @@ export function rememberRecentGoal(
   return preference
 }
 
+export function readGoalViewState(
+  projectId: string,
+  goalId: string,
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+): GoalViewState {
+  let raw: string | null
+  try {
+    raw = storage?.getItem(goalViewStateKey(projectId, goalId)) ?? null
+  } catch {
+    return emptyGoalViewState()
+  }
+  if (!raw) return emptyGoalViewState()
+
+  try {
+    return normalizeGoalViewState(JSON.parse(raw) as unknown)
+  } catch {
+    return emptyGoalViewState()
+  }
+}
+
+export function rememberGoalViewState(
+  projectId: string,
+  goalId: string,
+  state: GoalViewState,
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+) {
+  const normalized = normalizeGoalViewState(state)
+  writePreference(storage, goalViewStateKey(projectId, goalId), normalized)
+  return normalized
+}
+
 export function orderProjectsByRecency<T extends { projectId: string }>(
   projects: readonly T[],
   recentProjects: readonly RecentProjectPreference[],
@@ -188,16 +227,37 @@ function recentGoalKey(projectId: string) {
   return `${RECENT_GOAL_KEY_PREFIX}${encodeURIComponent(projectId)}`
 }
 
+function goalViewStateKey(projectId: string, goalId: string) {
+  return `${GOAL_VIEW_STATE_KEY_PREFIX}${encodeURIComponent(projectId)}.${encodeURIComponent(goalId)}`
+}
+
 function writePreference(
   storage: GoalPreferenceStorage | null,
   key: string,
-  value: RecentProjectPreference[] | RecentGoalPreference,
+  value: unknown,
 ) {
   try {
     storage?.setItem(key, JSON.stringify(value))
   } catch {
     // Navigation preferences must never block the workspace when storage is unavailable.
   }
+}
+
+function emptyGoalViewState(): GoalViewState {
+  return { expandedWorkIds: [], mobileLane: null }
+}
+
+function normalizeGoalViewState(value: unknown): GoalViewState {
+  if (!isRecord(value)) return emptyGoalViewState()
+  const expandedWorkIds = Array.isArray(value.expandedWorkIds)
+    ? [...new Set(value.expandedWorkIds.filter(isString))]
+    : []
+  const mobileLane = isGoalViewLane(value.mobileLane) ? value.mobileLane : null
+  return { expandedWorkIds, mobileLane }
+}
+
+function isGoalViewLane(value: unknown): value is GoalViewLane {
+  return value === 'Plan' || value === 'Build' || value === 'Review' || value === 'Done'
 }
 
 function normalizeRecentProjects(value: unknown) {

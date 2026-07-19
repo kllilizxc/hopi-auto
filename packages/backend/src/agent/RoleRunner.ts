@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
 import type { AgentRuntimeEvent } from './runtimeEvents'
@@ -10,7 +11,11 @@ import {
   isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from './vendorAssistantOutput'
-import { type ProcessTranscriptFormat, normalizeProcessOutputLine } from './vendorTranscript'
+import {
+  type ProcessTranscriptFormat,
+  isNonFatalProcessDiagnostic,
+  normalizeProcessOutputLine,
+} from './vendorTranscript'
 import { type RoleTransportConfig, resolveConfiguredTransportCommand } from './vendorTransport'
 
 export const PASS_RESULTS = ['success', 'reject', 'attention', 'fail'] as const
@@ -372,7 +377,7 @@ async function executeProcess(
   }
   await observer?.onHeartbeat?.()
   const heartbeat = setInterval(() => void observer?.onHeartbeat?.(), heartbeatMs)
-  const stderr: string[] = []
+  const stderr = new BoundedLineTail()
   let observedSessionId = session?.sessionId ?? null
   let sessionInvalid = false
   let terminalError: string | null = null
@@ -417,14 +422,14 @@ async function executeProcess(
         await emitLine(observer, format, 'stdout', input, line)
       }),
       consumeLines(child.stderr as ReadableStream<Uint8Array>, async (line) => {
-        stderr.push(line)
         await recordLine('stderr', line)
+        if (!isNonFatalProcessDiagnostic({ format, stream: 'stderr', line })) stderr.push(line)
         if (session && isExplicitSessionFailure(line)) sessionInvalid = true
         await emitLine(observer, format, 'stderr', input, line)
       }),
     ])
     await transcriptTail
-    return { exitCode, stderr, terminalError, sessionInvalid }
+    return { exitCode, stderr: stderr.values(), terminalError, sessionInvalid }
   } finally {
     clearInterval(heartbeat)
     input.signal?.removeEventListener('abort', abort)

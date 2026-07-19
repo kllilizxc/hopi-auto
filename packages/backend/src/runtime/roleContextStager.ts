@@ -867,7 +867,7 @@ function renderResponsibilityPrompt(
       : []),
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
     'Do not invent workflow states, roles, actions, or control fields.',
-    'Targeted Attention is only for an exact operator decision, credential, permission, or external action that retry cannot supply. Sandbox, Git metadata, local ports, and optional-tool failures are technical diagnostics, not operator authority by themselves.',
+    'Targeted Attention is for a blocker this role and retry cannot clear. Name Assistant for HOPI repair; name the operator only for an external decision, credential, permission, or action. Technical diagnostics such as local ports are not operator authority.',
     'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
     ...targetedAttentionContract(input),
     '',
@@ -900,9 +900,10 @@ function targetedAttentionContract(input: PrepareRoleContextInput) {
     'createdAt: 1970-01-01T00:00:00.000Z',
     'resolvedAt: null',
     'notifiedAt: null',
+    'operatorRequest: null',
     '---',
     '```',
-    'In the Markdown body, preserve the evidence that retry cannot help and state the exact operator decision, permission, credential, or external action required.',
+    'In the body, preserve evidence that retry cannot help, the blocker, and owner; ask the operator only when Assistant cannot act.',
   ]
 }
 
@@ -1010,7 +1011,9 @@ function plannerPrompt(paths: {
       : []),
     'Record durable established decisions in the relevant design/** documents, including design/decisions.md, before exposing implementation Work.',
     'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
-    'Plan the smallest independently useful and schedulable Engineering Work DAG. Add dependsOn only when downstream Work needs a predecessor result, writers may overlap, or concurrent execution would contend for the same exclusive external resource. Leave independently useful Work that can start from the current release dependency-free; shared read-only context, broad semantic relation, or expected integration order is not a dependency. Keep prerequisite scaffolding with its only consumer when it has no independent operator outcome; never split cohesive Work merely to fill capacity.',
+    'Plan the smallest independently useful Engineering Work DAG. Add dependsOn only for a required predecessor result, overlapping writers, or an exclusive resource. Leave independent current-release Work dependency-free; shared read-only context, broad semantic relation, or expected integration order is not a dependency. Keep prerequisite scaffolding with its only consumer when it has no independent operator outcome.',
+    'Judge cohesion by proof boundary, not product label: one Work follows one canonical fact chain and one primary verification strategy. Split independent proof strategies at a stable contract; never split cohesive Work merely to fill capacity.',
+    'For repeated facts, design names a single canonical owner and one-way derivation; other artifacts are projections. Prefer a closed accepted schema or another finite verification oracle to forbidden-alias lists.',
     'Each Engineering Work is standalone for outcome, scope, dependencies, Repo coverage, and task-worktree-provable acceptance. Cite exact canonical design paths instead of copying durable design contracts; repeat only a boundary whose omission would make execution or review materially ambiguous. Use the smallest non-empty repos list covering every Repo Generator or Reviewer must inspect, execute, or modify. One Work may span multiple Repos; unchanged listed Repos are C1 no-ops.',
     'Public Project Preview runs the integrated release and cannot prove an Engineering candidate. Keep that validation out of Engineering acceptance criteria.',
     'New Engineering Work uses kind engineering, stage generate, and the current Goal contractRevision. Terminal Work is immutable; never create next-revision Work or advance Engineering Work to review/done.',
@@ -1041,6 +1044,7 @@ function plannerPrompt(paths: {
     'createdAt: 1970-01-01T00:00:00.000Z',
     'resolvedAt: null',
     'notifiedAt: null',
+    'operatorRequest: null',
     '---',
     '```',
     ...(paths.apiOrigin
@@ -1071,6 +1075,7 @@ function generatorPrompt() {
     '## Generator',
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
+    'Treat a Reviewer reproducer as evidence that an accepted invariant is false, not as the repair scope. Repair the owning invariant, check adjacent representations and representative variants, and derive persisted projections from their canonical owner instead of adding pairwise exceptions. Use proportionate judgment; no checklist artifact is required.',
     'Read Project guidance and the preparation entrypoint before rediscovering setup. A Project Preparation Diagnostic appended below is exact preflight input, not separate Work.',
     'When a required Repo is absent from the Repo manifest, stage Attention instead of discovering another Work checkout. Project scripts must consume the manifest rather than scan HOPI runtime siblings.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest.',
@@ -1092,6 +1097,7 @@ function reviewerPrompt() {
     `Review the owning Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Do not attribute release-only commits or canonical .hopi movement to this Work; C1 owns integration onto the current release tip.`,
     'Do not edit source, ordinary project documents, or .hopi in the task worktree.',
     'Choose the strongest proportionate proof for every acceptance criterion.',
+    'Order cheap, high-risk canonical or recomputation probes before expensive broad or browser proof when both matter. After a decisive defect, perform a bounded low-cost sweep of the same invariant and other already-visible independent risks, then batch all currently knowable findings; stop before unrelated exhaustive exploration. On a later review, prove the reported invariant rather than only its literal reproducer.',
     'Decide the proof plan before installing optional tools. Reuse Project guidance, preparation, and the existing test/browser stack; do not add a competing harness after decisive proof exists.',
     'If direct proof requires a Repo absent from the Repo manifest, stage Attention instead of inspecting another Work checkout or historical runtime directory.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
@@ -1123,16 +1129,16 @@ function resultInstruction(responsibility: Responsibility) {
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
     ...(responsibility === 'planner'
       ? [
-          'success = complete valid sparse proposal; fail = no valid proposal and no operator request is needed.',
+          'success = complete valid sparse proposal; fail = no valid proposal and no durable blocker needs follow-up.',
         ]
       : responsibility === 'generator'
         ? [
-            'success = implementation and proof complete; fail = execution failed but no operator request is needed.',
+            'success = implementation and proof complete; fail = execution failed without a durable blocker.',
           ]
         : [
-            'success = criteria pass; reject = implementation defect; fail = review failed but no operator request is needed.',
+            'success = criteria pass; reject = implementation defect; fail = review failed without a durable blocker.',
           ]),
-    'attention = exactly one staged operator request.',
+    'attention = exactly one staged blocker for Assistant follow-up.',
     'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
     '',
   ].join('\n')

@@ -10,12 +10,29 @@ export type ProcessTranscriptFormat =
   | 'claude_stream_json'
   | 'opencode_json'
 
+const NON_FATAL_CODEX_MODEL_REFRESH_TIMEOUT =
+  /^(?:\S+\s+)?ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit\s*$/
+
+export function isNonFatalProcessDiagnostic(options: {
+  format: ProcessTranscriptFormat
+  stream: 'stdout' | 'stderr'
+  line: string
+}): boolean {
+  return (
+    options.format === 'codex_jsonl' &&
+    options.stream === 'stderr' &&
+    NON_FATAL_CODEX_MODEL_REFRESH_TIMEOUT.test(options.line)
+  )
+}
+
 export function normalizeProcessOutputLine(options: {
   format: ProcessTranscriptFormat
   stream: 'stdout' | 'stderr'
   role: string
   line: string
 }): AgentRuntimeEvent[] {
+  if (isNonFatalProcessDiagnostic(options)) return []
+
   if (options.format === 'plain') {
     return [
       messageEvent(options.role, options.stream === 'stderr' ? 'error' : 'info', options.line),

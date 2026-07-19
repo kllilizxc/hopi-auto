@@ -6,6 +6,7 @@ import {
   type LiveHarness,
   type LiveState,
   type StateRecorder,
+  assertAcceptedDelivery,
   checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
@@ -191,7 +192,7 @@ try {
       "export const protocol = 'v2'\n",
     )
     assert.equal((await runCommand(['bun', 'test'], integration)).exitCode, 0)
-    assert.deepEqual(await checkoutSnapshot(repo), checkout)
+    await assertAcceptedDelivery(repo, checkout)
   }
   assert.deepEqual(recorder.violations, [])
   assert.deepEqual(await readPendingInboxEvents(harness.homeRoot), [])

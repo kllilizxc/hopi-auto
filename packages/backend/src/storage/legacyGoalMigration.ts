@@ -276,6 +276,7 @@ function migrateBlocker(
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
       notifiedAt: null,
+      operatorRequest: null,
     },
     body: [
       `Legacy Work \`${item.ref}\` had unresolved blockers when imported.`,

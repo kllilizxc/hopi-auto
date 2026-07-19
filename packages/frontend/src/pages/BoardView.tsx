@@ -1,7 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
 import {
   AlertCircle,
-  Check,
+  ChevronDown,
   CirclePause,
   CirclePlay,
   ExternalLink,
@@ -11,16 +16,29 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import {
+  memo,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type UIEvent,
+} from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useShell } from '../components/Layout'
-import { MessageFeedSkeleton, UnifiedMessageFeed } from '../components/UnifiedMessageFeed'
+import { MessageFeedSkeleton } from '../components/MessageFeedSkeleton'
 import {
   AppAlert,
+  AppBreathingIndicator,
   AppButton,
   AppButtonGroup,
   AppDisclosure,
   AppLink,
+  AppLoadingNotice,
   AppModal,
   AppRouterLink,
   AppScrollShadow,
@@ -39,20 +57,46 @@ import {
   type RunAttemptDetail,
   type RunAttemptEvent,
   type RunAttemptSummary,
-  type WorkView,
+  type WorkCardView,
   controlGoal,
-  readGoal,
-  readState,
+  readGoalBoard,
+  readShellState,
   readWorkAttempt,
   readWorkAttemptEvents,
   readWorkAttempts,
+  readWorkDocument,
   requestPreviewRepair,
   startPreview,
   stopPreview,
 } from '../lib/api'
-import { latestAgentPlan } from '../lib/agentPlan'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
-import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
+import {
+  hydrateInfiniteMessageStreamSnapshot,
+  messageStreamSnapshotKey,
+  readMessageStreamSnapshot,
+  writeMessageStreamSnapshot,
+} from '../lib/messageStreamCache'
+import {
+  readGoalViewState,
+  rememberGoalViewState,
+  type GoalViewLane,
+  type GoalViewState,
+} from '../lib/goalScope'
+import {
+  ACTIVE_STREAM_POLL_INTERVAL_MS,
+  boardPollInterval,
+  shellPollInterval,
+  STABLE_QUERY_NOTIFY_PROPS,
+} from '../lib/queryPerformance'
+import {
+  goalBoardQueryKey,
+  workAttemptEventsQueryKey,
+  workAttemptsQueryKey,
+} from '../lib/queryKeys'
+import {
+  prefetchInfiniteMessageStream,
+  useInfiniteMessageStream,
+} from '../lib/useInfiniteMessageStream'
 import { cn, excerpt, formatTime, projectDisplayName } from '../lib/utils'
 
 const COLUMNS: Array<{
@@ -87,28 +131,318 @@ const COLUMNS: Array<{
   },
 ]
 
+const COMPACT_KANBAN_QUERY = '(max-width: 900px)'
+
+export function compactLaneRenderWindow(selectedLane: GoalViewLane | null) {
+  const selectedIndex = Math.max(
+    0,
+    COLUMNS.findIndex((column) => column.id === (selectedLane ?? 'Plan')),
+  )
+  return new Set(
+    COLUMNS.filter((_, index) => Math.abs(index - selectedIndex) <= 1).map(
+      (column) => column.id,
+    ),
+  )
+}
+
+export function shouldShowWorkProgress(input: {
+  stage: WorkCardView['stage']
+  runAttemptCount: number
+  hasAgentPlan: boolean
+  running: boolean
+}) {
+  const terminal = input.stage === 'done' || input.stage === 'cancelled'
+  const started = input.running || input.hasAgentPlan || input.runAttemptCount > 0
+  return !terminal && started
+}
+
+const loadUnifiedMessageFeed = () => import('../components/UnifiedMessageFeed')
+
+const UnifiedMessageFeed = lazy(() =>
+  loadUnifiedMessageFeed().then((module) => ({
+    default: module.UnifiedMessageFeed,
+  })),
+)
+
+function prepareAttemptMessageStream(
+  queryClient: QueryClient,
+  projectId: string,
+  goalId: string,
+  workId: string,
+  runId: string,
+) {
+  const queryKey = workAttemptEventsQueryKey(projectId, goalId, workId, runId)
+  const cached = hydrateInfiniteMessageStreamSnapshot<RunAttemptEvent>(queryClient, queryKey)
+  const prefetch = prefetchInfiniteMessageStream<RunAttemptEvent>(queryClient, {
+    queryKey,
+    readPage: (input) => readWorkAttemptEvents(projectId, goalId, workId, runId, input),
+  })
+  const loadFeed = loadUnifiedMessageFeed()
+
+  if (cached) {
+    void prefetch
+    return loadFeed.then(() => undefined)
+  }
+  return Promise.all([loadFeed, prefetch]).then(() => undefined)
+}
+
+async function prepareWorkActivity(
+  queryClient: QueryClient,
+  projectId: string,
+  goalId: string,
+  workId: string,
+) {
+  const queryKey = workAttemptsQueryKey(projectId, goalId, workId)
+  const snapshotKey = messageStreamSnapshotKey(queryKey)
+  const persisted = readMessageStreamSnapshot<{ attempts: RunAttemptSummary[] }>(snapshotKey)
+  const cached =
+    queryClient.getQueryData<{ attempts: RunAttemptSummary[] }>(queryKey) ?? persisted?.value
+  if (queryClient.getQueryData(queryKey) === undefined && persisted) {
+    queryClient.setQueryData(queryKey, persisted.value, { updatedAt: persisted.savedAt })
+  }
+  const prefetch = queryClient.prefetchQuery({
+    queryKey,
+    queryFn: () => readWorkAttempts(projectId, goalId, workId),
+  })
+
+  if (cached !== undefined) void prefetch
+  else await prefetch
+
+  const attempts = cached ?? queryClient.getQueryData<{ attempts: RunAttemptSummary[] }>(queryKey)
+  const latestAttempt = attempts?.attempts[0]
+  if (latestAttempt) {
+    await prepareAttemptMessageStream(
+      queryClient,
+      projectId,
+      goalId,
+      workId,
+      latestAttempt.runId,
+    )
+  }
+}
+
+interface ScopedGoalViewState {
+  scopeKey: string
+  state: GoalViewState
+}
+
+function goalViewScopeKey(projectId: string | undefined, goalId: string | undefined) {
+  return projectId && goalId ? `${projectId}\u0000${goalId}` : ''
+}
+
+function readScopedGoalViewState(
+  projectId: string | undefined,
+  goalId: string | undefined,
+): ScopedGoalViewState {
+  const scopeKey = goalViewScopeKey(projectId, goalId)
+  return {
+    scopeKey,
+    state:
+      projectId && goalId
+        ? readGoalViewState(projectId, goalId)
+        : { expandedWorkIds: [], mobileLane: null },
+  }
+}
+
+function useGoalViewState(projectId: string | undefined, goalId: string | undefined) {
+  const scopeKey = goalViewScopeKey(projectId, goalId)
+  const [snapshot, setSnapshot] = useState(() => readScopedGoalViewState(projectId, goalId))
+  const current =
+    snapshot.scopeKey === scopeKey ? snapshot : readScopedGoalViewState(projectId, goalId)
+
+  useEffect(() => {
+    if (snapshot.scopeKey !== scopeKey) setSnapshot(current)
+  }, [current, scopeKey, snapshot.scopeKey])
+
+  const update = useCallback(
+    (change: (state: GoalViewState) => GoalViewState) => {
+      if (!projectId || !goalId) return
+      setSnapshot((previous) => {
+        const base =
+          previous.scopeKey === scopeKey
+            ? previous.state
+            : readGoalViewState(projectId, goalId)
+        const state = rememberGoalViewState(projectId, goalId, change(base))
+        return { scopeKey, state }
+      })
+    },
+    [goalId, projectId, scopeKey],
+  )
+
+  return [current.state, update] as const
+}
+
+function useCompactKanban() {
+  const [compact, setCompact] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(COMPACT_KANBAN_QUERY).matches,
+  )
+
+  useEffect(() => {
+    const media = window.matchMedia(COMPACT_KANBAN_QUERY)
+    const update = () => setCompact(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
+  return compact
+}
+
 export function BoardView() {
   const { projectId, goalId } = useParams()
   const queryClient = useQueryClient()
   const { openAssistant } = useShell()
-  const [selectedWork, setSelectedWork] = useState<WorkView | null>(null)
+  const [selectedWork, setSelectedWork] = useState<WorkCardView | null>(null)
   const [repairPrompt, setRepairPrompt] = useState<string | null>(null)
-  const snapshotQuery = useQuery({
+  const [goalViewState, updateGoalViewState] = useGoalViewState(projectId, goalId)
+  const compactKanban = useCompactKanban()
+  const kanbanRef = useRef<HTMLDivElement | null>(null)
+  const laneSaveFrame = useRef(0)
+  const mobileLaneRef = useRef<GoalViewLane | null>(goalViewState.mobileLane)
+  mobileLaneRef.current = goalViewState.mobileLane
+  const projectQuery = useQuery({
     queryKey: ['mvp-state'],
-    queryFn: readState,
-    refetchInterval: 2_000,
+    queryFn: readShellState,
+    enabled: Boolean(projectId),
+    refetchInterval: shellPollInterval,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
+    select: (snapshot) => snapshot.projects.find((item) => item.projectId === projectId) ?? null,
   })
   const goalQuery = useQuery({
-    queryKey: ['mvp-goal', projectId, goalId],
-    queryFn: () => readGoal(projectId ?? '', goalId ?? ''),
+    queryKey: goalBoardQueryKey(projectId, goalId),
+    queryFn: () => readGoalBoard(projectId ?? '', goalId ?? ''),
     enabled: Boolean(projectId && goalId),
-    refetchInterval: 2_000,
+    refetchInterval: boardPollInterval,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
+  const worksByColumn = useMemo(() => {
+    const groups = new Map<KanbanColumn, WorkCardView[]>(COLUMNS.map((column) => [column.id, []]))
+    for (const work of goalQuery.data?.works ?? []) {
+      if (work.projection.column) groups.get(work.projection.column)?.push(work)
+    }
+    return groups
+  }, [goalQuery.data?.works])
+  const cancelled = useMemo(
+    () => (goalQuery.data?.works ?? []).filter((work) => work.projection.cancelled),
+    [goalQuery.data?.works],
+  )
+  const goalReady = Boolean(goalQuery.data)
+  const expandedWorkIds = useMemo(
+    () => new Set(goalViewState.expandedWorkIds),
+    [goalViewState.expandedWorkIds],
+  )
+  const compactRenderedLanes = useMemo(
+    () => compactLaneRenderWindow(goalViewState.mobileLane),
+    [goalViewState.mobileLane],
+  )
+  const setWorkExpanded = useCallback(
+    (workId: string, expanded: boolean) => {
+      updateGoalViewState((current) => {
+        const nextIds = new Set(current.expandedWorkIds)
+        if (expanded) nextIds.add(workId)
+        else nextIds.delete(workId)
+        return { ...current, expandedWorkIds: [...nextIds] }
+      })
+    },
+    [updateGoalViewState],
+  )
+  const setMobileLane = useCallback(
+    (mobileLane: GoalViewLane) => {
+      updateGoalViewState((current) =>
+        current.mobileLane === mobileLane ? current : { ...current, mobileLane },
+      )
+    },
+    [updateGoalViewState],
+  )
+  const handleKanbanScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      if (!compactKanban || laneSaveFrame.current) return
+      const scroller = event.currentTarget
+      laneSaveFrame.current = window.requestAnimationFrame(() => {
+        laneSaveFrame.current = 0
+        const board = scroller.querySelector<HTMLElement>('.kanban-board')
+        const columns = [...scroller.querySelectorAll<HTMLElement>('[data-lane]')]
+        if (!board || columns.length === 0) return
+        const lane = columns.reduce((nearest, column) => {
+          const nearestDistance = Math.abs(
+            nearest.offsetLeft - board.offsetLeft - scroller.scrollLeft,
+          )
+          const columnDistance = Math.abs(
+            column.offsetLeft - board.offsetLeft - scroller.scrollLeft,
+          )
+          return columnDistance < nearestDistance ? column : nearest
+        })
+        const laneId = lane.dataset.lane as GoalViewLane | undefined
+        if (laneId && laneId !== mobileLaneRef.current) {
+          mobileLaneRef.current = laneId
+          setMobileLane(laneId)
+        }
+      })
+    },
+    [compactKanban, setMobileLane],
+  )
+
+  useEffect(
+    () => () => {
+      if (laneSaveFrame.current) window.cancelAnimationFrame(laneSaveFrame.current)
+    },
+    [],
+  )
+
+  useLayoutEffect(() => {
+    const scroller = kanbanRef.current
+    const lane = goalViewState.mobileLane
+    if (!compactKanban || !scroller || !lane || !goalReady) return
+    const board = scroller.querySelector<HTMLElement>('.kanban-board')
+    const column = [...scroller.querySelectorAll<HTMLElement>('[data-lane]')].find(
+      (item) => item.dataset.lane === lane,
+    )
+    if (!board || !column) return
+    scroller.scrollLeft = column.offsetLeft - board.offsetLeft
+  }, [compactKanban, goalId, goalReady, goalViewState.mobileLane, projectId])
+  const workOpenRequest = useRef(0)
+  const warmWork = useCallback(
+    (work: WorkCardView) => {
+      if (!projectId || !goalId) return
+      void prepareWorkActivity(queryClient, projectId, goalId, work.id).catch(() => undefined)
+    },
+    [goalId, projectId, queryClient],
+  )
+  const openWork = useCallback(
+    (work: WorkCardView) => {
+      const request = ++workOpenRequest.current
+      if (!projectId || !goalId) {
+        setSelectedWork(work)
+        return
+      }
+      void prepareWorkActivity(queryClient, projectId, goalId, work.id)
+        .catch(() => undefined)
+        .then(() => {
+          if (request === workOpenRequest.current) setSelectedWork(work)
+        })
+    },
+    [goalId, projectId, queryClient],
+  )
+  const closeWork = useCallback(() => {
+    workOpenRequest.current += 1
+    const workId = selectedWork?.id
+    setSelectedWork(null)
+    window.setTimeout(() => {
+      const trigger = workId
+        ? document.querySelector<HTMLElement>(
+            `[data-work-id="${CSS.escape(workId)}"] .work-card__open`,
+          )
+        : null
+      trigger?.focus({ preventScroll: true })
+    }, 150)
+  }, [selectedWork?.id])
 
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
-      queryClient.invalidateQueries({ queryKey: ['mvp-goal', projectId, goalId] }),
+      queryClient.invalidateQueries({
+        queryKey: ['mvp-goal', projectId, goalId],
+      }),
     ])
   }
   const controlMutation = useMutation({
@@ -140,16 +474,13 @@ export function BoardView() {
   })
 
   if (!projectId || !goalId) return <Navigate to="/projects" replace />
-  const snapshot = snapshotQuery.data
-  const project = snapshot?.projects.find((item) => item.projectId === projectId)
+  const project = projectQuery.data
   const goal = goalQuery.data
-  const error = snapshotQuery.error ?? goalQuery.error ?? controlMutation.error
+  const error = projectQuery.error ?? goalQuery.error ?? controlMutation.error
 
-  if (!goal && (snapshotQuery.isLoading || goalQuery.isLoading)) {
+  if ((!goal || project === undefined) && (projectQuery.isLoading || goalQuery.isLoading)) {
     return (
-      <div className="full-loading">
-        <AppSpinner size="sm" /> Loading canonical Goal
-      </div>
+      <AppLoadingNotice detail="Reading the latest projection…" label="Loading Goal" />
     )
   }
   if (!goal || !project) {
@@ -169,34 +500,22 @@ export function BoardView() {
     (attention) => attention.target !== null && attention.resolvedAt === null,
   )
   const assistantAttention =
-    openAssistantAttentions.find((attention) => attention.notifiedAt !== null) ??
+    openAssistantAttentions.find((attention) => Boolean(attention.operatorRequest)) ??
     openAssistantAttentions[0]
-  const assistantAttentionLabel = assistantAttention?.notifiedAt
+  const assistantAttentionLabel = assistantAttention?.operatorRequest
     ? 'Needs you'
     : 'Waiting for Assistant'
-  const projectAttention =
-    goal.projectAttention?.resolvedAt === null ? goal.projectAttention : null
+  const projectAttention = goal.projectAttention?.resolvedAt === null ? goal.projectAttention : null
   const focus =
     goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
     goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
     goal.works.find((work) => work.projection.primaryBadge === 'working') ??
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
-  const cancelled = goal.works.filter((work) => work.projection.cancelled)
   const mutationError =
     previewStartMutation.error ?? previewStopMutation.error ?? previewRepairMutation.error
 
   const runControl = (control: GoalControl) => {
     controlMutation.mutate(control)
-  }
-  const closeWork = () => {
-    const workId = selectedWork?.id
-    setSelectedWork(null)
-    window.setTimeout(() => {
-      const trigger = workId
-        ? document.querySelector<HTMLElement>(`[data-work-id="${CSS.escape(workId)}"]`)
-        : null
-      trigger?.focus({ preventScroll: true })
-    }, 150)
   }
 
   return (
@@ -285,7 +604,7 @@ export function BoardView() {
       )}
 
       {projectAttention && (
-        <div className="attention-status-banner project-blocked-banner" role="status">
+        <output className="attention-status-banner project-blocked-banner">
           <span>
             <AlertCircle />
           </span>
@@ -294,7 +613,7 @@ export function BoardView() {
             <p>{excerpt(projectAttention.body, 360)}</p>
             <small>Created {formatTime(projectAttention.createdAt)}</small>
           </span>
-        </div>
+        </output>
       )}
 
       <section className="goal-focus-strip">
@@ -315,10 +634,10 @@ export function BoardView() {
             {projectAttention
               ? excerpt(projectAttention.body)
               : assistantAttention
-              ? assistantAttention.notifiedAt
-                ? 'Your decision is needed. Open Assistant to reply.'
-                : 'Assistant is diagnosing the blocker and will contact you only if needed.'
-              : (focus?.projection.primaryBadge ?? 'No pending Work')}
+                ? assistantAttention.operatorRequest
+                  ? 'Your decision is needed. Open Assistant to reply.'
+                  : 'Assistant is diagnosing the blocker and will contact you only if needed.'
+                : (focus?.projection.primaryBadge ?? 'No pending Work')}
           </p>
         </div>
         <div>
@@ -330,13 +649,19 @@ export function BoardView() {
         </div>
       </section>
 
-      <AppScrollShadow className="kanban-scroll" orientation="horizontal">
+      <AppScrollShadow className="kanban-scroll"
+        ref={kanbanRef}
+        orientation="horizontal"
+        onScroll={handleKanbanScroll}
+      >
         <div className="kanban-board">
           {COLUMNS.map((column) => {
-            const works = goal.works.filter((work) => work.projection.column === column.id)
+            const works = worksByColumn.get(column.id) ?? []
+            const renderCards = !compactKanban || compactRenderedLanes.has(column.id)
             return (
               <section
                 className={`kanban-column column-${column.id.toLowerCase()}`}
+                data-lane={column.id}
                 key={column.id}
               >
                 <header>
@@ -347,9 +672,18 @@ export function BoardView() {
                   <CountBadge>{works.length}</CountBadge>
                 </header>
                 <AppScrollShadow className="kanban-cards">
-                  {works.length ? (
+                  {!renderCards ? (
+                    <div className="kanban-cards-deferred" aria-hidden="true" />
+                  ) : works.length ? (
                     works.map((work) => (
-                      <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
+                      <WorkCard
+                        expanded={expandedWorkIds.has(work.id)}
+                        key={work.id}
+                        work={work}
+                        onExpandedChange={setWorkExpanded}
+                        onOpen={openWork}
+                        onWarm={warmWork}
+                      />
                     ))
                   ) : (
                     <div className="column-empty">
@@ -373,9 +707,16 @@ export function BoardView() {
           bodyClassName="cancelled-archive__content"
           summary={`Cancelled archive · ${cancelled.length}`}
         >
-            {cancelled.map((work) => (
-              <WorkCard key={work.id} work={work} onOpen={() => setSelectedWork(work)} />
-            ))}
+          {cancelled.map((work) => (
+            <WorkCard
+              expanded={expandedWorkIds.has(work.id)}
+              key={work.id}
+              work={work}
+              onExpandedChange={setWorkExpanded}
+              onOpen={openWork}
+              onWarm={warmWork}
+            />
+          ))}
         </AppDisclosure>
       )}
 
@@ -413,92 +754,178 @@ export function BoardView() {
     </div>
   )
 }
-function WorkCard({ work, onOpen }: { work: WorkView; onOpen: () => void }) {
-  const badge = work.projection.primaryBadge ?? (work.stage === 'done' ? 'Done' : null)
+const WorkCard = memo(function WorkCard({
+  expanded,
+  work,
+  onExpandedChange,
+  onOpen,
+  onWarm,
+}: {
+  expanded: boolean
+  work: WorkCardView
+  onExpandedChange: (workId: string, expanded: boolean) => void
+  onOpen: (work: WorkCardView) => void
+  onWarm: (work: WorkCardView) => void
+}) {
+  const badge = work.projection.primaryBadge
+  const running = badge === 'working'
+  const showProgress = shouldShowWorkProgress({
+    stage: work.stage,
+    runAttemptCount: work.runAttemptCount,
+    hasAgentPlan: Boolean(work.agentPlan),
+    running,
+  })
+
   return (
-    <AppButton
-      className={cn(
-        'work-card',
-        work.kind,
-        badge === 'working' && 'work-card--working',
-      )}
+    <article
+      className={cn('work-card', work.kind, running && 'work-card--working')}
       data-work-id={work.id}
-      variant="ghost"
-      type="button"
-      onClick={(event) => {
-        event.currentTarget.focus({ preventScroll: true })
-        onOpen()
-      }}
     >
+      <AppButton
+        aria-label={`Open Work details: ${work.title}`}
+        className="work-card__open"
+        variant="ghost"
+        type="button"
+        onFocus={() => onWarm(work)}
+        onClick={() => onOpen(work)}
+        onPointerDown={() => onWarm(work)}
+        onPointerEnter={() => onWarm(work)}
+      />
       <h2>{work.title}</h2>
-      {work.agentPlan && <AgentPlanChecklist plan={work.agentPlan} compact />}
-      {(badge || (work.repos && work.repos.length > 0)) && (
-        <div className="work-card-meta">
-          {badge && (
-            <StatusChip
-              className={`work-badge badge-${badge.toLowerCase().replaceAll(' ', '-')}`}
-              size="sm"
-            >
-              {badge === 'working' ? <WorkingIndicator label={badge} /> : badge}
-            </StatusChip>
-          )}
-          {work.repos && work.repos.length > 0 && (
-            <div className="work-repos" aria-label="Repositories">
-              {work.repos.map((repoId) => (
-                <span key={repoId}>{repoId}</span>
-              ))}
-            </div>
-          )}
-        </div>
+      {showProgress && (
+        <WorkProgress
+          expanded={expanded}
+          plan={work.agentPlan}
+          running={running}
+          onExpandedChange={(nextExpanded) => onExpandedChange(work.id, nextExpanded)}
+        />
       )}
-    </AppButton>
+      <div className="work-card-meta">
+        <span className="work-card-attempts">Attempts {work.runAttemptCount}</span>
+        {work.blockedBy && (
+          <span className="work-card-blocker" title={work.blockedBy}>
+            Blocked by {work.blockedBy}
+          </span>
+        )}
+      </div>
+    </article>
+  )
+})
+
+type AgentPlanItemStatus = 'complete' | 'current' | 'pending'
+
+function planItemStatus(
+  completed: boolean,
+  index: number,
+  currentIndex: number,
+): AgentPlanItemStatus {
+  if (completed) return 'complete'
+  return index === currentIndex ? 'current' : 'pending'
+}
+
+function AgentPlanItems({
+  plan,
+  running,
+}: {
+  plan: AgentPlanSnapshot
+  running: boolean
+}) {
+  const currentIndex = running ? plan.items.findIndex((item) => !item.completed) : -1
+
+  return (
+    <ul className="agent-plan__items">
+      {plan.items.map((item, index) => {
+        const status = planItemStatus(item.completed, index, currentIndex)
+        return (
+          <li
+            className={cn('agent-plan__item', `is-${status}`)}
+            key={`${plan.planId}:${item.text}`}
+          >
+            <span className="agent-plan__marker" aria-hidden="true">
+              {status === 'current' && (
+                <AppBreathingIndicator className="agent-plan__current-indicator" />
+              )}
+            </span>
+            <span>{item.text}</span>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
-function AgentPlanChecklist({
+function WorkProgress({
+  expanded,
   plan,
-  compact = false,
+  running,
+  onExpandedChange,
 }: {
-  plan: AgentPlanSnapshot
-  compact?: boolean
+  expanded: boolean
+  plan: AgentPlanSnapshot | null
+  running: boolean
+  onExpandedChange: (expanded: boolean) => void
 }) {
-  const completed = plan.items.filter((item) => item.completed).length
-  const visibleItems = compact ? plan.items.slice(0, 3) : plan.items
-  const remaining = plan.items.length - visibleItems.length
+  const items = plan?.items ?? []
+  const hasSubtasks = items.length > 0
+  const total = hasSubtasks ? items.length : 1
+  const completed = hasSubtasks ? items.filter((item) => item.completed).length : 0
+  const currentIndex = running
+    ? hasSubtasks
+      ? items.findIndex((item) => !item.completed)
+      : 0
+    : -1
+  const segments = hasSubtasks
+    ? items.map((item, index) => ({
+        key: `${plan?.planId ?? 'plan'}:${item.text}`,
+        status: planItemStatus(item.completed, index, currentIndex),
+      }))
+    : [
+        {
+          key: 'work',
+          status: currentIndex === 0 ? 'current' : 'pending',
+        } satisfies { key: string; status: AgentPlanItemStatus },
+      ]
+  const summary = (
+    <span className="agent-plan__progress-summary">
+      <span
+        className="agent-plan__track"
+        style={{ gridTemplateColumns: `repeat(${total}, minmax(0, 1fr))` }}
+        aria-hidden="true"
+      >
+        {segments.map((segment) => (
+          <span className={cn('agent-plan__segment', `is-${segment.status}`)} key={segment.key}>
+            {segment.status === 'current' && <span className="agent-plan__segment-progress" />}
+          </span>
+        ))}
+      </span>
+      <strong className="agent-plan__count">
+        {completed}/{total}
+      </strong>
+      {hasSubtasks && <ChevronDown className="agent-plan__chevron" aria-hidden="true" />}
+    </span>
+  )
+  const label = `Task progress, ${completed} of ${total} complete`
+
+  if (!plan || !hasSubtasks) {
+    return (
+      <div className="agent-plan agent-plan--card agent-plan--single" aria-label={label}>
+        {summary}
+      </div>
+    )
+  }
 
   return (
-    <div
-      className={cn('agent-plan', compact ? 'agent-plan--card' : 'agent-plan--detail')}
-      aria-label={`Agent plan, ${completed} of ${plan.items.length} steps complete`}
+    <AppDisclosure
+      className="agent-plan agent-plan--card"
+      isExpanded={expanded}
+      onExpandedChange={onExpandedChange}
+      summary={summary}
+      triggerClassName="agent-plan__trigger"
+      contentClassName="agent-plan__content"
+      bodyClassName="agent-plan__body"
     >
-      <div className="agent-plan__summary">
-        {!compact && <span className="agent-plan__heading">Agent plan</span>}
-        <progress
-          className="agent-plan__progress"
-          max={Math.max(plan.items.length, 1)}
-          value={completed}
-          aria-hidden="true"
-        />
-        <strong className="agent-plan__count">
-          {completed}/{plan.items.length}
-        </strong>
-      </div>
-      <div className="agent-plan__items" role="list">
-        {visibleItems.map((item, index) => (
-          <div
-            className={cn('agent-plan__item', item.completed && 'is-complete')}
-            key={`${plan.planId}:${index}:${item.text}`}
-            role="listitem"
-          >
-            <span className="agent-plan__marker" aria-hidden="true">
-              {item.completed && <Check />}
-            </span>
-            <span>{item.text}</span>
-          </div>
-        ))}
-      </div>
-      {remaining > 0 && <span className="agent-plan__more">+{remaining} more</span>}
-    </div>
+      <AgentPlanItems plan={plan} running={running} />
+    </AppDisclosure>
   )
 }
 
@@ -510,25 +937,102 @@ function WorkDetail({
 }: {
   projectId: string
   goalId: string
-  work: WorkView
+  work: WorkCardView
   onClose: () => void
 }) {
+  const queryClient = useQueryClient()
   const [activePane, setActivePane] = useState<'activity' | 'contract'>('activity')
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+  const attemptSelectionRequest = useRef(0)
+  const paneSelectionRequest = useRef(0)
   const attemptsQuery = useQuery({
-    queryKey: ['work-attempts', projectId, goalId, work.id],
+    queryKey: workAttemptsQueryKey(projectId, goalId, work.id),
     queryFn: () => readWorkAttempts(projectId, goalId, work.id),
-    refetchInterval: 1_000,
+    refetchInterval:
+      work.stage === 'done' || work.stage === 'cancelled' ? false : ACTIVE_STREAM_POLL_INTERVAL_MS,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
+  const attemptsSnapshotKey = messageStreamSnapshotKey(
+    workAttemptsQueryKey(projectId, goalId, work.id),
+  )
+  useEffect(() => {
+    if (attemptsQuery.data) {
+      writeMessageStreamSnapshot(attemptsSnapshotKey, attemptsQuery.data)
+    }
+  }, [attemptsQuery.data, attemptsSnapshotKey])
   const attempts = attemptsQuery.data?.attempts ?? []
+  const firstAttemptId = attempts[0]?.runId
   const selectedAttempt =
     attempts.find((attempt) => attempt.runId === selectedAttemptId) ?? attempts[0] ?? null
+
+  useEffect(() => {
+    if (!selectedAttemptId && firstAttemptId) setSelectedAttemptId(firstAttemptId)
+  }, [firstAttemptId, selectedAttemptId])
+
+  const warmAttempt = useCallback(
+    (runId: string) => {
+      void prepareAttemptMessageStream(queryClient, projectId, goalId, work.id, runId).catch(
+        () => undefined,
+      )
+    },
+    [goalId, projectId, queryClient, work.id],
+  )
+  const selectAttempt = useCallback(
+    (runId: string) => {
+      if (runId === selectedAttemptId) return
+      if (activePane !== 'activity') {
+        paneSelectionRequest.current += 1
+        setSelectedAttemptId(runId)
+        warmAttempt(runId)
+        return
+      }
+      const request = ++attemptSelectionRequest.current
+      void prepareAttemptMessageStream(queryClient, projectId, goalId, work.id, runId)
+        .catch(() => undefined)
+        .then(() => {
+          if (request === attemptSelectionRequest.current) setSelectedAttemptId(runId)
+        })
+    },
+    [activePane, goalId, projectId, queryClient, selectedAttemptId, warmAttempt, work.id],
+  )
+  const selectPane = useCallback(
+    (nextPane: 'activity' | 'contract') => {
+      if (nextPane === activePane) return
+      const request = ++paneSelectionRequest.current
+      if (nextPane !== 'activity' || !selectedAttempt) {
+        setActivePane(nextPane)
+        return
+      }
+      void prepareAttemptMessageStream(
+        queryClient,
+        projectId,
+        goalId,
+        work.id,
+        selectedAttempt.runId,
+      )
+        .catch(() => undefined)
+        .then(() => {
+          if (request === paneSelectionRequest.current) setActivePane(nextPane)
+        })
+    },
+    [activePane, goalId, projectId, queryClient, selectedAttempt, work.id],
+  )
   const attemptQuery = useQuery({
     queryKey: ['work-attempt', projectId, goalId, work.id, selectedAttempt?.runId],
-    queryFn: () => readWorkAttempt(projectId, goalId, work.id, selectedAttempt!.runId),
+    queryFn: () => readWorkAttempt(projectId, goalId, work.id, selectedAttempt?.runId ?? ''),
     enabled: Boolean(selectedAttempt) && activePane === 'contract',
     refetchInterval:
-      activePane === 'contract' && selectedAttempt?.status === 'running' ? 1_000 : false,
+      activePane === 'contract' && selectedAttempt?.status === 'running'
+        ? ACTIVE_STREAM_POLL_INTERVAL_MS
+        : false,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
+  })
+  const workDocumentQuery = useQuery({
+    queryKey: ['work-document', projectId, goalId, work.id, work.contractRevision],
+    queryFn: () => readWorkDocument(projectId, goalId, work.id),
+    enabled: activePane === 'contract',
+    staleTime: Number.POSITIVE_INFINITY,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
 
   return (
@@ -548,7 +1052,7 @@ function WorkDetail({
           <AppModal.Dialog className="work-detail-modal" aria-label={work.title}>
             <AppTabs
               className="work-detail-tabs-root"
-              onSelectionChange={(key) => setActivePane(String(key) as 'activity' | 'contract')}
+              onSelectionChange={(key) => selectPane(String(key) as 'activity' | 'contract')}
               selectedKey={activePane}
             >
               <header>
@@ -559,16 +1063,19 @@ function WorkDetail({
                   <AppModal.Heading className="work-detail-heading">{work.title}</AppModal.Heading>
                 </div>
                 <div className="work-detail-header-actions">
-                  <AppTabs.ListContainer>
-                    <AppTabs.List className="work-detail-tabs" aria-label="Work detail view">
-                      <AppTabs.Tab id="activity">
-                        <MessageSquareText /> Activity
-                      </AppTabs.Tab>
-                      <AppTabs.Tab id="contract">
-                        <FileText /> Work contract
-                      </AppTabs.Tab>
-                    </AppTabs.List>
-                  </AppTabs.ListContainer>
+                  <AppTabs.List className="work-detail-tabs" aria-label="Work detail view">
+                    <AppTabs.Tab
+                      id="activity"
+                      onFocus={() => selectedAttempt && warmAttempt(selectedAttempt.runId)}
+                      onPointerDown={() => selectedAttempt && warmAttempt(selectedAttempt.runId)}
+                      onPointerEnter={() => selectedAttempt && warmAttempt(selectedAttempt.runId)}
+                    >
+                      <MessageSquareText /> Activity
+                    </AppTabs.Tab>
+                    <AppTabs.Tab id="contract">
+                      <FileText /> Work contract
+                    </AppTabs.Tab>
+                  </AppTabs.List>
                   <AppModal.CloseTrigger className="icon-button" aria-label="Close Work detail">
                     <X />
                   </AppModal.CloseTrigger>
@@ -611,8 +1118,8 @@ function WorkDetail({
                       selectedAttempt={selectedAttempt}
                       loading={attemptsQuery.isLoading}
                       error={attemptsQuery.error as Error | null}
-                      activePlan={work.agentPlan}
-                      onSelect={setSelectedAttemptId}
+                      onSelect={selectAttempt}
+                      onWarm={warmAttempt}
                     />
                   ) : null}
                 </AppTabs.Panel>
@@ -623,9 +1130,12 @@ function WorkDetail({
                       attempts={attempts}
                       selectedAttempt={selectedAttempt}
                       detail={attemptQuery.data ?? null}
+                      workBody={workDocumentQuery.data?.body ?? null}
+                      workBodyError={workDocumentQuery.error as Error | null}
+                      workBodyLoading={workDocumentQuery.isLoading}
                       loading={attemptsQuery.isLoading || attemptQuery.isLoading}
                       error={(attemptsQuery.error ?? attemptQuery.error) as Error | null}
-                      onSelect={setSelectedAttemptId}
+                      onSelect={selectAttempt}
                     />
                   ) : null}
                 </AppTabs.Panel>
@@ -643,14 +1153,20 @@ function WorkContract({
   attempts,
   selectedAttempt,
   detail,
+  workBody,
+  workBodyError,
+  workBodyLoading,
   loading,
   error,
   onSelect,
 }: {
-  work: WorkView
+  work: WorkCardView
   attempts: RunAttemptSummary[]
   selectedAttempt: RunAttemptSummary | null
   detail: RunAttemptDetail | null
+  workBody: string | null
+  workBodyError: Error | null
+  workBodyLoading: boolean
   loading: boolean
   error: Error | null
   onSelect: (runId: string) => void
@@ -699,7 +1215,15 @@ function WorkContract({
       </section>
       <section>
         <h2>Canonical Work document</h2>
-        <pre>{work.body}</pre>
+        {workBodyError ? (
+          <AppAlert className="work-document-status error">{workBodyError.message}</AppAlert>
+        ) : workBodyLoading || workBody === null ? (
+          <div className="work-document-status" role="status">
+            <AppBreathingIndicator /> Loading Work contract
+          </div>
+        ) : (
+          <pre>{workBody}</pre>
+        )}
       </section>
       <section className="work-system-prompt-section">
         <div className="work-system-prompt-heading">
@@ -733,7 +1257,10 @@ function WorkContract({
         ) : (
           <>
             <div className="work-system-prompt-meta">
-              <StatusChip className={`attempt-status ${attemptStatusTone(selectedAttempt)}`} size="sm">
+              <StatusChip
+                className={`attempt-status ${attemptStatusTone(selectedAttempt)}`}
+                size="sm"
+              >
                 {selectedAttempt.status === 'running' ? (
                   <WorkingIndicator label={attemptStatus(selectedAttempt)} />
                 ) : (
@@ -794,8 +1321,8 @@ function AttemptHistory({
   selectedAttempt,
   loading,
   error,
-  activePlan,
   onSelect,
+  onWarm,
 }: {
   projectId: string
   goalId: string
@@ -804,18 +1331,23 @@ function AttemptHistory({
   selectedAttempt: RunAttemptSummary | null
   loading: boolean
   error: Error | null
-  activePlan: WorkView['agentPlan']
   onSelect: (runId: string) => void
+  onWarm: (runId: string) => void
 }) {
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: selectedAttempt?.runId ?? 'no-attempt',
-    queryKey: ['work-attempt-events', projectId, goalId, workId, selectedAttempt?.runId ?? null],
+    queryKey: workAttemptEventsQueryKey(
+      projectId,
+      goalId,
+      workId,
+      selectedAttempt?.runId ?? null,
+    ),
     readPage: (input) =>
       readWorkAttemptEvents(projectId, goalId, workId, selectedAttempt?.runId ?? '', input),
     getItemId: runEventId,
     compareItems: compareRunEvents,
     enabled: Boolean(selectedAttempt),
-    refetchInterval: selectedAttempt?.status === 'running' ? 1_000 : false,
+    refetchInterval: selectedAttempt?.status === 'running' ? ACTIVE_STREAM_POLL_INTERVAL_MS : false,
     tailPageSize: 200,
   })
   const messages = useMemo(() => {
@@ -827,14 +1359,9 @@ function AttemptHistory({
       active: selectedAttempt.status === 'running',
     })
   }, [eventStream.items, selectedAttempt])
-  const plan = useMemo(
-    () =>
-      latestAgentPlan(eventStream.items) ??
-      (selectedAttempt?.runId === activePlan?.runId ? activePlan : null),
-    [activePlan, eventStream.items, selectedAttempt?.runId],
-  )
   const streamError = error ?? eventStream.error
   const streamLoading = loading || eventStream.isLoading
+  const outcomeSummary = attemptOutcomeSummary(attempts)
 
   return (
     <section className="attempt-workspace">
@@ -842,13 +1369,13 @@ function AttemptHistory({
         <div className="attempt-history-heading">
           <div>
             <h2>Attempts</h2>
-            <p>Messages and tool activity</p>
+            <p>{outcomeSummary}</p>
           </div>
           <CountBadge>{attempts.length}</CountBadge>
         </div>
 
         {attempts.length > 0 ? (
-          <AppScrollShadow className="attempt-tabs" orientation="auto">
+          <AppScrollShadow className="attempt-list" orientation="auto">
             {attempts.map((attempt, index) => (
               <AppButton
                 variant="ghost"
@@ -856,7 +1383,10 @@ function AttemptHistory({
                 className={attempt.runId === selectedAttempt?.runId ? 'active' : undefined}
                 key={attempt.runId}
                 type="button"
+                onFocus={() => onWarm(attempt.runId)}
                 onClick={() => onSelect(attempt.runId)}
+                onPointerDown={() => onWarm(attempt.runId)}
+                onPointerEnter={() => onWarm(attempt.runId)}
               >
                 <span>
                   <strong>Attempt {attempts.length - index}</strong>
@@ -890,7 +1420,10 @@ function AttemptHistory({
           <>
             <header>
               <div>
-                <StatusChip className={`attempt-status ${attemptStatusTone(selectedAttempt)}`} size="sm">
+                <StatusChip
+                  className={`attempt-status ${attemptStatusTone(selectedAttempt)}`}
+                  size="sm"
+                >
                   {selectedAttempt.status === 'running' ? (
                     <WorkingIndicator label={attemptStatus(selectedAttempt)} />
                   ) : (
@@ -905,22 +1438,23 @@ function AttemptHistory({
             {selectedAttempt.summary && (
               <p className="attempt-summary">{selectedAttempt.summary}</p>
             )}
-            {plan && <AgentPlanChecklist plan={plan} />}
-            <UnifiedMessageFeed
-              feedKey={`attempt:${selectedAttempt.runId}`}
-              items={messages}
-              tailActivity={selectedAttempt.status === 'running' ? 'working' : null}
-              density="compact"
-              className="attempt-message-feed"
-              ariaLabel={`Attempt ${selectedAttempt.runId} message stream`}
-              isLoading={eventStream.isLoading}
-              hasMoreBefore={eventStream.hasMoreBefore}
-              isLoadingOlder={eventStream.isLoadingOlder}
-              onLoadOlder={eventStream.loadOlder}
-              emptyState={
-                <div className="attempt-feed-empty">This Attempt predates live event capture.</div>
-              }
-            />
+            <Suspense fallback={<MessageFeedSkeleton density="compact" />}>
+              <UnifiedMessageFeed
+                feedKey={`attempt:${selectedAttempt.runId}`}
+                items={messages}
+                tailActivity={selectedAttempt.status === 'running' ? 'working' : null}
+                density="compact"
+                className="attempt-message-feed"
+                ariaLabel={`Attempt ${selectedAttempt.runId} message stream`}
+                isLoading={eventStream.isLoading}
+                hasMoreBefore={eventStream.hasMoreBefore}
+                isLoadingOlder={eventStream.isLoadingOlder}
+                onLoadOlder={eventStream.loadOlder}
+                emptyState={
+                  <div className="attempt-feed-empty">This Attempt predates live event capture.</div>
+                }
+              />
+            </Suspense>
           </>
         )}
       </div>
@@ -932,6 +1466,31 @@ export function attemptStatus(attempt: RunAttemptSummary) {
   if (attempt.status === 'running') return 'working'
   if (attempt.application === 'stale') return 'stale'
   return attempt.result ?? attempt.status
+}
+
+export function attemptOutcomeBreakdown(attempts: RunAttemptSummary[]) {
+  let rejected = 0
+  let failed = 0
+  let interrupted = 0
+
+  for (const attempt of attempts) {
+    if (attempt.status === 'interrupted') interrupted += 1
+    else if (attempt.result === 'reject') rejected += 1
+    else if (attempt.result === 'fail') failed += 1
+  }
+
+  return { rejected, failed, interrupted }
+}
+
+export function attemptOutcomeSummary(attempts: RunAttemptSummary[]) {
+  const counts = attemptOutcomeBreakdown(attempts)
+  const parts = [
+    counts.rejected > 0 ? `${counts.rejected} rejected` : null,
+    counts.failed > 0 ? `${counts.failed} failed` : null,
+    counts.interrupted > 0 ? `${counts.interrupted} interrupted` : null,
+  ].filter((part): part is string => part !== null)
+
+  return parts.length > 0 ? parts.join(' · ') : 'Messages and tool activity'
 }
 
 function attemptStatusTone(attempt: RunAttemptSummary) {

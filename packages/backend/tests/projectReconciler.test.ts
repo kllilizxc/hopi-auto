@@ -853,7 +853,10 @@ async function createFixture(
   if (options.includePrepare !== false) {
     await mkdir(join(projectSourceRoot, 'scripts', 'hopi'), { recursive: true })
     const prepareAdapter = join(projectSourceRoot, 'scripts', 'hopi', 'prepare')
-    await Bun.write(prepareAdapter, '#!/usr/bin/env bun\nconsole.log("ready")\n')
+    await Bun.write(
+      prepareAdapter,
+      '#!/usr/bin/env bun\nif (!process.env.HOPI_GOAL_ID) process.exit(2)\nconsole.log("ready")\n',
+    )
     await chmod(prepareAdapter, 0o755)
   }
   await git(repoRoot, ['init', '-b', 'main'])

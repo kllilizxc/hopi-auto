@@ -245,6 +245,18 @@ async function validateImmutableDocuments(
     if (before.notifiedAt !== null && before.notifiedAt !== after.notifiedAt) {
       throw invalid(goalId, `Attention delivery acknowledgement changed: ${attentionId}`)
     }
+    const beforeOperatorRequest = before.operatorRequest ?? null
+    const afterOperatorRequest = after.operatorRequest ?? null
+    if (before.resolvedAt !== null && beforeOperatorRequest !== afterOperatorRequest) {
+      throw invalid(goalId, `Resolved Attention ownership changed: ${attentionId}`)
+    }
+    if (
+      beforeOperatorRequest !== null &&
+      afterOperatorRequest !== null &&
+      beforeOperatorRequest !== afterOperatorRequest
+    ) {
+      throw invalid(goalId, `Attention operator request changed without a reply: ${attentionId}`)
+    }
     if (!nextAttention.body.startsWith(previousAttention.body)) {
       throw invalid(goalId, `Attention notification body was rewritten: ${attentionId}`)
     }

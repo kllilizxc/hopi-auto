@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
@@ -8,11 +9,12 @@ import {
   isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from '../agent/vendorAssistantOutput'
-import { normalizeProcessOutputLine } from '../agent/vendorTranscript'
+import { isNonFatalProcessDiagnostic, normalizeProcessOutputLine } from '../agent/vendorTranscript'
 import { type RoleTransportConfig, appendCodexHttpsOnlyConfig } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
+import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
@@ -109,10 +111,11 @@ export function createConfiguredAssistantModelRunner(options: {
       }
 
       let observedSessionId = session?.sessionId ?? null
-      const stderr: string[] = []
+      const stderr = new BoundedLineTail()
       let finalReply = ''
       let finalMessageId: string | undefined
       let terminalError: VendorAssistantTerminalError | undefined
+      const transcriptFormat = assistantTranscriptFormat(transport)
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
@@ -135,11 +138,10 @@ export function createConfiguredAssistantModelRunner(options: {
               finalReply += `${finalReply ? '\n' : ''}${output.assistantText}`
             }
           }
-        } else {
+        } else if (!isNonFatalProcessDiagnostic({ format: transcriptFormat, stream, line })) {
           stderr.push(line)
         }
 
-        const transcriptFormat = assistantTranscriptFormat(transport)
         for (const event of normalizeProcessOutputLine({
           format: transcriptFormat,
           stream,
@@ -182,7 +184,7 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new ErrorType(terminalError.message)
       }
       if (exitCode !== 0) {
-        const detail = stderr.at(-1) ?? 'no error detail'
+        const detail = stderr.last() ?? 'no error detail'
         const message = `${transport} conversation exited with code ${exitCode}: ${detail}`
         if (session && isExplicitSessionFailure(detail)) {
           throw new AssistantSessionUnavailableError(message)
@@ -216,6 +218,7 @@ export function createWorkspaceAssistant(input: {
   tools: AssistantTools
   runner: AssistantModelRunner
   resolveToolUrl(): string
+  onTurnSettled?(eventId: string): Promise<void> | void
   now?: () => Date
 }): WorkspaceAssistant {
   const now = input.now ?? (() => new Date())
@@ -227,6 +230,9 @@ export function createWorkspaceAssistant(input: {
       const workspaceState = await input.workspace.readWorkspace()
       const event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
+      if (event.attributes.source === 'user') {
+        await input.tools.acceptUserAttentionReply(eventId)
+      }
       if (event.attributes.status === 'handled') {
         await input.tools.acknowledgeEventAttentions(eventId, now())
         return { kind: 'answered', eventId }
@@ -251,12 +257,13 @@ export function createWorkspaceAssistant(input: {
           }
           await input.conversation.record(eventId, runtimeEvent)
         },
-        onSession: (session) => input.conversation.writeSession(session),
+        onSession: (session) =>
+          input.conversation.writeSession(session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST),
       }
 
       try {
         const imageFiles = await resolveEventImages(input.workspace, event)
-        let session = await input.conversation.readSession()
+        let session = await input.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
         const rebuildPrompt = renderNewConversation(
           workspaceState.events,
           event,
@@ -313,15 +320,73 @@ export function createWorkspaceAssistant(input: {
           )
         }
 
-        await input.conversation.writeSession(result.session)
-        const notificationMessage = input.tools.notificationMessage(toolToken)
+        await input.conversation.writeSession(result.session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
+        let notificationMessage = input.tools.notificationMessage(toolToken)
+        let notificationIntent = input.tools.notificationIntent(toolToken)
+        if (event.attributes.source === 'reflection') {
+          let assistantOwnedAttentionRefs = await input.tools.assistantOwnedAttentionRefs(eventId)
+          if (
+            assistantOwnedAttentionRefs.length > 0 &&
+            notificationIntent !== 'request' &&
+            !input.tools.hasDurableEffect(toolToken)
+          ) {
+            await input.conversation.record(eventId, {
+              kind: 'message',
+              level: 'info',
+              role: 'coordinator',
+              content:
+                'Continuing the Assistant turn because referenced Attention still has no internal continuation or exact operator request.',
+            })
+            result = await input.runner.run(
+              {
+                eventId,
+                prompt: renderAttentionSettlementCorrection(assistantOwnedAttentionRefs),
+                rebuildPrompt,
+                session: result.session,
+                cwd: workspaceRoot,
+                lastMessageFile: join(turnRoot, 'last-message.txt'),
+                transcriptFile: join(turnRoot, 'transcript.log'),
+                toolUrl: input.resolveToolUrl(),
+                toolToken,
+                imageFiles,
+                readableRoots: [resolve(input.homeRoot)],
+                toolMode: 'internal',
+                signal,
+              },
+              observer,
+            )
+            await input.conversation.writeSession(
+              result.session,
+              WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+            )
+            notificationMessage = input.tools.notificationMessage(toolToken)
+            notificationIntent = input.tools.notificationIntent(toolToken)
+            assistantOwnedAttentionRefs = await input.tools.assistantOwnedAttentionRefs(eventId)
+            if (
+              assistantOwnedAttentionRefs.length > 0 &&
+              notificationIntent !== 'request' &&
+              !input.tools.hasDurableEffect(toolToken)
+            ) {
+              throw new WorkspaceAssistantError(
+                'Assistant left referenced Attention without a durable internal continuation or exact operator request',
+              )
+            }
+          }
+        }
         const reply = notificationMessage ?? result.reply.trim()
         if (!reply && event.attributes.source !== 'reflection') {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
-          disposition: usedTool ? 'tools-used' : 'answered',
+          disposition:
+            notificationIntent === 'request'
+              ? 'operator-requested'
+              : notificationIntent === 'inform'
+                ? 'notified'
+                : usedTool
+                  ? 'tools-used'
+                  : 'answered',
           handledAt: now(),
           expose: notificationMessage !== null,
         })
@@ -339,6 +404,7 @@ export function createWorkspaceAssistant(input: {
         throw error
       } finally {
         input.tools.revoke(toolToken)
+        await input.onTurnSettled?.(eventId)
       }
     },
 
@@ -538,6 +604,27 @@ function assistantCodexCommand(
   return command
 }
 
+const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
+  'Continue as one normal Assistant conversation for the operator.',
+  'Use HOPI tools only for a requested durable effect. Page context disambiguates references but never implies mutation; explicit intent may choose another scope or Goal.',
+  'Inbox already preserves every public turn. Keep discussion, questions, optional suggestions, and future ideas in conversation unless the operator intends to change current authority. Request Planning only when current plan or delivery should change.',
+  'Ask before admission only when outcome, target, or operator intent is materially unclear; Planner owns later technical and delivery clarification.',
+  'Do not edit HOPI canonical files or project source directly. Use HOPI tools; implementation work must go through Planning and the fixed delivery flow.',
+  'MCP descriptions and schemas are the sole authority for tool arguments; never inspect files or transcripts to rediscover them.',
+  '[Mandatory Attention check before every final reply]',
+  'Inspect every exact Attention reference attached to the current Inbox turn and every remainingAttentionRefs value returned by tools in this turn. Reconcile each reference before ending the turn; do not silently carry it past a successful mutation.',
+  'When the current instruction or a successful effect satisfies or supersedes its blocker, settle it before replying. Work retry/cancel settles only Attention targeted exactly at affected Work; for every other blocker you MUST call hopi_resolve_attention with the exact scope and IDs. Requesting Planning or changing a Goal never closes Attention by itself.',
+  'If a referenced Attention still blocks, keep ownership with Assistant while HOPI can repair or schedule it. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply. Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds and its reference is no longer returned as open.',
+  'Read state at current page scope by omitting IDs; for another explicit scope copy complete canonical IDs. Follow exact returned document or diagnostic paths only when their body is needed; never scan runtime history broadly.',
+  'When asked for a report, output, preview, or other deliverable, call hopi_read_state for that Goal with includeEvidence: true and select it from Work Evidence artifacts. Link the returned operatorUrl in Markdown; never substitute inspectionPath, a design, Work, plan, or latest-Attempt path for the deliverable.',
+  'Adopt only task-relevant current images through the references field of the Goal tool already needed, with a concise purpose. Keep unrelated images in conversation and use returned Goal-local paths in authority.',
+  'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
+] as const
+
+export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
+  .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
+  .digest('hex')
+
 function renderNewConversation(
   events: ReadonlyMap<string, InboxEventDocument>,
   current: InboxEventDocument,
@@ -552,19 +639,7 @@ function renderNewConversation(
   return [
     '# HOPI Workspace Assistant',
     '',
-    'Continue as one normal Assistant conversation for the operator.',
-    'Use HOPI tools only for a requested durable effect. Page context disambiguates references but never implies mutation; explicit intent may choose another scope or Goal.',
-    'Inbox already preserves every public turn. Keep discussion, questions, optional suggestions, and future ideas in conversation unless the operator intends to change current authority. Request Planning only when current plan or delivery should change.',
-    'Ask before admission only when outcome, target, or operator intent is materially unclear; Planner owns later technical and delivery clarification.',
-    'Do not edit HOPI canonical files or project source directly. Use HOPI tools; implementation work must go through Planning and the fixed delivery flow.',
-    'MCP descriptions and schemas are the sole authority for tool arguments; never inspect files or transcripts to rediscover them.',
-    '[Mandatory Attention check before every final reply]',
-    'Inspect every exact Attention reference attached to the current Inbox turn and every remainingAttentionRefs value returned by tools in this turn. Reconcile each reference before ending the turn; do not silently carry it past a successful mutation.',
-    'When the current instruction or a successful effect satisfies or supersedes its blocker, you MUST call hopi_resolve_attention with the exact scope and IDs. Requesting Planning, retrying Work, or changing a Goal never closes Attention by itself.',
-    'If a referenced Attention still blocks, leave it open and state the one exact decision or external action still needed. Claim it cleared only after hopi_resolve_attention succeeds.',
-    'Read state at current page scope by omitting IDs; for another explicit scope copy complete canonical IDs. Follow exact returned document or diagnostic paths only when their body is needed; never scan runtime history broadly.',
-    'Adopt only task-relevant current images through the references field of the Goal tool already needed, with a concise purpose. Keep unrelated images in conversation and use returned Goal-local paths in authority.',
-    'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
+    ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
     '',
     ...(history.length
       ? [
@@ -589,7 +664,7 @@ function renderTurn(event: InboxEventDocument, preference: AssistantPreferenceDo
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
       '[Internal Reflection handoff. This is not operator input.]',
       'Re-read current state and referenced Attention. Resolve what code and authority can answer; change design or request Planning when needed. Ask the operator only for a decision or external action Assistant cannot supply.',
-      'If stale or already resolved, finish silently. Call hopi_notify_user only with an exact concise update the operator should see; all other output stays hidden.',
+      'If stale or already resolved, finish silently. Use hopi_notify_user only for a concise informational update alongside real internal progress. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply; all other output stays hidden.',
       renderPreference(preference, false),
       renderOperatorReplyContract(),
       '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',
@@ -608,6 +683,15 @@ function renderTurn(event: InboxEventDocument, preference: AssistantPreferenceDo
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function renderAttentionSettlementCorrection(references: readonly string[]) {
+  return [
+    '[Attention settlement correction for the current internal turn.]',
+    'The previous response left the exact Assistant-owned Attention references below open without a durable internal continuation or actionable operator request.',
+    references.join('\n'),
+    'Re-read current state. Resolve each blocker that is now false or superseded. Otherwise create the durable internal repair/retry/planning effect that continues it. Only if one exact decision, authorization, or external action remains, call hopi_request_user with one concise question. hopi_notify_user alone does not settle this check. Do not finish as a no-op.',
+  ].join('\n\n')
 }
 
 function renderPreference(preference: AssistantPreferenceDocument, writable: boolean) {
@@ -631,11 +715,13 @@ function renderAttentionContext(context: {
   goalId?: string
   attentionId?: string
   attentionRefs?: string[]
+  replyTo?: string
   observedDigest?: string
 }) {
   const references = normalizeInboxAttentionReferences(context)
   return [
     ...(references.length ? [` / Attention ${references.join(', ')}`] : []),
+    ...(context.replyTo ? [` / reply to ${context.replyTo}`] : []),
     ...(context.observedDigest ? [` / observed digest ${context.observedDigest}`] : []),
   ].join('')
 }
@@ -645,6 +731,7 @@ function renderInboxContext(context: {
   goalId?: string
   attentionId?: string
   attentionRefs?: string[]
+  replyTo?: string
   observedDigest?: string
 }) {
   const location =
@@ -659,6 +746,7 @@ function renderOperatorReplyContract() {
     '- Default to one or two short sentences. Add only detail that changes understanding or a decision, unless asked.',
     '- If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
     '- Omit internal IDs and process unless requested or needed; if an effect lands in another Goal, include its name and exact Goal ID.',
+    '- For a deliverable link, use a returned operatorUrl in Markdown; never link inspectionPath or any machine-local path.',
   ].join('\n')
 }
 

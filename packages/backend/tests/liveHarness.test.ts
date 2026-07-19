@@ -33,7 +33,7 @@ test('browser audit degradation is explicit and never fabricates verification', 
   )
 })
 
-test('settled Attention liveness rejects only unresolved unnotified targeted blockers', () => {
+test('settled Attention liveness rejects unresolved Assistant-owned targeted blockers', () => {
   expect(
     settledAttentionLivenessViolations({
       attentions: [
@@ -43,6 +43,7 @@ test('settled Attention liveness rejects only unresolved unnotified targeted blo
           body: 'Needs delivery.',
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
         {
           id: 'A-notified',
@@ -50,6 +51,7 @@ test('settled Attention liveness rejects only unresolved unnotified targeted blo
           body: 'Already delivered.',
           resolvedAt: null,
           notifiedAt: '2026-07-16T00:00:00.000Z',
+          operatorRequest: 'home:H-1/event:EV-request',
         },
         {
           id: 'A-resolved',
@@ -57,6 +59,7 @@ test('settled Attention liveness rejects only unresolved unnotified targeted blo
           body: 'Already resolved.',
           resolvedAt: '2026-07-16T00:00:00.000Z',
           notifiedAt: null,
+          operatorRequest: null,
         },
         {
           id: 'A-targetless',
@@ -64,11 +67,12 @@ test('settled Attention liveness rejects only unresolved unnotified targeted blo
           body: 'Completion projection.',
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
       ],
     }),
   ).toEqual([
-    'settled boundary retains unnotified targeted Attention A-orphaned at project:P-1/goal:G-1',
+    'settled boundary retains Assistant-owned targeted Attention A-orphaned at project:P-1/goal:G-1',
   ])
 })
 

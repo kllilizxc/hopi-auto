@@ -100,7 +100,7 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window: today or tomorrow?',
         })
         return {
@@ -165,7 +165,7 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
           message: 'The Project checkout needs to be rebound before work can continue.',
         })
         return {
@@ -337,7 +337,7 @@ async function verifyPoisonedHistoryIsolation(scenario: {
       if (!runtime) throw new Error('Runtime is not ready')
       internalTurns += 1
       if (internalTurns === 1) {
-        await runtime.assistantTools.execute(input.toolToken, 'hopi_notify_user', {
+        await runtime.assistantTools.execute(input.toolToken, 'hopi_request_user', {
           message: publicMessage,
         })
       }

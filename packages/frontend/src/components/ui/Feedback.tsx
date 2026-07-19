@@ -13,6 +13,28 @@ export function AppBreathingIndicator({ className }: AppBreathingIndicatorProps)
   return <span aria-hidden="true" className={cn('app-breathing-indicator', className)} />
 }
 
+export interface AppLoadingNoticeProps {
+  className?: string
+  detail?: ReactNode
+  label: ReactNode
+}
+
+export function AppLoadingNotice({ className, detail, label }: AppLoadingNoticeProps) {
+  return (
+    <div
+      className={cn('app-loading-notice', className)}
+      role="status"
+      aria-live="polite"
+    >
+      <AppBreathingIndicator className="app-loading-notice__indicator" />
+      <span className="app-loading-notice__copy">
+        <strong>{label}</strong>
+        {detail !== undefined ? <small>{detail}</small> : null}
+      </span>
+    </div>
+  )
+}
+
 export interface AppSpinnerProps extends Omit<SpinnerProps, 'className'> {
   className?: string
 }

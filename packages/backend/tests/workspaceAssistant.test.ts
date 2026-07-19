@@ -9,6 +9,7 @@ import { createAssistantTools } from '../src/assistant/assistantTools'
 import {
   type AssistantModelRunner,
   AssistantSessionUnavailableError,
+  WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
   WorkspaceAssistantError,
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
@@ -19,6 +20,7 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -352,6 +354,100 @@ describe('WorkspaceAssistant conversation', () => {
     await expect(run('EV-empty')).rejects.toThrow('empty Assistant message')
   })
 
+  test('retains a Codex model refresh timeout without using it as the Assistant failure', async () => {
+    const binary = join(temporaryRoot, 'fake-codex-model-refresh-timeout')
+    const warning =
+      '2026-07-17T16:43:47.149889Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit'
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'console.error("provider connection failed")',
+        `console.error(${JSON.stringify(warning)})`,
+        'process.exit(1)',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-model-refresh-timeout')
+    const transcriptFile = join(cwd, 'transcript.log')
+    const events: AgentRuntimeEvent[] = []
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        cwdMode: 'root',
+        binary,
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const run = runner.run(
+      {
+        eventId: 'EV-model-refresh-timeout',
+        prompt: 'Continue.',
+        session: null,
+        cwd,
+        lastMessageFile: join(cwd, 'last-message.txt'),
+        transcriptFile,
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'model-refresh-timeout-token',
+      },
+      {
+        onEvent: (event) => {
+          events.push(event)
+        },
+      },
+    )
+
+    await expect(run).rejects.toThrow('provider connection failed')
+    expect(events).not.toContainEqual(expect.objectContaining({ summary: warning }))
+    expect(await Bun.file(transcriptFile).text()).toContain(warning)
+  })
+
+  test('bounds Assistant stderr in memory while retaining the complete transcript', async () => {
+    const binary = join(temporaryRoot, 'fake-codex-verbose-failure')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'for (let index = 0; index < 250; index += 1) console.error(`assistant-${String(index).padStart(3, "0")}`)',
+        'process.exit(9)',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-verbose-failure')
+    const transcriptFile = join(cwd, 'transcript.log')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        cwdMode: 'root',
+        binary,
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    const run = runner.run({
+      eventId: 'EV-verbose-failure',
+      prompt: 'Continue.',
+      session: null,
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile,
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'verbose-failure-token',
+    })
+
+    await expect(run).rejects.toThrow('assistant-249')
+    const transcript = await Bun.file(transcriptFile).text()
+    expect(transcript).toContain('stderr: assistant-000')
+    expect(transcript).toContain('stderr: assistant-249')
+  })
+
   test('passes images to a resumed configured Codex conversation', async () => {
     const binary = join(temporaryRoot, 'fake-codex-image')
     const argsFile = join(temporaryRoot, 'codex-args.json')
@@ -478,11 +574,19 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('never inspect files or transcripts to rediscover them')
     expect(seen[0]?.prompt).toContain('Read state at current page scope by omitting IDs')
     expect(seen[0]?.prompt).toContain('copy complete canonical IDs')
+    expect(seen[0]?.prompt).toContain('select it from Work Evidence artifacts')
+    expect(seen[0]?.prompt).toContain('includeEvidence: true')
+    expect(seen[0]?.prompt).toContain('Link the returned operatorUrl in Markdown')
     expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
     expect(seen[0]?.prompt).toContain('every remainingAttentionRefs value returned by tools')
-    expect(seen[0]?.prompt).toContain('you MUST call hopi_resolve_attention')
-    expect(seen[0]?.prompt).toContain('never closes Attention by itself')
-    expect(seen[0]?.prompt).toContain('Claim it cleared only after hopi_resolve_attention succeeds')
+    expect(seen[0]?.prompt).toContain('Work retry/cancel settles only Attention targeted exactly')
+    expect(seen[0]?.prompt).toContain(
+      'for every other blocker you MUST call hopi_resolve_attention',
+    )
+    expect(seen[0]?.prompt).toContain('Requesting Planning or changing a Goal never closes')
+    expect(seen[0]?.prompt).toContain(
+      'Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds',
+    )
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
@@ -493,9 +597,11 @@ describe('WorkspaceAssistant conversation', () => {
 
   test('resumes one persistent vendor session for later turns', async () => {
     const sessionIds: Array<string | null> = []
+    const prompts: string[] = []
     const fixture = await setup(() => ({
       async run(input, observer) {
         sessionIds.push(input.session?.sessionId ?? null)
+        prompts.push(input.prompt)
         await observer?.onSession?.(codexSession('thread-1'))
         return { reply: `reply-${sessionIds.length}`, session: codexSession('thread-1') }
       },
@@ -506,7 +612,33 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
+    expect(prompts[1]).toContain('use a returned operatorUrl in Markdown')
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
+  })
+
+  test('rebuilds a persisted session when the initial Assistant contract changes', async () => {
+    const calls: Array<{ sessionId: string | null; prompt: string }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        calls.push({ sessionId: input.session?.sessionId ?? null, prompt: input.prompt })
+        await observer?.onSession?.(codexSession('thread-current'))
+        return { reply: 'Current contract applied.', session: codexSession('thread-current') }
+      },
+    }))
+    await fixture.conversation.writeSession(codexSession('thread-old'), 'stale-contract')
+    await fixture.workspace.receiveEvent({ eventId: 'EV-contract', content: 'Continue.' })
+
+    await fixture.assistant.process('EV-contract')
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        sessionId: null,
+        prompt: expect.stringContaining('# HOPI Workspace Assistant'),
+      }),
+    ])
+    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
+      codexSession('thread-current'),
+    )
   })
 
   test('injects current preferences on every turn and rebuilds them from Home', async () => {
@@ -603,7 +735,10 @@ describe('WorkspaceAssistant conversation', () => {
       reply: 'Old reply',
       disposition: 'answered',
     })
-    await fixture.conversation.writeSession(codexSession('missing-thread'))
+    await fixture.conversation.writeSession(
+      codexSession('missing-thread'),
+      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+    )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
     await fixture.assistant.process('EV-1')
@@ -611,7 +746,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls.map((call) => call.sessionId)).toEqual(['missing-thread', null])
     expect(calls[1]?.prompt).toContain('User: Old turn')
     expect(calls[1]?.prompt).toContain('Assistant: Old reply')
-    expect(await fixture.conversation.readSession()).toEqual(codexSession('thread-rebuilt'))
+    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
+      codexSession('thread-rebuilt'),
+    )
   })
 
   test('does not rebuild a cached session after a terminal provider failure', async () => {
@@ -622,7 +759,10 @@ describe('WorkspaceAssistant conversation', () => {
         throw new WorkspaceAssistantError('Daily provider allocation exceeded.')
       },
     }))
-    await fixture.conversation.writeSession(codexSession('thread-existing'))
+    await fixture.conversation.writeSession(
+      codexSession('thread-existing'),
+      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+    )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
     await expect(fixture.assistant.process('EV-1')).rejects.toThrow(
@@ -630,7 +770,9 @@ describe('WorkspaceAssistant conversation', () => {
     )
 
     expect(calls).toEqual(['thread-existing'])
-    expect(await fixture.conversation.readSession()).toEqual(codexSession('thread-existing'))
+    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
+      codexSession('thread-existing'),
+    )
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest).toMatchObject({
       status: 'failed',
       attempt: 1,
@@ -730,10 +872,168 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
-  test('publishes only the explicit notification before acknowledging linked Attention', async () => {
+  test('finishes a retry-only internal handoff without a second model call', async () => {
+    let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {
+        calls += 1
+        await tools.execute(input.toolToken, 'hopi_control_work', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'plan-initial',
+          operation: 'retry',
+        })
+        return { reply: '', session: codexSession('thread-atomic-retry') }
+      },
+    }))
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await fixture.controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      3,
+      'stream disconnected before completion',
+    )
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-atomic-retry',
+      content: 'The transient blocker is clear; retry the Work.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [`project:P-1/goal:G-1/attention:${attention.attributes.id}`],
+      },
+    })
+
+    await fixture.assistant.process('EV-atomic-retry')
+
+    expect(calls).toBe(1)
+    expect((await fixture.workspace.readEvent('EV-atomic-retry'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
+        ?.attributes.resolvedAt,
+    ).not.toBeNull()
+  })
+
+  test('continues the same session when an internal handoff leaves Attention unnotified', async () => {
+    const prompts: string[] = []
+    const sessions: Array<string | null> = []
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        prompts.push(input.prompt)
+        sessions.push(input.session?.sessionId ?? null)
+        if (prompts.length === 1) {
+          return { reply: '', session: codexSession('thread-settlement') }
+        }
+        await tools.execute(input.toolToken, 'hopi_request_user', {
+          message: 'Choose the release window: today or tomorrow?',
+        })
+        return {
+          reply: 'Internal narration remains hidden.',
+          session: codexSession('thread-settlement'),
+        }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-settlement')
+    const reference = 'project:P-1/goal:G-1/attention:A-settlement'
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-settlement',
+      content: 'Ask the operator for the unresolved choice.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+
+    await fixture.assistant.process('EV-settlement')
+
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('[Attention settlement correction')
+    expect(prompts[1]).toContain(reference)
+    expect(sessions).toEqual([null, 'thread-settlement'])
+    expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'public',
+      reply: 'Choose the release window: today or tomorrow?',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-settlement')?.attributes,
+    ).toMatchObject({
+      notifiedAt: expect.any(String),
+      operatorRequest: expect.stringContaining('/event:EV-settlement'),
+      resolvedAt: null,
+    })
+  })
+
+  test('does not let prior informational delivery silently settle Assistant-owned Attention', async () => {
+    const prompts: string[] = []
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        prompts.push(input.prompt)
+        if (prompts.length === 1) {
+          return { reply: '', session: codexSession('thread-informational-owner') }
+        }
+        await tools.execute(input.toolToken, 'hopi_request_user', {
+          message: 'Choose the release window: today or tomorrow?',
+        })
+        return { reply: '', session: codexSession('thread-informational-owner') }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-informational-owner')
+    await acknowledgeGoalAttention(
+      fixture.goalStore,
+      'G-1',
+      'A-informational-owner',
+      new Date('2026-07-11T01:00:00Z'),
+    )
+    const reference = 'project:P-1/goal:G-1/attention:A-informational-owner'
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-informational-owner',
+      content: 'Continue the internally owned blocker after its earlier status update.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+
+    await fixture.assistant.process('EV-informational-owner')
+
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('[Attention settlement correction')
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-informational-owner')
+        ?.attributes,
+    ).toMatchObject({
+      notifiedAt: '2026-07-11T01:00:00.000Z',
+      operatorRequest: expect.stringContaining('/event:EV-informational-owner'),
+      resolvedAt: null,
+    })
+  })
+
+  test('does not silently handle a handoff after two Attention omissions', async () => {
+    const fixture = await setup(() => ({
+      async run() {
+        return { reply: '', session: codexSession('thread-omission') }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-omission')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-omission',
+      content: 'Settle this blocker.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-omission'],
+      },
+    })
+
+    await expect(fixture.assistant.process('EV-omission')).rejects.toThrow(
+      'without a durable internal continuation or exact operator request',
+    )
+
+    expect((await fixture.workspace.readEvent('EV-omission'))?.attributes.status).toBe('pending')
+    expect((await fixture.conversation.readTurn('EV-omission'))?.manifest.status).toBe('failed')
+  })
+
+  test('publishes only the explicit operator request before transferring linked Attention', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window: today or tomorrow?',
         })
         return {
@@ -760,17 +1060,22 @@ describe('WorkspaceAssistant conversation', () => {
       visibility: 'public',
       status: 'handled',
       reply: 'Choose the release window: today or tomorrow?',
+      disposition: 'operator-requested',
     })
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+    ).toMatchObject({
+      notifiedAt: expect.any(String),
+      operatorRequest: expect.stringContaining('/event:EV-notify'),
+      resolvedAt: null,
+    })
   })
 
   test('HOPI-E2E-013 contracts one Attention notification, durable answer, and continuation', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         if (input.eventId === 'EV-notify') {
-          await tools.execute(input.toolToken, 'hopi_notify_user', {
+          await tools.execute(input.toolToken, 'hopi_request_user', {
             message: 'Which release window should I use: today or tomorrow?',
           })
           return {
@@ -869,7 +1174,7 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window.',
         })
         throw new Error('reply generation failed')
@@ -902,7 +1207,7 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_notify_user', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window.',
         })
         return {
@@ -1019,11 +1324,21 @@ async function setup(
     attempts: createRunAttemptStore(homeRoot),
   })
   const tools = createAssistantTools({
+    home,
     workspace,
     publisher,
     preview,
     projects,
     state,
+    readAssistantCodingDefaults: async () => ({
+      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      inherited: true,
+    }),
+    readProjectCodingDefaults: async () => ({
+      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      inherited: true,
+    }),
+    updateAssistantCodingDefaultsForTurn: async () => undefined,
   })
   const assistant = createWorkspaceAssistant({
     homeRoot,
@@ -1034,7 +1349,7 @@ async function setup(
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
-  return { homeRoot, workspace, conversation, goalStore, tools, assistant }
+  return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }
 }
 
 async function createGoalAttention(
@@ -1055,6 +1370,7 @@ async function createGoalAttention(
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
         body: '## Needs you\n\nChoose one option.\n',
       }),

@@ -109,7 +109,7 @@ export function deriveWorkProjection(
   if (work.attempts >= maxAttempts) failedPredicates.push('attempts_exhausted')
   const coveringAttention = findCoveringAttention(projectId, goalId, work.id, goalPackage)
   const needsAttention = Boolean(coveringAttention)
-  const attentionNotified = Boolean(coveringAttention?.attributes.notifiedAt)
+  const waitingForOperator = Boolean(coveringAttention?.attributes.operatorRequest)
   if (needsAttention) failedPredicates.push('attention')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
@@ -131,7 +131,7 @@ export function deriveWorkProjection(
     primaryBadge: terminal
       ? null
       : needsAttention
-        ? attentionNotified
+        ? waitingForOperator
           ? 'Needs you'
           : 'Waiting for Assistant'
         : working
@@ -158,7 +158,7 @@ function findCoveringAttention(
       attention.attributes.resolvedAt === null &&
       (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
   )
-  return covering.find((attention) => attention.attributes.notifiedAt !== null) ?? covering[0]
+  return covering.find((attention) => Boolean(attention.attributes.operatorRequest)) ?? covering[0]
 }
 
 function kanbanColumn(work: WorkAttributes): KanbanColumn | null {

@@ -4,9 +4,9 @@ import {
   type BrowserHarnessContext,
   type LiveGoalDetail,
   type LiveState,
+  assertAcceptedDelivery,
   captureCompletionUpdate,
-  checkoutSnapshot,
-  gitOutput,
+  type checkoutSnapshot,
   inspectKanban,
   readPendingInboxEvents,
   requestJson,
@@ -68,15 +68,7 @@ export async function verifyGoalDeliveryDomain(input: {
   const attempts = await readAttempts(input.context, input.projectId, input.goalId, finalGoal)
   assertRealResponsibilityPath(attempts)
   const projectVerification = await verifyIntegratedClampProject(input.integrationRoot)
-  const checkoutAfter = await checkoutSnapshot(input.context.repoRoot)
-  assert.equal(checkoutAfter.branch, input.checkoutBefore.branch)
-  assert.equal(checkoutAfter.status, '')
-  assert.notEqual(checkoutAfter.head, input.checkoutBefore.head)
-  assert.equal(
-    checkoutAfter.head,
-    await gitOutput(input.context.repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
-    'Delivery checkout must fast-forward exactly to the accepted release',
-  )
+  const checkoutAfter = await assertAcceptedDelivery(input.context.repoRoot, input.checkoutBefore)
   const deliveryVerification = await verifyIntegratedClampProject(input.context.repoRoot)
 
   return {

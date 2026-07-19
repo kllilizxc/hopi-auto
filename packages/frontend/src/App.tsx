@@ -2,23 +2,35 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { AppLoadingNotice } from './components/ui'
+import { initializeMessageStreamCache } from './lib/messageStreamCache'
+import {
+  loadBoardView,
+  loadGoalCreatePage,
+  loadGoalDocsPage,
+  loadProjectHomePage,
+} from './routeModules'
+import { NAVIGATION_CACHE_GC_INTERVAL_MS } from './lib/queryPerformance'
+
+initializeMessageStreamCache()
 
 const BoardView = lazy(() =>
-  import('./pages/BoardView').then((module) => ({ default: module.BoardView })),
+  loadBoardView().then((module) => ({ default: module.BoardView })),
 )
 const GoalDocsPage = lazy(() =>
-  import('./pages/GoalDocsPage').then((module) => ({ default: module.GoalDocsPage })),
+  loadGoalDocsPage().then((module) => ({ default: module.GoalDocsPage })),
 )
 const GoalCreatePage = lazy(() =>
-  import('./pages/GoalCreatePage').then((module) => ({ default: module.GoalCreatePage })),
+  loadGoalCreatePage().then((module) => ({ default: module.GoalCreatePage })),
 )
 const ProjectHomePage = lazy(() =>
-  import('./pages/ProjectHomePage').then((module) => ({ default: module.ProjectHomePage })),
+  loadProjectHomePage().then((module) => ({ default: module.ProjectHomePage })),
 )
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      gcTime: NAVIGATION_CACHE_GC_INTERVAL_MS,
       staleTime: 1_000,
       retry: 1,
       refetchOnWindowFocus: false,
@@ -64,11 +76,10 @@ function RouteBoundary({ children }: { children: ReactNode }) {
 
 function RouteLoading() {
   return (
-    <div className="route-loading" role="status" aria-live="polite">
-      <span className="route-loading-mark" aria-hidden="true" />
-      <strong>Opening workspace</strong>
-      <small>Loading this surface…</small>
-    </div>
+    <AppLoadingNotice
+      detail="Loading this surface…"
+      label="Opening workspace"
+    />
   )
 }
 

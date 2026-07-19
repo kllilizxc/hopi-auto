@@ -26,6 +26,11 @@ export interface PlanningContext {
   references?: readonly PlanningReference[]
 }
 
+export interface WorkRetrySettlement {
+  acceptedInput: PlanningInputAdmission
+  resolution: string
+}
+
 export interface GoalControllerOptions {
   now?: () => Date
   verifyCompletion(goalId: string, packageState: GoalPackage): Promise<boolean> | boolean
@@ -65,7 +70,12 @@ export interface GoalController {
   resumeGoal(goalId: string): Promise<GoalDocument>
   setPriority(goalId: string, priority: number): Promise<GoalDocument>
   setWorkNotBefore(goalId: string, workId: string, notBefore: string | null): Promise<WorkDocument>
-  retryWork(goalId: string, workId: string, notBefore: string | null): Promise<WorkDocument>
+  retryWork(
+    goalId: string,
+    workId: string,
+    notBefore: string | null,
+    settlement?: WorkRetrySettlement,
+  ): Promise<WorkDocument>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
   reopenGoal(goalId: string, input: { eventId: string; content: string }): Promise<GoalDocument>
@@ -289,9 +299,10 @@ export function createGoalController(
           createdAt: now().toISOString(),
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
         body: [
-          '## Needs you',
+          '## Reviewed recovery decision',
           '',
           `Work ${workId} exhausted its ${work.attributes.attempts} reviewed repair attempts.`,
           '',
@@ -331,6 +342,7 @@ export function createGoalController(
           createdAt: now().toISOString(),
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
         body: [
           '## Assistant recovery needed',
@@ -377,6 +389,7 @@ export function createGoalController(
           createdAt: now().toISOString(),
           resolvedAt: null,
           notifiedAt: null,
+          operatorRequest: null,
         },
         body: [
           '## Needs attention',
@@ -522,7 +535,7 @@ export function createGoalController(
       })
       return next
     },
-    async retryWork(goalId, workId, notBefore) {
+    async retryWork(goalId, workId, notBefore, settlement) {
       if (notBefore !== null && Number.isNaN(Date.parse(notBefore))) {
         throw new GoalControllerError('Work notBefore must be an ISO timestamp or null')
       }
@@ -531,21 +544,66 @@ export function createGoalController(
       if (!work || isWorkTerminal(work.attributes)) {
         throw new GoalControllerError(`Cannot retry missing or terminal Work: ${workId}`)
       }
-      if (work.attributes.attempts === 0 && work.attributes.notBefore === notBefore) return work
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
       const next: WorkDocument = {
         ...work,
         attributes: { ...work.attributes, attempts: 0, notBefore },
       }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
+      const writes: PublicationWrite[] = []
+      if (work.attributes.attempts !== 0 || work.attributes.notBefore !== notBefore) {
+        const path = store.paths.workDocument(goalId, workId)
+        const source = await Bun.file(store.paths.absolute(path)).text()
+        writes.push({
           path,
           expectedHash: await hashBytes(new TextEncoder().encode(source)),
           content: renderWorkDocument(next),
-        },
-      })
+        })
+      }
+
+      if (settlement?.acceptedInput.write) writes.push(settlement.acceptedInput.write)
+      if (settlement) {
+        const target = workAttentionTarget(store.paths.projectId, goalId, workId)
+        for (const attention of goalPackage.attentions.values()) {
+          if (attention.attributes.target !== target || attention.attributes.resolvedAt !== null) {
+            continue
+          }
+          const path = store.paths.attentionDocument(goalId, attention.attributes.id)
+          const source = await Bun.file(store.paths.absolute(path)).text()
+          const resolved: AttentionDocument = {
+            ...attention,
+            attributes: {
+              ...attention.attributes,
+              operatorRequest: null,
+              resolvedAt: now().toISOString(),
+              resolutionInput: settlement.acceptedInput.path,
+            },
+            body: [
+              attention.body.trimEnd(),
+              '',
+              '## Resolution',
+              '',
+              `Answer Input: \`${settlement.acceptedInput.path}\``,
+              '',
+              settlement.resolution.trim(),
+              '',
+            ].join('\n'),
+          }
+          writes.push({
+            path,
+            expectedHash: await hashBytes(new TextEncoder().encode(source)),
+            content: renderAttentionDocument(resolved),
+          })
+        }
+      }
+
+      if (writes.length === 0) return work
+      const attentionPrefix = `${store.paths.attentionRoot(goalId)}/`
+      const attentionGateIndex = writes.findLastIndex((write) =>
+        write.path.startsWith(attentionPrefix),
+      )
+      const gateIndex = attentionGateIndex >= 0 ? attentionGateIndex : writes.length - 1
+      const [gateWrite] = writes.splice(gateIndex, 1)
+      if (!gateWrite) return next
+      await store.publishGoal(goalId, { supportingWrites: writes, gateWrite })
       return next
     },
     async cancelWork(goalId, workId) {
@@ -664,6 +722,7 @@ export function createGoalController(
         const resolved: AttentionDocument = {
           attributes: {
             ...completion.attributes,
+            operatorRequest: null,
             resolvedAt: now().toISOString(),
           },
           body: `${completion.body}\n## Resolution\n\nSuperseded by explicit Goal reopen.\n`,
@@ -747,6 +806,7 @@ async function resolveAttention(
   const path = store.paths.attentionDocument(goalId, attention.attributes.id)
   const source = await Bun.file(store.paths.absolute(path)).text()
   const next = parseAttentionDocument(source)
+  next.attributes.operatorRequest = null
   next.attributes.resolvedAt = resolvedAt.toISOString()
   next.body += `\n## Resolution\n\n${reason}\n`
   await store.publishGoal(goalId, {

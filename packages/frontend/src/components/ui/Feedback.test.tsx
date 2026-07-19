@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AppBreathingIndicator, WorkingIndicator } from './Feedback'
+import { AppBreathingIndicator, AppLoadingNotice, WorkingIndicator } from './Feedback'
 
 test('the breathing indicator is a quiet decorative loading primitive', () => {
   const markup = renderToStaticMarkup(<AppBreathingIndicator className="assistant-waiting" />)
@@ -20,4 +20,16 @@ test('the working indicator owns the shared running Spinner and optional label',
   expect(labelledMarkup).toContain('aria-hidden="true"')
   expect(labelledMarkup).toContain('>Working</span>')
   expect(iconOnlyMarkup).toContain('aria-label="Working"')
+})
+
+test('the shared loading notice stays non-modal and uses the breathing primitive', () => {
+  const markup = renderToStaticMarkup(
+    <AppLoadingNotice detail="Reading the latest projection…" label="Loading Goal" />,
+  )
+
+  expect(markup).toContain('app-loading-notice')
+  expect(markup).toContain('app-loading-notice__indicator')
+  expect(markup).toContain('role="status"')
+  expect(markup).toContain('Loading Goal')
+  expect(markup).not.toContain('app-spinner')
 })

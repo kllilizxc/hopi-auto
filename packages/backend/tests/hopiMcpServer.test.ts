@@ -42,10 +42,14 @@ describe('HOPI MCP server', () => {
     const tools = await client.listTools()
     const result = await client.callTool({ name: 'hopi_read_state', arguments: {} })
 
-    expect(tools.tools.map((tool) => tool.name)).toContain('hopi_request_planning')
-    expect(tools.tools.map((tool) => tool.name)).toContain('hopi_write_preferences')
-    expect(tools.tools.map((tool) => tool.name)).not.toContain('hopi_notify_user')
-    expect(tools.tools).toHaveLength(9)
+    const names = tools.tools.map((tool) => tool.name)
+    expect(names).toContain('hopi_request_planning')
+    expect(names).toContain('hopi_write_preferences')
+    expect(names).toContain('hopi_manage_project')
+    expect(names).toContain('hopi_configure_model')
+    expect(names).not.toContain('hopi_notify_user')
+    expect(names).not.toContain('hopi_request_user')
+    expect(tools.tools).toHaveLength(11)
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
     ).toContain('reusable defaults')
@@ -61,6 +65,12 @@ describe('HOPI MCP server', () => {
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
     ).toContain('not for optional notes or future ideas')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
+      'includeEvidence: true',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
+      'link only operatorUrl',
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
       'relative to the Goal design root',
     )
@@ -74,7 +84,7 @@ describe('HOPI MCP server', () => {
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })
 
-  test('exposes notify only to an internal speaking-thread turn', async () => {
+  test('exposes informational and request delivery only to an internal speaking-thread turn', async () => {
     const api = Bun.serve({
       port: 0,
       fetch: () => Response.json({ summary: 'Ready.', changed: false, value: {} }),
@@ -98,8 +108,11 @@ describe('HOPI MCP server', () => {
     const names = (await client.listTools()).tools.map((tool) => tool.name)
     expect(names).toContain('hopi_request_planning')
     expect(names).toContain('hopi_notify_user')
+    expect(names).toContain('hopi_request_user')
     expect(names).not.toContain('hopi_write_preferences')
-    expect(names).toHaveLength(9)
+    expect(names).not.toContain('hopi_manage_project')
+    expect(names).not.toContain('hopi_configure_model')
+    expect(names).toHaveLength(10)
   })
 
   test('limits Reflection to state read and one handoff tool', async () => {

@@ -22,6 +22,15 @@ const turnManifestSchema = z
 
 const sessionManifestSchema = z
   .object({
+    version: z.literal(2),
+    transport: z.enum(['codex', 'claude', 'opencode']),
+    sessionId: z.string().min(1),
+    contractDigest: z.string().min(1).nullable(),
+  })
+  .strict()
+
+const previousSessionManifestSchema = z
+  .object({
     version: z.literal(1),
     transport: z.enum(['codex', 'claude', 'opencode']),
     sessionId: z.string().min(1),
@@ -61,8 +70,8 @@ export interface AssistantConversationStore {
   complete(eventId: string): Promise<void>
   fail(eventId: string, error: string): Promise<void>
   readTurn(eventId: string): Promise<AssistantTurnRuntime | null>
-  readSession(): Promise<AssistantSession | null>
-  writeSession(session: AssistantSession): Promise<void>
+  readSession(contractDigest?: string): Promise<AssistantSession | null>
+  writeSession(session: AssistantSession, contractDigest?: string): Promise<void>
   clearSession(): Promise<void>
 }
 
@@ -155,7 +164,7 @@ export function createAssistantConversationStore(
       return { manifest, events: await readEvents(eventsPath(eventId)) }
     },
 
-    async readSession() {
+    async readSession(contractDigest) {
       const file = Bun.file(sessionPath)
       if (!(await file.exists())) return null
       let source: unknown
@@ -167,13 +176,35 @@ export function createAssistantConversationStore(
       }
       const current = sessionManifestSchema.safeParse(source)
       if (current.success) {
+        if (contractDigest && current.data.contractDigest !== contractDigest) {
+          await rm(sessionPath, { force: true })
+          return null
+        }
         return {
           transport: current.data.transport,
           sessionId: current.data.sessionId,
         }
       }
+      const previous = previousSessionManifestSchema.safeParse(source)
+      if (previous.success) {
+        if (contractDigest) {
+          await rm(sessionPath, { force: true })
+          return null
+        }
+        const migrated: AssistantSession = {
+          transport: previous.data.transport,
+          sessionId: previous.data.sessionId,
+        }
+        await writeJson(sessionPath, { version: 2, ...migrated, contractDigest: null })
+        return migrated
+      }
+
       const legacy = legacySessionManifestSchema.safeParse(source)
       if (!legacy.success) {
+        await rm(sessionPath, { force: true })
+        return null
+      }
+      if (contractDigest) {
         await rm(sessionPath, { force: true })
         return null
       }
@@ -181,16 +212,17 @@ export function createAssistantConversationStore(
         transport: 'codex',
         sessionId: legacy.data.threadId,
       }
-      await writeJson(sessionPath, { version: 1, ...migrated })
+      await writeJson(sessionPath, { version: 2, ...migrated, contractDigest: null })
       return migrated
     },
 
-    async writeSession(session) {
+    async writeSession(session, contractDigest) {
       await mkdir(root, { recursive: true })
       const manifest = sessionManifestSchema.parse({
-        version: 1,
+        version: 2,
         transport: session.transport,
         sessionId: session.sessionId.trim(),
+        contractDigest: contractDigest?.trim() || null,
       })
       await writeJson(sessionPath, manifest)
     },

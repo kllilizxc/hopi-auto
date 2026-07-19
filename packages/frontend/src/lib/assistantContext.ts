@@ -10,6 +10,7 @@ export interface AssistantInboxContext {
   projectId?: string
   goalId?: string
   attentionRefs?: string[]
+  replyTo?: string
 }
 
 export function assistantAttentionReference(attention: AttentionView, homeId?: string) {
@@ -27,27 +28,22 @@ export function findAttentionNotificationEventId(
   homeId?: string,
 ) {
   const reference = assistantAttentionReference(attention, homeId)
-  if (!reference) return null
+  const requestEventId = attention.operatorRequest?.split('/event:')[1]
+  if (!reference || !requestEventId) return null
 
-  const entry = entries.findLast(
+  return entries.some(
     (candidate) =>
       candidate.kind === 'event' &&
-      candidate.event.source === 'reflection' &&
-      candidate.event.visibility === 'public' &&
-      candidate.event.status === 'handled' &&
-      Boolean(candidate.event.reply?.trim()) &&
-      Boolean(
-        candidate.event.context &&
-          normalizeAttentionReferences(candidate.event.context).includes(reference),
-      ),
+      candidate.event.id === requestEventId &&
+      candidate.event.context &&
+      normalizeAttentionReferences(candidate.event.context).includes(reference),
   )
-  return entry?.kind === 'event' ? entry.event.id : null
+    ? requestEventId
+    : null
 }
 
 export function isNeedsYouAttention(attention: AttentionView) {
-  return (
-    attention.target !== null && attention.resolvedAt === null && attention.notifiedAt !== null
-  )
+  return attention.resolvedAt === null && !!attention.operatorRequest
 }
 
 export function groupNeedsYouAttentions(
@@ -61,7 +57,9 @@ export function groupNeedsYouAttentions(
     const eventId = findAttentionNotificationEventId(entries, attention, homeId)
     if (!eventId) continue
     const groupId = `inbox:${eventId}`
-    groups.set(groupId, [...(groups.get(groupId) ?? []), attention])
+    const group = groups.get(groupId)
+    if (group) group.push(attention)
+    else groups.set(groupId, [attention])
   }
   return groups
 }
@@ -88,6 +86,11 @@ export function resolveAssistantInboxContext(
     ]
     if (references.length === 0) return undefined
     const first = replyAttentions[0]
+    const replyTo =
+      first?.operatorRequest &&
+      replyAttentions.every((attention) => attention.operatorRequest === first.operatorRequest)
+        ? first.operatorRequest
+        : undefined
     const sharedGoal =
       first?.scope === 'goal' &&
       first.projectId &&
@@ -103,9 +106,10 @@ export function resolveAssistantInboxContext(
         projectId: first.projectId,
         goalId: first.goalId,
         attentionRefs: references,
+        ...(replyTo ? { replyTo } : {}),
       }
     }
-    return { attentionRefs: references }
+    return { attentionRefs: references, ...(replyTo ? { replyTo } : {}) }
   }
   if (!pageScope) return undefined
   const attentionRefs = openAttentions

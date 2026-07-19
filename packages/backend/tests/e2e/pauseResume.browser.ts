@@ -14,6 +14,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
+  assertAcceptedDelivery,
   checkoutSnapshot,
   clickGoalControl,
   errorMessage,
@@ -137,15 +138,7 @@ try {
     [false, true],
     'The resumed Attempt must read a file written in the pre-Pause workspace',
   )
-  const checkoutAfter = await checkoutSnapshot(repoRoot)
-  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
-  assert.equal(checkoutAfter.status, '')
-  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
-  assert.equal(
-    checkoutAfter.head,
-    await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
-    'Accepted delivery must fast-forward the clean checkout exactly to hopi/release',
-  )
+  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
   assert.equal(
     await Bun.file(join(roles.generatorWorkspaces[1]?.path ?? '', 'pause-continuity.txt')).exists(),
     false,

@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
-import type { AssistantFeedEntry } from './apiTypes'
-import { mergeAssistantFeedEntries } from './useAssistantFeedStream'
+import type { AssistantFeedEntry, AssistantFeedPage } from './apiTypes'
+import { mergeAssistantChangesIntoHistory } from './messageStreamCache'
+import {
+  mergeAssistantFeedEntries,
+} from './useAssistantFeedStream'
 
 test('merges mutable Assistant entries by identity instead of only replacing the newest tail', () => {
   const current = [
@@ -25,6 +28,37 @@ test('removes a standalone projection after it is absorbed into another conversa
   } as AssistantFeedEntry
 
   expect(mergeAssistantFeedEntries([standalone], [], [standalone.id])).toEqual([])
+})
+
+test('retains Assistant changes in cached history for the next mount', () => {
+  const removed = eventEntry('event:removed', '2026-07-16T09:00:00.000Z', 'completed')
+  const added = eventEntry('event:added', '2026-07-16T09:01:00.000Z', 'running')
+  const page: AssistantFeedPage = {
+    items: [removed],
+    activity: null,
+    syncCursor: 'old-sync',
+    pageInfo: {
+      oldestCursor: 'before-old',
+      newestCursor: 'after-old',
+      hasOlder: false,
+      hasNewer: false,
+      totalCount: 1,
+    },
+  }
+
+  const merged = mergeAssistantChangesIntoHistory(
+    { pages: [page], pageParams: [null] },
+    {
+      items: [added],
+      removedIds: [removed.id],
+      activity: { phase: 'working' },
+      syncCursor: 'new-sync',
+    },
+  )
+
+  expect(merged?.pages[0]?.items).toEqual([added])
+  expect(merged?.pages[0]?.activity).toEqual({ phase: 'working' })
+  expect(merged?.pages[0]?.syncCursor).toBe('new-sync')
 })
 
 function eventEntry(

@@ -12,14 +12,16 @@ import {
   workspaceAttentionReference,
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
+import type { WorkDocument } from './domain/canonicalDocuments'
 import type { GoalPackage } from './domain/goalPackage'
+import { inboxEventReferenceSchema } from './domain/inboxEventReference'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './domain/projectCodingDefaults'
 import { isNormalizedProjectPath, resolveProjectPath } from './domain/projectPath'
 import { deriveReadableId, stableIdSchema } from './domain/stableId'
-import { deriveGoalWorkProjections } from './domain/workProjection'
+import { type WorkProjection, deriveGoalWorkProjections } from './domain/workProjection'
 import { CursorPageError, type CursorPageRequest, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
@@ -31,10 +33,16 @@ import {
   type AttentionTransport,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
+import {
+  EvidenceArtifactResolutionError,
+  inlineArtifactMediaType,
+  resolveEvidenceArtifact,
+} from './runtime/evidenceArtifacts'
 import { GoalControllerError } from './runtime/goalController'
 import { HostDirectoryPickerError, selectHostDirectory } from './runtime/hostDirectoryPicker'
 import { assertSupportedPlatform } from './runtime/hostPlatform'
 import {
+  type CreateMvpRuntimeOptions,
   type MvpProjectRuntime,
   type MvpRuntime,
   createMvpRuntime,
@@ -45,6 +53,7 @@ import {
   classifyProjectDirectory,
   initializeEmptyGitRepository,
 } from './runtime/projectDirectory'
+import type { RunAttemptSummary } from './runtime/runAttemptStore'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 
@@ -128,6 +137,7 @@ const inboxSchema = z
         attentionRefs: z
           .array(z.string().refine((value) => Boolean(parseAttentionReference(value))))
           .optional(),
+        replyTo: inboxEventReferenceSchema.optional(),
       })
       .superRefine((context, refinement) => {
         if (Boolean(context.projectId) !== Boolean(context.goalId)) {
@@ -140,6 +150,12 @@ const inboxSchema = z
           refinement.addIssue({
             code: z.ZodIssueCode.custom,
             message: 'context requires a Goal location or Attention reference',
+          })
+        }
+        if (context.replyTo && !context.attentionRefs?.length) {
+          refinement.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'replyTo requires exact Attention references',
           })
         }
       })
@@ -161,8 +177,11 @@ const previewRepairSchema = z
 export function createServer(options: ServerOptions = {}): MvpServer {
   assertSupportedPlatform(process.platform)
   const homeRoot = options.rootDir ?? process.cwd()
-  const serverRef: { current: Bun.Server<undefined> | null } = { current: null }
-  const runtimeOptions = {
+  const serverRef: { current: Bun.Server<undefined> | null } = {
+    current: null,
+  }
+  let topologyReloadScheduled = false
+  const runtimeOptions: CreateMvpRuntimeOptions = {
     homeRoot,
     roleRunner: options.roleRunner,
     assistantRunner: options.assistantRunner,
@@ -176,6 +195,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       if (!serverRef.current) throw new Error('Assistant tool server is not ready')
       return `http://127.0.0.1:${serverRef.current.port}/api/internal/assistant-tool`
     },
+    onProjectTopologyChanged: scheduleTopologyReload,
     start: false,
   }
   let runtimePromise = createMvpRuntime(runtimeOptions)
@@ -202,6 +222,18 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     return runtimePromise
   }
 
+  function scheduleTopologyReload() {
+    if (topologyReloadScheduled) return
+    topologyReloadScheduled = true
+    setTimeout(() => {
+      void reloadRuntime(async () => undefined)
+        .catch((error) => console.error('[mvp runtime reload error]', error))
+        .finally(() => {
+          topologyReloadScheduled = false
+        })
+    }, 0)
+  }
+
   const server = Bun.serve({
     reusePort: false,
     routes: {
@@ -221,12 +253,18 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(await runtime.assistantTools.execute(body.token, body.name, body.arguments))
         }
         if (request.method === 'GET' && url.pathname === '/api/state') {
-          return json(await presentState(runtime))
+          return json(
+            await presentState(runtime, {
+              includeAttentions: url.searchParams.get('view') !== 'shell',
+            }),
+          )
         }
         if (request.method === 'POST' && url.pathname === '/api/system/select-directory') {
           try {
             const path = await pickDirectory()
-            return json({ selection: path ? await classifyProjectDirectory(path) : null })
+            return json({
+              selection: path ? await classifyProjectDirectory(path) : null,
+            })
           } catch (error) {
             if (error instanceof HostDirectoryPickerError) {
               throw new ApiError(503, error.message)
@@ -236,10 +274,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (request.method === 'POST' && url.pathname === '/api/system/initialize-repository') {
           const body = await parseBody(request, initializeRepositorySchema)
-          return json({ selection: await initializeEmptyGitRepository(body.path) })
+          return json({
+            selection: await initializeEmptyGitRepository(body.path),
+          })
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed/changes') {
           return json(await presentAssistantFeedChanges(runtime, readAssistantChangeCursor(url)))
+        }
+        if (request.method === 'GET' && url.pathname === '/api/assistant/attentions') {
+          return json(await presentAssistantAttentions(runtime))
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
           return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
@@ -304,7 +347,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const reflectionId = parts[3]
           const events = await runtime.reflection.readRunEvents(reflectionId)
           if (!events) throw new ApiError(404, `Reflection Run not found: ${reflectionId}`)
-          const indexedEvents = events.map((event, streamIndex) => ({ ...event, streamIndex }))
+          const indexedEvents = events.map((event, streamIndex) => ({
+            ...event,
+            streamIndex,
+          }))
           return json(
             paginateItems(indexedEvents, readPageRequest(url, 80, 200), {
               scope: `reflection-events:${reflectionId}`,
@@ -330,7 +376,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const body = await parseBody(request, rebindProjectSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
             if ('repos' in body) await current.home.rebindRepos({ projectId, repos: body.repos })
-            else await current.rebindProject(projectId, body.repoPath)
+            else await current.rebindProject(projectId, body.repoPath, body.projectPath)
           })
           return json(await presentState(await nextRuntime))
         }
@@ -360,7 +406,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const repoId = requirePart(parts, 4)
           const body = await parseBody(request, repoPathSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
-            await current.rebindRepo(projectId, repoId, body.repoPath)
+            await current.rebindRepo(projectId, repoId, body.repoPath, body.projectPath)
           })
           return json(await presentState(await nextRuntime))
         }
@@ -504,9 +550,81 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           )
         }
 
+        const evidenceArtifactRoute = matchEvidenceArtifactRoute(parts)
+        if (evidenceArtifactRoute && request.method === 'GET') {
+          const project = requireProject(runtime.projects, evidenceArtifactRoute.projectId)
+          const goalPackage = await project.store.readPackage(evidenceArtifactRoute.goalId)
+          const evidence = goalPackage.evidence.get(evidenceArtifactRoute.evidenceId)
+          if (
+            !evidence ||
+            ![...goalPackage.works.values()].some((work) =>
+              work.attributes.evidenceRefs.includes(evidenceArtifactRoute.evidenceId),
+            )
+          ) {
+            throw new ApiError(404, 'Evidence not found')
+          }
+          const reference = evidence.attributes.artifacts[evidenceArtifactRoute.artifactIndex]
+          if (!reference) throw new ApiError(404, 'Evidence artifact not found')
+          try {
+            const artifact = await resolveEvidenceArtifact({
+              homeRoot: runtime.homeRoot,
+              project,
+              reference,
+            })
+            return new Response(Bun.file(artifact.path), {
+              headers: {
+                'cache-control': 'private, no-store',
+                'content-disposition': inlineContentDisposition(artifact.fileName),
+                'content-security-policy':
+                  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'",
+                'content-type': inlineArtifactMediaType(artifact.fileName),
+                'x-content-type-options': 'nosniff',
+              },
+            })
+          } catch (error) {
+            if (error instanceof EvidenceArtifactResolutionError) {
+              throw new ApiError(error.code === 'ambiguous' ? 409 : 404, error.message)
+            }
+            throw error
+          }
+        }
+
+        const workDocumentRoute = matchWorkDocumentRoute(parts)
+        if (workDocumentRoute && request.method === 'GET') {
+          const project = requireProject(runtime.projects, workDocumentRoute.projectId)
+          const work = (await project.store.readPackage(workDocumentRoute.goalId)).works.get(
+            workDocumentRoute.workId,
+          )
+          if (!work) throw new ApiError(404, `Work not found: ${workDocumentRoute.workId}`)
+          return json({ id: work.attributes.id, body: work.body })
+        }
+
+        const goalDocumentRoute = matchGoalDocumentRoute(parts)
+        if (goalDocumentRoute && request.method === 'GET') {
+          const project = requireProject(runtime.projects, goalDocumentRoute.projectId)
+          const path = url.searchParams.get('path')
+          const designRoot = project.store.paths.designRoot(goalDocumentRoute.goalId)
+          if (!path || !isDesignDocumentPath(designRoot, path)) {
+            throw new ApiError(400, 'A canonical design document path is required')
+          }
+          const snapshot = await runtime.publisher.snapshot(project.store.paths.publicationRoot, [
+            path,
+          ])
+          const document = snapshot.files.find((file) => file.path === path)
+          if (!document?.content) throw new ApiError(404, `Design document not found: ${path}`)
+          return json({ path, content: new TextDecoder().decode(document.content) })
+        }
+
         const goalRoute = matchGoalRoute(parts)
         if (goalRoute && request.method === 'GET' && goalRoute.action === null) {
-          return json(await presentGoal(runtime, goalRoute.projectId, goalRoute.goalId))
+          return json(
+            await presentGoal(
+              runtime,
+              goalRoute.projectId,
+              goalRoute.goalId,
+              readGoalView(url.searchParams.get('view')),
+            ),
+          )
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'pause') {
           const project = requireProject(runtime.projects, goalRoute.projectId)
@@ -601,10 +719,14 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           )
         }
         if (previewRoute && request.method === 'POST' && previewRoute.action === 'stop') {
-          return json({ session: await runtime.preview.stop(previewRoute.projectId) })
+          return json({
+            session: await runtime.preview.stop(previewRoute.projectId),
+          })
         }
         if (previewRoute && request.method === 'GET' && previewRoute.action === null) {
-          return json({ session: runtime.preview.inspect(previewRoute.projectId) })
+          return json({
+            session: runtime.preview.inspect(previewRoute.projectId),
+          })
         }
         if (request.method === 'POST' && url.pathname === '/api/preview/repair') {
           const body = await parseBody(request, previewRepairSchema)
@@ -667,7 +789,8 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   })
 }
 
-async function presentState(runtime: MvpRuntime) {
+async function presentState(runtime: MvpRuntime, options: { includeAttentions?: boolean } = {}) {
+  const includeAttentions = options.includeAttentions ?? true
   const [home, workspace, assistantModelSettings] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspace(),
@@ -684,10 +807,16 @@ async function presentState(runtime: MvpRuntime) {
     )
     const goals = []
     let goalOpenAttentionCount = 0
-    const readableGoalPackages: Array<{ goalId: string; goalPackage: GoalPackage }> = []
+    const readableGoalPackages: Array<{
+      goalId: string
+      goalPackage: GoalPackage
+    }> = []
     try {
       for (const goalId of await project.store.listGoalIds()) {
-        readableGoalPackages.push({ goalId, goalPackage: await project.store.readPackage(goalId) })
+        readableGoalPackages.push({
+          goalId,
+          goalPackage: await project.store.readPackage(goalId),
+        })
       }
     } catch (error) {
       if (!projectAttention) throw error
@@ -722,20 +851,8 @@ async function presentState(runtime: MvpRuntime) {
         ...summaries,
         openAttentionCount,
       })
-      for (const attention of goalPackage.attentions.values()) {
-        if (
-          attention.attributes.target === null &&
-          (goalPackage.goal.attributes.lifecycle !== 'done' ||
-            goalPackage.goal.attributes.completionAttentionId !== attention.attributes.id)
-        ) {
-          continue
-        }
-        goalAttentions.push({
-          projectId: project.projectId,
-          goalId,
-          ...attention.attributes,
-          body: attention.body,
-        })
+      if (includeAttentions) {
+        goalAttentions.push(...presentGoalAttentions(project.projectId, goalId, goalPackage))
       }
     }
     projects.push({
@@ -766,19 +883,80 @@ async function presentState(runtime: MvpRuntime) {
       assistantCodingDefaultsInherited: assistantModelSettings.inherited,
     },
     projects,
-    attentions: [
-      ...[...workspace.attentions.values()].map((attention) => ({
-        scope: 'workspace',
-        ...attention.attributes,
-        body: attention.body,
-      })),
-      ...goalAttentions.map((attention) => ({ scope: 'goal', ...attention })),
-    ],
+    attentions: includeAttentions
+      ? [
+          ...[...workspace.attentions.values()].map((attention) => ({
+            scope: 'workspace',
+            ...attention.attributes,
+            operatorRequest: attention.attributes.operatorRequest ?? null,
+            body: attention.body,
+          })),
+          ...goalAttentions.map((attention) => ({ scope: 'goal', ...attention })),
+        ]
+      : [],
     activeRuns: [...runtime.coordinator.activeRuns()].map(([key, responsibility]) => ({
       key,
       responsibility,
     })),
   }
+}
+
+async function presentAssistantAttentions(runtime: MvpRuntime) {
+  const workspace = await runtime.workspace.readWorkspace()
+  const goalAttentions = []
+  for (const project of runtime.projects.values()) {
+    let goalIds: string[]
+    try {
+      goalIds = await project.store.listGoalIds()
+    } catch {
+      continue
+    }
+    for (const goalId of goalIds) {
+      try {
+        goalAttentions.push(
+          ...presentGoalAttentions(
+            project.projectId,
+            goalId,
+            await project.store.readPackage(goalId),
+          ),
+        )
+      } catch {
+        // A project-level recovery Attention remains available even when one Goal package is unreadable.
+      }
+    }
+  }
+  return {
+    attentions: [
+      ...[...workspace.attentions.values()].map((attention) => ({
+        scope: 'workspace' as const,
+        ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        body: attention.body,
+      })),
+      ...goalAttentions.map((attention) => ({ scope: 'goal' as const, ...attention })),
+    ],
+  }
+}
+
+function presentGoalAttentions(projectId: string, goalId: string, goalPackage: GoalPackage) {
+  return [...goalPackage.attentions.values()].flatMap((attention) => {
+    if (
+      attention.attributes.target === null &&
+      (goalPackage.goal.attributes.lifecycle !== 'done' ||
+        goalPackage.goal.attributes.completionAttentionId !== attention.attributes.id)
+    ) {
+      return []
+    }
+    return [
+      {
+        projectId,
+        goalId,
+        ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        body: attention.body,
+      },
+    ]
+  })
 }
 
 function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, InboxEventDocument>) {
@@ -839,6 +1017,7 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
       .map((attention) => ({
         scope: 'workspace' as const,
         ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
         body: attention.body,
       })),
     ...goalCompletions,
@@ -1048,6 +1227,7 @@ async function readGoalCompletionAttentions(runtime: MvpRuntime) {
         projectId: project.projectId,
         goalId,
         ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
         body: attention.body,
       })
     }
@@ -1137,6 +1317,11 @@ async function receiveUserEvent(
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
 ) {
   const event = await runtime.workspace.receiveEvent(input)
+  try {
+    await runtime.assistantTools.acceptUserAttentionReply(event.attributes.id)
+  } catch (error) {
+    console.error('[assistant attention reply acknowledgement error]', error)
+  }
   runtime.coordinator.interruptInternalAssistant()
   return event
 }
@@ -1170,9 +1355,35 @@ async function executeDirectUserCommand(
   })
 }
 
-async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: string) {
+async function presentGoal(
+  runtime: MvpRuntime,
+  projectId: string,
+  goalId: string,
+  view: 'full' | 'board' | 'docs' = 'full',
+) {
   const project = requireProject(runtime.projects, projectId)
   const goalPackage = await project.store.readPackage(goalId)
+  if (view === 'docs') {
+    const designSnapshot = await runtime.publisher.snapshotTree(
+      project.store.paths.publicationRoot,
+      project.store.paths.designRoot(goalId),
+    )
+    return {
+      projectId,
+      goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
+      design: designSnapshot.files.map((file) => ({
+        path: file.path,
+        excerpt: presentExcerpt(file.content ? new TextDecoder().decode(file.content) : '', 60),
+      })),
+      evidence: [...goalPackage.evidence.values()].map((evidence) => ({
+        id: evidence.attributes.id,
+        createdAt: evidence.attributes.createdAt,
+        producerRun: evidence.attributes.producerRun,
+        owner: evidence.attributes.owner,
+        excerpt: presentExcerpt(evidence.body, 150),
+      })),
+    }
+  }
   const activePrefix = `${projectId}/${goalId}/`
   const liveWorkIds = new Set(
     [...runtime.coordinator.activeRuns().keys()]
@@ -1195,41 +1406,60 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
     maxAttempts: 3,
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
-  const [designSnapshot, agentPlanByWork] = await Promise.all([
-    runtime.publisher.snapshotTree(
-      project.store.paths.publicationRoot,
-      project.store.paths.designRoot(goalId),
-    ),
-    readLiveAgentPlans(runtime, projectId, goalId, liveWorkIds),
+  const [designSnapshot, attemptsByWork] = await Promise.all([
+    view === 'full'
+      ? runtime.publisher.snapshotTree(
+          project.store.paths.publicationRoot,
+          project.store.paths.designRoot(goalId),
+        )
+      : null,
+    runtime.attempts.listGoal(projectId, goalId),
   ])
-  return {
+  const agentPlanByWork = await readLiveAgentPlans(
+    runtime,
+    projectId,
+    goalId,
+    liveWorkIds,
+    attemptsByWork,
+  )
+  const projection = {
     projectId,
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
     works: [...goalPackage.works.values()].map((work) => ({
       ...work.attributes,
-      body: work.body,
+      ...(view === 'full' ? { body: work.body } : {}),
       projection: projectionByWork.get(work.attributes.id),
+      blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
       agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
+      runAttemptCount: attemptsByWork.get(work.attributes.id)?.length ?? 0,
     })),
-    design: designSnapshot.files.map((file) => ({
-      path: file.path,
-      content: file.content ? new TextDecoder().decode(file.content) : '',
-    })),
-    attentions: [...goalPackage.attentions.values()].map((attention) => ({
-      scope: 'goal' as const,
-      projectId,
-      goalId,
-      ...attention.attributes,
-      body: attention.body,
-    })),
+    attentions: [...goalPackage.attentions.values()]
+      .filter((attention) => view === 'full' || attention.attributes.resolvedAt === null)
+      .map((attention) => ({
+        scope: 'goal' as const,
+        projectId,
+        goalId,
+        ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        ...(view === 'full' ? { body: attention.body } : {}),
+      })),
     projectAttention: projectAttention
       ? {
           scope: 'workspace' as const,
           projectId,
           ...projectAttention.attributes,
+          operatorRequest: projectAttention.attributes.operatorRequest ?? null,
           body: projectAttention.body,
         }
       : null,
+  }
+  if (view === 'board') return projection
+  return {
+    ...projection,
+    design: (designSnapshot?.files ?? []).map((file) => ({
+      path: file.path,
+      content: file.content ? new TextDecoder().decode(file.content) : '',
+    })),
     evidence: [...goalPackage.evidence.values()].map((evidence) => ({
       ...evidence.attributes,
       body: evidence.body,
@@ -1237,17 +1467,86 @@ async function presentGoal(runtime: MvpRuntime, projectId: string, goalId: strin
   }
 }
 
+function presentWorkBlocker(
+  work: WorkDocument,
+  projections: ReadonlyMap<string, WorkProjection>,
+  goalPackage: GoalPackage,
+) {
+  const projection = projections.get(work.attributes.id)
+  if (
+    !projection ||
+    work.attributes.stage === 'done' ||
+    work.attributes.stage === 'cancelled' ||
+    projection.ready ||
+    projection.primaryBadge === 'working'
+  ) {
+    return null
+  }
+
+  const reasons = new Set(projection.failedPredicates)
+  if (reasons.has('attention')) {
+    if (projection.primaryBadge === 'Needs you') return 'you'
+    if (projection.primaryBadge === 'Waiting for Assistant') return 'Assistant'
+    return 'Attention'
+  }
+  if (reasons.has('project_ineligible')) return 'Project'
+  if (reasons.has('goal_not_active')) return 'Goal'
+  if (reasons.has('planning_guard')) {
+    if (work.attributes.kind === 'engineering') return 'Planner'
+    const activeResponsibilities = new Set(
+      [...goalPackage.works.values()]
+        .filter((candidate) => candidate.attributes.kind === 'engineering')
+        .map((candidate) => projections.get(candidate.attributes.id))
+        .filter(
+          (candidate): candidate is WorkProjection =>
+            candidate?.primaryBadge === 'working' && candidate.responsibility !== null,
+        )
+        .map((candidate) => candidate.responsibility),
+    )
+    if (activeResponsibilities.size === 1) {
+      const responsibility = [...activeResponsibilities][0]
+      return responsibility ? capitalize(responsibility) : null
+    }
+    return 'active Work'
+  }
+  if (reasons.has('stale_contract_revision')) return 'Planner'
+  if (reasons.has('dependency_incomplete')) {
+    const dependencies = work.attributes.dependsOn
+      .map((dependencyId) => goalPackage.works.get(dependencyId))
+      .filter((dependency): dependency is WorkDocument =>
+        Boolean(dependency && dependency.attributes.stage !== 'done'),
+      )
+    if (dependencies.length === 1) return dependencies[0]?.attributes.title ?? 'dependency'
+    return dependencies.length > 1 ? `${dependencies.length} dependencies` : 'dependency'
+  }
+  if (reasons.has('not_before')) return 'schedule'
+  if (reasons.has('attempts_exhausted')) return 'attempt limit'
+  if (reasons.has('operational_backoff')) return 'retry backoff'
+  if (reasons.has('capacity')) {
+    return projection.responsibility
+      ? `${capitalize(projection.responsibility)} capacity`
+      : 'Agent capacity'
+  }
+  if (reasons.has('no_profile_pass')) return 'runner profile'
+  return null
+}
+
+function capitalize(value: string) {
+  return `${value[0]?.toUpperCase() ?? ''}${value.slice(1)}`
+}
+
 async function readLiveAgentPlans(
   runtime: MvpRuntime,
   projectId: string,
   goalId: string,
   liveWorkIds: ReadonlySet<string>,
+  attemptsByWork: ReadonlyMap<string, readonly RunAttemptSummary[]>,
 ) {
   const plans = await Promise.all(
     [...liveWorkIds].map(async (workId) => {
-      const attempt = (await runtime.attempts.list(projectId, goalId, workId)).find(
-        (candidate) => candidate.status === 'running',
-      )
+      const attempt = attemptsByWork
+        .get(workId)
+        ?.find((candidate) => candidate.status === 'running')
       if (!attempt) return null
       const events = await runtime.attempts.readEvents(projectId, goalId, workId, attempt.runId)
       const plan = latestAgentPlan(events ?? [])
@@ -1301,6 +1600,61 @@ function matchGoalRoute(parts: string[]) {
   return { projectId: parts[2], goalId: parts[4], action }
 }
 
+function matchWorkDocumentRoute(parts: string[]) {
+  if (
+    parts.length !== 7 ||
+    parts[0] !== 'api' ||
+    parts[1] !== 'projects' ||
+    parts[3] !== 'goals' ||
+    parts[5] !== 'works' ||
+    !parts[2] ||
+    !parts[4] ||
+    !parts[6]
+  ) {
+    return null
+  }
+  return { projectId: parts[2], goalId: parts[4], workId: parts[6] }
+}
+
+function matchGoalDocumentRoute(parts: string[]) {
+  if (
+    parts.length !== 6 ||
+    parts[0] !== 'api' ||
+    parts[1] !== 'projects' ||
+    parts[3] !== 'goals' ||
+    parts[5] !== 'documents' ||
+    !parts[2] ||
+    !parts[4]
+  ) {
+    return null
+  }
+  return { projectId: parts[2], goalId: parts[4] }
+}
+
+function isDesignDocumentPath(designRoot: string, path: string) {
+  const prefix = `${designRoot}/`
+  if (!path.startsWith(prefix) || !path.endsWith('.md')) return false
+  const relative = path.slice(prefix.length)
+  return (
+    relative.length > 0 &&
+    relative.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+  )
+}
+
+function readGoalView(view: string | null): 'full' | 'board' | 'docs' {
+  if (view === 'board' || view === 'docs') return view
+  return 'full'
+}
+
+function presentExcerpt(value: string, maxLength: number) {
+  const plain = value
+    .replace(/^#+\s+.*$/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain.length > maxLength ? `${plain.slice(0, maxLength - 1)}…` : plain
+}
+
 function matchPreviewRoute(parts: string[]) {
   if (
     parts[0] !== 'api' ||
@@ -1339,6 +1693,30 @@ function matchWorkAttemptRoute(parts: string[]) {
     workId: parts[6],
     runId: parts[8] ?? null,
     events: parts[9] === 'events',
+  }
+}
+
+function matchEvidenceArtifactRoute(parts: string[]) {
+  if (
+    parts.length !== 9 ||
+    parts[0] !== 'api' ||
+    parts[1] !== 'projects' ||
+    parts[3] !== 'goals' ||
+    parts[5] !== 'evidence' ||
+    parts[7] !== 'artifacts' ||
+    !parts[2] ||
+    !parts[4] ||
+    !parts[6] ||
+    !parts[8] ||
+    !/^\d+$/.test(parts[8])
+  ) {
+    return null
+  }
+  return {
+    projectId: parts[2],
+    goalId: parts[4],
+    evidenceId: parts[6],
+    artifactIndex: Number.parseInt(parts[8], 10),
   }
 }
 
@@ -1407,6 +1785,7 @@ function canonicalInboxContext(context: z.infer<typeof inboxSchema>['context']) 
       ? { projectId: context.projectId, goalId: context.goalId }
       : {}),
     ...(attentionRefs.length ? { attentionRefs } : {}),
+    ...(context.replyTo ? { replyTo: context.replyTo } : {}),
   }
 }
 
@@ -1434,6 +1813,10 @@ function requirePart(parts: string[], index: number) {
 
 function json(value: unknown, status = 200) {
   return Response.json(value, { status })
+}
+
+function inlineContentDisposition(fileName: string) {
+  return `inline; filename*=UTF-8''${encodeURIComponent(fileName).replaceAll("'", '%27')}`
 }
 
 function createSingleFlight<T>(operation: () => Promise<T>) {
@@ -1470,7 +1853,10 @@ if (import.meta.main) {
   const configuredHome = process.env.HOPI_HOME?.trim()
   const homeRoot = configuredHome || defaultAssistantHomeRoot()
   if (!configuredHome) {
-    const migration = await migrateRepositoryAssistantHome({ legacyRoot: sourceRoot, homeRoot })
+    const migration = await migrateRepositoryAssistantHome({
+      legacyRoot: sourceRoot,
+      homeRoot,
+    })
     if (migration.relocated || migration.flattenedRuns > 0) {
       console.log(
         `HOPI Home migrated to ${homeRoot}: ${migration.flattenedRuns} Runs flattened, ${migration.preservedArtifacts} artifacts preserved, ${migration.removedScratchRoots} scratch roots removed.`,

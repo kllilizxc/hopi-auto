@@ -63,7 +63,7 @@ export function createAssistantReflection(options: {
   minObserveIntervalMs?: number
   failureRetryBaseMs?: number
   failureRetryMaxMs?: number
-  maxFailuresPerDigest?: number
+  failuresBeforeMaxBackoff?: number
   onWake?(): void
   onLoopExhausted?(eventId: string, message: string): Promise<void> | void
 }): AssistantReflection {
@@ -72,7 +72,7 @@ export function createAssistantReflection(options: {
   const minObserveIntervalMs = options.minObserveIntervalMs ?? 5_000
   const failureRetryBaseMs = options.failureRetryBaseMs ?? 5_000
   const failureRetryMaxMs = options.failureRetryMaxMs ?? 5 * 60_000
-  const maxFailuresPerDigest = options.maxFailuresPerDigest ?? 3
+  const failuresBeforeMaxBackoff = options.failuresBeforeMaxBackoff ?? 3
   const reflectionsRoot = join(
     resolve(options.homeRoot),
     '.hopi',
@@ -89,9 +89,7 @@ export function createAssistantReflection(options: {
         promise: Promise<void>
       }
     | undefined
-  let failureState:
-    | { digest: string; failures: number; retryNotBefore: number; exhausted: boolean }
-    | undefined
+  let failureState: { failures: number; retryNotBefore: number } | undefined
   let consecutiveHandoffs = 0
   let previousHandoffEventId: string | null = null
   let nextObserveAt = 0
@@ -103,8 +101,6 @@ export function createAssistantReflection(options: {
       if (currentTime < nextObserveAt) return 'unchanged'
       nextObserveAt = currentTime + minObserveIntervalMs
       const snapshot = await options.state.read()
-      if (failureState && failureState.digest !== snapshot.stateDigest) failureState = undefined
-      if (failureState?.exhausted) return 'unchanged'
       if (failureState && currentTime < failureState.retryNotBefore) return 'unchanged'
       const immediate = hasImmediateReflectionSignal(snapshot)
       if (lastAssessedDigest === null && !immediate) {
@@ -148,16 +144,14 @@ export function createAssistantReflection(options: {
           }
         })
         .catch(() => {
-          const failures = failureState?.digest === entry.digest ? failureState.failures + 1 : 1
-          const exhausted = failures >= maxFailuresPerDigest
-          const delay = exhausted
-            ? 0
-            : Math.min(failureRetryBaseMs * 2 ** Math.min(failures - 1, 20), failureRetryMaxMs)
+          const failures = (failureState?.failures ?? 0) + 1
+          const delay =
+            failures >= failuresBeforeMaxBackoff
+              ? failureRetryMaxMs
+              : Math.min(failureRetryBaseMs * 2 ** Math.min(failures - 1, 20), failureRetryMaxMs)
           failureState = {
-            digest: entry.digest,
             failures,
             retryNotBefore: now().getTime() + delay,
-            exhausted,
           }
         })
         .finally(() => {
@@ -315,7 +309,7 @@ function prepareReflectionHandoff(
   homeId: string,
   prepared: PreparedReflectionHandoff | null,
 ): PreparedReflectionHandoff | null {
-  const scopes = unnotifiedGoalAttentionScopes(snapshot)
+  const scopes = assistantOwnedGoalAttentionScopes(snapshot)
   const preferred = prepared?.context
     ? scopes.find(
         (scope) =>
@@ -326,7 +320,7 @@ function prepareReflectionHandoff(
   const scope = preferred ?? scopes[0]
   if (scope) {
     const fallbackBrief = [
-      `Unnotified Attention remains open for ${scope.projectId}/${scope.goalId}.`,
+      `Assistant-owned Attention remains open for ${scope.projectId}/${scope.goalId}.`,
       'Re-read current state, resolve it with ordinary HOPI tools when safe, and notify the operator only when a decision or concise result is required.',
       `Canonical Attention references: ${scope.attentionRefs.join(', ')}.`,
     ].join(' ')
@@ -341,7 +335,7 @@ function prepareReflectionHandoff(
   }
 
   const workspaceAttentionRefs = snapshot.workspaceAttentions
-    .filter(isUnnotifiedAttention)
+    .filter(isAssistantOwnedAttention)
     .map(recordId)
     .filter((id) => id !== 'unknown-attention')
     .map((attentionId) => workspaceAttentionReference(homeId, attentionId))
@@ -350,7 +344,7 @@ function prepareReflectionHandoff(
     brief:
       prepared?.brief ??
       [
-        'Unnotified Workspace Attention remains open.',
+        'Assistant-owned Workspace Attention remains open.',
         'Re-read current state, diagnose the exact blocker, and tell the operator only the outcome or decision needed.',
         `Canonical Attention references: ${workspaceAttentionRefs.join(', ')}.`,
       ].join(' '),
@@ -360,7 +354,7 @@ function prepareReflectionHandoff(
   }
 }
 
-function unnotifiedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
+function assistantOwnedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
   const scopes: Array<{ projectId: string; goalId: string; attentionRefs: string[] }> = []
   for (const project of snapshot.projects) {
     if (!isRecord(project) || typeof project.projectId !== 'string') continue
@@ -371,7 +365,7 @@ function unnotifiedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
       const goalId = nestedId(goal.goal, '')
       if (!goalId || !Array.isArray(goal.attentions)) continue
       const attentionRefs = goal.attentions
-        .filter(isUnnotifiedAttention)
+        .filter(isAssistantOwnedAttention)
         .map(recordId)
         .filter((id) => id !== 'unknown-attention')
         .map((attentionId) => goalAttentionReference(projectId, goalId, attentionId))
@@ -396,8 +390,10 @@ function reflectionPrompt(
     'Do not mutate canonical files or source. You only have hopi_read_state and hopi_handoff_to_main.',
     'Use hopi_read_state only after the delta identifies a concrete candidate, scoped to its exact Project or Goal.',
     'Use local read-only shell access only for an exact diagnostic path already present in state. Never scan .hopi or search historical Runs speculatively.',
+    'When several urgent candidates exist, normally restore an event-target Workspace Attention first because it blocks a speaking turn; choose another only when its consequence is materially more urgent.',
     'Call hopi_handoff_to_main at most once only when the speaking Assistant should revalidate a useful action or user decision; otherwise finish silently.',
     'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
+    'Distinguish Assistant action from operator action. Say operator action is required only when human input or a human decision is actually needed.',
     'For unresolved Goal Attention, select exact projectId and goalId but do not copy Attention IDs; Coordinator adds canonical references. Keep one handoff Goal-scoped.',
     'Do not draft operator prose or assume this snapshot is current. The speaking Assistant revalidates and communicates only the useful outcome or required action.',
     '',
@@ -496,8 +492,11 @@ async function writeManifest(path: string, manifest: ReflectionManifest) {
 function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
   const reasons: string[] = []
   for (const attention of snapshot.workspaceAttentions) {
-    if (!isUnnotifiedAttention(attention)) continue
-    reasons.push(`Unnotified workspace Attention ${recordId(attention)} is open.`)
+    if (!isAssistantOwnedAttention(attention)) continue
+    const target = recordTarget(attention)
+    reasons.push(
+      `Assistant-owned workspace Attention ${recordId(attention)}${target ? ` targeting ${target}` : ''} is open.`,
+    )
   }
   for (const project of snapshot.projects) {
     if (!isRecord(project)) continue
@@ -509,9 +508,9 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
       const goalId = nestedId(goal.goal, 'unknown-goal')
       if (Array.isArray(goal.attentions)) {
         for (const attention of goal.attentions) {
-          if (!isUnnotifiedAttention(attention)) continue
+          if (!isAssistantOwnedAttention(attention)) continue
           reasons.push(
-            `Goal ${goalId} has unnotified Attention ${recordId(attention)} in Project ${projectId}.`,
+            `Goal ${goalId} has Assistant-owned Attention ${recordId(attention)} in Project ${projectId}.`,
           )
         }
       }
@@ -695,6 +694,7 @@ function compactAttention(value: unknown) {
       createdAt: attributes.createdAt,
       resolvedAt: attributes.resolvedAt,
       notifiedAt: attributes.notifiedAt,
+      operatorRequest: attributes.operatorRequest ?? null,
       resolutionInput: attributes.resolutionInput,
     },
     ...(typeof value.body === 'string' ? { body: bounded(value.body, 800) } : {}),
@@ -705,6 +705,12 @@ function recordId(value: unknown) {
   if (!isRecord(value)) return 'unknown-attention'
   const attributes = isRecord(value.attributes) ? value.attributes : value
   return stringValue(attributes.id, 'unknown-attention')
+}
+
+function recordTarget(value: unknown) {
+  if (!isRecord(value)) return null
+  const attributes = isRecord(value.attributes) ? value.attributes : value
+  return typeof attributes.target === 'string' ? attributes.target : null
 }
 
 function nestedId(value: unknown, fallback: string) {
@@ -730,14 +736,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasImmediateReflectionSignal(snapshot: AssistantStateSnapshot) {
-  if (snapshot.workspaceAttentions.some(isUnnotifiedAttention)) return true
+  if (snapshot.workspaceAttentions.some(isAssistantOwnedAttention)) return true
   return snapshot.projects.some((project) => {
     if (!isRecord(project)) return false
     if (project.available === false) return true
     if (!Array.isArray(project.goals)) return false
     return project.goals.some((goal) => {
       if (!isRecord(goal)) return false
-      if (Array.isArray(goal.attentions) && goal.attentions.some(isUnnotifiedAttention)) return true
+      if (Array.isArray(goal.attentions) && goal.attentions.some(isAssistantOwnedAttention))
+        return true
       if (!Array.isArray(goal.works)) return false
       return goal.works.some(
         (work) => isRecord(work) && isRecord(work.runtime) && work.runtime.stale === true,
@@ -746,8 +753,8 @@ function hasImmediateReflectionSignal(snapshot: AssistantStateSnapshot) {
   })
 }
 
-function isUnnotifiedAttention(value: unknown) {
+function isAssistantOwnedAttention(value: unknown) {
   if (!isRecord(value)) return false
   const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.resolvedAt === null && attributes.notifiedAt === null
+  return attributes.resolvedAt === null && (attributes.operatorRequest ?? null) === null
 }

@@ -62,7 +62,15 @@ export interface AssistantWorkspaceStore {
   ): Promise<InboxEventDocument>
   markEventWebhookDelivered(eventId: string, deliveredAt?: Date): Promise<InboxEventDocument>
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
-  markAttentionNotified(attentionId: string, notifiedAt?: Date): Promise<WorkspaceAttentionDocument>
+  markAttentionNotified(
+    attentionId: string,
+    notifiedAt?: Date,
+    operatorRequest?: string,
+  ): Promise<WorkspaceAttentionDocument>
+  clearAttentionOperatorRequest(
+    attentionId: string,
+    expectedRequest?: string,
+  ): Promise<WorkspaceAttentionDocument>
   resolveAttention(
     attentionId: string,
     resolution: string,
@@ -197,16 +205,30 @@ export function createAssistantWorkspaceStore(
       })
       return attention
     },
-    async markAttentionNotified(attentionId, notifiedAt = new Date()) {
+    async markAttentionNotified(attentionId, notifiedAt = new Date(), operatorRequest = undefined) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
         if (attention.attributes.resolvedAt !== null) {
           throw new AssistantWorkspaceStoreError('Resolved Attention cannot be newly notified')
         }
         attention.attributes.notifiedAt ??= notifiedAt.toISOString()
+        if (operatorRequest !== undefined) {
+          attention.attributes.operatorRequest = operatorRequest
+        } else {
+          attention.attributes.operatorRequest ??= null
+        }
+      })
+    },
+    async clearAttentionOperatorRequest(attentionId, expectedRequest) {
+      return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
+        const current = attention.attributes.operatorRequest ?? null
+        if (attention.attributes.resolvedAt !== null || current === null) return
+        if (expectedRequest !== undefined && current !== expectedRequest) return
+        attention.attributes.operatorRequest = null
       })
     },
     async resolveAttention(attentionId, resolution, resolvedAt = new Date()) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
+        attention.attributes.operatorRequest = null
         attention.attributes.resolvedAt ??= resolvedAt.toISOString()
         if (!attention.body.includes('\n## Resolution\n')) {
           attention.body += `\n## Resolution\n\n${resolution.trim()}\n`

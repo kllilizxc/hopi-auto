@@ -1,8 +1,18 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, FileText, FolderOpen, LayoutDashboard, X } from 'lucide-react'
-import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  lazy,
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { readState, type AttentionView } from '../lib/api'
+import { readGoalBoard, readGoalDocs, readShellState, type AttentionView } from '../lib/api'
 import {
   buildGoalRoute,
   findNewestUnseenGoal,
@@ -17,17 +27,22 @@ import {
   selectProjectShortcuts,
   type GoalSurface,
 } from '../lib/goalScope'
-import { cn, projectDisplayName } from '../lib/utils'
+import { goalBoardQueryKey, goalDocsQueryKey } from '../lib/queryKeys'
+import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
 import {
-  AppAlert,
-  AppRouterLink,
-  AppTabs,
-  IconButton,
-  SelectField,
-} from './ui'
+  loadAssistantPanel,
+  loadBoardView,
+  loadGoalDocsPage,
+  preloadAssistantPanel,
+  preloadProjectHomePage,
+} from '../routeModules'
+import { cn, projectDisplayName } from '../lib/utils'
+import { AppAlert, AppRouterLink, AppTabs, IconButton, SelectField } from './ui'
 
 const AssistantPanel = lazy(() =>
-  import('./AssistantPanel').then((module) => ({ default: module.AssistantPanel })),
+  loadAssistantPanel().then((module) => ({
+    default: module.AssistantPanel,
+  })),
 )
 
 interface ShellContextValue {
@@ -90,6 +105,7 @@ function useProjectShortcutLimit() {
 export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const routeScope = readGoalRouteState(location.pathname)
   const [assistantReply, setAssistantReply] = useState<AttentionView | null>(null)
   const [assistantRequest, setAssistantRequest] = useState(0)
@@ -100,14 +116,16 @@ export function Layout() {
     routeScope ? readRecentGoal(routeScope.projectId) : null,
   )
   const knownGoalIds = useRef<Map<string, Set<string>> | null>(null)
+  const goalNavigationRequest = useRef(0)
   const compactWorkspace = useCompactWorkspace()
   const projectShortcutCount = useProjectShortcutLimit()
   const assistantDocked = !compactWorkspace
   const shouldRenderAssistant = assistantDocked || assistantActivated
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
-    queryFn: readState,
-    refetchInterval: 2_000,
+    queryFn: readShellState,
+    refetchInterval: shellPollInterval,
+    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
   const snapshot = snapshotQuery.data
   const routeProjectId = routeScope?.projectId
@@ -142,19 +160,143 @@ export function Layout() {
     }
   }, [routeProjectId, snapshot])
 
-  useEffect(() => setAssistantOpen(false), [location.pathname])
+  useEffect(() => {
+    goalNavigationRequest.current += 1
+    setAssistantOpen(false)
+  }, [location.pathname])
 
-  const openAssistant = (attention?: AttentionView) => {
+  const openAssistant = useCallback((attention?: AttentionView) => {
     setAssistantReply(attention ?? null)
     setAssistantActivated(true)
     setAssistantOpen(true)
     setAssistantRequest((value) => value + 1)
-  }
+  }, [])
+  const shellContext = useMemo(() => ({ openAssistant }), [openAssistant])
+  const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'board'
+  const orderedProjects = useMemo(
+    () => orderProjectsByRecency(snapshot?.projects ?? [], recentProjects),
+    [recentProjects, snapshot?.projects],
+  )
+  const projectShortcuts = useMemo(
+    () =>
+      routeProjectId
+        ? selectProjectShortcuts(orderedProjects, routeProjectId, projectShortcutCount)
+        : [],
+    [orderedProjects, projectShortcutCount, routeProjectId],
+  )
+  const projectShortcutIds = useMemo(
+    () => new Set(projectShortcuts.map((item) => item.projectId)),
+    [projectShortcuts],
+  )
+  const overflowProjects = useMemo(
+    () => orderedProjects.filter((item) => !projectShortcutIds.has(item.projectId)),
+    [orderedProjects, projectShortcutIds],
+  )
+  const overflowProjectOptions = useMemo(
+    () =>
+      overflowProjects.map((item) => ({
+        label: projectDisplayName(item),
+        value: item.projectId,
+      })),
+    [overflowProjects],
+  )
+  const orderedGoals = useMemo(
+    () =>
+      routeProjectId
+        ? orderGoalsByRecency(project?.goals ?? [], routeProjectId, recentGoal)
+        : [],
+    [project?.goals, recentGoal, routeProjectId],
+  )
+  const goalOptions = useMemo(
+    () =>
+      orderedGoals.map((item) => ({
+        label: item.title,
+        value: item.id,
+      })),
+    [orderedGoals],
+  )
+  const prepareGoalSurface = useCallback(
+    async (scope: { projectId: string; goalId: string }, nextSurface: GoalSurface) => {
+      const queryKey =
+        nextSurface === 'docs'
+          ? goalDocsQueryKey(scope.projectId, scope.goalId)
+          : goalBoardQueryKey(scope.projectId, scope.goalId)
+      const cached = queryClient.getQueryData(queryKey) !== undefined
+      const loadSurface = nextSurface === 'docs' ? loadGoalDocsPage() : loadBoardView()
+      const prefetch =
+        nextSurface === 'docs'
+          ? queryClient.prefetchQuery({
+              queryKey,
+              queryFn: () => readGoalDocs(scope.projectId, scope.goalId),
+            })
+          : queryClient.prefetchQuery({
+              queryKey,
+              queryFn: () => readGoalBoard(scope.projectId, scope.goalId),
+            })
+
+      if (cached) {
+        void prefetch
+        await loadSurface
+        return
+      }
+      await Promise.all([loadSurface, prefetch])
+    },
+    [queryClient],
+  )
+  const warmGoalSurface = useCallback(
+    (scope: { projectId: string; goalId: string }, nextSurface: GoalSurface) => {
+      void prepareGoalSurface(scope, nextSurface).catch(() => undefined)
+    },
+    [prepareGoalSurface],
+  )
+  const navigateToGoalSurface = useCallback(
+    (scope: { projectId: string; goalId: string }, nextSurface: GoalSurface) => {
+      const request = ++goalNavigationRequest.current
+      void prepareGoalSurface(scope, nextSurface)
+        .catch(() => undefined)
+        .then(() => {
+          if (request === goalNavigationRequest.current) {
+            navigate(buildGoalRoute(scope, nextSurface))
+          }
+        })
+    },
+    [navigate, prepareGoalSurface],
+  )
+  const goalForProject = useCallback(
+    (projectId: string) => {
+      const nextProject = snapshot?.projects.find((item) => item.projectId === projectId)
+      return resolveProjectGoalId(
+        nextProject?.goals ?? [],
+        projectId,
+        readRecentGoal(projectId),
+      )
+    },
+    [snapshot?.projects],
+  )
+  const warmProject = useCallback(
+    (projectId: string) => {
+      const goalId = goalForProject(projectId)
+      if (goalId) warmGoalSurface({ projectId, goalId }, surface)
+    },
+    [goalForProject, surface, warmGoalSurface],
+  )
+  const navigateToProject = useCallback(
+    (projectId: string) => {
+      const nextGoalId = goalForProject(projectId)
+      if (nextGoalId) {
+        navigateToGoalSurface({ projectId, goalId: nextGoalId }, surface)
+        return
+      }
+      goalNavigationRequest.current += 1
+      navigate(`/projects/${encodeURIComponent(projectId)}/goals/new`)
+    },
+    [goalForProject, navigate, navigateToGoalSurface, surface],
+  )
 
   if (!routeScope) {
     const pageLabel = location.pathname.endsWith('/goals/new') ? 'New Goal' : 'Projects'
     return (
-      <ShellContext.Provider value={{ openAssistant }}>
+      <ShellContext.Provider value={shellContext}>
         <div className="standalone-shell">
           <header className="standalone-header">
             <AppRouterLink className="standalone-brand" to="/projects" aria-label="HOPI Projects">
@@ -171,7 +313,10 @@ export function Layout() {
                 type="button"
                 aria-label="Open Assistant"
                 title="Open Assistant"
+                onFocus={preloadAssistantPanel}
                 onClick={() => openAssistant()}
+                onPointerDown={preloadAssistantPanel}
+                onPointerEnter={preloadAssistantPanel}
               >
                 <Bot />
               </IconButton>
@@ -208,39 +353,8 @@ export function Layout() {
     )
   }
 
-  const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'board'
-  const orderedProjects = orderProjectsByRecency(snapshot?.projects ?? [], recentProjects)
-  const projectShortcuts = selectProjectShortcuts(
-    orderedProjects,
-    routeScope.projectId,
-    projectShortcutCount,
-  )
-  const projectShortcutIds = new Set(projectShortcuts.map((item) => item.projectId))
-  const overflowProjects = orderedProjects.filter(
-    (item) => !projectShortcutIds.has(item.projectId),
-  )
-  const orderedGoals = orderGoalsByRecency(
-    project?.goals ?? [],
-    routeScope.projectId,
-    recentGoal,
-  )
-
-  const navigateToProject = (projectId: string) => {
-    const nextProject = snapshot?.projects.find((item) => item.projectId === projectId)
-    const nextGoalId = resolveProjectGoalId(
-      nextProject?.goals ?? [],
-      projectId,
-      readRecentGoal(projectId),
-    )
-    navigate(
-      nextGoalId
-        ? buildGoalRoute({ projectId, goalId: nextGoalId }, surface)
-        : `/projects/${encodeURIComponent(projectId)}/goals/new`,
-    )
-  }
-
   return (
-    <ShellContext.Provider value={{ openAssistant }}>
+    <ShellContext.Provider value={shellContext}>
       <div className="goal-workspace">
         {shouldRenderAssistant && (
           <Suspense
@@ -264,7 +378,12 @@ export function Layout() {
           </Suspense>
         )}
 
-        <section className="goal-workspace-surface">
+        <section
+          className={cn(
+            'goal-workspace-surface',
+            surface === 'board' && 'goal-workspace-surface--board',
+          )}
+        >
           <header className="workspace-topbar">
             <div className="workspace-switchers">
               <div className="project-switcher">
@@ -283,16 +402,17 @@ export function Layout() {
                         if (projectId !== routeScope.projectId) navigateToProject(projectId)
                       }}
                     >
-                      <AppTabs.List className="project-switcher__tab-list">
+                      <AppTabs.List>
                         {projectShortcuts.map((item) => {
                           const label = projectDisplayName(item)
                           return (
                             <AppTabs.Tab
-                              className="project-switcher__tab"
                               id={item.projectId}
                               key={item.projectId}
+                              onFocus={() => warmProject(item.projectId)}
+                              onPointerDown={() => warmProject(item.projectId)}
+                              onPointerEnter={() => warmProject(item.projectId)}
                             >
-                              <AppTabs.Indicator className="project-switcher__indicator" />
                               <span title={label}>{label}</span>
                             </AppTabs.Tab>
                           )
@@ -309,11 +429,7 @@ export function Layout() {
                       aria-label="More Projects"
                       className="project-switcher__more"
                       onValueChange={navigateToProject}
-                      options={overflowProjects.map((item) => ({
-                        label: projectDisplayName(item),
-                        value: item.projectId,
-                      }))}
-                      placeholder={`More ${overflowProjects.length}`}
+                      options={overflowProjectOptions}
                       popoverClassName="project-switcher__popover"
                       value={null}
                     />
@@ -325,35 +441,43 @@ export function Layout() {
                 disabled={!project}
                 label="Goal"
                 onValueChange={(nextGoalId) =>
-                  navigate(
-                    buildGoalRoute(
-                      { projectId: routeScope.projectId, goalId: nextGoalId },
-                      surface,
-                    ),
+                  navigateToGoalSurface(
+                    { projectId: routeScope.projectId, goalId: nextGoalId },
+                    surface,
                   )
                 }
-                options={orderedGoals.map((item) => ({
-                  label: item.title,
-                  value: item.id,
-                }))}
+                options={goalOptions}
                 value={routeScope.goalId}
               />
             </div>
 
-            <nav className="workspace-tabs" aria-label="Goal workspace view">
-              <AppRouterLink
-                className={cn(surface === 'board' && 'active')}
-                to={buildGoalRoute(routeScope, 'board')}
-              >
-                <LayoutDashboard /> Kanban
-              </AppRouterLink>
-              <AppRouterLink
-                className={cn(surface === 'docs' && 'active')}
-                to={buildGoalRoute(routeScope, 'docs')}
-              >
-                <FileText /> Goal docs
-              </AppRouterLink>
-            </nav>
+            <AppTabs
+              className="workspace-tabs"
+              onSelectionChange={(key) => {
+                const nextSurface = String(key) as GoalSurface
+                if (nextSurface !== surface) navigateToGoalSurface(routeScope, nextSurface)
+              }}
+              selectedKey={surface}
+            >
+              <AppTabs.List aria-label="Goal workspace view">
+                <AppTabs.Tab
+                  id="board"
+                  onFocus={() => warmGoalSurface(routeScope, 'board')}
+                  onPointerDown={() => warmGoalSurface(routeScope, 'board')}
+                  onPointerEnter={() => warmGoalSurface(routeScope, 'board')}
+                >
+                  <LayoutDashboard /> Kanban
+                </AppTabs.Tab>
+                <AppTabs.Tab
+                  id="docs"
+                  onFocus={() => warmGoalSurface(routeScope, 'docs')}
+                  onPointerDown={() => warmGoalSurface(routeScope, 'docs')}
+                  onPointerEnter={() => warmGoalSurface(routeScope, 'docs')}
+                >
+                  <FileText /> Goal docs
+                </AppTabs.Tab>
+              </AppTabs.List>
+            </AppTabs>
 
             <div className="workspace-topbar-actions">
               <IconButton
@@ -362,7 +486,10 @@ export function Layout() {
                 aria-label="Open Assistant"
                 aria-expanded={assistantOpen}
                 title="Open Assistant"
+                onFocus={preloadAssistantPanel}
                 onClick={() => openAssistant()}
+                onPointerDown={preloadAssistantPanel}
+                onPointerEnter={preloadAssistantPanel}
               >
                 <Bot />
               </IconButton>
@@ -370,6 +497,9 @@ export function Layout() {
                 aria-label="Projects"
                 className="workspace-projects-link"
                 to="/projects"
+                onFocus={preloadProjectHomePage}
+                onPointerDown={preloadProjectHomePage}
+                onPointerEnter={preloadProjectHomePage}
               >
                 <FolderOpen /> <span>Projects</span>
               </AppRouterLink>
@@ -402,17 +532,13 @@ function AssistantLoading({
       className={cn('assistant-drawer assistant-loading', open && 'open', docked && 'docked')}
       aria-hidden={!open}
     >
-      <header className="assistant-header">
-        <div>
-          <span className="assistant-avatar"><Bot /></span>
-          <span><strong>Assistant</strong><small>Workspace conversation</small></span>
-        </div>
+      <div className="assistant-corner-chrome assistant-corner-chrome--loading">
         {!docked && (
           <IconButton type="button" onClick={onClose} aria-label="Close assistant">
             <X />
           </IconButton>
         )}
-      </header>
+      </div>
       <div className="route-loading assistant-loading-body" role="status" aria-live="polite">
         <span className="route-loading-mark" aria-hidden="true" />
         <strong>Opening Assistant</strong>

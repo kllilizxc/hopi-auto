@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   type LiveHarness,
   type LiveState,
+  assertAcceptedDelivery,
   checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
@@ -196,14 +197,7 @@ try {
       value.activeRuns.length === 0,
     { timeoutMs: 15 * 60_000, description: 'selected delivery to complete' },
   )
-  const checkoutAfter = await checkoutSnapshot(harness.repoRoot)
-  assert.equal(checkoutAfter.branch, checkoutBefore.branch)
-  assert.equal(checkoutAfter.status, '')
-  assert.notEqual(checkoutAfter.head, checkoutBefore.head)
-  assert.equal(
-    checkoutAfter.head,
-    await gitOutput(harness.repoRoot, ['rev-parse', 'refs/heads/hopi/release']),
-  )
+  await assertAcceptedDelivery(harness.repoRoot, checkoutBefore)
   assert.equal(
     (await Bun.file(join(harness.repoRoot, 'src', 'release.ts')).text()).replaceAll('\r\n', '\n'),
     "export const releaseLabel = 'compact'\n",

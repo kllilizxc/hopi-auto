@@ -99,7 +99,7 @@ describe('Assistant Reflection', () => {
       workspaceAttentions: [
         {
           id: 'A-1',
-          target: 'project:P-1',
+          target: 'home:H-1/event:EV-blocked',
           resolvedAt: null,
           notifiedAt: null,
           body: 'Coordinator needs safe repair.',
@@ -158,9 +158,12 @@ describe('Assistant Reflection', () => {
     await fixture.reflection.waitForIdle()
 
     expect(prompt).toContain('## Trigger')
-    expect(prompt).toContain('Unnotified workspace Attention A-1')
+    expect(prompt).toContain('Assistant-owned workspace Attention A-1')
+    expect(prompt).toContain('targeting home:H-1/event:EV-blocked')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
     expect(prompt).toContain('whether operator action is required')
+    expect(prompt).toContain('restore an event-target Workspace Attention first')
+    expect(prompt).toContain('operator action is required only when human input')
     expect(prompt).toContain('useful outcome or required action')
     expect(prompt).not.toContain('User: Keep public context.')
     expect(prompt).not.toContain('## Recent Public Conversation')
@@ -238,7 +241,7 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
   })
 
-  test('backs off failed digests, stops at the ceiling, and retries after semantic change', async () => {
+  test('keeps transport backoff across semantic changes and probes at the capped interval', async () => {
     let clock = 0
     let digest = 'f'.repeat(64)
     let calls = 0
@@ -258,30 +261,62 @@ describe('Assistant Reflection', () => {
         now: () => new Date(clock),
         failureRetryBaseMs: 100,
         failureRetryMaxMs: 1_000,
-        maxFailuresPerDigest: 3,
+        failuresBeforeMaxBackoff: 3,
       },
     )
 
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
+    digest = 'e'.repeat(64)
+    clock = 99
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
     clock = 100
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
+    digest = 'd'.repeat(64)
     clock = 299
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
     clock = 300
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
-    clock = 10_000
+    digest = 'c'.repeat(64)
+    clock = 1_299
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
     expect(calls).toBe(3)
 
-    digest = 'e'.repeat(64)
+    clock = 1_300
     expect(await fixture.reflection.observe({ settled: false })).toBe('started')
     await fixture.reflection.waitForIdle()
     expect(calls).toBe(4)
     expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
+  })
+
+  test('forces Reflection state reads to use the compact Evidence view', async () => {
+    const digest = 'f'.repeat(64)
+    const fixture = await setup(
+      () => ({
+        digest,
+        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
+      }),
+      (tools) => ({
+        async run(input) {
+          await tools.execute(input.toolToken, 'hopi_read_state', {
+            projectId: 'P-1',
+            goalId: 'G-1',
+            includeEvidence: true,
+          })
+          return { reply: 'No handoff.', session: codexSession('reflection-compact-state') }
+        },
+      }),
+    )
+
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(fixture.stateReads).toContainEqual({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      includeEvidence: false,
+    })
   })
 
   test('bounds a consecutive handoff chain while its predecessors remain unhandled', async () => {
@@ -404,7 +439,7 @@ describe('Assistant Reflection', () => {
       attentionRefs: ['project:P-1/goal:G-1/attention:A-1', 'project:P-1/goal:G-1/attention:A-2'],
       observedDigest: 'a'.repeat(64),
     })
-    expect(events[0]?.body).toContain('Unnotified Attention remains open')
+    expect(events[0]?.body).toContain('Assistant-owned Attention remains open')
   })
 
   test('starts unsettled snapshots only for immediate signals, including after startup', async () => {
@@ -468,8 +503,22 @@ describe('Assistant Reflection', () => {
       digest: 'f'.repeat(64),
       workspaceAttentions: [{ resolvedAt: null, notifiedAt: '2026-07-11T00:00:00.000Z' }],
     }
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(calls).toBe(5)
+
+    state = {
+      digest: '1'.repeat(64),
+      workspaceAttentions: [
+        {
+          resolvedAt: null,
+          notifiedAt: '2026-07-11T00:00:00.000Z',
+          operatorRequest: 'home:H-1/event:EV-request',
+        },
+      ],
+    }
     expect(await fixture.reflection.observe({ settled: false })).toBe('deferred')
-    expect(calls).toBe(4)
+    expect(calls).toBe(5)
   })
 })
 
@@ -486,7 +535,7 @@ async function setup(
     now?: () => Date
     failureRetryBaseMs?: number
     failureRetryMaxMs?: number
-    maxFailuresPerDigest?: number
+    failuresBeforeMaxBackoff?: number
     maxConsecutiveHandoffs?: number
     onLoopExhausted?(eventId: string, message: string): Promise<void> | void
     linkProject?: boolean
@@ -507,8 +556,10 @@ async function setup(
     await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
   }
   const workspace = createAssistantWorkspaceStore(temporaryRoot, publisher)
+  const stateReads: Array<{ projectId?: string; goalId?: string; includeEvidence?: boolean }> = []
   const state: AssistantStateReader = {
-    async read() {
+    async read(input = {}) {
+      stateReads.push(input)
       const current = readState()
       return {
         observedAt: '2026-07-11T00:00:00.000Z',
@@ -520,11 +571,21 @@ async function setup(
     },
   }
   const tools = createAssistantTools({
+    home,
     workspace,
     projects: new Map(),
     publisher,
     preview: createPreviewManager(temporaryRoot),
     state,
+    readAssistantCodingDefaults: async () => ({
+      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      inherited: true,
+    }),
+    readProjectCodingDefaults: async () => ({
+      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      inherited: true,
+    }),
+    updateAssistantCodingDefaultsForTurn: async () => undefined,
   })
   const reflection = createAssistantReflection({
     homeRoot: temporaryRoot,
@@ -541,8 +602,8 @@ async function setup(
     ...(reflectionOptions.failureRetryMaxMs !== undefined
       ? { failureRetryMaxMs: reflectionOptions.failureRetryMaxMs }
       : {}),
-    ...(reflectionOptions.maxFailuresPerDigest !== undefined
-      ? { maxFailuresPerDigest: reflectionOptions.maxFailuresPerDigest }
+    ...(reflectionOptions.failuresBeforeMaxBackoff !== undefined
+      ? { failuresBeforeMaxBackoff: reflectionOptions.failuresBeforeMaxBackoff }
       : {}),
     ...(reflectionOptions.maxConsecutiveHandoffs !== undefined
       ? { maxConsecutiveHandoffs: reflectionOptions.maxConsecutiveHandoffs }
@@ -551,7 +612,7 @@ async function setup(
       ? { onLoopExhausted: reflectionOptions.onLoopExhausted }
       : {}),
   })
-  return { workspace, tools, reflection }
+  return { workspace, tools, reflection, stateReads }
 }
 
 async function git(cwd: string, args: string[]) {

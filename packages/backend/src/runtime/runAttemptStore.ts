@@ -1,5 +1,5 @@
-import { appendFile, mkdir, readdir, rename, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import {
   type RoleRunResult,
@@ -38,6 +38,12 @@ const attemptManifestSchema = z
     application: z.string().nullable(),
   })
   .strict()
+const attemptIdentitySchema = attemptManifestSchema.pick({
+  projectId: true,
+  goalId: true,
+  workId: true,
+  runId: true,
+})
 
 const storedMessageEventSchema = z
   .object({
@@ -130,9 +136,16 @@ export interface RunAttemptRecorder {
   interrupt(error: unknown): Promise<void>
 }
 
+export interface RunAttemptSnapshot {
+  list(projectId: string, goalId: string, workId: string): readonly RunAttemptSummary[]
+  listGoal(projectId: string, goalId: string): ReadonlyMap<string, readonly RunAttemptSummary[]>
+}
+
 export interface RunAttemptStore {
   start(input: StartRunAttemptInput): Promise<RunAttemptRecorder>
+  snapshot(): Promise<RunAttemptSnapshot>
   list(projectId: string, goalId: string, workId: string): Promise<RunAttemptSummary[]>
+  listGoal(projectId: string, goalId: string): Promise<Map<string, RunAttemptSummary[]>>
   read(
     projectId: string,
     goalId: string,
@@ -258,26 +271,24 @@ export function createRunAttemptStore(
       }
     },
 
+    async snapshot() {
+      return createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+    },
+
     async list(projectId, goalId, workId) {
       assertIds(projectId, goalId, workId)
-      const flatEntries = await readDirectories(attemptsRoot)
-      const legacyRoot = join(attemptsRoot, projectId, goalId, workId)
-      const legacyEntries = await readDirectories(legacyRoot)
-      const attempts = await Promise.all([
-        ...flatEntries.map((entry) =>
-          readSummary(join(attemptsRoot, entry), projectId, goalId, workId, entry),
-        ),
-        ...legacyEntries.map((entry) =>
-          readSummary(join(legacyRoot, entry), projectId, goalId, workId, entry),
-        ),
-      ])
-      const unique = new Map<string, RunAttemptSummary>()
-      for (const attempt of attempts) {
-        if (attempt && !unique.has(attempt.runId)) unique.set(attempt.runId, attempt)
-      }
-      return [...unique.values()].sort(
-        (left, right) =>
-          right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
+      const snapshot = createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+      return [...snapshot.list(projectId, goalId, workId)]
+    },
+
+    async listGoal(projectId, goalId) {
+      assertScopeIds(projectId, goalId)
+      const snapshot = createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+      return new Map(
+        [...snapshot.listGoal(projectId, goalId)].map(([workId, attempts]) => [
+          workId,
+          [...attempts],
+        ]),
       )
     },
 
@@ -356,6 +367,110 @@ export function createRunAttemptStore(
   }
 }
 
+const RUN_MANIFEST_READ_CONCURRENCY = 32
+const ATTEMPT_MANIFEST_PATTERNS = ['*/attempt.json', '*/*/*/*/attempt.json'] as const
+const LEGACY_CONTEXT_PATTERNS = ['*/context.md', '*/*/*/*/context.md'] as const
+
+async function readAllAttemptSummaries(attemptsRoot: string) {
+  const manifestPaths = await scanAttemptPaths(attemptsRoot, ATTEMPT_MANIFEST_PATTERNS)
+  const parsedManifests = await mapWithConcurrency(
+    manifestPaths,
+    RUN_MANIFEST_READ_CONCURRENCY,
+    async (path) => ({
+      root: dirname(path),
+      attempt: await readStoredManifest(path).catch(() => null),
+    }),
+  )
+  const manifestRoots = new Set(
+    parsedManifests.flatMap(({ root, attempt }) => (attempt ? [root] : [])),
+  )
+  const contextPaths = await scanAttemptPaths(attemptsRoot, LEGACY_CONTEXT_PATTERNS)
+  const legacyAttempts = await mapWithConcurrency(
+    contextPaths.filter((path) => !manifestRoots.has(dirname(path))),
+    RUN_MANIFEST_READ_CONCURRENCY,
+    (path) => readLegacySnapshotSummary(attemptsRoot, dirname(path)),
+  )
+  return [
+    ...parsedManifests.flatMap(({ attempt }) => (attempt ? [attempt] : [])),
+    ...legacyAttempts.filter((attempt): attempt is RunAttemptSummary => attempt !== null),
+  ]
+}
+
+function createAttemptSnapshot(attempts: readonly RunAttemptSummary[]): RunAttemptSnapshot {
+  const grouped = new Map<string, Map<string, Map<string, RunAttemptSummary>>>()
+  for (const attempt of attempts) {
+    const goalKey = `${attempt.projectId}\u0000${attempt.goalId}`
+    const byWork = grouped.get(goalKey) ?? new Map<string, Map<string, RunAttemptSummary>>()
+    const byRun = byWork.get(attempt.workId) ?? new Map<string, RunAttemptSummary>()
+    if (!byRun.has(attempt.runId)) byRun.set(attempt.runId, attempt)
+    byWork.set(attempt.workId, byRun)
+    grouped.set(goalKey, byWork)
+  }
+  const sorted = new Map<string, Map<string, readonly RunAttemptSummary[]>>()
+  for (const [goalKey, byWork] of grouped) {
+    sorted.set(
+      goalKey,
+      new Map([...byWork].map(([workId, byRun]) => [workId, sortAttempts([...byRun.values()])])),
+    )
+  }
+  return {
+    list(projectId, goalId, workId) {
+      return sorted.get(`${projectId}\u0000${goalId}`)?.get(workId) ?? []
+    },
+    listGoal(projectId, goalId) {
+      return new Map(sorted.get(`${projectId}\u0000${goalId}`) ?? [])
+    },
+  }
+}
+
+async function scanAttemptPaths(root: string, patterns: readonly string[]) {
+  const paths = new Set<string>()
+  try {
+    for (const pattern of patterns) {
+      for await (const path of new Bun.Glob(pattern).scan({ cwd: root, onlyFiles: true })) {
+        paths.add(join(root, path))
+      }
+    }
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error
+  }
+  return [...paths]
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+) {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await operation(values[index] as T)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+async function readLegacySnapshotSummary(attemptsRoot: string, root: string) {
+  const segments = relative(attemptsRoot, root).split(sep)
+  const fallback =
+    segments.length === 4
+      ? {
+          projectId: segments[0],
+          goalId: segments[1],
+          workId: segments[2],
+          runId: segments[3],
+        }
+      : segments.length === 1
+        ? { runId: segments[0] }
+        : {}
+  return readLegacySummaryWithFallback(root, fallback)
+}
+
 async function readSummary(
   root: string,
   projectId: string,
@@ -382,23 +497,35 @@ async function readLegacySummary(
   workId: string,
   runId: string,
 ): Promise<RunAttemptSummary | null> {
+  const attempt = await readLegacySummaryWithFallback(root, {
+    projectId,
+    goalId,
+    workId,
+    runId,
+  })
+  return attempt?.projectId === projectId &&
+    attempt.goalId === goalId &&
+    attempt.workId === workId &&
+    attempt.runId === runId
+    ? attempt
+    : null
+}
+
+async function readLegacySummaryWithFallback(
+  root: string,
+  fallback: Partial<Pick<RunAttemptSummary, 'projectId' | 'goalId' | 'workId' | 'runId'>>,
+): Promise<RunAttemptSummary | null> {
   const contextFile = Bun.file(join(root, 'context.md'))
   if (!(await contextFile.exists())) return null
   const context = await contextFile.text()
-  const contextIdentity = {
-    projectId: context.match(/^- Project: (.+)$/m)?.[1],
-    goalId: context.match(/^- Goal: (.+)$/m)?.[1],
-    workId: context.match(/^- Work: (.+)$/m)?.[1],
-    runId: context.match(/^- Run: (.+)$/m)?.[1],
+  const identity = {
+    projectId: context.match(/^- Project: (.+)$/m)?.[1] ?? fallback.projectId,
+    goalId: context.match(/^- Goal: (.+)$/m)?.[1] ?? fallback.goalId,
+    workId: context.match(/^- Work: (.+)$/m)?.[1] ?? fallback.workId,
+    runId: context.match(/^- Run: (.+)$/m)?.[1] ?? fallback.runId,
   }
-  if (
-    (contextIdentity.projectId && contextIdentity.projectId !== projectId) ||
-    (contextIdentity.goalId && contextIdentity.goalId !== goalId) ||
-    (contextIdentity.workId && contextIdentity.workId !== workId) ||
-    (contextIdentity.runId && contextIdentity.runId !== runId)
-  ) {
-    return null
-  }
+  const parsedIdentity = attemptIdentitySchema.safeParse(identity)
+  if (!parsedIdentity.success) return null
   const responsibility = z
     .enum(RESPONSIBILITIES)
     .safeParse(context.match(/^- Responsibility: (.+)$/m)?.[1]).data
@@ -411,10 +538,7 @@ async function readLegacySummary(
   const resultStats = source.trim() ? await stat(resultPath).catch(() => null) : null
   return {
     version: 1,
-    projectId,
-    goalId,
-    workId,
-    runId,
+    ...parsedIdentity.data,
     responsibility,
     startedAt: contextStats.mtime.toISOString(),
     endedAt: resultStats?.mtime.toISOString() ?? contextStats.mtime.toISOString(),
@@ -453,17 +577,6 @@ async function readEvents(path: string) {
 async function readOptionalText(path: string) {
   const file = Bun.file(path)
   return (await file.exists()) ? await file.text() : null
-}
-
-async function readDirectories(path: string) {
-  try {
-    return (await readdir(path, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return []
-    throw error
-  }
 }
 
 async function writeManifest(path: string, manifest: RunAttemptSummary) {
@@ -508,6 +621,22 @@ function assertIds(projectId: string, goalId: string, workId: string, runId?: st
   ] as const) {
     if (!stableIdSchema.safeParse(value).success) throw new Error(`Invalid ${label}: ${value}`)
   }
+}
+
+function assertScopeIds(projectId: string, goalId: string) {
+  for (const [label, value] of [
+    ['projectId', projectId],
+    ['goalId', goalId],
+  ] as const) {
+    if (!stableIdSchema.safeParse(value).success) throw new Error(`Invalid ${label}: ${value}`)
+  }
+}
+
+function sortAttempts(attempts: RunAttemptSummary[]) {
+  return attempts.sort(
+    (left, right) =>
+      right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
+  )
 }
 
 function errorCode(error: unknown) {

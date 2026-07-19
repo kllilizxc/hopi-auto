@@ -67,6 +67,29 @@
         0%, 100% { opacity: .35; transform: scale(.82); }
         50% { opacity: .9; transform: scale(1); }
       }
+      @media (max-width: 660px) {
+        .app-boot { pointer-events: none; }
+        .app-boot__content {
+          position: fixed;
+          z-index: 2;
+          right: max(12px, env(safe-area-inset-right));
+          bottom: max(12px, env(safe-area-inset-bottom));
+          width: auto;
+          height: auto;
+          min-height: 0;
+          flex-direction: row;
+          gap: 7px;
+          padding: 9px 11px;
+          border-radius: 12px;
+          background: color-mix(in srgb, CanvasText 7%, Canvas);
+          box-shadow: 0 12px 30px color-mix(in srgb, Canvas 58%, transparent);
+          backdrop-filter: blur(12px);
+          text-align: left;
+        }
+        .app-boot__pulse { margin: 0; }
+        .app-boot__content strong { font-size: 10px; }
+        .app-boot__content small { display: none; }
+      }
       @media (prefers-reduced-motion: reduce) {
         .app-boot__pulse { animation: none; opacity: .7; }
       }

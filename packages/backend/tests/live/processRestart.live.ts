@@ -8,6 +8,7 @@ import { type TestRunCleanupRegistration, registerTestRunCleanup } from '../test
 import {
   type LiveGoalDetail,
   type LiveState,
+  assertAcceptedDelivery,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -304,7 +305,7 @@ try {
     "export const protocol = 'v2'\n",
   )
   assert.equal((await runCommand(['bun', 'test'], integrationRoot)).exitCode, 0)
-  assert.deepEqual(await checkoutSnapshot(repoRoot), checkout)
+  await assertAcceptedDelivery(repoRoot, checkout)
   const browser = await inspectKanban(
     {
       scenario: SCENARIO,

@@ -1,7 +1,7 @@
 # HOPI MVP Execution
 
 Status: forward execution authority
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 
 This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
 recovery, completion assessment, notification, and Preview behavior for
@@ -174,6 +174,14 @@ related blocker false or superseded, then explicitly resolves it or leaves it op
 the remaining decision. Page context and `attentionRefs` improve identity but never replace this
 judgment. Planner and Coordinator do not infer closure from prose or from a Goal revision because an
 environmental or external blocker may survive the revision.
+
+One deterministic exception removes a split command at the Work control boundary. Explicitly
+retrying a Work means that Assistant has judged its current blocker clear or superseded; cancelling
+means that the Work will no longer run. The corresponding control tool therefore settles every open
+Attention targeted exactly at that Work as part of the same logical operation. Retry publishes the
+Work reset, current Goal Input, and Attention resolution together, with resolution as the final gate;
+a crash before that gate leaves the Work conservatively blocked and repeating the command completes
+it idempotently. Neither operation closes Goal, Project, or another Work's Attention.
 
 Project-target Workspace Attention cannot be closed by a model assertion. Explicit repair such as
 Repo rebind first validates the Repo, release ref, managed root, and Project identity, then resolves
@@ -356,6 +364,20 @@ stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bo
 the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
 Work and cannot replace Evidence or a canonical gate.
 
+Full raw output remains on disk, while process memory retains only bounded diagnostic tails needed
+for an exit summary or Preview startup response. Responsibility and Assistant runners keep the most
+recent unclassified stderr lines rather than every line from a long process. Preview likewise keeps
+a bounded recent startup-log tail and the detected endpoint while continuing to append the complete
+stream to `preview.log`. A verbose child therefore cannot make Coordinator memory proportional to
+its lifetime output, and truncating the in-memory tail never truncates durable diagnostics.
+
+Raw `stderr` is not itself a product error. A vendor adapter may recognize a narrowly identified,
+non-fatal vendor diagnostic and keep it only in `transcript.log`; such a line does not enter the
+default Activity stream or become the fallback summary for an otherwise unexplained process exit.
+This classification changes presentation, not truth: the original line remains available for
+debugging, while terminal vendor errors and all unclassified `stderr` retain their existing error
+semantics. The same adapter classification applies to responsibility Runs and Assistant turns.
+
 One provider-neutral responsibility session belongs to each
 `Project + Goal + Work + responsibility + Work contractRevision` tuple. It contains both the saved
 vendor conversation identity and one writable responsibility workspace. An Attempt is one process
@@ -397,6 +419,11 @@ Attempt presentation preserves any explicit recorded result, application, and su
 stale reason. Canonical Evidence may fill fields missing from a legacy or interrupted presentation,
 but Evidence consumption must not overwrite the recorded Attempt application; provenance and Run
 diagnostics answer different questions.
+
+The Work-detail UI derives a compact breakdown from those immutable Attempt records and keeps
+Reviewer `reject`, responsibility/process `fail`, and `interrupted` distinct. This is observability,
+not another retry counter or lifecycle model. Work frontmatter `attempts` remains the sole canonical
+recovery count, while the total Run count and outcome breakdown explain how execution time was spent.
 
 Generator and Reviewer may start short-lived local services when implementation or material
 verification requires them. Their workspace-write Codex transport includes network execution so
@@ -511,6 +538,20 @@ capacity may run them concurrently. Shared read-only context, broad semantic rel
 anticipated integration order does not create `dependsOn`. Planner does not split a cohesive Work
 merely to fill available capacity.
 
+Work cohesion is judged by proof boundary, not only by product label or shared user story. A Work is
+normally cohesive when its outcome follows one canonical fact chain and can be assessed with one
+primary verification strategy. Planner splits at a stable contract boundary when otherwise
+independent proof strategies would form one flat cross-product of acceptance concerns, such as a
+persisted loader/schema boundary followed by a UI projection. It does not split a helper or
+prerequisite whose only useful outcome is still its consumer.
+
+When one fact is repeated across artifacts, Planner records its single owner and one-way derivation
+in design, then makes Work acceptance prove that chain. Different facts may have different owners;
+this rule never forces a single large document. At deterministic persistence boundaries Planner
+prefers a closed accepted representation or another finite verification oracle over an unbounded
+negative requirement such as an ever-growing list of forbidden field aliases. These deterministic
+contracts constrain persistence and execution edges, not the model's free-form reasoning or prose.
+
 The Work `repos` list is the complete source workspace for that responsibility: include every Repo
 the Generator or Reviewer must inspect, execute, or modify to prove the Work. HOPI does not add a
 second read-only Repo scope. A Repo that is only exercised may produce no source delta; checkpointing
@@ -607,6 +648,12 @@ required, while fail means this Run did not complete valid implementation proof.
 keeps the Engineering Work and immediately ensures Planning to revise, cancel, or replace it; it does
 not consume a Reviewer-repair attempt or redispatch Generator unchanged.
 
+Generator treats a Reviewer reproducer as evidence that an accepted invariant is false, not as the
+scope of the repair. It fixes the owning invariant, checks adjacent representations and representative
+variants, and derives persisted projections from their canonical owner instead of adding pairwise
+exceptions. The model chooses proportionate proof; HOPI adds no mandatory checklist artifact or
+structured repair protocol.
+
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every
 visual detail is a requirement.
@@ -661,6 +708,13 @@ entrypoint and existing test/browser stack, does not install competing harnesses
 already exists, and does not rerun an unchanged passing check. Helper-only changes normally stop at
 focused tests; an operator-reported visual or interaction path receives one direct runtime exercise.
 
+Reviewer orders cheap, high-risk canonical/recomputation probes before expensive broad or browser
+proof when both are material. After finding a decisive implementation defect, it performs a bounded
+low-cost sweep of the same invariant and other already-visible independent risks so one rejection
+batches the defects currently knowable from that candidate. It stops before unrelated exhaustive
+exploration. A later review first proves the reported invariant rather than only the literal example,
+then reuses still-valid prior evidence.
+
 Reviewer may return `success`, `reject`, `attention`, or `fail`: reject identifies an implementation
 defect against accepted criteria, attention identifies an invalid design or missing authority, and fail means
 the Run could not produce a valid review and therefore returns the Goal to Planning rather than
@@ -671,6 +725,12 @@ Project-relative source path remains portable as-is; a Run-local file is copied 
 Run's durable `artifacts/` directory and replaced with `artifact:<runId>/<artifactName>`. Missing or
 unreadable declared proof invalidates the result rather than publishing a dangling Evidence
 reference.
+
+Goal-scoped Assistant state projects these referenced artifacts with bounded Evidence context and a
+read-only URL addressed through the owning Evidence entry. The HTTP resolver revalidates canonical
+identity on every request, resolves preserved Run artifacts or a unique managed Project-relative
+file, and serves content inline with conservative media types. It never accepts an absolute local
+path from either the model or browser.
 
 A Reviewer `reject` or deterministic pre-C1 integration rejection increments `attempts`. After
 either returns Work to `generate`, Generator repairs the same task branch and Reviewer checks it
@@ -737,7 +797,8 @@ non-interactive, idempotent, and returns zero only when the current checkout can
 It may populate ignored dependencies and caches but must not modify tracked or non-ignored Project
 files. Coordinator invokes it with the primary root as cwd and a runtime-only `HOPI_REPOS_FILE`
 mapping stable Repo IDs to the exact task or integration roots that will be consumed before every
-Generator, Reviewer, and Preview start. Repeated invocation, rather than a HOPI-maintained lockfile
+Generator, Reviewer, and Preview start. Engineering preparation additionally receives the exact
+`HOPI_GOAL_ID` of its owning Run; Preview has no Goal and omits it. Repeated invocation, rather than a HOPI-maintained lockfile
 fingerprint, is the freshness check. When the manifest is present, the script resolves linked Repos
 from it and never scans HOPI runtime siblings or earlier Work directories. It may call Repo-native
 setup commands through that manifest; HOPI does not add per-Repo preparation configuration.
@@ -783,8 +844,8 @@ the latest resolved Work-target Attention. Before the limit it retries with boun
 backoff. At the third consecutive failure it creates one ordinary Work-target Attention containing
 the latest exact failure and asks Assistant to diagnose the next action. The Attention ID and body do
 not encode a failure kind. Resolving that exact Attention starts a fresh operational episode and
-ordinary readiness may dispatch a new Attempt in the same responsibility session; generic retry
-never closes unrelated Attention.
+ordinary readiness may dispatch a new Attempt in the same responsibility session. An explicit retry
+atomically resolves only Attention targeted at that Work and never closes unrelated Attention.
 
 Planner reads every linked Repo's current managed source and existing Repo-local `AGENTS.md`, while
 the primary root `AGENTS.md` remains the single automatically bootstrapped Project entrypoint. It
@@ -825,6 +886,18 @@ does not pre-validate Git or C1 a second time. If that judgment is wrong, the ne
 Coordinator, publication, or C1 boundary that observes the fault fails closed and creates a fresh
 Project Attention. Assistant may claim that the guard was removed only after the resolution tool
 itself succeeds.
+
+Safe deterministic repair is attempted at the failing boundary or startup validation before a
+Project Attention is created. Once the durable guard exists, Coordinator neither polls the reported
+condition nor resolves the Attention from a generic Project health check. A generic check cannot
+prove that every possible reported fault was repaired, and automatic resolution would race the
+Assistant and repeat work behind the operator's back.
+
+The guard prevents new responsibility admission; it does not retroactively erase a Run that was
+already admitted when the fault was observed. That Run may remain `working` while its result and
+lease settle. Once admitted Runs drain, the stable blocked projection is `waiting` with
+`project_ineligible`. Consumers and tests must distinguish this short transition from the stable
+Project-blocked state rather than introduce another lifecycle state.
 
 Likewise, a responsibility process that never returns a valid result is not evidence that the Work
 failed. Nonzero transport exit, provider quota, interrupted process, invalid result protocol, and a
@@ -886,7 +959,9 @@ The MCP tool descriptions and JSON schemas injected into the Assistant turn are 
 for tool arguments. Assistant calls those tools directly and never searches Project files,
 `.hopi/runtime`, transcripts, or HOPI source to guess a schema. It reads an exact canonical or
 diagnostic path returned by `hopi_read_state` only when that file's body is actually needed; broad
-runtime search is neither discovery nor evidence.
+runtime search is neither discovery nor evidence. Resolved Evidence artifacts distinguish an
+internal `inspectionPath` from the browser-facing `operatorUrl`; only the latter belongs in an
+operator reply.
 
 An Inbox turn is eligible when it is pending, not already active in the one Home conversation, and
 not covered by open event-target Attention. Public user turns have priority over internal Reflection
@@ -894,7 +969,17 @@ turns; each source class runs in receipt order. Project Attention blocks a tool 
 Project, not unrelated conversation or direct answers. A terminal Assistant or tool failure leaves
 the turn pending under targeted Attention immediately. Vendor-local transient retry belongs to the
 single configured invocation; Coordinator does not repeat that invocation. Only an explicit cached
-session incompatibility may rebuild once from durable conversation history.
+session or initial Assistant-contract incompatibility may rebuild once from durable conversation
+history.
+
+An internal Reflection-sourced turn carrying Assistant-owned Attention references has a
+deterministic completion postcondition: each still-current reference is resolved, receives a durable
+internal continuation effect, or is transferred through an explicit `request_user` event. An
+informational `notify_user` message does not satisfy that ownership boundary. If the first model return satisfies neither branch, Coordinator
+continues the same speaking session once with the exact unresolved references. A second omission is
+a normal Assistant failure and leaves the Inbox turn pending under existing failure recovery; it is
+never published as a silent handled turn. Already resolved or operator-owned references require no
+action. This adds no Attention disposition field or workflow state.
 
 Messages remain writable while passes run. A material instruction first ensures Planning Work as
 the Goal-wide guard, then increments `contractRevision` and publishes its effects. Once that
@@ -934,7 +1019,7 @@ time-derived digest change so a silent hang is still assessed. The MVP threshold
 long enough for one high-reasoning edit or build without producing a false Reflection, while still
 surfacing a genuinely silent responsibility without waiting for an operator report.
 
-Reflection starts immediately for an unnotified Attention, unavailable Project, or stale running
+Reflection starts immediately for an Assistant-owned Attention, unavailable Project, or stale running
 Attempt. All other changed snapshots wait for an idle reconciliation tick that both begins and ends
 with no active responsibility Run. An old scan that overlaps a Run completion is therefore not a
 settled boundary; the next tick must reconcile the newly published result first. This is one progress
@@ -946,7 +1031,7 @@ change.
 Reflection runs outside the global publication mutex and responsibility capacities. There is at most
 one active Reflection per Home; later changes coalesce to the latest eligible digest. The first startup
 snapshot establishes a baseline instead of producing a notification storm unless it already contains
-an immediate signal; an unnotified Attention, unavailable Project, or stale running Attempt must
+an immediate signal; an Assistant-owned Attention, unavailable Project, or stale running Attempt must
 survive process restart and is assessed without waiting for a later digest. Reflection receives only
 the code-derived trigger and a compact semantic delta. It does not receive a second full current-state
 projection or public conversation history: both duplicate facts owned by canonical state or the
@@ -955,7 +1040,7 @@ paths, full Evidence lists, or unrelated Goal state. Reflection may call scoped 
 follow an exact diagnostic path only after identifying a concrete candidate.
 
 Reflection has only read plus one `handoff_to_main` capability. A no-op result is silent unless the
-same current snapshot still contains unnotified Attention. Attention already means Assistant
+same current snapshot still contains Assistant-owned Attention. Attention already means Assistant
 management is required, so Coordinator deterministically prepares one scoped internal fallback brief
 and attaches the exact canonical Goal-local or workspace Attention references rather than allowing a
 model omission to strand the target. A handoff durably creates one
@@ -964,7 +1049,7 @@ and optional operator notification.
 
 One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
 that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
-remains pending for revalidation after resolution, but cannot suppress assessment of the unnotified
+remains pending for revalidation after resolution, but cannot suppress assessment of the Assistant-owned
 blocker or newer Goal state. This does not rerun the blocked turn; it allows a new digest to hand off
 the exact Attention that requires speaking-Assistant management. Canonical Attention references and
 `notifiedAt` prevent recursive notification. An Attention-blocked public user turn is likewise
@@ -981,10 +1066,10 @@ read-only Reflection process. Source priority selects public input next. Reflect
 immutable snapshot, but Coordinator publishes its prepared brief only when the semantic digest is
 still current; otherwise the result is discarded and the newest eligible digest is assessed later.
 This avoids cancellation churn without letting stale thought act or delay speech. One digest is
-otherwise assessed once. Reflection model failures retry with per-digest exponential backoff and a
-fixed attempt ceiling; an exhausted digest remains visible in runtime diagnostics and is not retried
-until semantic state changes. Consecutive internal handoffs are also bounded so a feedback loop cannot
-consume unbounded calls.
+otherwise assessed once. Reflection model transport failures retain one exponential backoff across
+semantic changes, which continue to coalesce without resetting the retry delay. After repeated
+failure, HOPI probes only at the capped interval until a successful Reflection clears the backoff.
+Consecutive internal handoffs are also bounded so a feedback loop cannot consume unbounded calls.
 
 ## Reconciler and Scheduling
 
@@ -1007,7 +1092,7 @@ Each cycle:
 5. evaluates `ready(work)` and dispatches responsibility passes within capacity
 6. after Reviewer success, performs deterministic integration while Work remains at `review`
 7. publishes validated outcomes and wakes dependents after upstream `done`
-8. evaluates completion and routes unnotified Attention through Reflection
+8. evaluates completion and routes Assistant-owned Attention through Reflection
 9. observes the latest semantic digest and starts or coalesces non-blocking Reflection
 
 `ready(work)` is one conjunction:
@@ -1121,7 +1206,7 @@ but before the Goal gate lets Coordinator finish from the durable proposal witho
 semantic model call.
 
 Before delivery, Coordinator verifies the Goal is still done and still references that
-Attention. Reopen resolves an unnotified old completion as superseded before clearing the
+Attention. Reopen resolves an undelivered old completion as superseded before clearing the
 reference and creating Planning Work.
 
 Manual completion confirmation is not required.

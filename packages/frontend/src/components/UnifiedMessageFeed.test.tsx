@@ -102,6 +102,9 @@ test('decorates the exact unresolved Assistant request and restores it after res
   expect(marked).toContain('· 2')
   expect(marked).toContain('aria-label="Reply to this request"')
   expect(marked).toContain('>Reply<')
+  expect(
+    marked.match(/<button[^>]*aria-label="Reply to this request"[\s\S]*?<\/button>/)?.[0],
+  ).not.toContain('<svg')
   expect(resolved).not.toContain('needs-you')
   expect(resolved).not.toContain('Reply to this request')
 })
@@ -225,6 +228,57 @@ test('does not surface transport metadata as conversation copy', () => {
   expect(markup).toContain('The task is complete.')
   expect(markup).not.toContain('codex')
   expect(markup).not.toContain('item.completed')
+})
+
+test('opens safe Assistant Markdown links without activating local filesystem paths', () => {
+  const artifactUrl = '/api/projects/P-1/goals/G-1/evidence/E-1/artifacts/0'
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="links"
+      items={[
+        {
+          id: 'assistant-links',
+          createdAt: '2026-07-18T00:00:00.000Z',
+          kind: 'assistant_message',
+          role: 'assistant',
+          text: `报告在 [打开报告](${artifactUrl})。旧路径 [plan](/home/user/plan.md) 不应打开。`,
+        },
+      ]}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(markup).toContain(`href="${artifactUrl}"`)
+  expect(markup).toContain('target="_blank"')
+  expect(markup).toContain('>打开报告</a>')
+  expect(markup).toContain('[plan](/home/user/plan.md)')
+  expect(markup).not.toContain('href="/home/user/plan.md"')
+})
+
+test('opens the same safe Markdown links from completion updates', () => {
+  const artifactUrl = '/api/projects/P-1/goals/G-1/evidence/E-1/artifacts/7'
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="completion-links"
+      items={[
+        {
+          id: 'completion-link',
+          createdAt: '2026-07-19T00:00:00.000Z',
+          kind: 'system_update',
+          role: 'system',
+          label: 'Completed',
+          text: `已完成：[查看循环动画](${artifactUrl})。`,
+        },
+      ]}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(markup).toContain('unified-feed-system-update')
+  expect(markup).toContain(`href="${artifactUrl}"`)
+  expect(markup).toContain('>查看循环动画</a>')
 })
 
 test('collapses an activity aggregate when a later message follows it', () => {

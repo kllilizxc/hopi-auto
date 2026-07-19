@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { parseAttentionReference } from './attentionReference'
+import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
   type MarkdownDocument,
   parseMarkdownDocument,
@@ -36,6 +37,7 @@ export const inboxContextSchema = z
     goalId: stableIdSchema.optional(),
     attentionId: stableIdSchema.optional(),
     attentionRefs: z.array(z.union([stableIdSchema, attentionReferenceSchema])).optional(),
+    replyTo: inboxEventReferenceSchema.optional(),
     observedDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -53,6 +55,12 @@ export const inboxContextSchema = z
       refinement.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Inbox context requires a Goal location or canonical Attention reference',
+      })
+    }
+    if (context.replyTo && !context.attentionRefs?.length) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Inbox replyTo requires exact Attention references',
       })
     }
     if (
@@ -119,8 +127,18 @@ export const workspaceAttentionAttributesSchema = z
     createdAt: timestampSchema,
     resolvedAt: timestampSchema.nullable(),
     notifiedAt: timestampSchema.nullable(),
+    operatorRequest: inboxEventReferenceSchema.nullable().optional(),
   })
   .strict()
+  .superRefine((attention, context) => {
+    if (attention.resolvedAt !== null && attention.operatorRequest) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operatorRequest'],
+        message: 'Resolved Workspace Attention cannot wait for operator input',
+      })
+    }
+  })
 
 export type InboxRouteClaim = z.infer<typeof inboxRouteClaimSchema>
 export type InboxContext = z.infer<typeof inboxContextSchema>

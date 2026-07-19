@@ -164,10 +164,12 @@ writes a runtime-only Repo manifest and supplies:
 ```text
 HOPI_PROJECT_ROOT=<primary-root>
 HOPI_REPOS_FILE=<runtime-json-path>
+HOPI_GOAL_ID=<owning-goal-id> # Engineering preparation only
 ```
 
-For an Engineering Run the manifest names its task roots. For Preview it names every managed
-integration root. Existing single-Repo scripts may ignore `HOPI_REPOS_FILE` and retain their current
+For an Engineering Run the manifest names its task roots and `HOPI_GOAL_ID` identifies the exact
+canonical Goal. For Preview the manifest names every managed integration root and no Goal ID is
+invented. Existing single-Repo scripts may ignore `HOPI_REPOS_FILE` and retain their current
 behavior. Multi-Repo scripts orchestrate Repo-native commands through the manifest. HOPI adds no
 per-Repo adapter schema, initialized flag, or adapter revision.
 
@@ -229,11 +231,15 @@ adapter implements it under the normal approval policy.
 Linked Projects shows one primary Repo and a list of secondary Repos. The MVP supports selecting
 multiple Repos before Project creation, adding a secondary Repo later, and rebinding one or all
 moved Repos. Primary switching after creation and Repo removal are deferred. Project model settings
-remain Project-level.
+remain Project-level. The speaking Assistant exposes these same Project and Repo operations when the
+operator supplies their paths; the host directory picker remains only a UI input mechanism. A
+topology mutation made during an Assistant turn persists first and schedules one runtime rebuild
+after that turn settles, rather than interrupting the speaking session mid-call.
 
-Kanban remains Goal/Work based. Engineering cards show compact Repo badges; no Repo columns or
-Repo subcards are introduced. Work Attempts remain one stream and may show the per-Repo workspace
-paths, checkpoints, diffs, and integration diagnostics. Preview remains one Project control.
+Kanban remains Goal/Work based; no Repo columns or Repo subcards are introduced. Card footers
+prioritize the real runtime Attempt count and current blocker, while exact Repo scope stays in Work
+detail. Work Attempts remain one stream and may show the per-Repo workspace paths, checkpoints,
+diffs, and integration diagnostics. Preview remains one Project control.
 
 ## Acceptance Scenarios
 
@@ -253,3 +259,5 @@ The implementation is complete only when automated tests cover:
   later safe state converges by fast-forward
 - Project prepare and Preview receive the correct multi-Repo runtime manifest
 - the UI manages Repo links and shows Work Repo scope without a Repo workflow
+- Assistant can perform every supported Project/Repo mutation without calling UI HTTP routes, and a
+  topology change preserves its final speaking reply before the runtime rebuild
