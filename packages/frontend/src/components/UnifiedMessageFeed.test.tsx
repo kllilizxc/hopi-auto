@@ -250,6 +250,7 @@ test('opens safe Assistant Markdown links without activating local filesystem pa
   )
 
   expect(markup).toContain(`href="${artifactUrl}"`)
+  expect(markup).toContain('assistant-message-link')
   expect(markup).toContain('target="_blank"')
   expect(markup).toContain('>打开报告</a>')
   expect(markup).toContain('[plan](/home/user/plan.md)')
@@ -278,6 +279,7 @@ test('opens the same safe Markdown links from completion updates', () => {
 
   expect(markup).toContain('unified-feed-system-update')
   expect(markup).toContain(`href="${artifactUrl}"`)
+  expect(markup).toContain('assistant-message-link')
   expect(markup).toContain('>查看循环动画</a>')
 })
 

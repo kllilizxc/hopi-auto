@@ -361,6 +361,17 @@ test('compact Kanban and Docs preserve every lane and evidence surface', async (
   )
 })
 
+test('Assistant Markdown links stay blue in ordinary and Completed messages', async () => {
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const feed = await Bun.file(new URL('../components/UnifiedMessageFeed.tsx', import.meta.url)).text()
+  const linkRule = styles.match(/\.assistant-message-link\.app-link\s*\{([^}]*)\}/)?.[1] ?? ''
+
+  expect(feed).toContain('className="assistant-message-link"')
+  expect(linkRule).toContain('color: var(--color-info-400)')
+  expect(linkRule).toContain('text-decoration: underline')
+  expect(styles).not.toContain('.unified-feed-message__text .app-link')
+})
+
 test('phone form controls avoid viewport zoom and honor display safe areas', async () => {
   const source = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const html = await Bun.file(new URL('../../index.html', import.meta.url)).text()
