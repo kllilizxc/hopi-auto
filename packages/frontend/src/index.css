@@ -2941,16 +2941,16 @@ button:disabled,
   overflow-wrap: anywhere;
 }
 
-.unified-feed-message__text .app-link {
-  color: var(--color-accent-300);
+.assistant-message-link.app-link {
+  color: var(--color-info-400);
   font-weight: 650;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
   text-underline-offset: 3px;
 }
 
-.unified-feed-message__text .app-link:hover {
-  color: var(--color-accent-200);
+.assistant-message-link.app-link:hover {
+  color: var(--color-info-200);
   text-decoration-color: currentColor;
 }
 
