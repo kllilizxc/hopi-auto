@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { HOPI_RELEASE_REF } from '../src/domain/project'
 import { PublicationCoordinator } from '../src/publication/publisher'
@@ -53,6 +53,30 @@ describe('bootstrapCoordinator', () => {
     expect([...result.blockedProjectIds]).toEqual([])
   })
 
+  test('archives and repairs primary managed source without removing canonical documents', async () => {
+    const fixture = await setup()
+    await Bun.write(join(fixture.projectRoot, 'README.md'), 'planner changed source\n')
+    await Bun.write(join(fixture.projectRoot, 'leaked.spec.ts'), 'planner leaked source\n')
+    await git(fixture.projectRoot, ['add', 'README.md', 'leaked.spec.ts'])
+
+    const result = await fixture.bootstrap()
+
+    expect([...result.eligibleProjectIds]).toEqual(['P-1'])
+    expect(await Bun.file(join(fixture.projectRoot, 'README.md')).text()).toBe('# Repo\n')
+    expect(await Bun.file(join(fixture.projectRoot, 'leaked.spec.ts')).exists()).toBe(false)
+    expect(await Bun.file(join(fixture.projectRoot, '.hopi', 'project.yml')).exists()).toBe(true)
+    const recoveryRoot = join(fixture.projectRoot, '..', 'recovery')
+    const recoveries = await readdir(recoveryRoot)
+    expect(recoveries).toHaveLength(1)
+    const recoveryPath = join(recoveryRoot, recoveries[0] ?? '')
+    expect(await Bun.file(join(recoveryPath, 'files', 'README.md')).text()).toBe(
+      'planner changed source\n',
+    )
+    expect(await Bun.file(join(recoveryPath, 'files', 'leaked.spec.ts')).text()).toBe(
+      'planner leaked source\n',
+    )
+  })
+
   test('creates and reuses one project Attention for invalid canonical identity', async () => {
     const fixture = await setup()
     await Bun.write(
@@ -74,7 +98,7 @@ describe('bootstrapCoordinator', () => {
     ).toHaveLength(1)
   })
 
-  test('blocks a durable ref whose managed index was not materialized', async () => {
+  test('repairs a regressed managed ref but refuses to roll back the delivery checkout', async () => {
     const fixture = await setup(true)
     const parent = await git(fixture.projectRoot, ['rev-parse', `${HOPI_RELEASE_REF}^`])
     await git(fixture.projectRoot, ['update-ref', HOPI_RELEASE_REF, parent])
@@ -83,7 +107,7 @@ describe('bootstrapCoordinator', () => {
 
     expect([...result.blockedProjectIds]).toEqual(['P-1'])
     expect([...(await fixture.workspace.readWorkspace()).attentions.values()][0]?.body).toContain(
-      'does not materialize',
+      'cannot fast-forward',
     )
   })
 

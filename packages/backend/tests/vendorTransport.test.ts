@@ -189,6 +189,52 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.cmd).toContain('/tmp')
   })
 
+  test('makes read-only Repo roots visible to Claude without granting write access', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for read-only repos\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      } satisfies RoleTransportConfig,
+      bundle: {
+        ...bundle,
+        extraReadableRoots: ['/tmp/integration'],
+        extraWritableRoots: ['/tmp/run'],
+      },
+      input: { ...input, role: 'reviewer' },
+    })
+
+    expect(command.cmd).toContain('/tmp/integration')
+    expect(command.cmd).toContain('/tmp/run')
+    expect(await Bun.file('/tmp/run/scratch/claude-settings.json').json()).toMatchObject({
+      sandbox: { filesystem: { allowWrite: ['/tmp/run'] } },
+    })
+  })
+
+  test('does not turn Codex read-only Repo roots into writable add-dir roots', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for read-only repos\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      } satisfies RoleTransportConfig,
+      bundle: {
+        ...bundle,
+        extraReadableRoots: ['/tmp/integration'],
+        extraWritableRoots: ['/tmp/run'],
+      },
+      input: { ...input, role: 'reviewer' },
+    })
+
+    expect(command.cmd).toContain('/tmp/run')
+    expect(command.cmd).not.toContain('/tmp/integration')
+  })
+
   test('passes extra writable roots through codex --add-dir arguments', async () => {
     await Bun.write(bundle.promptFile, '# prompt for codex with writable roots\n')
 

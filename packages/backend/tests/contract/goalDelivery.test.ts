@@ -238,7 +238,7 @@ async function generateDelivery(input: RoleRunInput): Promise<RoleRunResult> {
 }
 
 async function reviewDelivery(input: RoleRunInput): Promise<RoleRunResult> {
-  const source = await Bun.file(join(input.cwd, 'src', 'feature.ts')).text()
+  const source = await Bun.file(join(primarySourceRoot(input), 'src', 'feature.ts')).text()
   if (source !== 'export const feature = 2\n') {
     return {
       result: 'reject',
@@ -248,6 +248,12 @@ async function reviewDelivery(input: RoleRunInput): Promise<RoleRunResult> {
     }
   }
   return successfulResult('Reviewer verified the candidate source independently.')
+}
+
+function primarySourceRoot(input: RoleRunInput) {
+  const root = input.context.repoRoots.find((repo) => repo.primary)?.path
+  if (!root) throw new Error('Responsibility context has no primary source root')
+  return root
 }
 
 function successfulResult(summary: string): RoleRunResult {

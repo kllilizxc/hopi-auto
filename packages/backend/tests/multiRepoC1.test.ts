@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
@@ -157,6 +157,40 @@ describe('multi-Repo C1', () => {
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
   })
 
+  test('archives and removes unexpected managed integration files during reconciliation', async () => {
+    const fixture = await createFixture(['api'])
+    const apiRoot = fixture.repo('api').integrationRoot
+    const leakedPath = join(apiRoot, 'tests', 'leaked.spec.ts')
+    const stagedPath = join(apiRoot, 'tests', 'staged.spec.ts')
+    await mkdir(join(apiRoot, 'tests'), { recursive: true })
+    await Bun.write(leakedPath, 'leaked planner output\n')
+    await Bun.write(stagedPath, 'staged planner output\n')
+    await git(apiRoot, ['add', 'tests/staged.spec.ts'])
+
+    await reconcileProjectReleaseProjection(fixture.layout)
+
+    expect(await Bun.file(leakedPath).exists()).toBe(false)
+    expect(await Bun.file(stagedPath).exists()).toBe(false)
+    const recoveryRoot = join(apiRoot, '..', 'recovery')
+    const recoveries = await readdir(recoveryRoot)
+    expect(recoveries).toHaveLength(1)
+    const recoveryPath = join(recoveryRoot, recoveries[0] ?? '')
+    expect(await Bun.file(join(recoveryPath, 'files', 'tests', 'leaked.spec.ts')).text()).toBe(
+      'leaked planner output\n',
+    )
+    expect(await Bun.file(join(recoveryPath, 'files', 'tests', 'staged.spec.ts')).text()).toBe(
+      'staged planner output\n',
+    )
+    const manifest = await Bun.file(join(recoveryPath, 'manifest.json')).json()
+    expect(manifest).toMatchObject({
+      repoId: 'api',
+      integrationRoot: apiRoot,
+    })
+    expect(manifest.preservedPaths).toContain('tests/leaked.spec.ts')
+    expect(manifest.preservedPaths).toContain('tests/staged.spec.ts')
+    expect(await git(apiRoot, ['status', '--porcelain=v1', '--untracked-files=all'])).toBe('')
+  })
+
   test('continues remaining Repo projections after a partial projection', async () => {
     const fixture = await createFixture(['api', 'worker'])
     let projected = 0
@@ -200,7 +234,7 @@ describe('multi-Repo C1', () => {
     await git(apiRoot, ['add', 'unexpected.txt'])
     await git(apiRoot, ['commit', '-m', 'unexpected release change'])
 
-    await expect(reconcileProjectReleaseProjection(fixture.layout)).rejects.toThrow('neither')
+    await expect(reconcileProjectReleaseProjection(fixture.layout)).rejects.toThrow('release is')
     expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
       primaryC1,
     )

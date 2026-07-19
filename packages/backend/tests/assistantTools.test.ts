@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
@@ -95,6 +95,7 @@ describe('Assistant HOPI tools', () => {
   test('initializes an explicitly named empty repository through Project management', async () => {
     const fixture = await setup()
     const repoRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-init-'))
+    const canonicalRepoRoot = await realpath(repoRoot)
     try {
       await fixture.workspace.receiveEvent({
         eventId: 'EV-initialize',
@@ -109,7 +110,7 @@ describe('Assistant HOPI tools', () => {
         changed: true,
         value: {
           operation: 'initialize_repository',
-          selection: { repoPath: repoRoot, projectPath: '.' },
+          selection: { repoPath: canonicalRepoRoot, projectPath: '.' },
         },
       })
       expect(await git(repoRoot, ['branch', '--show-current'])).toBe('main')
@@ -974,7 +975,7 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
-  test('resolves Project Attention optimistically and restores eligibility exactly once', async () => {
+  test('records Project Attention resolution and requests reconciliation exactly once', async () => {
     const fixture = await setup()
     const attention = await createWorkspaceAttentionController(
       fixture.workspace,
@@ -1005,6 +1006,7 @@ describe('Assistant HOPI tools', () => {
 
     expect(result).toMatchObject({
       changed: true,
+      summary: `Resolved Project Attention ${attention.attributes.id}; requested fresh reconciliation for Project P-1.`,
       value: { attentionId: attention.attributes.id, projectId: 'P-1' },
     })
     expect(repeated.changed).toBe(false)
@@ -1625,7 +1627,9 @@ async function setup(
       assistantCodingDefaultsInherited = input === null
     },
     onProjectTopologyChanged: (eventId) => topologyChangedEventIds.push(eventId),
-    onProjectAttentionResolved: (projectId) => restoredProjectIds.push(projectId),
+    onProjectAttentionResolved: (projectId) => {
+      restoredProjectIds.push(projectId)
+    },
   })
   return {
     homeRoot,

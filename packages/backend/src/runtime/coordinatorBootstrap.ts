@@ -2,13 +2,14 @@ import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import {
   type C1ProjectRepo,
   listIntegrationRecords,
+  reconcileManagedIntegrationSource,
   reconcileProjectReleaseProjection,
 } from './c1Integrator'
 import { createCompletionStructureVerifier } from './completionVerifier'
@@ -89,6 +90,7 @@ export async function recoverCoordinatorProject(
       integrationRoot: repo.integrationRoot,
       checkoutRoot: repo.repoPath,
       deliveryBranch: repo.deliveryBranch,
+      projectPath: repo.projectPath,
       primary: repo.primary,
     }))
   for (const repo of repos) {
@@ -116,21 +118,34 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   // Index-reading Git commands may refresh and lock the index, so bootstrap must not race them.
   const head = await git(project.projectRoot, ['rev-parse', 'HEAD'])
   const target = await git(project.projectRoot, ['rev-parse', HOPI_RELEASE_REF])
-  const indexTree = await git(project.projectRoot, ['write-tree'])
   const targetTree = await git(project.projectRoot, ['show', '-s', '--format=%T', HOPI_RELEASE_REF])
-  const sourceStatus = await git(project.projectRoot, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all',
-    '--',
-    '.',
-    ':(exclude).hopi/**',
-  ])
-  if (head !== target || indexTree !== targetTree) {
+  if (head !== target) {
     throw new Error('managed integration index does not materialize the durable release ref')
   }
-  const unsafeSourceStatus = sourceStatus
+  await reconcileManagedIntegrationSource(
+    {
+      repoId: project.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID,
+      integrationRoot: project.projectRoot,
+      primary: true,
+    },
+    target,
+    [project.store.paths.agentsPath],
+  )
+  const indexTree = await git(project.projectRoot, ['write-tree'])
+  if (indexTree !== targetTree) {
+    throw new Error('managed integration index does not materialize the durable release ref')
+  }
+  const unsafeSourceStatus = (
+    await git(project.projectRoot, [
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '--untracked-files=all',
+      '--',
+      '.',
+      ':(exclude).hopi/**',
+    ])
+  )
     .split('\0')
     .filter(Boolean)
     .filter((line) => line !== `?? ${project.store.paths.agentsPath}`)

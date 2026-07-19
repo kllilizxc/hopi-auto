@@ -57,7 +57,6 @@ export interface RoleContextBundle extends TransportContextBundle {
   guardPrefixes: readonly string[]
   bootstrapSourceRoot?: string
   agentsPath?: string
-  preparePath?: string
   operatorPreferenceFile?: string
   repoRoots: readonly RoleRepoRoot[]
   reposFile: string
@@ -112,7 +111,6 @@ export function createRoleContextStager(
       const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, {
         paths: [
           paths.agentsPath,
-          paths.preparePath,
           '.hopi/project.yml',
           '.hopi/docs/index.md',
           '.hopi/docs/repos.md',
@@ -200,7 +198,6 @@ export function createRoleContextStager(
       )
 
       const agentsFile = snapshot.files.find((file) => file.path === paths.agentsPath)
-      const prepareFile = snapshot.files.find((file) => file.path === paths.preparePath)
       let bootstrapSourceRoot: string | undefined
       if (input.responsibility === 'planner' && agentsFile?.content === null) {
         bootstrapSourceRoot = join(contextRoot, 'source')
@@ -254,9 +251,7 @@ export function createRoleContextStager(
             proposalRoot,
             resultFile,
             bootstrapSourceRoot,
-            prepareMissing: prepareFile?.content === null,
             agentsPath: paths.agentsPath,
-            preparePath: paths.preparePath,
             attentionRoot: paths.attentionRoot(input.goalId),
             primaryRepoId,
             repoRoots,
@@ -288,19 +283,19 @@ export function createRoleContextStager(
         guardPrefixes,
         bootstrapSourceRoot,
         agentsPath: paths.agentsPath,
-        preparePath: paths.preparePath,
         operatorPreferenceFile,
         repoRoots,
         reposFile,
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
+        extraReadableRoots: [...new Set(repoRoots.map((repo) => repo.path))],
         extraWritableRoots: [
           ...new Set([
             runRoot,
             runtimeScratchDir,
             runtimeCacheDir,
-            ...repoRoots.map((repo) => repo.path),
+            ...(input.responsibility === 'generator' ? repoRoots.map((repo) => repo.path) : []),
           ]),
         ],
         contextFile,
@@ -817,9 +812,7 @@ function renderResponsibilityPrompt(
     proposalRoot: string
     resultFile: string
     bootstrapSourceRoot?: string
-    prepareMissing: boolean
     agentsPath: string
-    preparePath: string
     attentionRoot: string
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
@@ -833,7 +826,7 @@ function renderResponsibilityPrompt(
   const boundary = [
     '## Execution Boundary',
     '',
-    `Working directory: ${input.responsibility === 'planner' ? paths.runRoot : 'the assigned task Repo root'}`,
+    `Working directory: ${input.responsibility === 'generator' ? 'the assigned task Repo root' : paths.runRoot}`,
     `Authority root: ${paths.authorityRoot}`,
     `Proposal root: ${paths.proposalRoot}`,
     `Result file: ${paths.resultFile}`,
@@ -846,7 +839,7 @@ function renderResponsibilityPrompt(
     `Repo manifest: ${paths.reposFile}`,
     `Attention proposal directory: ${paths.attentionRoot} (relative to Proposal root)`,
     `Project guidance: ${paths.agentsPath}`,
-    `Preparation entrypoint: ${paths.preparePath}`,
+    `Repo preparation entrypoints: ${paths.repoRoots.map((repo) => `${repo.repoId}=${join(repo.path, 'scripts', 'hopi', 'prepare')}`).join(', ')}`,
     `Primary Repo: ${paths.primaryRepoId}`,
     `Source roots: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}`,
     ...(paths.operatorPreferenceFile
@@ -991,9 +984,7 @@ function plannerPrompt(paths: {
   runRoot: string
   proposalRoot: string
   bootstrapSourceRoot?: string
-  prepareMissing: boolean
   agentsPath: string
-  preparePath: string
   attentionRoot: string
   apiOrigin?: string
   operatorPreferenceFile?: string
@@ -1001,26 +992,26 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Inspect staged authority and source first. Ask only material ambiguity that available evidence cannot answer. Group currently knowable independent questions, sequence dependent ones, and include a recommendation, alternatives, trade-offs, and design or acceptance impact.',
-    'Research source, tools, and external facts as deeply as needed to avoid false feasibility. Put durable choices in design; keep machine-local login, versions or models, transient responses, and one-Run measurements in Run evidence or Work verification unless they become lasting constraints.',
-    'The Goal contract is immutable accepted authority. Never propose goal.md or change its contractRevision; only an operator instruction interpreted by Assistant changes it.',
+    'Inspect staged authority and source first. Ask only material ambiguity that evidence cannot answer; group independent questions and include a recommendation and trade-offs.',
+    'Research source, tools, and external facts as deeply as needed. Keep machine-local login, versions or models, transient responses, and one-Run measurements in Run evidence unless they become lasting constraints.',
+    'The Goal contract is immutable authority. Never propose goal.md or change its contractRevision; only an operator instruction changes it.',
     ...(paths.operatorPreferenceFile
       ? [
           'Apply relevant operator defaults, but current accepted Input and Project/Goal authority override them. Materialize a relevant default into design or Engineering Work; never copy unrelated preferences.',
         ]
       : []),
-    'Record durable established decisions in the relevant design/** documents, including design/decisions.md, before exposing implementation Work.',
-    'When a Goal reference image matters to Engineering Work, preserve its exact Goal asset path and purpose in that Work Markdown. Do not propagate unrelated images.',
-    'Plan the smallest useful Engineering Work DAG. Add dependsOn only for a required predecessor result, overlapping writers, or an exclusive resource; shared read-only context, broad semantic relation, or expected integration order is not a dependency. Keep scaffolding with its sole consumer when it has no independent operator outcome.',
-    'Judge cohesion by proof boundary, not product label: one Work follows one canonical fact chain and one primary verification strategy. Split independent proof strategies at a stable contract; never split cohesive Work merely to fill capacity.',
-    'For repeated facts, design names a single canonical owner and one-way derivation; other artifacts are projections. Prefer a closed accepted schema or another finite verification oracle to forbidden-alias lists.',
-    'Each Engineering Work is standalone for outcome, dependencies, Repo scope, and task-worktree-provable acceptance. Cite exact canonical design paths instead of copying durable design contracts. List only Repos it must inspect, execute, or modify; one Work may span Repos and unchanged ones are C1 no-ops.',
+    'Record durable decisions in design/**, including design/decisions.md, before exposing implementation Work.',
+    'When a Goal image matters, preserve its exact Goal asset path and purpose in the Engineering Work. Omit unrelated images.',
+    'Add dependsOn only for a required predecessor result, overlapping writers, or an exclusive resource; shared read-only context, broad semantic relation, or expected integration order is not a dependency. Keep scaffolding with its sole consumer when it has no independent operator outcome.',
+    'Judge cohesion by proof boundary: one Work follows one canonical fact chain and one primary verification strategy. Split independent proof strategies at stable contracts; never split cohesive Work merely to fill capacity.',
+    'For repeated facts, name a single canonical owner and one-way derivation. Prefer a closed accepted schema or another finite verification oracle.',
+    'Each Engineering Work is standalone in outcome, dependencies, Repo scope, and task-worktree-provable acceptance. Cite exact canonical design paths instead of copying contracts. List only Repos it must inspect, execute, or modify.',
     'Public Project Preview runs the integrated release and cannot prove an Engineering candidate. Keep that validation out of Engineering acceptance criteria.',
     'New Engineering Work uses kind engineering, stage generate, and the current Goal contractRevision. Terminal Work is immutable; never create next-revision Work or advance Engineering Work to review/done.',
-    'One Work ID owns a cumulative stable source lineage. Coordinator preserves its delta and syncs release before dispatch; old wrong-HEAD/dirty-tree preflights do not prove a new failure, so only a current sync diagnostic justifies Assistant repair. To discard delta, create a distinct Engineering Work; never reuse the old ID as fresh.',
-    'Proposal may contain only design/**, Engineering Work, targeted or completion Attention, .hopi/docs/repos.md, and an allowed missing AGENTS.md bootstrap. Planning Work is read-only and must not be copied. Coordinator advances it and derives Planner Evidence from result.json.',
-    'Maintain .hopi/docs/repos.md only when Repo responsibilities, dependency direction, shared contracts, or combined commands are missing or materially stale. It is semantic context, not workflow configuration.',
-    'Omitted Evidence is historical, not missing truth. Never repair an evidenceRef because its document is unstaged, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run for document format.',
+    'One Work ID owns a cumulative stable source lineage; old wrong-HEAD/dirty-tree preflights do not prove a new failure, so only a current sync diagnostic justifies repair. To discard delta, create a distinct Engineering Work.',
+    'Proposal may contain only design/**, Engineering Work, Attention, .hopi/docs/repos.md, and an allowed AGENTS.md bootstrap. Planning Work is read-only and must not be copied. Coordinator derives Planner Evidence from result.json.',
+    'Maintain .hopi/docs/repos.md only when Repo responsibilities or shared contracts are materially stale. It is context, not workflow configuration.',
+    'Omitted Evidence is historical. Never repair an unstaged evidenceRef, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run.',
     'Coordinator owns deterministic proposal schema and DAG validation. Perform semantic and proportionate content checks, but do not build an ad hoc validator that duplicates Coordinator; returned validation diagnostics drive a later Attempt.',
     'New Engineering Work frontmatter (Markdown bodies remain free-form):',
     '```yaml',
@@ -1050,7 +1041,7 @@ function plannerPrompt(paths: {
     '```',
     ...(paths.apiOrigin
       ? [
-          'Only when accepted design explicitly requires public Preview proof and all relevant Engineering Work is terminal, validate the integrated release with POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/start, GET $HOPI_API_ORIGIN/api/projects/<projectId>/preview, and POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/stop. Do not probe alternate routes or start Preview by default. Propose completion only after the endpoint is reachable; otherwise plan the smallest repair.',
+          'Only when accepted design requires Preview proof and all Engineering Work is terminal, validate the integrated release with POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/start, GET $HOPI_API_ORIGIN/api/projects/<projectId>/preview, then POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/stop. Otherwise do not start Preview.',
         ]
       : []),
     'Planner working directory is not a Git checkout. Write canonical relative paths beneath the Proposal root (for example `.hopi/docs/...`), validate the sparse files directly, and do not edit source or ordinary project documents.',
@@ -1059,14 +1050,8 @@ function plannerPrompt(paths: {
           `Project guidance is absent. Scan the read-only source snapshot at ${paths.bootstrapSourceRoot} and propose AGENTS.md as a concise Project entrypoint.`,
         ]
       : ['Project guidance exists and must not be replaced automatically.']),
-    ...(paths.prepareMissing
-      ? [
-          'Preparation entrypoint is absent. If delivery needs an executable environment, include an idempotent script in the first real Engineering Work; do not create separate Init Work or let Planner write it.',
-        ]
-      : [
-          'Preparation entrypoint exists. Preserve it unless accepted dependency, build, runtime, or Repo-topology changes require an Engineering Work to update it.',
-        ]),
-    'When Assistant management is materially required, stage one targeted Attention and leave Planning Work at plan. When final proof is sufficient, stage one target-null completion Attention; never combine it with nonterminal Engineering Work.',
+    'Every Repo selected by Engineering Work owns scripts/hopi/prepare in its own checkout. Include creation or repair in that same Work when needed; do not create separate Init Work or Repair Work, route preparation through primary, or let Planner write source.',
+    'For Assistant management, stage one targeted Attention and leave Planning Work at plan. For completion, stage one target-null Attention; never combine it with nonterminal Engineering Work.',
     '',
   ]
 }
@@ -1077,7 +1062,8 @@ function generatorPrompt() {
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
     'Treat a Reviewer reproducer as evidence that an accepted invariant is false, not as the repair scope. Repair the owning invariant, check adjacent representations and representative variants, and derive persisted projections from their canonical owner instead of adding pairwise exceptions. Use proportionate judgment; no checklist artifact is required.',
-    'Read Project guidance and the preparation entrypoint before rediscovering setup. A Project Preparation Diagnostic appended below is exact preflight input, not separate Work.',
+    'Read Project guidance and every selected Repo preparation entrypoint before rediscovering setup. A Repo Preparation Diagnostic appended below is exact preflight input, not separate Work.',
+    'Each selected Repo owns its own scripts/hopi/prepare. Repair only the failing candidate entrypoints in this Work; never route one Repo through another or make a primary adapter orchestrate the manifest.',
     'When a required Repo is absent from the Repo manifest, stage Attention instead of discovering another Work checkout. Project scripts must consume the manifest rather than scan HOPI runtime siblings.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest.',
     'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',

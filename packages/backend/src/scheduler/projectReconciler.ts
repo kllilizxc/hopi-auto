@@ -397,10 +397,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })
           .catch(() => null)
         if (scopedWorktrees.length > 0) {
-          const primaryTaskRoot = scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot
-          const preparationProjectRoot =
-            primaryTaskRoot ??
-            resolveProjectPath(primaryProjectRepo.integrationRoot, primaryProjectRepo.projectPath)
+          const preparationProjectRoot = scopedWorktrees[0]?.projectRoot
+          if (!preparationProjectRoot) {
+            throw new Error(`Engineering Work ${workId} has no Repo preparation root`)
+          }
           const preparation = await preparer.prepare({
             projectRoot: preparationProjectRoot,
             runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
@@ -414,7 +414,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })
           await attempt?.record(preparationEvent(responsibility, preparation))
           if (preparation.kind !== 'ready') {
-            if (preparation.kind === 'source_changed') {
+            if (preparation.repos.some((repo) => repo.kind === 'source_changed')) {
               await Promise.all(
                 worktreeEntries.map(({ repo }) =>
                   worktrees.prepareClean({
@@ -478,9 +478,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             responsibility,
             cwd:
-              scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot ??
-              scopedWorktrees[0]?.projectRoot ??
-              context.runRoot,
+              responsibility === 'generator'
+                ? (scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot ??
+                  scopedWorktrees[0]?.projectRoot ??
+                  context.runRoot)
+                : context.runRoot,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             session: responsibilitySession.session,
@@ -833,19 +835,22 @@ async function ensureProjectScope(repoRoot: string, projectPath: string) {
 }
 
 function preparationEvent(responsibility: string, preparation: ProjectPreparationResult) {
+  const failedRepoIds = preparation.repos
+    .filter((repo) => repo.kind !== 'ready')
+    .map((repo) => repo.repoId)
   return {
     kind: 'message' as const,
     level: preparation.kind === 'ready' ? ('info' as const) : ('error' as const),
     role: 'coordinator',
     content:
       preparation.kind === 'ready'
-        ? `Project preparation completed before ${responsibility}.`
-        : `Project preparation ${preparation.kind} before ${responsibility}: ${boundedPreparationLogs(preparation.logs)}`,
+        ? `Repo preparation completed before ${responsibility}: ${preparation.repos.map((repo) => repo.repoId).join(', ')}.`
+        : `Repo preparation failed before ${responsibility} for ${failedRepoIds.join(', ')}: ${boundedPreparationLogs(preparation.logs)}`,
   }
 }
 
 function preparationFailureSummary(preparation: ProjectPreparationResult) {
-  return `Project preparation is not ready, so Reviewer was skipped. ${boundedPreparationLogs(preparation.logs)}`
+  return `Repo preparation is not ready, so Reviewer was skipped. ${boundedPreparationLogs(preparation.logs)}`
 }
 
 async function appendPreparationDiagnostic(
@@ -858,15 +863,15 @@ async function appendPreparationDiagnostic(
     [
       prompt.trimEnd(),
       '',
-      '## Project Preparation Diagnostic',
+      '## Repo Preparation Diagnostic',
       '',
       `Status: ${preparation.kind}`,
-      `Adapter: ${preparation.adapterPath}`,
-      `Log: ${preparation.logPath}`,
+      `Repos: ${preparation.repos.map((repo) => `${repo.repoId}=${repo.kind}`).join(', ')}`,
+      `Combined log: ${preparation.logPath}`,
       '',
       boundedPreparationLogs(preparation.logs),
       '',
-      'Repair or create scripts/hopi/prepare as part of this Engineering Work when needed. It must be executable, idempotent, and leave Project source unchanged.',
+      'Repair or create scripts/hopi/prepare in each failing Repo candidate owned by this Work. Each entrypoint must be executable, idempotent, prepare only its own checkout, and leave every Repo source unchanged.',
       '',
     ].join('\n'),
   )

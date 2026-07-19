@@ -15,13 +15,15 @@ The primary Repo is the existing Project control boundary:
 
 - its managed integration worktree contains the canonical `.hopi` package
 - its root `AGENTS.md` is the Project model entrypoint
-- its `scripts/hopi/prepare` and `scripts/hopi/preview` are the only HOPI adapters
+- its `scripts/hopi/preview` is the one Project Preview adapter
 - its `hopi/release` ref is the one logical C1 boundary
 
 Every secondary Repo has its own HOPI-owned `hopi/release` ref and managed integration worktree, but
-no duplicate Goal package. Choosing a primary Repo instead of creating a synthetic control Repo
-preserves the current single-Repo layout and migration model. Changing or removing the primary Repo
-is outside this MVP because it would move canonical history and the irreversible boundary.
+no duplicate Goal package. Every Repo owns the same local `scripts/hopi/prepare` capability; primary
+status does not change preparation ownership. Choosing a primary Repo instead of creating a
+synthetic control Repo preserves the current single-Repo layout and migration model. Changing or
+removing the primary Repo is outside this MVP because it would move canonical history and the
+irreversible boundary.
 
 The user-facing model remains:
 
@@ -158,25 +160,27 @@ against its current release target and rejects a conflict before the primary bou
 
 ## Preparation and Preview
 
-There is still one Project preparation and one Preview adapter in the primary Repo. Coordinator
-writes a runtime-only Repo manifest and supplies:
+Every Repo owns one local preparation entrypoint; only Preview remains a primary Project adapter.
+Coordinator writes one runtime-only Repo manifest and invokes each selected Repo checkout with:
 
 ```text
-HOPI_PROJECT_ROOT=<primary-root>
+HOPI_REPO_ID=<stable-repo-id>
+HOPI_REPO_ROOT=<current-checkout-root>
 HOPI_REPOS_FILE=<runtime-json-path>
 HOPI_GOAL_ID=<owning-goal-id> # Engineering preparation only
 ```
 
-For an Engineering Run the manifest names its task roots and `HOPI_GOAL_ID` identifies the exact
-canonical Goal. For Preview the manifest names every managed integration root and no Goal ID is
-invented. Existing single-Repo scripts may ignore `HOPI_REPOS_FILE` and retain their current
-behavior. Multi-Repo scripts orchestrate Repo-native commands through the manifest. HOPI adds no
-per-Repo adapter schema, initialized flag, or adapter revision.
+For an Engineering Run the manifest names only its task roots and `HOPI_GOAL_ID` identifies the exact
+canonical Goal. For Preview it names every managed integration root and no Goal ID is invented. A
+script prepares only its own cwd; the manifest may inform cross-Repo compatibility checks but never
+delegates another Repo's setup. HOPI adds no adapter schema, initialized flag, adapter revision, or
+primary fallback.
 
-The existing bootstrap rule remains: when the primary script is missing or broken, Planner includes
-its repair in the first real Engineering Work needing the environment. That Work must include the
-primary Repo. Preparation failure before Reviewer returns the logical Work to Generator with the
-captured log. Preview is one Project button and starts only when all release projections are valid.
+Before Generator the sequence is diagnostic and non-blocking. Before Reviewer every manifested Repo
+must prepare successfully or the same logical Work returns to Generator. Before Preview every managed
+integration Repo must prepare successfully, then the primary Preview adapter starts. A missing
+entrypoint is bootstrapped inside the ordinary Work that owns that Repo; a no-setup Repo uses an
+explicit executable no-op entrypoint.
 
 ## Primary C1 and Component Commits
 

@@ -362,11 +362,15 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Control Goal | Pause, resume, cancel, reopen, or set priority | Validated Goal/control documents |
 | Control Work | Retry, cancel, or change `notBefore` | Validated Work documents; retry/cancel also settle exact Work Attention |
 | Resolve Attention | Record an operator answer after any required Goal/Work effects | Goal Input and Attention resolution |
-| Control Preview | Start, stop, or request repair of Preview | Runtime process, or ordinary Planning request for repair |
+| Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Notify operator | Publish one concise message from the current internal Reflection turn | Handled public Inbox reply, then Attention `notifiedAt` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
+
+A failed Preview produces an ordinary Assistant turn with Project and Goal context. Assistant uses
+the existing design and Request planning capabilities when source repair is needed; Preview has no
+special repair operation or repair workflow.
 
 Every semantic operation available in the product UI is also available to the speaking Assistant
 through the same domain validator and document store. This is capability parity, not button parity:
@@ -559,6 +563,11 @@ it stays open and Assistant states the one remaining decision when silence would
 Goal mutation tools surface the still-open canonical references after their effect so this settlement
 is not buried in a large state read. Apart from the exact Work retry/cancel semantics above, HOPI adds
 no answer parser, intent labels, or automatic semantic closure rule.
+
+Resolution is Assistant judgment, not a safety capability. Resolving Project Attention requests a
+fresh Coordinator reconciliation and does not itself declare the Project executable. Each backend
+boundary rechecks its own durable and safety preconditions before acting; a remaining failure creates
+ordinary Project Attention again without importing a separate Attention kind or validation model.
 
 After the configured bounded Assistant retry count, HOPI creates event-target Attention and stops
 retrying that turn until the operator responds or the condition changes. A visible error replaces

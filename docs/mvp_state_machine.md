@@ -600,10 +600,14 @@ outcome. Other state and document changes do not participate in this runtime tra
   worktree owns canonical documents and the single C1; every managed Repo materializes the release
   recorded by that C1. User checkouts are outside publication and repair. Missing primary root
   `AGENTS.md` is Planner context bootstrap, not a lifecycle state or initialization Work.
-- A Project may bootstrap one reviewed `scripts/hopi/prepare` through its first real Engineering
-  Work. Coordinator runs it repeatedly before consuming a checkout; there is no initialized or
-  prepare-stale state. Reviewer always starts from a clean task-branch checkpoint, never from
-  uncheckpointed Run residue.
+- Managed integration worktrees are backend-owned release projections. Workflow model processes may
+  read them, but only Coordinator-owned Git operations may write them. Planner and Reviewer write
+  only Run-local state; Generator writes only its assigned task worktrees.
+- Every Repo owns one reviewed `scripts/hopi/prepare`. Coordinator invokes each Work Repo's candidate
+  entrypoint before Reviewer and each managed integration Repo's entrypoint before Preview; it never
+  routes preparation through primary or another Repo. Missing or failed preparation returns the same
+  Work to Generator, with no preparation state or Attention. Reviewer always starts from clean
+  task-branch checkpoints, never from uncheckpointed Run residue.
 - User-checkout code enters only from an explicitly named committed ref through ordinary Input,
   Planning, Engineering Work, Review, and C1. Uncommitted content is never imported.
 - One Coordinator publishes canonical changes under one global mutex. An ordinary publication has
@@ -617,6 +621,10 @@ outcome. Other state and document changes do not participate in this runtime tra
   non-null target always blocks; its nullable exact `operatorRequest` pointer derives whether its
   badge is **Waiting for Assistant** or **Needs you**. `notifiedAt` is delivery history only. A null
   target is Goal completion and never blocks.
+- Attention resolution records Assistant judgment and requests ordinary reconciliation; it never
+  overrides an execution precondition. The component that owns a durable or safety boundary checks
+  that boundary again before acting and fails closed through ordinary Project Attention when it is
+  still unsafe.
 - Operational exhaustion reuses ordinary Work-target Attention and is derived from Attempt history;
   it adds no Work field, Attention identity convention, or Kanban state. Explicit Work retry settles
   only the exact Work blocker as part of that control operation.

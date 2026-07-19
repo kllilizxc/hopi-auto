@@ -62,6 +62,52 @@ describe('PreviewManager', () => {
     })
   })
 
+  test('prepares every integrated Repo before launching the primary Preview adapter', async () => {
+    const projectRoot = join(temporaryRoot, 'web')
+    const apiRoot = join(temporaryRoot, 'api')
+    const orderFile = join(temporaryRoot, 'prepare-order.txt')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    const appendOrder = (repoId: string) =>
+      [
+        'import { appendFile } from "node:fs/promises"',
+        `await appendFile(${JSON.stringify(orderFile)}, ${JSON.stringify(`${repoId}\n`)})`,
+      ].join('\n')
+    await writePrepareAdapter(projectRoot, appendOrder('web'))
+    await writePrepareAdapter(apiRoot, appendOrder('api'))
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        `if (await Bun.file(${JSON.stringify(orderFile)}).text() !== "web\\napi\\n") process.exit(2)`,
+        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    await initializeGit(apiRoot)
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      startupTimeoutMs: 2_000,
+      stopGraceMs: 500,
+    })
+
+    const result = await manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      primaryRepoId: 'web',
+      repoRoots: [
+        { repoId: 'web', path: projectRoot },
+        { repoId: 'api', path: apiRoot },
+      ],
+    })
+
+    expect(result).toMatchObject({ kind: 'started', session: { status: 'running' } })
+    expect(await Bun.file(orderFile).text()).toBe('web\napi\n')
+    await manager.stop('P-1')
+  })
+
   test('returns an ordinary Assistant repair prompt when the adapter is missing', async () => {
     const manager = createPreviewManager(join(temporaryRoot, 'home'))
 
@@ -96,7 +142,7 @@ describe('PreviewManager', () => {
     expect(await Bun.file(launchLog).text()).toBe('started\n')
   })
 
-  test('Stop during Project preparation prevents the Preview adapter from launching', async () => {
+  test('Stop during Repo preparation prevents the Preview adapter from launching', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
@@ -155,6 +201,17 @@ describe('PreviewManager', () => {
           exitCode: 0,
           logs: '',
           logPath: join(input.runtimeDir, 'prepare.log'),
+          repos: [
+            {
+              repoId: 'primary',
+              repoRoot: input.projectRoot,
+              kind: 'ready',
+              adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
+              exitCode: 0,
+              logs: '',
+              logPath: join(input.runtimeDir, 'prepare.log'),
+            },
+          ],
         }
       },
     }
@@ -172,7 +229,7 @@ describe('PreviewManager', () => {
     expect(calls).toBe(2)
   })
 
-  test('stopAll waits for blocked Project preparation to settle', async () => {
+  test('stopAll waits for blocked Repo preparation to settle', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
@@ -195,7 +252,7 @@ describe('PreviewManager', () => {
     expect(await Bun.file(launchLog).exists()).toBe(false)
   })
 
-  test('runs Project preparation before Preview and returns its logs on failure', async () => {
+  test('runs Repo preparation before Preview and returns its logs on failure', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
     await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
@@ -409,6 +466,17 @@ function createControlledPreparer() {
         exitCode: 0,
         logs: '',
         logPath: join(input.runtimeDir, 'prepare.log'),
+        repos: [
+          {
+            repoId: 'primary',
+            repoRoot: input.projectRoot,
+            kind: 'ready',
+            adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
+            exitCode: 0,
+            logs: '',
+            logPath: join(input.runtimeDir, 'prepare.log'),
+          },
+        ],
       }
     },
   }

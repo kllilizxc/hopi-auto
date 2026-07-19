@@ -119,8 +119,7 @@ if (mode !== 'reflection') {
   server.registerTool(
     'hopi_control_preview',
     {
-      description:
-        'Start or stop reviewed Preview, or request ordinary Planning when the adapter is missing or broken.',
+      description: 'Start or stop the reviewed Project Preview runtime.',
       inputSchema: assistantToolSchemas.hopi_control_preview,
     },
     (args) => callTool('hopi_control_preview', args),

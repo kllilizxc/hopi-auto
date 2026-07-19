@@ -39,7 +39,9 @@ describe('ProjectPreparer', () => {
 
     expect(result).toMatchObject({ kind: 'ready', exitCode: 0 })
     expect(result.logs).toContain('stdout: ready')
-    expect(await Bun.file(join(fixture.runtime, 'cwd.txt')).text()).toBe(
+    const repoResult = result.repos[0]
+    if (!repoResult) throw new Error('Expected Repo preparation result')
+    expect(await Bun.file(join(dirname(repoResult.logPath), 'cwd.txt')).text()).toBe(
       await realpath(fixture.repo),
     )
     expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
@@ -74,8 +76,14 @@ describe('ProjectPreparer', () => {
       fixture.repo,
       'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE!).json(); console.log(`api=${manifest.repos.api}`)',
     )
+    await writeAdapter(
+      api,
+      'console.log(`repo=${process.env.HOPI_REPO_ID} root=${process.env.HOPI_REPO_ROOT}`)',
+    )
     await git(fixture.repo, ['add', '.'])
     await git(fixture.repo, ['commit', '-m', 'add prepare'])
+    await git(api, ['add', '.'])
+    await git(api, ['commit', '-m', 'add prepare'])
 
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
@@ -88,7 +96,29 @@ describe('ProjectPreparer', () => {
     })
 
     expect(result.kind).toBe('ready')
+    expect(result.repos.map((repo) => repo.repoId)).toEqual(['web', 'api'])
     expect(result.logs).toContain(`api=${api}`)
+    expect(result.logs).toContain(`repo=api root=${api}`)
+
+    await writeAdapter(fixture.repo, 'console.error("web failed"); process.exit(2)')
+    await writeAdapter(api, 'console.log("api still ran")')
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'fail prepare'])
+    await git(api, ['add', '.'])
+    await git(api, ['commit', '-m', 'track prepare attempt'])
+    const failed = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: join(fixture.runtime, 'failed'),
+      primaryRepoId: 'web',
+      repoRoots: [
+        { repoId: 'web', path: fixture.repo },
+        { repoId: 'api', path: api },
+      ],
+    })
+
+    expect(failed.kind).toBe('failed')
+    expect(failed.repos.map((repo) => repo.kind)).toEqual(['failed', 'ready'])
+    expect(failed.logs).toContain('api still ran')
   })
 
   test('passes the exact owning Goal only for an Engineering preparation', async () => {

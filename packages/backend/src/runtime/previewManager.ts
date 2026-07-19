@@ -376,10 +376,10 @@ function repairRequired(
     logs,
     prompt: [
       `Preview could not start through ${adapter}.`,
-      'The reviewed Project contract is scripts/hopi/prepare followed by scripts/hopi/preview from the clean managed integration worktree. Prepare owns runtime prerequisites; Preview owns service startup and its ready URL.',
+      "The reviewed contract is every selected Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its ready URL.",
       'A captured preparation or startup error is diagnosis rather than successful Preview behavior.',
       'First check whether an equivalent nonterminal Goal or Work is already creating or repairing either script and reuse it.',
-      'A terminal setup Goal whose Project preparation or Preview startup still fails is not an active repair: reopen it or request the smallest Planning repair instead of declaring the failure already accepted.',
+      'A terminal setup Goal whose Repo preparation or Preview startup still fails is not an active repair: reopen it or request the smallest Planning repair instead of declaring the failure already accepted.',
       details,
     ].join(' '),
   }

@@ -166,7 +166,7 @@ function createHandoffRoles(): RoleRunner & {
         return success('Produced source plus one immutable handoff proof.', [proof])
       }
       if (input.responsibility === 'reviewer' && input.workId === PRODUCE_WORK) {
-        expect(await Bun.file(join(input.cwd, 'src', 'producer.ts')).text()).toBe(
+        expect(await Bun.file(join(primarySourceRoot(input), 'src', 'producer.ts')).text()).toBe(
           'export const produced = 41\n',
         )
         return success('Accepted the predecessor source independently.')
@@ -181,7 +181,7 @@ function createHandoffRoles(): RoleRunner & {
         return success('Consumed only the staged predecessor proof.')
       }
       if (input.responsibility === 'reviewer' && input.workId === CONSUME_WORK) {
-        expect(await Bun.file(join(input.cwd, 'src', 'consumer.ts')).text()).toBe(
+        expect(await Bun.file(join(primarySourceRoot(input), 'src', 'consumer.ts')).text()).toBe(
           'export const consumed = 42\n',
         )
         return success('Accepted the dependent result independently.')
@@ -192,6 +192,12 @@ function createHandoffRoles(): RoleRunner & {
     },
   }
   return roles
+}
+
+function primarySourceRoot(input: RoleRunInput) {
+  const root = input.context.repoRoots.find((repo) => repo.primary)?.path
+  if (!root) throw new Error('Responsibility context has no primary source root')
+  return root
 }
 
 async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> {

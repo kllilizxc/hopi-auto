@@ -841,33 +841,36 @@ configuration or checkout. It preserves committed blob line endings in HOPI-owne
 executable script that passed review cannot become `bash\r` merely because a later Work gets a fresh
 checkout.
 
-### Project preparation
+### Repo preparation
 
-Primary `scripts/hopi/prepare` is the Project's one reviewed, executable preparation contract. It is a fixed
-convention rather than Project configuration or lifecycle state. The script is foreground,
-non-interactive, idempotent, and returns zero only when the current checkout can build, test, and run.
-It may populate ignored dependencies and caches but must not modify tracked or non-ignored Project
-files. Coordinator invokes it with the primary root as cwd and a runtime-only `HOPI_REPOS_FILE`
-mapping stable Repo IDs to the exact task or integration roots that will be consumed before every
-Generator, Reviewer, and Preview start. Engineering preparation additionally receives the exact
-`HOPI_GOAL_ID` of its owning Run; Preview has no Goal and omits it. Repeated invocation, rather than a HOPI-maintained lockfile
-fingerprint, is the freshness check. When the manifest is present, the script resolves linked Repos
-from it and never scans HOPI runtime siblings or earlier Work directories. It may call Repo-native
-setup commands through that manifest; HOPI does not add per-Repo preparation configuration.
+`scripts/hopi/prepare` is each Repo's reviewed, executable preparation contract. It is one fixed
+convention rather than Project configuration, adapter routing, or lifecycle state. Each script is
+foreground, non-interactive, idempotent, prepares only its own checkout, and returns zero only when
+that checkout can be consumed. It may populate ignored dependencies and caches but must not modify
+tracked or non-ignored source.
 
-A missing script is allowed only for bootstrap. Planner records its creation in the first real
-Engineering Work that needs an executable environment; it does not create a separate Init Work.
-That first Generator starts from the ordinary task checkout, inspects `AGENTS.md` and native manifests,
-creates and runs the script, and completes the owning product change. If several Works genuinely need
-the bootstrap result, existing `dependsOn` orders them. Planner never writes the executable directly:
-it judges adequacy and Work scope, while Generator changes it and Reviewer validates it.
+For an Engineering Run, Coordinator writes one runtime-only `HOPI_REPOS_FILE` containing the exact
+task roots declared by the Work. In stable manifest order it invokes every selected checkout's own
+script with that checkout as cwd, `HOPI_REPO_ID`, `HOPI_REPO_ROOT`, and the exact `HOPI_GOAL_ID`.
+For Preview it performs the same sequence over every managed integration root and omits the Goal ID.
+The manifest is context, not delegation authority: a Repo script never scans runtime siblings,
+prepares another Repo, or substitutes for another Repo's missing entrypoint. Repeated invocation,
+rather than a stored initialized flag or lockfile fingerprint, is the freshness check.
 
-Preparation is best-effort before Generator so a missing or broken script cannot prevent the role
-that can repair it. Its path and captured failure log are added to that Run's assignment. Preparation
-is strict before Reviewer: missing, non-executable, failing, or source-mutating preparation skips the
-model call and returns the same Work to Generator with the exact log. Preview runs the same preparation
-contract before primary `scripts/hopi/preview`, leaving Preview responsible only for service startup and its
-ready URL. The fixed responsibility prompt exposes the adapter's exact ready signal,
+A missing script is allowed only while Generator can bootstrap it in the ordinary Engineering Work
+that already owns that Repo. HOPI does not create an Init or Repair Work. A Repo that needs no setup
+still owns an explicit executable no-op script, so absence never ambiguously means either "ready" or
+"forgotten". Planner never writes the executable directly; Generator makes every selected candidate
+preparable and Reviewer validates the result.
+
+Preparation is best-effort before Generator: Coordinator attempts every selected Repo, captures all
+per-Repo diagnostics, and still starts Generator so the same Work can repair failures. Preparation is
+strict before Reviewer: Coordinator runs every selected candidate script, skips the model call when
+any result is missing, non-executable, failing, or source-mutating, and returns the same Work to
+Generator with Repo-specific logs. There is no Attention, preparation Work, or primary-Repo fallback.
+Preview requires every managed integration Repo to prepare successfully before the primary Repo's
+`scripts/hopi/preview` starts, leaving Preview responsible only for service startup and its ready URL.
+The fixed responsibility prompt exposes the adapter's exact ready signal,
 `HOPI_PREVIEW_URL=<reachable-url>`, whenever an Engineering Work may create, repair, or review the
 script; a merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
 initialized flag, prepare revision, setup Action, or preparation Kanban state.
@@ -903,8 +906,16 @@ Planner reads every linked Repo's current managed source and existing Repo-local
 the primary root `AGENTS.md` remains the single automatically bootstrapped Project entrypoint. It
 maintains `.hopi/docs/repos.md` as natural-language topology, responsibility, command, and shared
 contract context when missing or materially stale. Engineering responsibilities receive the roots
-listed by their owning Work and may change any of them; Reviewer read-only checks and Generator
-checkpointing cover every root as one logical result.
+listed by their owning Work. Planner and Reviewer processes start from their Run directory and see
+those roots read-only; Generator alone receives write access to its assigned task worktrees.
+Managed integration roots are never Agent-writable. Reviewer checks and Generator checkpointing
+cover every assigned root as one logical result.
+
+Coordinator recovery treats unexpected managed-integration source as system-owned projection drift:
+it archives the observed bytes and patches outside the worktree, rematerializes the recorded release,
+and validates the result before scheduling. Primary canonical `.hopi` documents and the allowed
+Planner `AGENTS.md` bootstrap remain authoritative and are not cleaned as source drift. User and
+delivery checkouts are never cleaned or rewritten by this recovery path.
 
 User-authored code enters `hopi/release` only through an explicit ordinary Assistant Input naming a
 committed branch or commit. Planner first reuses any Work already handling the same change and

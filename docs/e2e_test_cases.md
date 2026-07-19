@@ -1285,7 +1285,7 @@ Actions:
 2. Return an empty directory, require explicit UI confirmation, then initialize it as one `main` Repo and create the Project.
 3. Select `apps/storefront` inside an existing monorepo and create a separate Project from that source scope.
 4. Reload Coordinator and UI, then run one deterministic Planning/Engineering/Review/C1 path inside the selected app.
-5. Run Project preparation and Preview from the reviewed scoped integration and attempt one out-of-scope task mutation.
+5. Run Repo preparation and Preview from the reviewed scoped integration and attempt one out-of-scope task mutation.
 
 Pass conditions:
 

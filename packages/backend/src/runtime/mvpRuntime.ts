@@ -33,7 +33,7 @@ import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
 import { migrateLegacyAttentionOwnership } from './attentionOwnershipMigration'
 import { createCompletionStructureVerifier } from './completionVerifier'
-import { bootstrapCoordinator } from './coordinatorBootstrap'
+import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
@@ -150,6 +150,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
         integrationRoot: repo.integrationRoot,
         checkoutRoot: repo.repoPath,
         deliveryBranch: repo.deliveryBranch,
+        projectPath: repo.projectPath,
         primary: repo.primary,
       })),
     }
@@ -228,7 +229,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     readAssistantCodingDefaults: readAssistantModelSettings,
     readProjectCodingDefaults,
   })
-  let restoreProjectEligibility: (projectId: string) => void = () => undefined
+  let restoreProjectEligibility: (projectId: string) => Promise<void> = async () => undefined
   const assistantTools = createAssistantTools({
     home,
     workspace,
@@ -290,7 +291,32 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   })
   readActiveRuns = () => coordinator.activeRuns()
   wakeCoordinator = () => coordinator.wake()
-  restoreProjectEligibility = (projectId) => coordinator.setProjectEligible(projectId, true)
+  restoreProjectEligibility = async (projectId) => {
+    const project = requireProject(projects, projectId)
+    try {
+      await recoverCoordinatorProject(home, {
+        projectId: project.projectId,
+        projectRoot: project.projectRoot,
+        primaryRepoId: project.primaryRepoId,
+        repos: project.repos.map((repo) => ({
+          repoId: repo.repoId,
+          integrationRoot: repo.integrationRoot,
+          checkoutRoot: repo.repoPath,
+          deliveryBranch: repo.deliveryBranch,
+          projectPath: repo.projectPath,
+          primary: repo.primary,
+        })),
+        store: project.store,
+      })
+      coordinator.setProjectEligible(projectId, true)
+    } catch (error) {
+      coordinator.setProjectEligible(projectId, false)
+      await attentions.ensureProjectAttention(
+        projectId,
+        `Project reconciliation validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 

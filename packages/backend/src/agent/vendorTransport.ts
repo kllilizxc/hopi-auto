@@ -25,6 +25,7 @@ export interface TransportContextBundle {
   runtimeCacheDir: string
   goalFile: string
   designFile: string
+  extraReadableRoots?: string[]
   extraWritableRoots?: string[]
   contextFile: string
   artifactManifestFile?: string
@@ -241,7 +242,10 @@ export async function resolveConfiguredTransportCommand(options: {
     } else {
       cmd.push('--permission-mode', options.config.permissionMode)
     }
-    const accessibleDirs = new Set(options.bundle.extraWritableRoots ?? [])
+    const accessibleDirs = new Set([
+      ...(options.bundle.extraReadableRoots ?? []),
+      ...(options.bundle.extraWritableRoots ?? []),
+    ])
     for (const imageFile of options.bundle.imageFiles ?? []) accessibleDirs.add(dirname(imageFile))
     for (const dir of accessibleDirs) cmd.push('--add-dir', dir)
     if (options.config.model) {

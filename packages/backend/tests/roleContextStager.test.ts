@@ -80,7 +80,7 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
     expect(prompt).toContain('Completion Attention frontmatter (final Planner success only)')
     expect(prompt).toContain('notifiedAt: null')
-    expect(prompt).toContain('Preparation entrypoint is absent')
+    expect(prompt).toContain('Every Repo selected by Engineering Work owns scripts/hopi/prepare')
     expect(prompt).toContain('do not create separate Init Work')
     expect(prompt).toContain('no independent operator outcome')
     expect(prompt).toContain(
@@ -124,8 +124,12 @@ describe('RoleContextStager', () => {
     expect(await Bun.file(join(bundle.contextRoot, 'authority', 'AGENTS.md')).text()).toContain(
       'Existing',
     )
+    expect(bundle.extraReadableRoots).toContain(fixture.projectRoot)
+    expect(bundle.extraWritableRoots).not.toContain(fixture.projectRoot)
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
-    expect(await Bun.file(bundle.promptFile).text()).toContain('Preparation entrypoint exists')
+    expect(await Bun.file(bundle.promptFile).text()).toContain(
+      `Repo preparation entrypoints: primary=${join(fixture.projectRoot, 'scripts', 'hopi', 'prepare')}`,
+    )
   })
 
   test('stages Home preferences only for Planner without adding them to semantic guards', async () => {
@@ -417,6 +421,11 @@ describe('RoleContextStager', () => {
 
     const generatorPrompt = await Bun.file(generator.promptFile).text()
     const reviewerPrompt = await Bun.file(reviewer.promptFile).text()
+    expect(generator.extraReadableRoots).toContain(fixture.projectRoot)
+    expect(generator.extraWritableRoots).toContain(fixture.projectRoot)
+    expect(reviewer.extraReadableRoots).toContain(fixture.projectRoot)
+    expect(reviewer.extraWritableRoots).not.toContain(fixture.projectRoot)
+    expect(reviewerPrompt).toContain(`Working directory: ${reviewer.runRoot}`)
     expect(generatorPrompt).toContain('Git writes such as add, commit')
     expect(generatorPrompt).toContain('Coordinator alone validates proposals')
     expect(generatorPrompt).toContain('### Engineering Work: Engineering Work')

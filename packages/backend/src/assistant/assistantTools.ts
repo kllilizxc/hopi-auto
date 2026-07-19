@@ -111,7 +111,7 @@ export function createAssistantTools(options: {
     input: ProjectCodingDefaultsInput | null,
   ): Promise<void>
   onProjectTopologyChanged?: (eventId: string) => void
-  onProjectAttentionResolved?: (projectId: string) => void
+  onProjectAttentionResolved?: (projectId: string) => void | Promise<void>
   now?: () => Date
 }): AssistantTools {
   type Capability =
@@ -897,12 +897,14 @@ export function createAssistantTools(options: {
             if (changed) {
               await options.workspace.resolveAttention(args.attentionId, args.resolution, now())
               if (projectTarget) {
-                options.onProjectAttentionResolved?.(projectTarget.projectId)
+                await options.onProjectAttentionResolved?.(projectTarget.projectId)
               }
             }
             return {
               summary: projectTarget
-                ? `Resolved Project Attention ${args.attentionId}; Project ${projectTarget.projectId} is eligible again.`
+                ? changed
+                  ? `Resolved Project Attention ${args.attentionId}; requested fresh reconciliation for Project ${projectTarget.projectId}.`
+                  : `Project Attention ${args.attentionId} was already resolved.`
                 : `Resolved Workspace Attention ${args.attentionId}.`,
               changed,
               value: {
@@ -965,32 +967,7 @@ export function createAssistantTools(options: {
               value: result,
             }
           }
-          const contextGoalId = event.attributes.context?.goalId
-          if (!contextGoalId) throw new Error('Preview repair requires a Goal in turn context')
-          const admission = await goalInputAdmission(
-            options.workspace,
-            project.store,
-            contextGoalId,
-            event,
-          )
-          await ensurePlanningWithRunInvalidation(
-            project,
-            contextGoalId,
-            `Establish or repair Preview from Inbox turn ${eventId}: ${args.failure ?? event.body}`,
-            admission,
-          )
-          return {
-            summary: `Preview repair planning requested in ${contextGoalId}.`,
-            changed: true,
-            value: {
-              projectId: project.projectId,
-              goalId: contextGoalId,
-              remainingAttentionRefs: await remainingGoalAttentionRefs(
-                project.store,
-                contextGoalId,
-              ),
-            },
-          }
+          throw new Error(`Unsupported Preview operation: ${args.operation satisfies never}`)
         }
         case 'hopi_notify_user':
         case 'hopi_request_user': {

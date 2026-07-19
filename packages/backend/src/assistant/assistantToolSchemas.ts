@@ -221,8 +221,7 @@ export const assistantToolSchemas = {
   hopi_control_preview: z
     .object({
       projectId: stableIdSchema,
-      operation: z.enum(['start', 'stop', 'request_repair']),
-      failure: z.string().optional(),
+      operation: z.enum(['start', 'stop']),
     })
     .strict(),
   hopi_notify_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),

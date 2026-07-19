@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, realpath, rename, rm, symlink } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, mkdtemp, realpath, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -73,6 +73,7 @@ export interface C1Integrator {
 }
 
 export class C1IntegrationError extends Error {}
+class ManagedIntegrationDriftError extends C1IntegrationError {}
 
 export function createC1Integrator(
   homeRoot: string,
@@ -277,7 +278,10 @@ export function createC1Integrator(
             await faultHooks.afterRefUpdate?.(commit)
             await faultHooks.beforeMaterialization?.(commit)
             await materializeCommit(projectRoot, oldTarget, commit)
-            await validateMaterializedCommit(projectRoot, commit)
+            await ensureMaterializedCommit(
+              requireLayoutRepo(projectLayout, projectLayout.primaryRepoId),
+              commit,
+            )
             await faultHooks.beforeSecondaryProjection?.(commit)
             await materializeSecondaryProjections(
               projectLayout,
@@ -571,7 +575,7 @@ async function recoverProjectProjection(
   if (primaryHead !== commit) {
     await materializeCommit(primary.integrationRoot, primaryHead, commit)
   }
-  await validateMaterializedCommit(primary.integrationRoot, commit)
+  await ensureMaterializedCommit(primary, commit)
 
   const nextProject = await readProjectDocumentAt(
     primary.integrationRoot,
@@ -608,25 +612,32 @@ async function recoverProjectProjection(
 export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout) {
   const primary = requireLayoutRepo(layout, layout.primaryRepoId)
   const target = await git(primary.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
-  const [targetTree, indexTree] = await Promise.all([
+  const [targetTree, initialIndexTree] = await Promise.all([
     git(primary.integrationRoot, ['show', '-s', '--format=%T', target]),
     git(primary.integrationRoot, ['write-tree']),
   ])
+  let indexTree = initialIndexTree
   const parentLine = await git(primary.integrationRoot, ['show', '-s', '--format=%P', target])
   const parent = parentLine.split(/\s+/)[0] || null
   if (indexTree !== targetTree) {
-    if (!parent) {
-      throw new C1IntegrationError(
-        'Primary managed index does not materialize the root release tree',
-      )
-    }
-    const parentTree = await git(primary.integrationRoot, ['show', '-s', '--format=%T', parent])
+    const parentTree = parent
+      ? await git(primary.integrationRoot, ['show', '-s', '--format=%T', parent])
+      : null
     if (indexTree !== parentTree) {
+      const projectPath = normalizeProjectPath(primary.projectPath)
+      await reconcileManagedIntegrationSource(primary, target, [
+        projectPath === '.' ? 'AGENTS.md' : posix.join(projectPath, 'AGENTS.md'),
+      ])
+      indexTree = await git(primary.integrationRoot, ['write-tree'])
+    }
+    if (indexTree !== targetTree && indexTree !== parentTree) {
       throw new C1IntegrationError(
-        `Primary managed index ${indexTree} is neither current ${targetTree} nor parent ${parentTree}`,
+        `Repo ${primary.repoId} managed integration ${resolve(primary.integrationRoot)} index ${indexTree} is neither current ${targetTree} nor parent ${parentTree ?? 'none'}`,
       )
     }
-    await materializeCommit(primary.integrationRoot, parent, target)
+    if (parent && indexTree === parentTree) {
+      await materializeCommit(primary.integrationRoot, parent, target)
+    }
   }
 
   const projectFile = Bun.file(join(primary.integrationRoot, '.hopi', 'project.yml'))
@@ -792,11 +803,6 @@ async function materializeSecondaryRepo(
       : expectedOld && indexTree === expectedOldTree
         ? expectedOld
         : null
-  if (!materializedCommit) {
-    throw new C1IntegrationError(
-      `Repo ${repo.repoId} index tree ${indexTree} is neither the previous nor desired release`,
-    )
-  }
   if (current !== desired) {
     if (!expectedOld || current !== expectedOld) {
       throw new C1IntegrationError(
@@ -806,10 +812,14 @@ async function materializeSecondaryRepo(
     await durableUpdateRef(repo.integrationRoot, desired, expectedOld)
     await durabilitySync(repo.integrationRoot)
   }
+  if (!materializedCommit) {
+    await ensureMaterializedCommit(repo, desired)
+    return
+  }
   if (materializedCommit !== desired) {
     await materializeCommit(repo.integrationRoot, materializedCommit, desired)
   }
-  await validateMaterializedCommit(repo.integrationRoot, desired)
+  await ensureMaterializedCommit(repo, desired)
 }
 
 async function readProjectDocumentAt(repoRoot: string, commit: string, primaryRepoId: string) {
@@ -992,15 +1002,181 @@ async function materializeCommit(projectRoot: string, oldTarget: string, commit:
   await git(projectRoot, ['read-tree', commit])
 }
 
-async function validateMaterializedCommit(projectRoot: string, commit: string) {
+async function ensureMaterializedCommit(repo: C1ProjectRepo, commit: string) {
+  try {
+    await validateMaterializedCommit(repo, commit)
+    return
+  } catch (initialError) {
+    if (!(initialError instanceof ManagedIntegrationDriftError)) throw initialError
+    const recoveryPath = await archiveManagedIntegrationDrift(repo, commit)
+    try {
+      await rematerializeManagedIntegration(repo, commit)
+      await validateMaterializedCommit(repo, commit)
+    } catch (recoveryError) {
+      throw new C1IntegrationError(
+        `Repo ${repo.repoId} managed integration ${resolve(repo.integrationRoot)} could not be recovered to ${commit}; archived at ${recoveryPath}; initial=${errorMessage(initialError)}; recovery=${errorMessage(recoveryError)}`,
+      )
+    }
+  }
+}
+
+export async function reconcileManagedIntegrationSource(
+  repo: C1ProjectRepo,
+  commit: string,
+  allowedPaths: readonly string[] = [],
+) {
+  const projectRoot = resolve(repo.integrationRoot)
+  const [changed, untracked] = await Promise.all([
+    gitBytes(projectRoot, ['diff', '--name-only', '-z', 'HEAD']),
+    gitBytes(projectRoot, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])
+  const allowed = new Set(allowedPaths)
+  const unsafePaths = [...new Set([...nulPaths(changed), ...nulPaths(untracked)])].filter(
+    (path) => path !== '.hopi' && !path.startsWith('.hopi/') && !allowed.has(path),
+  )
+  if (unsafePaths.length === 0) return null
+
+  const recoveryPath = await archiveManagedIntegrationDrift(repo, commit, unsafePaths)
+  try {
+    await rematerializeManagedIntegrationPaths(repo, commit, unsafePaths)
+  } catch (error) {
+    throw new C1IntegrationError(
+      `Repo ${repo.repoId} managed integration ${projectRoot} source could not be recovered to ${commit}; archived at ${recoveryPath}; recovery=${errorMessage(error)}`,
+    )
+  }
+  return recoveryPath
+}
+
+async function archiveManagedIntegrationDrift(
+  repo: C1ProjectRepo,
+  commit: string,
+  requestedPaths?: readonly string[],
+) {
+  const projectRoot = resolve(repo.integrationRoot)
+  const recoveryPath = join(
+    dirname(projectRoot),
+    'recovery',
+    `${new Date().toISOString().replace(/[:.]/g, '-')}-${repo.repoId}-${crypto.randomUUID()}`,
+  )
+  // Index-reading commands may refresh and lock a worktree index, so never race them.
+  const head = await git(projectRoot, ['rev-parse', 'HEAD'])
+  const indexTree = await git(projectRoot, ['write-tree'])
+  const commitTree = await git(projectRoot, ['show', '-s', '--format=%T', commit])
+  const status = await git(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all'])
+  const changed = await gitBytes(projectRoot, ['diff', '--name-only', '-z', 'HEAD'])
+  const staged = await gitBytes(projectRoot, ['diff', '--cached', '--name-only', '-z', 'HEAD'])
+  const untracked = await gitBytes(projectRoot, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+  ])
+  const preservedPaths = requestedPaths
+    ? [...new Set(requestedPaths)]
+    : [...new Set([...nulPaths(changed), ...nulPaths(staged), ...nulPaths(untracked)])]
+  const pathspec = preservedPaths.length > 0 ? ['--', ...preservedPaths] : []
+  const [workingPatch, indexPatch] = await Promise.all([
+    gitBytes(projectRoot, ['diff', '--binary', 'HEAD', ...pathspec]),
+    gitBytes(projectRoot, ['diff', '--cached', '--binary', 'HEAD', ...pathspec]),
+  ])
+  await mkdir(join(recoveryPath, 'files'), { recursive: true })
+  for (const path of preservedPaths) {
+    const source = await safeProjectPath(projectRoot, path)
+    if (!(await pathExists(source))) continue
+    const destination = join(recoveryPath, 'files', ...path.split('/'))
+    await mkdir(dirname(destination), { recursive: true })
+    await cp(source, destination, {
+      recursive: true,
+      preserveTimestamps: true,
+    })
+  }
+  await Promise.all([
+    Bun.write(join(recoveryPath, 'working.patch'), workingPatch),
+    Bun.write(join(recoveryPath, 'index.patch'), indexPatch),
+    Bun.write(
+      join(recoveryPath, 'manifest.json'),
+      `${JSON.stringify(
+        {
+          repoId: repo.repoId,
+          integrationRoot: projectRoot,
+          expectedCommit: commit,
+          observedHead: head,
+          observedIndexTree: indexTree,
+          expectedTree: commitTree,
+          status: status || 'clean',
+          preservedPaths,
+          archivedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+    ),
+  ])
+  return recoveryPath
+}
+
+async function rematerializeManagedIntegration(repo: C1ProjectRepo, commit: string) {
+  const projectRoot = resolve(repo.integrationRoot)
+  const [tracked, untracked] = await Promise.all([
+    gitBytes(projectRoot, ['ls-files', '-z']),
+    gitBytes(projectRoot, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])
+  for (const path of new Set([...nulPaths(tracked), ...nulPaths(untracked)])) {
+    await rm(await safeProjectPath(projectRoot, path), {
+      recursive: true,
+      force: true,
+    })
+  }
+  await git(projectRoot, ['symbolic-ref', 'HEAD', HOPI_RELEASE_REF])
+  await git(projectRoot, ['read-tree', commit])
+  await git(projectRoot, ['checkout-index', '--all', '--force'])
+}
+
+async function rematerializeManagedIntegrationPaths(
+  repo: C1ProjectRepo,
+  commit: string,
+  paths: readonly string[],
+) {
+  const projectRoot = resolve(repo.integrationRoot)
+  for (const path of paths) {
+    await rm(await safeProjectPath(projectRoot, path), {
+      recursive: true,
+      force: true,
+    })
+    const entry = await treeEntry(projectRoot, commit, path, true)
+    if (!entry) {
+      await git(projectRoot, ['update-index', '--force-remove', '--', path])
+      continue
+    }
+    await git(projectRoot, ['update-index', '--add', '--cacheinfo', entry.mode, entry.hash, path])
+    await git(projectRoot, ['checkout-index', '--force', '--', path])
+  }
+}
+
+function nulPaths(value: Uint8Array) {
+  return new TextDecoder().decode(value).split('\0').filter(Boolean)
+}
+
+async function pathExists(path: string) {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+async function validateMaterializedCommit(repo: C1ProjectRepo, commit: string) {
+  const projectRoot = resolve(repo.integrationRoot)
   // Both write-tree and status may refresh and lock this worktree's index.
   const head = await git(projectRoot, ['rev-parse', 'HEAD'])
   const indexTree = await git(projectRoot, ['write-tree'])
   const status = await git(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all'])
   const commitTree = await git(projectRoot, ['show', '-s', '--format=%T', commit])
   if (head !== commit || indexTree !== commitTree || status) {
-    throw new C1IntegrationError(
-      `Managed integration worktree does not exactly materialize C1 (head=${head}, commit=${commit}, index=${indexTree}, tree=${commitTree}, status=${status || 'clean'})`,
+    throw new ManagedIntegrationDriftError(
+      `Repo ${repo.repoId} managed integration ${projectRoot} does not exactly materialize ${commit} (head=${head}, index=${indexTree}, tree=${commitTree}, status=${status || 'clean'})`,
     )
   }
 }
