@@ -57,6 +57,7 @@ describe('bootstrapCoordinator', () => {
 
   test('archives and repairs primary managed source without removing canonical documents', async () => {
     const fixture = await setup()
+    await git(fixture.projectRoot, ['config', 'core.autocrlf', 'true'])
     await Bun.write(join(fixture.projectRoot, 'README.md'), 'planner changed source\n')
     await Bun.write(join(fixture.projectRoot, 'leaked.spec.ts'), 'planner leaked source\n')
     await git(fixture.projectRoot, ['add', 'README.md', 'leaked.spec.ts'])

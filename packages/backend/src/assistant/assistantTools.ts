@@ -4,7 +4,11 @@ import {
   normalizeInboxAttentionReferences,
   parseAttentionReference,
 } from '../domain/attentionReference'
-import { parseProjectAttentionTarget, parseWorkAttentionTarget } from '../domain/attentionTarget'
+import {
+  parseProjectAttentionTarget,
+  parseWorkAttentionTarget,
+  projectAttentionTarget,
+} from '../domain/attentionTarget'
 import {
   type WorkDocument,
   isPlanningWork,
@@ -24,6 +28,7 @@ import {
 } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
 import { deriveReadableId } from '../domain/stableId'
+import { deriveWorkProjection } from '../domain/workProjection'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import {
@@ -849,30 +854,46 @@ export function createAssistantTools(options: {
             }
             inputChanged = Boolean(admission.write)
           } else if (args.operation === 'retry') {
-            const admission = await goalInputAdmission(
-              options.workspace,
-              project.store,
-              args.goalId,
-              event,
-            )
             await project.controller.retryWork(
               args.goalId,
               args.workId,
               args.notBefore === undefined ? work.attributes.notBefore : args.notBefore,
               {
-                acceptedInput: admission,
                 resolution: 'Assistant requested another run in the existing Work lineage.',
               },
             )
-            inputChanged = Boolean(admission.write)
           } else {
             await project.controller.setWorkNotBefore(
               args.goalId,
               args.workId,
               args.notBefore ?? null,
             )
-            inputChanged = await publishInput(options.workspace, project.store, args.goalId, event)
           }
+          const [currentPackage, workspace, profile] = await Promise.all([
+            project.store.readPackage(args.goalId),
+            options.workspace.readWorkspace(),
+            readSoftwareDeliveryProfile(),
+          ])
+          const currentWork = currentPackage.works.get(args.workId)
+          if (!currentWork) throw new Error(`Work not found after control: ${args.workId}`)
+          const projectEligible = ![...workspace.attentions.values()].some(
+            (attention) =>
+              attention.attributes.target === projectAttentionTarget(project.projectId) &&
+              attention.attributes.resolvedAt === null,
+          )
+          const projection = deriveWorkProjection(
+            project.projectId,
+            args.goalId,
+            currentWork.attributes,
+            currentPackage,
+            {
+              projectEligible,
+              liveRunWorkIds: new Set(),
+              passCapacity: { planner: true, generator: true, reviewer: true },
+              now: now(),
+              maxAttempts: profile.retry.maxAttempts,
+            },
+          )
           return {
             summary: `${args.operation} applied to Work ${args.workId}.`,
             changed: true,
@@ -881,6 +902,10 @@ export function createAssistantTools(options: {
               goalId: args.goalId,
               workId: args.workId,
               inputChanged,
+              stage: currentWork.attributes.stage,
+              notBefore: currentWork.attributes.notBefore,
+              terminal: isWorkTerminal(currentWork.attributes),
+              failedPredicates: projection.failedPredicates,
               remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
             },
           }
@@ -1268,12 +1293,7 @@ async function resolveGoalAttention(
   if (!(await file.exists())) throw new Error(`Goal Attention not found: ${attentionId}`)
   const source = await file.text()
   const attention = parseAttentionDocument(source)
-  if (attention.attributes.resolvedAt !== null) {
-    if (admission.write) {
-      await store.publishGoal(goalId, { supportingWrites: [], gateWrite: admission.write })
-    }
-    return Boolean(admission.write)
-  }
+  if (attention.attributes.resolvedAt !== null) return false
   await assertAttentionBlockerChanged(store, goalId, attention.attributes.target)
   attention.attributes.operatorRequest = null
   attention.attributes.resolvedAt = resolvedAt.toISOString()

@@ -157,8 +157,11 @@ worktrees are too short-lived.
 Before admitting another responsibility pass, Coordinator synchronizes that stable task branch
 with the current Repo release while preserving its checkpointed Work delta. An already-current
 branch is reused unchanged; a clean release advance is incorporated mechanically. A dirty or
-conflicting branch that cannot be synchronized without guessing returns to Planning before a model
-pass starts. This is maintenance of the existing Work projection, not another workflow state.
+conflicting branch that cannot be synchronized without guessing is preserved behind Work-target
+Attention before a model pass starts. Speaking Assistant may retry after a concrete repair or
+request Planning when the contract or DAG actually needs to change; the sync fault itself does not
+invent a Goal-wide Planning guard. This is maintenance of the existing Work projection, not another
+workflow state.
 
 Work identity also bounds what may be preserved. When accepted Planning requires the old task delta
 or checkpoint not to be used at all, Planner creates a distinct Engineering Work identity and routes
@@ -185,7 +188,8 @@ The kernel exposes three ideas to product architecture:
 
 - `publish(bundle)`: validated, idempotent document publication with at most one control gate
 - semantic guard: stale or no-longer-authorized results cannot advance state
-- bounded retry: repeated failure becomes Attention instead of an infinite loop
+- bounded Work recovery: reviewed or operational exhaustion becomes Attention instead of an
+  infinite automatic retry; HOPI adds no Goal-level Run-count or similarity fuse
 
 Publication mechanics live only in [the publish protocol ADR](./mvp_publish_protocol.md).
 
@@ -333,9 +337,11 @@ The MVP UI contains:
    state or persistent Assistant/Reflection list headers.
    The composer supports bounded image selection and paste, and the conversation preserves image
    thumbnails with their source turns.
-2. Project switcher and overview with the Home Assistant model, Project guidance, effective
-   responsibility model defaults, and Goals, but no Project workflow status. Assistant and Project
-   model settings remain visibly separate.
+2. Project switcher and overview with one Home agent-settings panel for Assistant, Planner,
+   Generator, and Reviewer, plus Project guidance, effective responsibility model defaults, and
+   Goals, but no Project workflow status. Each Home role may explicitly select its transport, model,
+   and compatible reasoning effort; an inherited workflow role continues to use each owning
+   Project's default.
 3. Goal list with derived current/next summaries rather than workflow controls.
 4. Goal detail with contract, derived focus, Assistant updates, and explicit Pause or Resume.
 5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
@@ -384,13 +390,17 @@ adjacent.
 The projection still derives one primary badge in priority order: **Needs you**, **Waiting for
 Assistant**, `working`, `scheduled`, `queued`, then `waiting`. The card footer shows the count of
 real runtime Attempts and, only when dispatch is currently prevented, one concise `Blocked by …`
-reason derived from readiness facts. This runtime count is not the canonical Work `attempts` repair
-counter. Lane placement and segmented progress already communicate ordinary running, queued, and
-terminal state without repeating footer labels.
+reason derived from readiness facts. A Done card also shows when its successful terminal Attempt
+made completion effective. This is a server-derived read projection over the durable Attempt log,
+not another model-maintained Work field; older Attempt records without application metadata may be
+used only when their successful terminal responsibility unambiguously matches the Work kind. This
+runtime count is not the canonical Work `attempts` repair counter. Lane placement and segmented
+progress already communicate ordinary running and queued state without repeating footer labels.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
-canonical Work, Evidence, dependency, timing, and error facts. Only the running segment's fill
-pulses; the card surface remains still. Opening a card also lists each runtime Attempt and its
-normalized live message/tool stream;
+canonical Work, Evidence, dependency, timing, and error facts. Only the running title and current
+segment fill carry restrained status motion; the title uses the Lane color while the card surface
+remains still. Reduced-motion keeps the title as a static emphasis. Opening a card also lists each
+runtime Attempt and its normalized live message/tool stream;
 that diagnostic stream is not another workflow authority. A separate polished Diagnostics product
 is deferred.
 

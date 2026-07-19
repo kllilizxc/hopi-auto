@@ -800,10 +800,9 @@ describe('Assistant HOPI tools', () => {
     expect(resolvedPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
     expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: expect.any(String),
-      resolutionInput: expect.stringContaining('/EV-1.md'),
+      resolutionInput: null,
     })
-    expect(resolvedPackage.inputs).toHaveLength(1)
-    expect(resolvedPackage.inputs[0]?.body).toBe('Retry this Work and clear the blocker.\n')
+    expect(resolvedPackage.inputs).toHaveLength(0)
   })
 
   test('settles operational Attention even when retry changes no Work fields', async () => {
@@ -836,7 +835,7 @@ describe('Assistant HOPI tools', () => {
       },
     )
 
-    expect(retried.value).toMatchObject({ inputChanged: true, remainingAttentionRefs: [] })
+    expect(retried.value).toMatchObject({ inputChanged: false, remainingAttentionRefs: [] })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       attempts: 0,
@@ -844,11 +843,45 @@ describe('Assistant HOPI tools', () => {
     })
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: expect.any(String),
-      resolutionInput: expect.stringContaining('/EV-operational-retry.md'),
+      resolutionInput: null,
     })
-    expect(goalPackage.inputs.map((input) => input.body)).toEqual([
-      'Connectivity recovered. Retry the same Work.\n',
-    ])
+    expect(goalPackage.inputs).toHaveLength(0)
+  })
+
+  test('does not route a retry turn into the controlled Goal as accepted Input', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({
+      goalId: 'G-target',
+      title: 'Target',
+      objective: 'Ship it.',
+    })
+    await fixture.goalStore.createGoal({ goalId: 'G-page', title: 'Page', objective: 'Keep it.' })
+    const attention = await fixture.controller.ensureOperationalFailureAttention(
+      'G-target',
+      'plan-initial',
+      3,
+      'provider recovered after a transient outage',
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-unrelated-page',
+      content: 'Continue the unrelated page task.',
+      context: { projectId: 'P-1', goalId: 'G-page' },
+    })
+
+    await fixture.tools.executeForEvent('EV-unrelated-page', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-target',
+      workId: 'plan-initial',
+      operation: 'retry',
+    })
+
+    const target = await fixture.goalStore.readPackage('G-target')
+    expect(target.inputs).toHaveLength(0)
+    expect(target.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolutionInput: null,
+    })
+    expect((await fixture.goalStore.readPackage('G-page')).inputs).toHaveLength(0)
   })
 
   test('settles exact Work Attention when cancellation makes the Work terminal', async () => {
@@ -886,6 +919,35 @@ describe('Assistant HOPI tools', () => {
       resolvedAt: expect.any(String),
       resolutionInput: expect.stringContaining('/EV-cancel-work.md'),
     })
+  })
+
+  test('returns canonical nonterminal state after deferring Planning Work', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-defer-planning',
+      content: 'Defer Planning until next year.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    const deferred = await fixture.tools.executeForEvent('EV-defer-planning', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      operation: 'set_not_before',
+      notBefore: '2099-01-01T00:00:00.000Z',
+    })
+
+    expect(deferred.value).toMatchObject({
+      stage: 'plan',
+      notBefore: '2099-01-01T00:00:00.000Z',
+      terminal: false,
+      failedPredicates: ['not_before'],
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
+    ).toMatchObject({ stage: 'plan', notBefore: '2099-01-01T00:00:00.000Z' })
+    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
   })
 
   test('atomically refreshes Planning and settles its exact referenced Attention', async () => {

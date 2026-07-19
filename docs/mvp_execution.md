@@ -33,6 +33,12 @@ Canonical documents are not shared model scratch space.
   release there.
 - Direct mutation of canonical files while Coordinator runs is unsupported; changes enter through
   staged publication or an explicit offline import and validation path.
+- PublicationCoordinator maintains one process-local generation per storage root. A successful
+  publication, uncertain failed publication, or C1 critical section advances that generation.
+  Coordinator's high-frequency reconciliation poll may reuse one Goal-ID plus validated
+  Goal-package snapshot only while it is unchanged; ordinary Assistant, API, control, and recovery
+  reads remain fresh. Restart begins from an empty cache and validates storage again. This is a read
+  optimization, never a durable version, workflow fact, or substitute for publication validation.
 
 One `publish(bundle)` call changes exactly one storage root. Under the global mutex, Coordinator
 rereads current documents, validates the proposed final view and semantic authorization, then
@@ -130,11 +136,11 @@ this is a disposable projection, not a separate replay ledger or latest-failure 
 Assistant home and project Git are not one atomic store. HOPI uses a simple idempotent sequence:
 
 1. The pending Assistant turn is already durable before the configured model runs.
-2. Each mutating HOPI tool names and validates its own target. In that project it uses
-   operation-specific single-gate publications for the blocking guard and requested effects, then
-   publishes Goal Input for source `(homeId, eventId)` as the durable effect receipt. Goal-local
-   Attention resolution is one more publication after Input. Goal creation establishes the Goal
-   and initial Planning guard before its Input receipt.
+2. Each mutating HOPI tool names and validates its own target. Material Goal or Work decisions use
+   operation-specific single-gate publications and publish Goal Input for source `(homeId, eventId)`
+   as the accepted authority receipt. Operational `retry` and `set_not_before` controls instead audit
+   their exact canonical control effect without adopting the current Inbox body as Goal authority.
+   Goal creation establishes the Goal and initial Planning guard before its Input receipt.
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
@@ -144,18 +150,20 @@ acknowledgement. The exclusion is process-local and covers the whole receive/eff
 sequence; it adds no canonical status. A failure or process replacement releases the exclusion, so
 the still-pending receipt follows the ordinary Assistant recovery path instead of being lost.
 
-The tool target owns destination choice for that call; the qualified Goal Input path and digest are
-the project-effects receipt. One turn may create receipts in multiple Goals. Goal-local Attention
-resolution may follow as the final unblocking gate. None of these is a generic operation receipt or
-cross-root transaction entity.
+The tool target owns destination choice for that call; when an operation accepts material authority,
+the qualified Goal Input path and digest are its project-effects receipt. One turn may intentionally
+create receipts in multiple Goals. Operational controls cannot create those receipts merely because
+they ran during the turn. None of these is a generic operation receipt or cross-root transaction
+entity.
 
-After a process crash, a pending turn resumes in the configured Assistant conversation. A tool whose Goal Input is
-missing rereads current canonical state and safely completes or reports the interrupted effect; a
-matching Input proves that Goal already accepted the source instruction. Domain IDs, lifecycle
-guards, expected content hashes, and existing Planning Work make repeats idempotent. A vanished
-target, conflicting Goal identity, digest mismatch, or missing original turn creates targeted
-Attention rather than a guessed repair. An unavailable unrelated project does not affect the other
-tool calls in the turn.
+After a process crash, a pending turn resumes in the configured Assistant conversation. A material
+tool whose Goal Input is missing rereads current canonical state and safely completes or reports the
+interrupted effect; a matching Input proves that Goal already accepted the source instruction.
+Operational controls reread their exact Work fields and targeted Attention instead. Domain IDs,
+lifecycle guards, expected content hashes, and existing Planning Work make repeats idempotent. A
+vanished target, conflicting Goal identity, digest mismatch, or missing original turn creates
+targeted Attention rather than a guessed repair. An unavailable unrelated project does not affect
+the other tool calls in the turn.
 
 Project-target Attention is created in one Assistant-home publication when the project root is
 invalid, unwritable, or a Coordinator integrity failure leaves no safe Goal-local writer. It has no
@@ -179,9 +187,12 @@ One deterministic exception removes a split command at the Work control boundary
 retrying a Work means that Assistant has judged its current blocker clear or superseded; cancelling
 means that the Work will no longer run. The corresponding control tool therefore settles every open
 Attention targeted exactly at that Work as part of the same logical operation. Retry publishes the
-Work reset, current Goal Input, and Attention resolution together, with resolution as the final gate;
-a crash before that gate leaves the Work conservatively blocked and repeating the command completes
-it idempotently. Neither operation closes Goal, Project, or another Work's Attention.
+Work reset and Attention resolution together, with resolution as the final gate, but does not copy
+the current Inbox event into Goal Input or set `resolutionInput`; its audit authority is the existing
+Work Attention plus the durable Assistant turn. A crash before that gate leaves the Work
+conservatively blocked and repeating the command completes it idempotently. Cancellation remains a
+material decision and retains its accepted Input. Neither operation closes Goal, Project, or another
+Work's Attention.
 
 The same atomic boundary applies when the current Inbox turn carries an exact Attention reference
 targeted at the Planning Work that `Request planning` creates or refreshes. Accepting that turn into
@@ -198,6 +209,13 @@ An internal Reflection handoff that identifies an unchanged branch defect must r
 another represented effect instead of using retry as a fictional repair. Direct operator retry keeps
 the atomic settlement shortcut above because the operator instruction itself is accepted authority
 to try the same lineage again.
+
+`notBefore` only defers dispatch. Setting it never makes Work terminal, cancels it, resolves its
+Attention, or removes the Planning guard imposed by a nonterminal Planning Work. Work cancellation
+is reserved for an explicit decision to abandon that Work and is not an operational or worktree-sync
+recovery command. After every Work control operation, the control API reads canonical state again
+and returns the Work's `stage`, `notBefore`, terminal fact, and failed readiness predicates; Assistant
+must base its claim on that returned state rather than infer an effect from the requested command.
 
 Project-target Workspace Attention cannot be closed by a model assertion. Explicit repair such as
 Repo rebind first validates the Repo, release ref, managed root, and Project identity, then resolves
@@ -266,6 +284,12 @@ Resolution for Planner, Generator, and Reviewer is:
    when the explicit role uses compatible Codex defaults
 3. otherwise Assistant-home `defaults` apply
 
+The Home settings surface exposes Assistant, Planner, Generator, and Reviewer in one panel. Saving
+a workflow role writes or removes only that role's existing `runtime/agent-adapters.json.roles`
+override; it does not copy the choice into Projects or Work. Removing an override restores the
+normal per-Project resolution above. Compatible advanced adapter fields remain intact when only the
+model or reasoning effort changes.
+
 The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
 configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits compatible Home
 defaults. The speaking Assistant's resumable session belongs to Home rather than any Project;
@@ -283,8 +307,8 @@ Pass result values are:
 - `reject`: Reviewer returns engineering Work to `generate` with findings
 - `attention`: keep the current stage and publish one internal Assistant-management request without
   consuming an attempt
-- `fail`: the current responsibility cannot complete this Work contract; Engineering returns to
-  Planning, while Planner creates one ordinary Work Attention for Assistant recovery
+- `fail`: the current responsibility cannot complete this Work contract; preserve its Evidence and
+  current stage, then create or reuse one ordinary Work Attention for Assistant recovery
 
 `blocked` is not a Work field. Open targeted Attention is the one derived readiness blocker.
 Only operational process failures retry automatically. Reviewer `reject` and deterministic C1
@@ -447,6 +471,9 @@ The Work-detail UI derives a compact breakdown from those immutable Attempt reco
 Reviewer `reject`, responsibility/process `fail`, and `interrupted` distinct. This is observability,
 not another retry counter or lifecycle model. Work frontmatter `attempts` remains the sole canonical
 recovery count, while the total Run count and outcome breakdown explain how execution time was spent.
+HOPI does not infer a Goal-level loop from Run count, similar summaries, or unchanged source, and does
+not stop normal model judgment with an arbitrary repetition threshold. A proven deterministic retry
+defect is repaired at its owning dispatch or recovery boundary.
 
 Generator and Reviewer may start short-lived local services when implementation or material
 verification requires them. Their workspace-write Codex transport includes network execution so
@@ -504,9 +531,13 @@ Evidence are not staged merely because they exist. Guard coverage and model cont
 separate concerns.
 
 The staged authority is a compact responsibility view, not a claim that omitted canonical history
-does not exist. In particular, an older `evidenceRefs` entry whose Evidence document is not staged is
-not dangling and Planner never repairs it. Terminal Engineering Work is immutable and remains absent
-from the sparse proposal even when Planner uses its latest Evidence for completion assessment.
+does not exist. An active owning Engineering Work receives its latest Evidence. Each transitive
+terminal Engineering dependency receives its latest Generator/Reviewer pair, while another terminal
+dependency kind receives its latest Evidence. An older Evidence explicitly cited by that Work body
+is also retained. Other older `evidenceRefs` entries are not dangling and Planner never repairs them.
+The complete history remains canonical; only the disposable Run projection and its semantic guard
+omit superseded history. Terminal Engineering Work is immutable and remains absent from the sparse
+proposal even when Planner uses its latest Evidence for completion assessment.
 
 Each accepted Goal instruction is published atomically with its Input and the Planning Work that owns
 it. The Planning Work body contains an `Accepted Inputs` section with canonical Input paths. Reusing
@@ -661,8 +692,11 @@ described under [Goal Completion](#goal-completion). This reuses the same Planne
 adds no completion role or pass.
 
 Planner may return `success`, `attention`, or `fail`. Success means its complete sparse proposal and
-Run result are ready for Coordinator validation. Attention means one exact Assistant-management
-request is staged. Fail means the Run could not produce a valid proposal without such a request;
+Run result are ready for Coordinator validation. When the existing nonterminal Engineering DAG is
+already the complete valid plan, that proposal may be empty: Coordinator records Planner Evidence
+and finishes the owning Planning Work without rewriting the DAG. Attention means one exact
+Assistant-management request is staged. Fail means the Run could not produce a valid proposal
+without such a request;
 Coordinator publishes its Evidence and creates one Work Attention so speaking Assistant can diagnose,
 retry, revise, or ask the operator rather than blindly launching the same Planner. A
 successful proposal either leaves nonterminal Engineering Work to execute or leaves one open
@@ -677,14 +711,17 @@ present. It reads the Work contract, design, current target state, and findings 
 canonical context bundle; changes source and normal project docs; runs focused checks; and produces
 Evidence. It returns `success`, `attention`, or `fail`: attention means Assistant management is
 required, while fail means this Run did not complete valid implementation proof. A published fail
-keeps the Engineering Work and immediately ensures Planning to revise, cancel, or replace it; it does
-not consume a Reviewer-repair attempt or redispatch Generator unchanged.
+keeps the Engineering Work, does not consume a Reviewer-repair attempt, and creates Work Attention
+instead of redispatching Generator unchanged or inventing a Goal-wide Planning guard. Speaking
+Assistant decides whether the exact recovery is retry, Planning, cancellation, or operator action.
 
 Generator treats a Reviewer reproducer as evidence that an accepted invariant is false, not as the
 scope of the repair. It fixes the owning invariant, checks adjacent representations and representative
 variants, and derives persisted projections from their canonical owner instead of adding pairwise
-exceptions. The model chooses proportionate proof; HOPI adds no mandatory checklist artifact or
-structured repair protocol.
+exceptions. Before claiming success it replays the latest exact reproducer. When that reproducer is
+stable and the Project's existing test or validator stack can express it, Generator persists it as a
+regression at the nearest owning boundary; otherwise its result explains why an ephemeral proof is
+stronger. HOPI adds no checklist artifact or new structured repair protocol.
 
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every
@@ -744,14 +781,17 @@ Reviewer orders cheap, high-risk canonical/recomputation probes before expensive
 proof when both are material. After finding a decisive implementation defect, it performs a bounded
 low-cost sweep of the same invariant and other already-visible independent risks so one rejection
 batches the defects currently knowable from that candidate. It stops before unrelated exhaustive
-exploration. A later review first proves the reported invariant rather than only the literal example,
-then reuses still-valid prior evidence.
+exploration. Every reproducible rejection records the violated invariant, exact command/input or
+deterministic inspection steps, and observed failure in the ordinary Evidence summary. A later review
+replays that reproducer first, then proves the invariant rather than only the literal example and
+reuses still-valid prior evidence.
 
 Reviewer may return `success`, `reject`, `attention`, or `fail`: reject identifies an implementation
-defect against accepted criteria, attention identifies an invalid design or missing authority, and fail means
-the Run could not produce a valid review and therefore returns the Goal to Planning rather than
-rerunning Reviewer unchanged. Every role's result may list Run-local logs, screenshots, or
-other proof paths in `artifacts`; omit artifacts when no preserved file adds evidence. These are
+defect against accepted criteria, attention identifies an invalid design or missing authority, and
+fail means the Run could not produce a valid review and therefore creates Work Attention rather than
+rerunning Reviewer unchanged or automatically returning the Goal to Planning. Every role's result
+may list Run-local logs, screenshots, or other proof paths in `artifacts`; omit artifacts when no
+preserved file adds evidence. These are
 model-supplied source paths only. Before publication Coordinator must verify each path. A
 Project-relative source path remains portable as-is; a Run-local file is copied into the owning
 Run's durable `artifacts/` directory and replaced with `artifact:<runId>/<artifactName>`. Missing or
@@ -819,10 +859,15 @@ Immediately before Generator or Reviewer preparation, Coordinator compares each 
 with that Repo's current `hopi/release`. If release is already an ancestor, no Git mutation occurs.
 If the clean task branch is behind or divergent, Coordinator fast-forwards it or merges release into
 it with hooks and signing disabled, preserving the task delta and then verifying a clean checkout and
-release ancestry. A failed merge is aborted back to the exact prior task HEAD and ensures Planning
-with the bounded conflict diagnostic; no responsibility Run starts and the Project is not globally
-blocked. A dirty Generator checkout is preserved and also returns to Planning when synchronization
-is required, because silently resetting or merging uncheckpointed source would guess ownership.
+release ancestry. A failed merge is aborted back to the exact prior task HEAD and creates or reuses a
+Work-target Attention with the bounded conflict diagnostic; no responsibility Run starts, unrelated
+Engineering Work remains eligible, and no global Planning guard is invented. A dirty Generator
+checkout is preserved behind the same Work Attention when synchronization is required, because
+silently resetting or merging uncheckpointed source would guess ownership. If a successful release
+merge itself exposes a dirty checkout, Coordinator likewise preserves the synchronized branch and
+source behind that Work Attention. Speaking Assistant requests Planning only when the represented
+Goal contract or DAG must change; the synchronization condition itself does not escalate to Project
+Attention, cancel Work, or create Planning automatically.
 
 This synchronization is the implementation of dependency handoff and ordinary independent release
 advance. It adds no base-commit field, sync status, repair Work, or Assistant-side Git capability.

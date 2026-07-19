@@ -10,6 +10,7 @@ import {
 } from '../src/domain/canonicalDocuments'
 import { GoalPackageValidationError } from '../src/domain/goalPackage'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import type { PublicationRoot } from '../src/publication/types'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'goal-package-store')
@@ -234,7 +235,42 @@ describe('createGoalPackageStore', () => {
       }),
     ).rejects.toThrow('without a contractRevision increment')
   })
+
+  test('reuses the Coordinator reconciliation snapshot until publication changes', async () => {
+    const publisher = new CountingPublicationCoordinator()
+    const writer = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+    await writer.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const reader = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+    publisher.snapshotTreeReads = 0
+
+    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
+    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
+    expect(publisher.snapshotTreeReads).toBe(1)
+
+    await publisher.publish({
+      root: reader.paths.publicationRoot,
+      supportingWrites: [
+        {
+          path: `${reader.paths.designRoot('G-1')}/notes.md`,
+          expectedHash: null,
+          content: '# Notes\n',
+        },
+      ],
+      validateCandidate() {},
+    })
+    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
+    expect(publisher.snapshotTreeReads).toBe(2)
+  })
 })
+
+class CountingPublicationCoordinator extends PublicationCoordinator {
+  snapshotTreeReads = 0
+
+  override snapshotTreeAtGeneration(root: PublicationRoot, prefix = '') {
+    this.snapshotTreeReads += 1
+    return super.snapshotTreeAtGeneration(root, prefix)
+  }
+}
 
 function engineeringWork(id: string, dependsOn: string[]) {
   return {

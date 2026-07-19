@@ -211,6 +211,36 @@ describe('PublicationCoordinator', () => {
     expect(result.kind).toBe('published')
     expect(await Bun.file(join(root.path, 'document.md')).text()).toBe('next\n')
   })
+
+  test('advances root-local generations only when cached reads may be stale', async () => {
+    const root = publicationRoot()
+    const otherRoot = { id: 'project:P-2', path: join(temporaryRoot, 'other') }
+    await mkdir(otherRoot.path)
+    const coordinator = new PublicationCoordinator()
+
+    expect(await coordinator.generation(root)).toBe(0)
+    expect(await coordinator.generation(otherRoot)).toBe(0)
+    await coordinator.publish(bundle(root, 'document.md', 'current\n'))
+    expect(await coordinator.generation(root)).toBe(1)
+    expect(await coordinator.generation(otherRoot)).toBe(0)
+
+    await coordinator.publish(bundle(root, 'document.md', 'current\n'))
+    expect(await coordinator.generation(root)).toBe(1)
+
+    await expect(
+      coordinator.publish({
+        root,
+        supportingWrites: [write('document.md', null, 'conflict\n')],
+        validateCandidate() {},
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' })
+    expect(await coordinator.generation(root)).toBe(2)
+
+    await coordinator.runExclusive(async (session) => {
+      await session.snapshotTree(root)
+    })
+    expect(await coordinator.generation(root)).toBe(3)
+  })
 })
 
 function publicationRoot(): PublicationRoot {

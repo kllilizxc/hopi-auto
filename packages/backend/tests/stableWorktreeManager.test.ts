@@ -298,7 +298,7 @@ describe('createStableWorktreeManager', () => {
     expect(await gitExitCode(prepared.path, ['rev-parse', '--verify', 'MERGE_HEAD'])).not.toBe(0)
   })
 
-  test('preserves dirty source and requests replanning when release synchronization is needed', async () => {
+  test('preserves dirty source for Work recovery when release synchronization is needed', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo-dirty'))
     const project = await createAssistantHomeStore(homeRoot).linkProject({
@@ -326,6 +326,53 @@ describe('createStableWorktreeManager', () => {
       'uncheckpointed source\n',
     )
     expect(await git(prepared.path, ['status', '--porcelain'])).toBe('?? unfinished.txt')
+  })
+
+  test('classifies source exposed by a successful release merge as Work-level sync recovery', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo-exposed-source'))
+    await Bun.write(join(repoPath, '.gitignore'), 'candidate.json\n')
+    await git(repoPath, ['add', '.gitignore'])
+    await git(repoPath, ['commit', '-m', 'ignore candidate output'])
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    const manager = createStableWorktreeManager(homeRoot)
+    const input = {
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    }
+    const prepared = await manager.prepare(input)
+    await Bun.write(join(prepared.path, 'candidate.json'), '{"preserved":true}\n')
+    await Bun.write(join(prepared.path, 'task.txt'), 'checkpointed task delta\n')
+    await git(prepared.path, ['add', 'task.txt'])
+    await git(prepared.path, ['commit', '-m', 'checkpoint task delta'])
+    const taskHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+
+    await rm(join(project.integrationRoot, '.gitignore'))
+    await Bun.write(join(project.integrationRoot, 'release.txt'), 'release delta\n')
+    await git(project.integrationRoot, ['add', '--all'])
+    await git(project.integrationRoot, ['commit', '-m', 'expose candidate output'])
+    const releaseHead = await git(project.integrationRoot, ['rev-parse', 'HEAD'])
+
+    const syncError = await manager.prepare(input).catch((error: unknown) => error)
+    expect(syncError).toBeInstanceOf(StableWorktreeSyncError)
+    expect((syncError as Error).message).toContain(
+      'merge exposed preserved source changes (?? candidate.json)',
+    )
+
+    const synchronizedHead = await git(prepared.path, ['rev-parse', 'HEAD'])
+    expect(synchronizedHead).not.toBe(taskHead)
+    expect(
+      await gitExitCode(prepared.path, ['merge-base', '--is-ancestor', releaseHead, 'HEAD']),
+    ).toBe(0)
+    expect(await Bun.file(join(prepared.path, 'candidate.json')).text()).toBe(
+      '{"preserved":true}\n',
+    )
+    expect(await git(prepared.path, ['status', '--porcelain'])).toBe('?? candidate.json')
   })
 })
 

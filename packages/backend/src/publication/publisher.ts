@@ -9,6 +9,7 @@ import type {
   PublicationSnapshot,
   PublicationSnapshotSelection,
   PublicationWrite,
+  VersionedPublicationSnapshot,
 } from './types'
 
 export class PublicationError extends Error {
@@ -22,12 +23,23 @@ export class PublicationError extends Error {
 
 export class PublicationCoordinator {
   private queueTail: Promise<void> = Promise.resolve()
+  private readonly generations = new Map<string, number>()
 
   publish(
     bundle: PublicationBundle,
     faultHooks: PublicationFaultHooks = {},
   ): Promise<PublicationResult> {
-    return this.withPublicationMutex(() => publishSerialized(bundle, faultHooks))
+    return this.withPublicationMutex(async () => {
+      try {
+        const result = await publishSerialized(bundle, faultHooks)
+        if (result.kind === 'published') this.advanceGeneration(bundle.root)
+        return result
+      } catch (error) {
+        // Supporting writes may already be visible even when the final gate failed.
+        this.advanceGeneration(bundle.root)
+        throw error
+      }
+    })
   }
 
   publishDurableReceipt(
@@ -35,10 +47,24 @@ export class PublicationCoordinator {
     faultHooks: PublicationFaultHooks = {},
   ): Promise<PublicationResult> {
     return this.withPublicationMutex(async () => {
-      const result = await publishSerialized(bundle, faultHooks)
-      await syncBundleFilesAndParents(bundle)
-      return result
+      try {
+        const result = await publishSerialized(bundle, faultHooks)
+        await syncBundleFilesAndParents(bundle)
+        if (result.kind === 'published') this.advanceGeneration(bundle.root)
+        return result
+      } catch (error) {
+        this.advanceGeneration(bundle.root)
+        throw error
+      }
     })
+  }
+
+  generation(root: PublicationRoot): Promise<number> {
+    return this.withPublicationMutex(() => Promise.resolve(this.currentGeneration(root)))
+  }
+
+  invalidate(root: PublicationRoot): Promise<number> {
+    return this.withPublicationMutex(() => Promise.resolve(this.advanceGeneration(root)))
   }
 
   snapshot(root: PublicationRoot, paths: string[]): Promise<PublicationSnapshot> {
@@ -49,6 +75,16 @@ export class PublicationCoordinator {
     return this.withPublicationMutex(() => snapshotTreeSerialized(root, prefix))
   }
 
+  snapshotTreeAtGeneration(
+    root: PublicationRoot,
+    prefix = '',
+  ): Promise<VersionedPublicationSnapshot> {
+    return this.withPublicationMutex(async () => ({
+      ...(await snapshotTreeSerialized(root, prefix)),
+      generation: this.currentGeneration(root),
+    }))
+  }
+
   snapshotSelection(
     root: PublicationRoot,
     selection: PublicationSnapshotSelection,
@@ -57,13 +93,42 @@ export class PublicationCoordinator {
   }
 
   runExclusive<T>(operation: (session: PublicationExclusiveSession) => Promise<T>): Promise<T> {
-    return this.withPublicationMutex(() =>
-      operation({
-        snapshot: snapshotPathsSerialized,
-        snapshotTree: snapshotTreeSerialized,
-        snapshotSelection: snapshotSelectionSerialized,
-      }),
-    )
+    return this.withPublicationMutex(async () => {
+      const roots = new Map<string, PublicationRoot>()
+      const observe = (root: PublicationRoot) => {
+        roots.set(publicationRootKey(root), root)
+      }
+      try {
+        return await operation({
+          snapshot: (root, paths) => {
+            observe(root)
+            return snapshotPathsSerialized(root, paths)
+          },
+          snapshotTree: (root, prefix) => {
+            observe(root)
+            return snapshotTreeSerialized(root, prefix)
+          },
+          snapshotSelection: (root, selection) => {
+            observe(root)
+            return snapshotSelectionSerialized(root, selection)
+          },
+        })
+      } finally {
+        // C1 owns writes inside this critical section, so every observed root becomes stale.
+        for (const root of roots.values()) this.advanceGeneration(root)
+      }
+    })
+  }
+
+  private currentGeneration(root: PublicationRoot) {
+    return this.generations.get(publicationRootKey(root)) ?? 0
+  }
+
+  private advanceGeneration(root: PublicationRoot) {
+    const key = publicationRootKey(root)
+    const next = (this.generations.get(key) ?? 0) + 1
+    this.generations.set(key, next)
+    return next
   }
 
   private async withPublicationMutex<T>(operation: () => Promise<T>): Promise<T> {
@@ -81,6 +146,10 @@ export class PublicationCoordinator {
       release()
     }
   }
+}
+
+function publicationRootKey(root: PublicationRoot) {
+  return `${root.id}\0${resolve(root.path)}`
 }
 
 async function syncBundleFilesAndParents(bundle: PublicationBundle) {

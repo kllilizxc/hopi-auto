@@ -129,6 +129,7 @@ export function createC1Integrator(
             existing[0],
             faultHooks,
           )
+          await store.invalidateCache()
           return { kind: 'already_integrated', commit: existing[0], deliveryIssues }
         } catch (error) {
           return {
@@ -1431,7 +1432,7 @@ async function git(
 }
 
 async function gitBytes(cwd: string, args: string[], env: Record<string, string> = {}) {
-  const child = Bun.spawn(['git', ...args], {
+  const child = Bun.spawn(['git', '-c', 'core.autocrlf=false', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -1454,7 +1455,7 @@ async function gitResult(
   env: Record<string, string> = {},
   stdin?: Uint8Array,
 ) {
-  const child = Bun.spawn(['git', ...args], {
+  const child = Bun.spawn(['git', '-c', 'core.autocrlf=false', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',

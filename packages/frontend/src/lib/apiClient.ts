@@ -1,5 +1,6 @@
 import type {
   AppSnapshot,
+  ConfigurableAgentRole,
   AssistantAttentionState,
   AssistantFeedChanges,
   AssistantFeedPage,
@@ -212,6 +213,16 @@ export function rebindProjectRepos(
 
 export function updateAssistantSettings(codingDefaults: ProjectCodingDefaults | null) {
   return apiRequest<AppSnapshot>('/api/assistant/settings', {
+    method: 'PATCH',
+    body: { codingDefaults },
+  })
+}
+
+export function updateAgentRoleSettings(
+  role: ConfigurableAgentRole,
+  codingDefaults: ProjectCodingDefaults | null,
+) {
+  return apiRequest<AppSnapshot>(`/api/agent-roles/${encodeURIComponent(role)}/settings`, {
     method: 'PATCH',
     body: { codingDefaults },
   })

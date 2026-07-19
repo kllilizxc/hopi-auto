@@ -233,6 +233,12 @@ with the selected transport so advanced binary/profile/permission settings are n
 switching transport replaces incompatible fields with that transport's safe defaults. `process` is
 allowed only for responsibility adapters and is not a configurable Assistant transport.
 
+`runtime/agent-adapters.json.roles` may separately override `planner`, `generator`, and `reviewer`.
+The Home agent-settings panel edits these existing role entries rather than introducing a second
+settings document. A missing role entry means inherit the owning Project's `codingDefaults`, then
+Home `defaults`; removing a role override restores that inheritance. Role settings affect only
+future responsibility Runs and never rewrite a Project link, Goal, Work, or active Run command.
+
 Version 1 `{ projectId, repoPath }` and version 2 multi-Repo links migrate by recording each linked
 checkout's current symbolic branch and relocating its registered managed worktrees without changing
 their branch, index, or working tree. A detached legacy checkout is ambiguous and blocks migration.
@@ -607,16 +613,18 @@ Work has one retry counter:
 attempts: 2
 ```
 
-`attempts` is the number of published unsuccessful Work outcomes in the current recovery episode,
-including `fail`, `reject`, and deterministic pre-C1 integration rejection. Every such outcome
-increments the same counter regardless of the current engineering stage. `attention` publishes no
-owning-Work outcome and does not increment attempts; speaking Assistant decides whether Planning or
-operator input is needed. The ordered `evidenceRefs` retains consumed Evidence, from which models
-derive repair context.
+`attempts` is the number of published reviewed implementation-repair outcomes in the current
+recovery episode: Reviewer `reject` and deterministic pre-C1 integration rejection. They increment
+the same counter regardless of the current engineering stage. `attention` publishes no owning-Work
+outcome and does not increment attempts. A responsibility `fail` appends its Evidence but likewise
+does not consume the repair counter; Coordinator then creates Work-target Attention so speaking
+Assistant can decide whether Planning, retry, cancellation, or operator input is needed. The ordered
+`evidenceRefs` retains consumed Evidence, from which models derive repair context.
 
 Ordinary pass success never clears recovery. The counter clears only when a material contract
-revision invalidates the episode, Planning publishes a materially changed plan, or the operator
-explicitly requests a retry and Coordinator verifies that instruction through its Input.
+revision invalidates the episode, Planning publishes a materially changed plan, or Assistant invokes
+the explicit retry control. Retry is audited by the durable Assistant turn, exact Work effect, and
+settled Work Attention; it does not create Goal Input.
 
 A timed autonomous retry uses Work `notBefore`. Conditions HOPI cannot resolve create targeted
 Attention. When `attempts == maxAttempts`, targeted Attention is ensured before another attempt can

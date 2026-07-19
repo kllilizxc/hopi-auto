@@ -222,7 +222,7 @@ test('Goal-local view state restores expanded cards and the compact Lane', async
   expect(source).toContain('scroller.scrollLeft = column.offsetLeft - board.offsetLeft')
 })
 
-test('Work card footers show real Attempt count and a blocker only when present', async () => {
+test('Work card footers show Attempt count, blockers, and Done completion time', async () => {
   const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
   const card = source.slice(
     source.indexOf('function WorkCard'),
@@ -232,6 +232,8 @@ test('Work card footers show real Attempt count and a blocker only when present'
   expect(card).toContain('Attempts {work.runAttemptCount}')
   expect(card).toContain('{work.blockedBy && (')
   expect(card).toContain('Blocked by {work.blockedBy}')
+  expect(card).toContain("work.stage === 'done' && work.completedAt")
+  expect(card).toContain('Completed {completedAt}')
   expect(card).not.toContain('work.repos.map')
   expect(card).not.toContain('visibleBadge')
 })

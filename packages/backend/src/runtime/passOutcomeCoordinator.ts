@@ -460,7 +460,7 @@ function buildEngineeringApplication(
     next.attributes.stage = 'generate'
     next.attributes.attempts += 1
   } else if (input.outcome.result === 'fail') {
-    // Semantic failure returns to Planning; attempts count reviewed repair cycles only.
+    // Semantic failure preserves the stage; Assistant recovery is represented by Work Attention.
   } else {
     throw new PassProposalError(
       `Unsupported ${input.responsibility} outcome: ${input.outcome.result}`,

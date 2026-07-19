@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readAssistantFeedChanges, requestPreviewRepair } from './apiClient'
+import { readAssistantFeedChanges, requestPreviewRepair, updateAgentRoleSettings } from './apiClient'
 
 test('sends the viewed Goal context with a Preview repair instruction', async () => {
   const originalFetch = globalThis.fetch
@@ -40,4 +40,33 @@ test('requests mutable Assistant changes from the independent synchronization cu
   expect(observed).toBe(
     '/api/assistant/feed/changes?cursor=2026-07-16T12%3A00%3A00.000Z',
   )
+})
+
+test('updates one workflow role through the unified agent settings API', async () => {
+  const originalFetch = globalThis.fetch
+  let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
+  globalThis.fetch = (async (input, init) => {
+    observed = { input, init }
+    return Response.json({ home: { agentRoleCodingDefaults: {} } })
+  }) as typeof fetch
+
+  try {
+    await updateAgentRoleSettings('reviewer', {
+      transport: 'codex',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  expect(observed?.input).toBe('/api/agent-roles/reviewer/settings')
+  expect(observed?.init?.method).toBe('PATCH')
+  expect(JSON.parse(String(observed?.init?.body))).toEqual({
+    codingDefaults: {
+      transport: 'codex',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+    },
+  })
 })

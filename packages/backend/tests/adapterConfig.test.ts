@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import {
   normalizeAgentAdapterConfig,
+  readAgentRoleCodingDefaults,
   readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
+  updateAgentRoleCodingDefaults,
   updateAssistantCodingDefaults,
 } from '../src/agent/adapterConfig'
 
@@ -232,6 +234,60 @@ describe('agent adapter config normalization', () => {
       approvalPolicy: 'never',
       model: 'gpt-5.5',
       reasoningEffort: 'high',
+    })
+  })
+
+  test('updates and clears one workflow role override without losing advanced fields', () => {
+    const config = normalizeAgentAdapterConfig({
+      version: 3,
+      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+      roles: {
+        reviewer: {
+          transport: 'codex',
+          cwdMode: 'worktree',
+          binary: '/opt/codex',
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+        },
+      },
+    })
+
+    const overridden = updateAgentRoleCodingDefaults(config, 'reviewer', {
+      transport: 'codex',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+    })
+    expect(overridden.roles.reviewer).toEqual({
+      transport: 'codex',
+      cwdMode: 'worktree',
+      binary: '/opt/codex',
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+    })
+    expect(readAgentRoleCodingDefaults(overridden, 'reviewer')).toEqual({
+      codingDefaults: {
+        transport: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+      },
+      inherited: false,
+      configurable: true,
+    })
+    expect(
+      readAgentRoleCodingDefaults(
+        updateAgentRoleCodingDefaults(overridden, 'reviewer', null),
+        'reviewer',
+      ),
+    ).toEqual({
+      codingDefaults: {
+        transport: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+      },
+      inherited: true,
+      configurable: true,
     })
   })
 

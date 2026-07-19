@@ -1,3 +1,4 @@
+export * from './AnimatedShinyText'
 export * from './Button'
 export * from './Disclosure'
 export * from './Feedback'

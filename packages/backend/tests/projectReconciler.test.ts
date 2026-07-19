@@ -404,7 +404,7 @@ describe('ProjectReconciler', () => {
     expect(secondAttempt?.status).toBe('interrupted')
   })
 
-  test('checkpoints partial Generator source and returns semantic failure to Planning', async () => {
+  test('checkpoints partial Generator source and returns semantic failure to Work Attention', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({
       generatorResult: 'fail',
@@ -422,6 +422,9 @@ describe('ProjectReconciler', () => {
       (candidate) =>
         candidate.attributes.kind === 'planning' && candidate.attributes.stage === 'plan',
     )
+    const recoveryAttention = [...goalPackage.attentions.values()].find(
+      (attention) => attention.attributes.resolvedAt === null,
+    )
 
     expect(result).toMatchObject({
       kind: 'pass_finished',
@@ -429,9 +432,9 @@ describe('ProjectReconciler', () => {
       application: 'published',
     })
     expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
-    expect(recoveryPlanning?.attributes.contractRevision).toBe(
-      goalPackage.goal.attributes.contractRevision,
-    )
+    expect(recoveryPlanning).toBeUndefined()
+    expect(recoveryAttention?.attributes.target).toBe('project:project-1/goal:goal-1/work:W-1')
+    expect(recoveryAttention?.body).toContain('generator could not complete Work W-1')
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
     expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
   })
@@ -565,7 +568,7 @@ describe('ProjectReconciler', () => {
     expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 1 })
   })
 
-  test('returns a task branch synchronization conflict to Planning before dispatch', async () => {
+  test('contains a task branch synchronization conflict in Work Attention before dispatch', async () => {
     const syncFailure = async () => {
       throw new StableWorktreeSyncError('task delta conflicts with the current release')
     }
@@ -582,11 +585,19 @@ describe('ProjectReconciler', () => {
     const planning = [...goalPackage.works.values()].find(
       (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
     )
+    const attention = [...goalPackage.attentions.values()].find(
+      (candidate) => candidate.attributes.resolvedAt === null,
+    )
 
-    expect(result).toMatchObject({ kind: 'planning_ensured', workId: planning?.attributes.id })
+    expect(result).toMatchObject({
+      kind: 'attention_ensured',
+      attentionId: attention?.attributes.id,
+    })
     expect(fixture.runner.responsibilities).toEqual(['planner'])
-    expect(planning?.body).toContain('could not synchronize its preserved task delta')
-    expect(planning?.body).toContain('Create a distinct Work identity')
+    expect(planning).toBeUndefined()
+    expect(attention?.attributes.target).toBe('project:project-1/goal:goal-1/work:W-1')
+    expect(attention?.body).toContain('task delta conflicts with the current release')
+    expect(attention?.body).toContain('request Planning only if')
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       attempts: 0,

@@ -445,6 +445,34 @@ describe('PassOutcomeCoordinator', () => {
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
   })
 
+  test('finishes Planning from an empty sparse proposal when the existing DAG is complete', async () => {
+    const fixture = await createFixture()
+    const engineeringPath = fixture.store.paths.workDocument('goal-1', 'W-existing')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: engineeringPath,
+          expectedHash: null,
+          content: renderWorkDocument(engineeringWork('W-existing', 'generate')),
+        },
+      ],
+    })
+    const before = (await fixture.store.readPackage('goal-1')).works.get('W-existing')
+    const context = await fixture.stage('plan-initial', 'run-empty-existing-dag', 'planner')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-empty-existing-dag', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'done',
+      evidenceRefs: ['E-run-empty-existing-dag'],
+    })
+    expect(goalPackage.works.get('W-existing')).toEqual(before)
+  })
+
   test('rejects Planner success with neither Engineering Work nor completion Attention', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-empty-incomplete', 'planner')

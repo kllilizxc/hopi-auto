@@ -5636,6 +5636,15 @@ samp {
   content: "·";
 }
 
+.work-card-completed-at {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--color-neutral-400);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-plan {
   min-width: 0;
   color: var(--color-neutral-400);

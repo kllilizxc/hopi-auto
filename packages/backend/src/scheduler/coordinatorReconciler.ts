@@ -211,8 +211,10 @@ export function createCoordinatorReconciler(
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId) || projectBlocks.has(project.projectId)) continue
       try {
-        for (const goalId of await project.store.listGoalIds()) {
-          const goalPackage = await project.store.readPackage(goalId)
+        const reconciliationPackages = project.store.readReconciliationSnapshot
+          ? await project.store.readReconciliationSnapshot()
+          : await readReconciliationPackages(project.store)
+        for (const [goalId, goalPackage] of reconciliationPackages) {
           const liveWorkIds = new Set(
             [...active.keys()]
               .filter((key) => key.startsWith(`${project.projectId}/${goalId}/`))
@@ -339,6 +341,14 @@ export function createCoordinatorReconciler(
   }
 
   return coordinator
+}
+
+async function readReconciliationPackages(store: GoalPackageStore) {
+  const goalPackages = new Map<string, Awaited<ReturnType<GoalPackageStore['readPackage']>>>()
+  for (const goalId of await store.listGoalIds()) {
+    goalPackages.set(goalId, await store.readPackage(goalId))
+  }
+  return goalPackages
 }
 
 function eligiblePendingEvent<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {

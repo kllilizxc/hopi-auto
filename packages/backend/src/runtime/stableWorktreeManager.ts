@@ -204,9 +204,14 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       worktreeStatus(expected.path),
       runGit(expected.path, ['merge-base', '--is-ancestor', releaseHead.stdout, 'HEAD'], true),
     ])
-    if (nextStatus || synchronized.exitCode !== 0) {
+    if (synchronized.exitCode !== 0) {
       throw new StableWorktreeError(
         `Work ${input.workId} did not cleanly synchronize ${taskHead.stdout} with release ${releaseHead.stdout} at ${nextHead.stdout}`,
+      )
+    }
+    if (nextStatus) {
+      throw new StableWorktreeSyncError(
+        `Work ${input.workId} synchronized with release ${releaseHead.stdout} at ${nextHead.stdout}, but the merge exposed preserved source changes (${nextStatus}); replan this Work lineage`,
       )
     }
     return expected

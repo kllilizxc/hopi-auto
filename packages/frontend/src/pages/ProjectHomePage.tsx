@@ -34,6 +34,8 @@ import {
 import {
   type CodingAgentTransport,
   type CodingReasoningEffort,
+  type ConfigurableAgentRole,
+  type AgentRoleCodingSettings,
   type ProjectCodingDefaults,
   type ProjectDirectorySelection,
   type ProjectSummary,
@@ -43,7 +45,7 @@ import {
   readShellState,
   rebindProjectRepo,
   selectProjectDirectory,
-  updateAssistantSettings,
+  updateAgentRoleSettings,
   updateProjectSettings,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
@@ -176,10 +178,7 @@ export function ProjectHomePage() {
 
             <div className="projects-side-column">
               {snapshotQuery.data && (
-                <AssistantSettingsPanel
-                  defaults={snapshotQuery.data.home.assistantCodingDefaults}
-                  inherited={snapshotQuery.data.home.assistantCodingDefaultsInherited}
-                />
+                <AgentSettingsPanel settings={snapshotQuery.data.home.agentRoleCodingDefaults} />
               )}
 
               <AppForm
@@ -401,19 +400,34 @@ function removeRepoDraft(current: ProjectRepoDraft[], key: string) {
   return remaining.map((repo, index) => ({ ...repo, primary: index === 0 }))
 }
 
-function AssistantSettingsPanel({
-  defaults,
-  inherited,
+const AGENT_ROLE_OPTIONS: Array<{ label: string; value: ConfigurableAgentRole }> = [
+  { label: 'Assistant', value: 'assistant' },
+  { label: 'Planner', value: 'planner' },
+  { label: 'Generator', value: 'generator' },
+  { label: 'Reviewer', value: 'reviewer' },
+]
+
+function AgentSettingsPanel({
+  settings,
 }: {
-  defaults: ProjectCodingDefaults
-  inherited: boolean
+  settings: Record<ConfigurableAgentRole, AgentRoleCodingSettings>
 }) {
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState(() => codingDefaultsToDraft(defaults))
+  const [role, setRole] = useState<ConfigurableAgentRole>('assistant')
+  const selected = settings[role]
+  const [draft, setDraft] = useState(() => codingDefaultsToDraft(settings.assistant.codingDefaults))
   const settingsMutation = useMutation({
-    mutationFn: updateAssistantSettings,
-    onSuccess: async (snapshot) => {
-      setDraft(codingDefaultsToDraft(snapshot.home.assistantCodingDefaults))
+    mutationFn: ({
+      role,
+      codingDefaults,
+    }: {
+      role: ConfigurableAgentRole
+      codingDefaults: ProjectCodingDefaults | null
+    }) => updateAgentRoleSettings(role, codingDefaults),
+    onSuccess: async (snapshot, variables) => {
+      setDraft(
+        codingDefaultsToDraft(snapshot.home.agentRoleCodingDefaults[variables.role].codingDefaults),
+      )
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
@@ -422,25 +436,39 @@ function AssistantSettingsPanel({
     <AppSurface className="assistant-settings-panel panel-card">
       <div className="panel-title">
         <span>
-          <Cpu /> Assistant
+          <Cpu /> Agents
         </span>
-        <StatusChip size="sm">{inherited ? 'Coding default' : 'Custom'}</StatusChip>
+        <StatusChip size="sm">{selected.inherited ? 'Default' : 'Custom'}</StatusChip>
       </div>
       <p className="panel-intro">
-        Used for your conversation and background Reflection. Project coding agents stay separate.
+        Configure the model used by each role. Workflow roles use each Project default until
+        overridden here.
       </p>
       <div className="assistant-settings-current">
-        <small>Current model</small>
-        <strong>{formatCodingDefaults(defaults)}</strong>
+        <small>{selected.inherited && role !== 'assistant' ? 'Home fallback' : 'Current model'}</small>
+        <strong>{formatCodingDefaults(selected.codingDefaults)}</strong>
       </div>
       <AppForm
         className="assistant-settings-form"
         onSubmit={(event) => {
           event.preventDefault()
-          settingsMutation.mutate(modelDraftToCodingDefaults(draft))
+          settingsMutation.mutate({ role, codingDefaults: modelDraftToCodingDefaults(draft) })
         }}
       >
         <SelectField
+          disabled={settingsMutation.isPending}
+          label="Role"
+          onValueChange={(value) => {
+            const nextRole = value as ConfigurableAgentRole
+            setRole(nextRole)
+            setDraft(codingDefaultsToDraft(settings[nextRole].codingDefaults))
+            settingsMutation.reset()
+          }}
+          options={AGENT_ROLE_OPTIONS}
+          value={role}
+        />
+        <SelectField
+          disabled={!selected.configurable}
           label="Agent"
           onValueChange={(transport) =>
             setDraft((current) => changeDraftTransport(current, transport as CodingAgentTransport))
@@ -454,6 +482,7 @@ function AssistantSettingsPanel({
         />
         <AppTextField
           label="Model"
+          isDisabled={!selected.configurable}
           onValueChange={(model) => setDraft((current) => ({ ...current, model }))}
           placeholder={assistantModelPlaceholder(draft.transport)}
           value={draft.model}
@@ -461,6 +490,7 @@ function AssistantSettingsPanel({
         {draft.transport === 'codex' && (
           <SelectField
             label="Reasoning"
+            disabled={!selected.configurable}
             onValueChange={(reasoningEffort) =>
               setDraft((current) => ({
                 ...current,
@@ -480,16 +510,18 @@ function AssistantSettingsPanel({
           <AppButton
             variant="ghost"
             type="button"
-            disabled={settingsMutation.isPending || inherited}
-            onClick={() => settingsMutation.mutate(null)}
+            disabled={settingsMutation.isPending || selected.inherited || !selected.configurable}
+            onClick={() => settingsMutation.mutate({ role, codingDefaults: null })}
           >
-            Use coding default
+            Use default
           </AppButton>
           <AppButton
             className="secondary-button"
             type="submit"
             disabled={
-              settingsMutation.isPending || (draft.transport === 'codex' && !draft.model.trim())
+              settingsMutation.isPending ||
+              !selected.configurable ||
+              (draft.transport === 'codex' && !draft.model.trim())
             }
           >
             {settingsMutation.isPending ? <AppSpinner size="sm" /> : <Settings2 />}

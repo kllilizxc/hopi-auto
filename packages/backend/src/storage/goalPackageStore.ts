@@ -18,6 +18,7 @@ import { publicationCandidateFromSnapshot } from '../publication/snapshotCandida
 import type {
   PublicationCandidate,
   PublicationResult,
+  PublicationSnapshotFile,
   PublicationWrite,
 } from '../publication/types'
 import { createGoalPackagePaths } from './goalPackagePaths'
@@ -51,6 +52,8 @@ export interface GoalPackageStore {
   listGoalIds(): Promise<string[]>
   readGoal(goalId: string): Promise<GoalDocument | null>
   readPackage(goalId: string): Promise<GoalPackage>
+  readReconciliationSnapshot(): Promise<ReadonlyMap<string, GoalPackage>>
+  invalidateCache(): Promise<void>
   migrateLegacyGoals(): Promise<readonly { goalId: string; kind: string }[]>
   publishGoal(
     goalId: string,
@@ -75,6 +78,14 @@ export function createGoalPackageStore(
   projectPath?: string,
 ): GoalPackageStore {
   const paths = createGoalPackagePaths(projectRoot, projectId, projectPath)
+  let cacheGeneration: number | null = null
+  let cachedReconciliation: ReadonlyMap<string, GoalPackage> | null = null
+
+  function alignCache(generation: number) {
+    if (cacheGeneration === generation) return
+    cacheGeneration = generation
+    cachedReconciliation = null
+  }
 
   return {
     paths,
@@ -181,16 +192,7 @@ export function createGoalPackageStore(
     },
     async listGoalIds() {
       const snapshot = await publisher.snapshotTree(paths.publicationRoot, paths.goalsRoot)
-      const prefix = `${paths.goalsRoot}/`
-      return [
-        ...new Set(
-          snapshot.files.flatMap((file) => {
-            if (!file.path.startsWith(prefix)) return []
-            const goalId = file.path.slice(prefix.length).split('/')[0]
-            return goalId ? [goalId] : []
-          }),
-        ),
-      ].sort()
+      return goalIdsFromSnapshot(snapshot.files, paths.goalsRoot)
     },
     async readGoal(goalId) {
       const snapshot = await publisher.snapshot(paths.publicationRoot, [paths.goalDocument(goalId)])
@@ -200,6 +202,27 @@ export function createGoalPackageStore(
     async readPackage(goalId) {
       const snapshot = await publisher.snapshotTree(paths.publicationRoot, paths.goalRoot(goalId))
       return readAndValidateGoalPackage(publicationCandidateFromSnapshot(snapshot), paths, goalId)
+    },
+    async readReconciliationSnapshot() {
+      const generation = await publisher.generation(paths.publicationRoot)
+      alignCache(generation)
+      if (cachedReconciliation) return cachedReconciliation
+
+      const snapshot = await publisher.snapshotTreeAtGeneration(
+        paths.publicationRoot,
+        paths.goalsRoot,
+      )
+      alignCache(snapshot.generation)
+      const candidate = publicationCandidateFromSnapshot(snapshot)
+      const goalPackages = new Map<string, GoalPackage>()
+      for (const goalId of goalIdsFromSnapshot(snapshot.files, paths.goalsRoot)) {
+        goalPackages.set(goalId, await readAndValidateGoalPackage(candidate, paths, goalId))
+      }
+      cachedReconciliation = goalPackages
+      return goalPackages
+    },
+    async invalidateCache() {
+      alignCache(await publisher.invalidate(paths.publicationRoot))
     },
     async migrateLegacyGoals() {
       return migrateLegacyGoals(paths, publisher)
@@ -248,6 +271,19 @@ export function createGoalPackageStore(
       })
     },
   }
+}
+
+function goalIdsFromSnapshot(files: readonly PublicationSnapshotFile[], goalsRoot: string) {
+  const prefix = `${goalsRoot}/`
+  return [
+    ...new Set(
+      files.flatMap((file) => {
+        if (!file.path.startsWith(prefix)) return []
+        const goalId = file.path.slice(prefix.length).split('/')[0]
+        return goalId ? [goalId] : []
+      }),
+    ),
+  ].sort()
 }
 
 function initialGoalDocument(input: CreateCanonicalGoalInput): GoalDocument {

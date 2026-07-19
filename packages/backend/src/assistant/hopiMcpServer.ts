@@ -100,7 +100,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Retry, cancel, or schedule one Work item. Retry/cancel also settle open Attention targeted exactly at affected Work; they never close broader or unrelated Attention. This changes canonical control facts, never a Kanban column directly.',
+        'Retry, explicitly abandon, or defer one Work. retry and set_not_before never adopt the current turn as Goal Input. cancel is only an explicit abandonment decision. Retry/cancel settle exact affected Work Attention, never broader Attention. Trust the returned stage, notBefore, terminal, and failedPredicates.',
       inputSchema: assistantToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),

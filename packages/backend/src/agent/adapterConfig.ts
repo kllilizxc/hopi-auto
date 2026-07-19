@@ -10,9 +10,15 @@ import {
 import type { RoleTransportConfig } from './vendorTransport'
 import { roleTransportConfigSchema } from './vendorTransport'
 
-const WORKFLOW_ROLE_KEYS = ['planner', 'generator', 'reviewer'] as const
+export const WORKFLOW_ROLE_KEYS = ['planner', 'generator', 'reviewer'] as const
 
-type WorkflowRoleKey = (typeof WORKFLOW_ROLE_KEYS)[number]
+export type WorkflowRoleKey = (typeof WORKFLOW_ROLE_KEYS)[number]
+export type ConfigurableAgentRole = 'assistant' | WorkflowRoleKey
+export interface AgentRoleCodingSettings {
+  codingDefaults: ProjectCodingDefaults
+  inherited: boolean
+  configurable: boolean
+}
 type ProjectCodingDefaultSource = Extract<
   RoleTransportConfig,
   { transport: 'codex' | 'claude' | 'opencode' }
@@ -144,6 +150,38 @@ export function readAssistantCodingDefaults(config: AgentAdapterConfig): {
   }
 }
 
+export function readAgentRoleCodingDefaults(
+  config: AgentAdapterConfig,
+  role: ConfigurableAgentRole,
+): AgentRoleCodingSettings {
+  if (role === 'assistant') {
+    return { ...readAssistantCodingDefaults(config), configurable: true }
+  }
+
+  const override = config.roles[role]
+  if (!override) {
+    return {
+      codingDefaults: config.defaults,
+      inherited: true,
+      configurable: true,
+    }
+  }
+  if (!isBuiltInCodingTransport(override)) {
+    return {
+      codingDefaults: config.defaults,
+      inherited: false,
+      configurable: false,
+    }
+  }
+  return {
+    codingDefaults: codingDefaultsFromTransport(
+      resolveExplicitTransportConfig(config.defaults, override),
+    ),
+    inherited: false,
+    configurable: true,
+  }
+}
+
 export function updateAssistantCodingDefaults(
   config: AgentAdapterConfig,
   input: ProjectCodingDefaultsInput | null,
@@ -160,6 +198,26 @@ export function updateAssistantCodingDefaults(
       ? mergeAssistantDefaults(current, defaults)
       : buildDefaultTransportConfig(defaults, 'root')
   return { ...config, assistant }
+}
+
+export function updateAgentRoleCodingDefaults(
+  config: AgentAdapterConfig,
+  role: ConfigurableAgentRole,
+  input: ProjectCodingDefaultsInput | null,
+): AgentAdapterConfig {
+  if (role === 'assistant') return updateAssistantCodingDefaults(config, input)
+  if (input === null) {
+    const { [role]: _removed, ...roles } = config.roles
+    return { ...config, roles }
+  }
+
+  const defaults = normalizeProjectCodingDefaults(input)
+  const current = config.roles[role]
+  const next =
+    current && isBuiltInCodingTransport(current) && current.transport === defaults.transport
+      ? mergeBuiltInDefaults(current, defaults, 'worktree')
+      : buildDefaultTransportConfig(defaults, 'worktree')
+  return { ...config, roles: { ...config.roles, [role]: next } }
 }
 
 export function resolveRoleTransportConfig(
@@ -333,21 +391,37 @@ function mergeAssistantDefaults(
   current: Exclude<RoleTransportConfig, { cmd: string[] }>,
   defaults: ProjectCodingDefaults,
 ): RoleTransportConfig {
+  return mergeBuiltInDefaults(current, defaults, 'root')
+}
+
+function mergeBuiltInDefaults(
+  current: Exclude<RoleTransportConfig, { cmd: string[] }>,
+  defaults: ProjectCodingDefaults,
+  cwdMode: 'root' | 'worktree',
+): RoleTransportConfig {
   if (current.transport === 'codex' && defaults.transport === 'codex') {
     return {
       ...current,
-      cwdMode: 'root',
+      cwdMode,
       model: defaults.model,
       reasoningEffort: defaults.reasoningEffort,
     }
   }
   if (current.transport === 'claude' && defaults.transport === 'claude') {
-    return { ...current, cwdMode: 'root', model: defaults.model }
+    return { ...current, cwdMode, model: defaults.model }
   }
   if (current.transport === 'opencode' && defaults.transport === 'opencode') {
-    return { ...current, cwdMode: 'root', model: defaults.model }
+    return { ...current, cwdMode, model: defaults.model }
   }
-  return buildDefaultTransportConfig(defaults, 'root')
+  return buildDefaultTransportConfig(defaults, cwdMode)
+}
+
+function isBuiltInCodingTransport(
+  config: RoleTransportConfig,
+): config is Exclude<RoleTransportConfig, { cmd: string[] }> {
+  return (
+    config.transport === 'codex' || config.transport === 'claude' || config.transport === 'opencode'
+  )
 }
 
 function codingDefaultsFromTransport(config: RoleTransportConfig): ProjectCodingDefaults {

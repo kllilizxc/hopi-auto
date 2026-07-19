@@ -14,6 +14,7 @@ import type { GoalPackage } from '../src/domain/goalPackage'
 import {
   createServer,
   deriveAssistantFeedActivity,
+  deriveWorkCompletedAt,
   latestAgentPlan,
   presentAttempt,
 } from '../src/mvpServer'
@@ -21,7 +22,7 @@ import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
-import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -135,6 +136,53 @@ describe('MVP server', () => {
     }
 
     expect(presentAttempt(attempt, goalPackage, 'P-1', 'G-1')).toEqual(attempt)
+  })
+
+  test('derives Done completion from the Attempt that applied the terminal transition', () => {
+    const attempt = (overrides: Partial<RunAttemptSummary> = {}): RunAttemptSummary => ({
+      version: 1,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-1',
+      responsibility: 'reviewer',
+      startedAt: '2026-07-11T00:00:00Z',
+      endedAt: '2026-07-11T00:05:00Z',
+      status: 'finished',
+      result: 'success',
+      summary: 'Integrated.',
+      exitCode: 0,
+      application: 'integrated',
+      ...overrides,
+    })
+
+    expect(
+      deriveWorkCompletedAt({ kind: 'engineering', stage: 'done' }, [
+        attempt({
+          runId: 'R-generator',
+          responsibility: 'generator',
+          endedAt: '2026-07-11T00:04:00Z',
+          application: 'published',
+        }),
+        attempt({ runId: 'R-reviewer' }),
+      ]),
+    ).toBe('2026-07-11T00:05:00Z')
+    expect(
+      deriveWorkCompletedAt({ kind: 'planning', stage: 'done' }, [
+        attempt({ responsibility: 'planner', application: 'published' }),
+      ]),
+    ).toBe('2026-07-11T00:05:00Z')
+    expect(
+      deriveWorkCompletedAt({ kind: 'engineering', stage: 'done' }, [
+        attempt({ application: null }),
+      ]),
+    ).toBe('2026-07-11T00:05:00Z')
+    expect(deriveWorkCompletedAt({ kind: 'engineering', stage: 'review' }, [attempt()])).toBeNull()
+    expect(
+      deriveWorkCompletedAt({ kind: 'engineering', stage: 'done' }, [
+        attempt({ result: 'reject', application: 'published' }),
+      ]),
+    ).toBeNull()
   })
 
   test('serves the React product frontend at root and Goal routes', async () => {
@@ -705,6 +753,41 @@ describe('MVP server', () => {
       sessionId: 'opencode-session',
     })
     expect(
+      await request(base, '/api/agent-roles/reviewer/settings', {
+        method: 'PATCH',
+        body: {
+          codingDefaults: {
+            transport: 'codex',
+            model: 'gpt-5.5',
+            reasoningEffort: 'high',
+          },
+        },
+      }),
+    ).toMatchObject({
+      home: {
+        agentRoleCodingDefaults: {
+          assistant: {
+            codingDefaults: { transport: 'opencode', model: 'openai/gpt-5.4' },
+            inherited: false,
+          },
+          planner: { inherited: true },
+          generator: { inherited: true },
+          reviewer: {
+            codingDefaults: {
+              transport: 'codex',
+              model: 'gpt-5.5',
+              reasoningEffort: 'high',
+            },
+            inherited: false,
+          },
+        },
+      },
+    })
+    expect(await Bun.file(assistantSessionPath).json()).toMatchObject({
+      transport: 'opencode',
+      sessionId: 'opencode-session',
+    })
+    expect(
       await request(base, '/api/projects/P-1/settings', {
         method: 'PATCH',
         body: {
@@ -742,6 +825,7 @@ describe('MVP server', () => {
       works: [
         {
           kind: 'planning',
+          completedAt: null,
           runAttemptCount: 0,
           projection: { column: 'Plan' },
         },

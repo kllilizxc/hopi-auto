@@ -338,11 +338,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 )
         } catch (error) {
           if (!(error instanceof StableWorktreeSyncError)) throw error
-          const planning = await goalController.ensurePlanning(
+          const attention = await goalController.ensureSynchronizationAttention(
             goalId,
-            `Reassess Work ${workId}: Coordinator could not synchronize its preserved task delta with the current release. ${error.message} Create a distinct Work identity if the old delta must be discarded; do not retry the unchanged lineage.`,
+            workId,
+            error.message,
           )
-          return { kind: 'planning_ensured', workId: planning.attributes.id }
+          return { kind: 'attention_ensured', attentionId: attention.attributes.id }
         }
         const scopedWorktrees = await Promise.all(
           worktreeEntries.map(async (entry) => ({
@@ -648,19 +649,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               `Reassess stale ${responsibility} output for Work ${workId}.`,
             )
           } else if (application.kind === 'published' && application.result === 'fail') {
-            if (responsibility === 'planner') {
-              await goalController.ensureResponsibilityFailureAttention(
-                goalId,
-                workId,
-                responsibility,
-                application.summary,
-              )
-            } else {
-              await goalController.ensurePlanning(
-                goalId,
-                `Reassess failed ${responsibility} Evidence for Work ${workId}; do not redispatch the unchanged responsibility.`,
-              )
-            }
+            await goalController.ensureResponsibilityFailureAttention(
+              goalId,
+              workId,
+              responsibility,
+              application.summary,
+            )
           }
           return {
             kind: 'pass_finished',

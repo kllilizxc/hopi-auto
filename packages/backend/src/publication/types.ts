@@ -43,6 +43,10 @@ export interface PublicationSnapshot {
   files: readonly PublicationSnapshotFile[]
 }
 
+export interface VersionedPublicationSnapshot extends PublicationSnapshot {
+  generation: number
+}
+
 export interface PublicationSnapshotSelection {
   paths?: readonly string[]
   prefixes?: readonly string[]

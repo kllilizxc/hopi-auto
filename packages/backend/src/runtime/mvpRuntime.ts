@@ -1,9 +1,13 @@
 import { ConfiguredRoleRunner, type RoleRunner } from '../agent/RoleRunner'
 import {
+  type AgentRoleCodingSettings,
+  type ConfigurableAgentRole,
+  readAgentRoleCodingDefaults,
   readAndMigrateAgentAdapterConfig,
   readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
+  updateAgentRoleCodingDefaults,
   updateAssistantCodingDefaults,
   writeAgentAdapterConfig,
 } from '../agent/adapterConfig'
@@ -85,7 +89,12 @@ export interface MvpRuntime {
     codingDefaults: ProjectCodingDefaults
     inherited: boolean
   }>
+  readAgentRoleCodingDefaults(role: ConfigurableAgentRole): Promise<AgentRoleCodingSettings>
   updateAssistantCodingDefaults(input: ProjectCodingDefaultsInput | null): Promise<void>
+  updateAgentRoleCodingDefaults(
+    role: ConfigurableAgentRole,
+    input: ProjectCodingDefaultsInput | null,
+  ): Promise<void>
 }
 
 export interface CreateMvpRuntimeOptions {
@@ -353,8 +362,24 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     return readAssistantCodingDefaults(await readAdapterConfig())
   }
 
+  async function readAgentRoleModelSettings(role: ConfigurableAgentRole) {
+    return readAgentRoleCodingDefaults(await readAdapterConfig(), role)
+  }
+
   async function updateAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
     if (await writeAssistantModelSettings(input)) await assistantConversation.clearSession()
+  }
+
+  async function updateAgentRoleModelSettings(
+    role: ConfigurableAgentRole,
+    input: ProjectCodingDefaultsInput | null,
+  ) {
+    if (role === 'assistant') {
+      await updateAssistantModelSettings(input)
+      return
+    }
+    const current = await readAdapterConfig()
+    await writeAgentAdapterConfig(adapterPath, updateAgentRoleCodingDefaults(current, role, input))
   }
 
   async function updateAssistantModelSettingsForTurn(
@@ -391,7 +416,9 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     rebindRepo,
     readProjectCodingDefaults,
     readAssistantCodingDefaults: readAssistantModelSettings,
+    readAgentRoleCodingDefaults: readAgentRoleModelSettings,
     updateAssistantCodingDefaults: updateAssistantModelSettings,
+    updateAgentRoleCodingDefaults: updateAgentRoleModelSettings,
   }
 }
 

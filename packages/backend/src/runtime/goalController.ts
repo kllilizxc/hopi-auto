@@ -32,7 +32,6 @@ export interface PlanningAttentionSettlement {
 }
 
 export interface WorkRetrySettlement {
-  acceptedInput: PlanningInputAdmission
   resolution: string
 }
 
@@ -70,6 +69,11 @@ export interface GoalController {
     workId: string,
     failures: number,
     latestFailure: string,
+  ): Promise<AttentionDocument>
+  ensureSynchronizationAttention(
+    goalId: string,
+    workId: string,
+    diagnostic: string,
   ): Promise<AttentionDocument>
   completeGoal(goalId: string, attentionId: string): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
@@ -465,6 +469,53 @@ export function createGoalController(
       })
       return attention
     },
+    async ensureSynchronizationAttention(goalId, workId, diagnostic) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot create synchronization Attention for missing or terminal Work: ${workId}`,
+        )
+      }
+      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
+      const existing = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.target === target && attention.attributes.resolvedAt === null,
+      )
+      if (existing) return existing
+
+      const attention: AttentionDocument = {
+        attributes: {
+          id: `sync-${workId}-${crypto.randomUUID()}`,
+          target,
+          createdAt: now().toISOString(),
+          resolvedAt: null,
+          notifiedAt: null,
+          operatorRequest: null,
+        },
+        body: [
+          '## Work synchronization needs recovery',
+          '',
+          `Coordinator preserved Work ${workId} but could not safely prepare its task lineage against the current release.`,
+          '',
+          '## Current diagnostic',
+          '',
+          boundedAttentionText(diagnostic),
+          '',
+          'Inspect this exact Work lineage. Retry only after the condition changed; request Planning only if the represented Goal contract or DAG must change, and create a distinct Work identity only when its preserved delta must be abandoned.',
+          '',
+        ].join('\n'),
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path: store.paths.attentionDocument(goalId, attention.attributes.id),
+          expectedHash: null,
+          content: renderAttentionDocument(attention),
+        },
+      })
+      return attention
+    },
     async completeGoal(goalId, attentionId) {
       const goalPackage = await store.readPackage(goalId)
       const goal = goalPackage.goal
@@ -608,7 +659,6 @@ export function createGoalController(
         })
       }
 
-      if (settlement?.acceptedInput.write) writes.push(settlement.acceptedInput.write)
       if (settlement) {
         const target = workAttentionTarget(store.paths.projectId, goalId, workId)
         for (const attention of goalPackage.attentions.values()) {
@@ -623,14 +673,12 @@ export function createGoalController(
               ...attention.attributes,
               operatorRequest: null,
               resolvedAt: now().toISOString(),
-              resolutionInput: settlement.acceptedInput.path,
+              resolutionInput: null,
             },
             body: [
               attention.body.trimEnd(),
               '',
               '## Resolution',
-              '',
-              `Answer Input: \`${settlement.acceptedInput.path}\``,
               '',
               settlement.resolution.trim(),
               '',

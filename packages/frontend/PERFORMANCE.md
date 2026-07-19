@@ -75,8 +75,10 @@ running animations and a 0.01 ms tab-indicator transition.
 - The Board reads a card projection, not the document reader projection. For the reference 36-card
   Goal it stays below 80 KiB and never includes design content, Goal Evidence bodies, artifact lists,
   canonical Work bodies, or Goal Attention bodies. Cards retain only open Attention status and the
-  reference needed to route the operator to Assistant. A Work body is read only when its contract
-  pane is opened. Compact
+  reference needed to route the operator to Assistant. Done cards additionally receive one terminal
+  completion timestamp derived server-side from the Attempt index that the Board already reads; no
+  extra document or stream request is introduced. A Work body is read only when its contract pane is
+  opened. Compact
   Kanban mounts the selected Lane and its immediate neighbors; selecting a Lane advances that
   window before the next horizontal gesture, so distant card lists do not tax the first frame.
 - Goal docs reads a document catalog containing paths and short display excerpts. It does not poll
@@ -106,9 +108,10 @@ a long list.
   entrances finish within 260 ms; direct hover, press, and selection feedback finishes within 160 ms.
 - A surface may animate once when it replaces another surface. Cards in a populated lane do not each
   run mount animations, and polling never replays an entrance.
-- Repeated status animation is reserved for one currently running progress segment or one tail-only
-  Assistant activity indicator. It uses opacity and transform only; the surrounding card remains
-  still.
+- Repeated status animation is reserved for a running Work's title and current progress segment, or
+  one tail-only Assistant activity indicator. The text shimmer animates only its clipped gradient;
+  the surrounding card remains still. The title uses the source-vendored Magic UI registry
+  primitive and existing CSS rather than adding a runtime animation dependency.
 - Hover lift runs only on devices that actually support hover. Touch interaction uses pressed/focus
   feedback without leaving a synthetic hover transform behind.
 - `prefers-reduced-motion: reduce` removes continuous and spatial motion while preserving selection,

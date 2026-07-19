@@ -100,6 +100,7 @@ export async function recoverCoordinatorProject(
     )
   }
   await reconcileProjectReleaseProjection({ primaryRepoId, repos })
+  await project.store.invalidateCache()
   const linked = await home.validateProject(project.projectId)
   if (linked.integrationRoot !== project.projectRoot) {
     throw new Error('Project runtime root disagrees with the Assistant-home link')

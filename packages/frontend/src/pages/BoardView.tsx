@@ -44,6 +44,7 @@ import {
   AppScrollShadow,
   AppSpinner,
   AppTabs,
+  AnimatedShinyText,
   CountBadge,
   IconButton,
   SelectField,
@@ -775,6 +776,7 @@ const WorkCard = memo(function WorkCard({
     hasAgentPlan: Boolean(work.agentPlan),
     running,
   })
+  const completedAt = work.stage === 'done' && work.completedAt ? formatTime(work.completedAt) : null
 
   return (
     <article
@@ -791,7 +793,15 @@ const WorkCard = memo(function WorkCard({
         onPointerDown={() => onWarm(work)}
         onPointerEnter={() => onWarm(work)}
       />
-      <h2>{work.title}</h2>
+      <h2 className="work-card__title">
+        {running ? (
+          <AnimatedShinyText className="work-card__title-shimmer" shimmerWidth={140}>
+            {work.title}
+          </AnimatedShinyText>
+        ) : (
+          work.title
+        )}
+      </h2>
       {showProgress && (
         <WorkProgress
           expanded={expanded}
@@ -806,6 +816,15 @@ const WorkCard = memo(function WorkCard({
           <span className="work-card-blocker" title={work.blockedBy}>
             Blocked by {work.blockedBy}
           </span>
+        )}
+        {completedAt && (
+          <time
+            className="work-card-completed-at"
+            dateTime={work.completedAt ?? undefined}
+            title={`Completed ${completedAt}`}
+          >
+            Completed {completedAt}
+          </time>
         )}
       </div>
     </article>

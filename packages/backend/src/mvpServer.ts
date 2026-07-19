@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { RoleRunner } from './agent/RoleRunner'
+import { type ConfigurableAgentRole, WORKFLOW_ROLE_KEYS } from './agent/adapterConfig'
 import type { AgentPlanEvent, AgentRuntimeEvent } from './agent/runtimeEvents'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
@@ -120,6 +121,8 @@ const projectSettingsSchema = z
 const assistantSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
+const CONFIGURABLE_AGENT_ROLES = ['assistant', ...WORKFLOW_ROLE_KEYS] as const
+const configurableAgentRoleSchema = z.enum(CONFIGURABLE_AGENT_ROLES)
 const goalSchema = z.object({
   goalId: stableIdSchema.optional(),
   title: z.string().trim().min(1),
@@ -290,6 +293,23 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'PATCH' && url.pathname === '/api/assistant/settings') {
           const body = await parseBody(request, assistantSettingsSchema)
           await runtime.updateAssistantCodingDefaults(
+            body.codingDefaults === null
+              ? null
+              : normalizeProjectCodingDefaults(body.codingDefaults),
+          )
+          return json(await presentState(runtime))
+        }
+        if (
+          request.method === 'PATCH' &&
+          parts.length === 4 &&
+          parts[0] === 'api' &&
+          parts[1] === 'agent-roles' &&
+          parts[3] === 'settings'
+        ) {
+          const role = configurableAgentRoleSchema.parse(requirePart(parts, 2))
+          const body = await parseBody(request, assistantSettingsSchema)
+          await runtime.updateAgentRoleCodingDefaults(
+            role,
             body.codingDefaults === null
               ? null
               : normalizeProjectCodingDefaults(body.codingDefaults),
@@ -791,11 +811,20 @@ export function createServer(options: ServerOptions = {}): MvpServer {
 
 async function presentState(runtime: MvpRuntime, options: { includeAttentions?: boolean } = {}) {
   const includeAttentions = options.includeAttentions ?? true
-  const [home, workspace, assistantModelSettings] = await Promise.all([
+  const [home, workspace, agentRoleSettingEntries] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspace(),
-    runtime.readAssistantCodingDefaults(),
+    Promise.all(
+      CONFIGURABLE_AGENT_ROLES.map(
+        async (role) => [role, await runtime.readAgentRoleCodingDefaults(role)] as const,
+      ),
+    ),
   ])
+  const agentRoleSettings = Object.fromEntries(agentRoleSettingEntries) as Record<
+    ConfigurableAgentRole,
+    Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
+  >
+  const assistantModelSettings = agentRoleSettings.assistant
   const projects = []
   const goalAttentions = []
   for (const project of runtime.projects.values()) {
@@ -881,6 +910,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       ...home,
       assistantCodingDefaults: assistantModelSettings.codingDefaults,
       assistantCodingDefaultsInherited: assistantModelSettings.inherited,
+      agentRoleCodingDefaults: agentRoleSettings,
     },
     projects,
     attentions: includeAttentions
@@ -1312,6 +1342,42 @@ export function presentAttempt<
   }
 }
 
+export function deriveWorkCompletedAt(
+  work: Pick<WorkDocument['attributes'], 'kind' | 'stage'>,
+  attempts: readonly Pick<
+    RunAttemptSummary,
+    'responsibility' | 'status' | 'result' | 'endedAt' | 'application'
+  >[],
+): string | null {
+  if (work.stage !== 'done') return null
+
+  const terminalResponsibility = work.kind === 'planning' ? 'planner' : 'reviewer'
+  const terminalApplications =
+    work.kind === 'planning'
+      ? new Set(['published'])
+      : new Set(['integrated', 'already_integrated'])
+  const successfulTerminalAttempts = attempts.filter(
+    (attempt) =>
+      attempt.responsibility === terminalResponsibility &&
+      attempt.status === 'finished' &&
+      attempt.result === 'success' &&
+      attempt.endedAt !== null,
+  )
+  const appliedAttempts = successfulTerminalAttempts.filter((attempt) =>
+    terminalApplications.has(attempt.application ?? ''),
+  )
+  // Pre-manifest-application Attempts remain readable without weakening current completion semantics.
+  const candidates = appliedAttempts.length
+    ? appliedAttempts
+    : successfulTerminalAttempts.filter((attempt) => attempt.application === null)
+
+  return candidates.reduce<string | null>(
+    (latest, attempt) =>
+      attempt.endedAt && (!latest || attempt.endedAt > latest) ? attempt.endedAt : latest,
+    null,
+  )
+}
+
 async function receiveUserEvent(
   runtime: MvpRuntime,
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
@@ -1425,14 +1491,18 @@ async function presentGoal(
   const projection = {
     projectId,
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
-    works: [...goalPackage.works.values()].map((work) => ({
-      ...work.attributes,
-      ...(view === 'full' ? { body: work.body } : {}),
-      projection: projectionByWork.get(work.attributes.id),
-      blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
-      agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
-      runAttemptCount: attemptsByWork.get(work.attributes.id)?.length ?? 0,
-    })),
+    works: [...goalPackage.works.values()].map((work) => {
+      const workAttempts = attemptsByWork.get(work.attributes.id) ?? []
+      return {
+        ...work.attributes,
+        ...(view === 'full' ? { body: work.body } : {}),
+        projection: projectionByWork.get(work.attributes.id),
+        blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
+        agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
+        runAttemptCount: workAttempts.length,
+        completedAt: deriveWorkCompletedAt(work.attributes, workAttempts),
+      }
+    }),
     attentions: [...goalPackage.attentions.values()]
       .filter((attention) => view === 'full' || attention.attributes.resolvedAt === null)
       .map((attention) => ({

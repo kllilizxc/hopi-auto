@@ -82,10 +82,14 @@ test('Working states share one centered indicator implementation', async () => {
   expect(applicationSource).not.toContain('.working-indicator')
 })
 
-test('Work cards keep running emphasis off the whole surface', async () => {
+test('Work cards animate only the running title and current progress', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const ui = await Bun.file(new URL('./ui.css', import.meta.url)).text()
   const board = await Bun.file(new URL('../pages/BoardView.tsx', import.meta.url)).text()
   const workingRule = styles.match(/\.work-card\.work-card--working\s*\{([^}]*)\}/)?.[1] ?? ''
+  const shinyTextRule = ui.match(/\.animated-shiny-text\s*\{([^}]*)\}/)?.[1] ?? ''
+  const shinyTextFrames =
+    ui.match(/@keyframes animated-shiny-text\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
   const badgeRule = styles.match(/\.badge-working\s*\{([^}]*)\}/)?.[1] ?? ''
   const activeProgressRule = styles.match(/\.agent-plan__segment-progress\s*\{([^}]*)\}/)?.[1] ?? ''
   const completedProgressRule =
@@ -95,15 +99,28 @@ test('Work cards keep running emphasis off the whole surface', async () => {
 
   expect(board).toContain("const running = badge === 'working'")
   expect(board).toContain("running && 'work-card--working'")
+  expect(board).toContain('<AnimatedShinyText')
+  expect(board).toContain('shimmerWidth={140}')
   expect(board).toContain('agent-plan__segment-progress')
   expect(board).not.toContain('<WorkingIndicator label={badge}')
   expect(workingRule).not.toContain('animation:')
+  expect(shinyTextRule).toContain('background-clip: text')
+  expect(shinyTextRule).toContain('animation: animated-shiny-text')
+  expect(shinyTextRule).toContain('linear infinite')
+  expect(shinyTextFrames).toContain('from {')
+  expect(shinyTextFrames).toContain('to {')
+  expect(shinyTextFrames).not.toContain('30%')
+  expect(shinyTextFrames).not.toContain('60%')
   expect(badgeRule).not.toContain('animation: running-glow')
   expect(styles).not.toContain('.work-card::before')
   expect(styles).not.toContain('.work-card.work-card--working::before')
   expect(styles).toContain('.agent-plan__segment-progress')
   expect(styles).toContain('inset: 0')
   expect(styles).toContain('animation: agent-plan-active-pulse')
+  expect(ui).toContain('@keyframes animated-shiny-text')
+  expect(ui).toMatch(
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.animated-shiny-text\s*\{[\s\S]*?animation:\s*none/,
+  )
   expect(styles).toContain('opacity: 0.42')
   expect(activeProgressRule).toContain('box-shadow:')
   expect(completedProgressRule).toContain('--lane-accent')

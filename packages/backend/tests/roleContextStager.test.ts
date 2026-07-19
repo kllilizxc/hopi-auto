@@ -63,6 +63,10 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Never create or edit evidence/** or append evidenceRefs')
     expect(prompt).toContain('Proposal is an initially empty sparse overlay')
     expect(prompt).toContain('Absence means unchanged')
+    expect(prompt).toContain(
+      'existing nonterminal Engineering DAG is already the complete valid plan',
+    )
+    expect(prompt).toContain('including an empty proposal')
     expect(prompt).toContain('Terminal Work is immutable')
     expect(prompt).toContain('Omitted Evidence is historical')
     expect(prompt).toContain('Planning Work is read-only and must not be copied')
@@ -458,6 +462,8 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('Do not rerun an unchanged passing check')
     expect(generatorPrompt).toContain('Reviewer reproducer as evidence')
     expect(generatorPrompt).toContain('not as the repair scope')
+    expect(generatorPrompt).toContain('Replay the latest Reviewer reproducer')
+    expect(generatorPrompt).toContain('persist it at the nearest owning boundary')
     expect(generatorPrompt).toContain('derive persisted projections from their canonical owner')
     expect(generatorPrompt).toContain('required Repo is absent from the Repo manifest')
     expect(generatorPrompt).toContain('instead of discovering another Work checkout')
@@ -469,6 +475,9 @@ describe('RoleContextStager', () => {
     expect(reviewerPrompt).toContain('Order cheap, high-risk canonical or recomputation probes')
     expect(reviewerPrompt).toContain('bounded low-cost sweep of the same invariant')
     expect(reviewerPrompt).toContain('batch all currently knowable findings')
+    expect(reviewerPrompt).toContain('replay the reported reproducer first')
+    expect(reviewerPrompt).toContain('Every reproducible reject summary')
+    expect(reviewerPrompt).toContain('exact command and input or deterministic inspection steps')
     expect(reviewerPrompt).toContain('direct proof requires a Repo absent from the Repo manifest')
     expect(reviewerPrompt).toContain('Batch independent inspection and checks')
     expect(reviewerPrompt).toContain('accepting a bare URL would leave Project Preview stuck')
@@ -525,6 +534,51 @@ describe('RoleContextStager', () => {
     await fixture.store.publishGoal('goal-1', {
       supportingWrites: [
         {
+          path: fixture.store.paths.evidenceDocument('goal-1', 'E-explicit'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-explicit',
+              createdAt: '2026-07-16T23:57:00Z',
+              producerRun: 'project:project-1/goal:goal-1/work:W-base/run:R-explicit',
+              coordinatorCheck: null,
+              owner: 'project:project-1/goal:goal-1/work:W-base',
+              artifacts: [],
+            },
+            body: 'An older proof remains explicitly relevant.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.evidenceDocument('goal-1', 'E-obsolete'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-obsolete',
+              createdAt: '2026-07-16T23:58:00Z',
+              producerRun: 'project:project-1/goal:goal-1/work:W-base/run:R-obsolete',
+              coordinatorCheck: null,
+              owner: 'project:project-1/goal:goal-1/work:W-base',
+              artifacts: [],
+            },
+            body: 'Superseded failed proof.\n',
+          }),
+        },
+        {
+          path: fixture.store.paths.evidenceDocument('goal-1', 'E-candidate'),
+          expectedHash: null,
+          content: renderEvidenceDocument({
+            attributes: {
+              id: 'E-candidate',
+              createdAt: '2026-07-16T23:59:00Z',
+              producerRun: 'project:project-1/goal:goal-1/work:W-base/run:R-candidate',
+              coordinatorCheck: null,
+              owner: 'project:project-1/goal:goal-1/work:W-base',
+              artifacts: [],
+            },
+            body: 'The final Generator candidate is ready.\n',
+          }),
+        },
+        {
           path: fixture.store.paths.evidenceDocument('goal-1', 'E-base'),
           expectedHash: null,
           content: renderEvidenceDocument({
@@ -566,10 +620,10 @@ describe('RoleContextStager', () => {
               notBefore: null,
               dependsOn: [],
               contractRevision: 1,
-              evidenceRefs: ['E-base'],
+              evidenceRefs: ['E-explicit', 'E-obsolete', 'E-candidate', 'E-base'],
               attempts: 0,
             },
-            body: 'Provide the base behavior.\n',
+            body: 'Provide the base behavior and retain the specifically cited `E-explicit` proof.\n',
           }),
         },
         {
@@ -628,12 +682,17 @@ describe('RoleContextStager', () => {
     for (const path of [
       fixture.store.paths.workDocument('goal-1', 'W-base'),
       fixture.store.paths.workDocument('goal-1', 'W-middle'),
+      fixture.store.paths.evidenceDocument('goal-1', 'E-explicit'),
+      fixture.store.paths.evidenceDocument('goal-1', 'E-candidate'),
       fixture.store.paths.evidenceDocument('goal-1', 'E-base'),
       fixture.store.paths.evidenceDocument('goal-1', 'E-middle'),
     ]) {
       expect(await Bun.file(join(authorityRoot, ...path.split('/'))).exists()).toBe(true)
       expect(bundle.guardFiles[path]).toBeTruthy()
     }
+    const obsoletePath = fixture.store.paths.evidenceDocument('goal-1', 'E-obsolete')
+    expect(await Bun.file(join(authorityRoot, ...obsoletePath.split('/'))).exists()).toBe(false)
+    expect(bundle.guardFiles[obsoletePath]).toBeUndefined()
     expect(bundle.artifactManifestFile).toBeDefined()
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
       version: 1,

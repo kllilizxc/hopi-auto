@@ -387,8 +387,8 @@ function collectDependencyContext(
       throw new RoleContextStagingError(`Dependency Work is missing from authority: ${workId}`)
     }
     workPaths.add(dependency.path)
-    for (const evidenceId of dependency.document.attributes.evidenceRefs) {
-      evidencePaths.add(paths.evidenceDocument(goalId, evidenceId))
+    for (const evidencePath of selectedEvidencePaths(dependency.document, paths, goalId)) {
+      evidencePaths.add(evidencePath)
     }
     for (const dependencyId of dependency.document.attributes.dependsOn) visit(dependencyId)
   }
@@ -450,9 +450,7 @@ function selectGuardFiles(
   const workTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
   const dependencyContext = collectDependencyContext(files, paths, input.goalId, work)
   const referencedEvidence = new Set([
-    ...work.attributes.evidenceRefs.map((evidenceId) =>
-      paths.evidenceDocument(input.goalId, evidenceId),
-    ),
+    ...selectedEvidencePaths(work, paths, input.goalId),
     ...dependencyContext.evidencePaths,
   ])
   const dependencyWork = dependencyContext.workPaths
@@ -487,6 +485,24 @@ function selectGuardFiles(
     return false
   })
   return Object.freeze(Object.fromEntries(selected.map((file) => [file.path, file.hash])))
+}
+
+function selectedEvidencePaths(
+  work: ReturnType<typeof parseWorkDocument>,
+  paths: ReturnType<typeof createGoalPackagePaths>,
+  goalId: string,
+) {
+  const evidenceIds = work.attributes.evidenceRefs
+  const terminalPairSize =
+    isEngineeringWork(work.attributes) && work.attributes.stage === 'done' ? 2 : 1
+  const selected = new Set(evidenceIds.slice(-terminalPairSize))
+  for (const evidenceId of evidenceIds) {
+    const evidencePath = paths.evidenceDocument(goalId, evidenceId)
+    if (work.body.includes(evidenceId) || work.body.includes(evidencePath)) {
+      selected.add(evidenceId)
+    }
+  }
+  return [...selected].map((evidenceId) => paths.evidenceDocument(goalId, evidenceId))
 }
 
 function selectPlannerAuthorityFiles(
@@ -1010,6 +1026,7 @@ function plannerPrompt(paths: {
     'New Engineering Work uses kind engineering, stage generate, and the current Goal contractRevision. Terminal Work is immutable; never create next-revision Work or advance Engineering Work to review/done.',
     'One Work ID owns a cumulative stable source lineage; old wrong-HEAD/dirty-tree preflights do not prove a new failure, so only a current sync diagnostic justifies repair. To discard delta, create a distinct Engineering Work.',
     'Proposal may contain only design/**, Engineering Work, Attention, .hopi/docs/repos.md, and an allowed AGENTS.md bootstrap. Planning Work is read-only and must not be copied. Coordinator derives Planner Evidence from result.json.',
+    'When the existing nonterminal Engineering DAG is already the complete valid plan, leave the sparse Proposal empty and return success; Coordinator will finish Planning without rewriting the DAG.',
     'Maintain .hopi/docs/repos.md only when Repo responsibilities or shared contracts are materially stale. It is context, not workflow configuration.',
     'Omitted Evidence is historical. Never repair an unstaged evidenceRef, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run.',
     'Coordinator owns deterministic proposal schema and DAG validation. Perform semantic and proportionate content checks, but do not build an ad hoc validator that duplicates Coordinator; returned validation diagnostics drive a later Attempt.',
@@ -1062,6 +1079,7 @@ function generatorPrompt() {
     '',
     'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
     'Treat a Reviewer reproducer as evidence that an accepted invariant is false, not as the repair scope. Repair the owning invariant, check adjacent representations and representative variants, and derive persisted projections from their canonical owner instead of adding pairwise exceptions. Use proportionate judgment; no checklist artifact is required.',
+    'Replay the latest Reviewer reproducer before claiming success. When it is stable and the existing Project test or validator stack can express it, persist it at the nearest owning boundary; otherwise explain why the retained proof is stronger in the result summary.',
     'Read Project guidance and every selected Repo preparation entrypoint before rediscovering setup. A Repo Preparation Diagnostic appended below is exact preflight input, not separate Work.',
     'Each selected Repo owns its own scripts/hopi/prepare. Repair only the failing candidate entrypoints in this Work; never route one Repo through another or make a primary adapter orchestrate the manifest.',
     'When a required Repo is absent from the Repo manifest, stage Attention instead of discovering another Work checkout. Project scripts must consume the manifest rather than scan HOPI runtime siblings.',
@@ -1084,7 +1102,8 @@ function reviewerPrompt() {
     `Review the owning Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Do not attribute release-only commits or canonical .hopi movement to this Work; C1 owns integration onto the current release tip.`,
     'Do not edit source, ordinary project documents, or .hopi in the task worktree.',
     'Choose the strongest proportionate proof for every acceptance criterion.',
-    'Order cheap, high-risk canonical or recomputation probes before expensive broad or browser proof when both matter. After a decisive defect, perform a bounded low-cost sweep of the same invariant and other already-visible independent risks, then batch all currently knowable findings; stop before unrelated exhaustive exploration. On a later review, prove the reported invariant rather than only its literal reproducer.',
+    'Order cheap, high-risk canonical or recomputation probes before expensive broad or browser proof when both matter. After a decisive defect, perform a bounded low-cost sweep of the same invariant and other already-visible independent risks, then batch all currently knowable findings; stop before unrelated exhaustive exploration. On a later review, replay the reported reproducer first, then prove its invariant rather than only the literal example.',
+    'Every reproducible reject summary must name the violated invariant, exact command and input or deterministic inspection steps, and the observed failure. Do not invent a reproducer when the finding is inherently observational; state that boundary precisely.',
     'Decide the proof plan before installing optional tools. Reuse Project guidance, preparation, and the existing test/browser stack; do not add a competing harness after decisive proof exists.',
     'If direct proof requires a Repo absent from the Repo manifest, stage Attention instead of inspecting another Work checkout or historical runtime directory.',
     'The public Project Preview API targets the current integrated release and is not candidate evidence. Validate this task worktree by executing its preview script directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
@@ -1116,7 +1135,7 @@ function resultInstruction(responsibility: Responsibility) {
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
     ...(responsibility === 'planner'
       ? [
-          'success = complete valid sparse proposal; fail = no valid proposal and no durable blocker needs follow-up.',
+          'success = complete valid sparse proposal, including an empty proposal when the existing nonterminal Engineering DAG is already complete; fail = no valid proposal and no durable blocker needs follow-up.',
         ]
       : responsibility === 'generator'
         ? [

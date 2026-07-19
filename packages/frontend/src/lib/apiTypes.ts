@@ -8,6 +8,7 @@ export type WorkBadge =
   | 'queued'
   | 'waiting'
 export type Responsibility = 'planner' | 'generator' | 'reviewer'
+export type ConfigurableAgentRole = 'assistant' | Responsibility
 export type PassResult = 'success' | 'reject' | 'attention' | 'fail' | 'replan'
 export type RunAttemptStatus = 'running' | 'finished' | 'interrupted'
 export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
@@ -23,6 +24,12 @@ export type ProjectCodingDefaults =
       transport: 'claude' | 'opencode'
       model?: string
     }
+
+export interface AgentRoleCodingSettings {
+  codingDefaults: ProjectCodingDefaults
+  inherited: boolean
+  configurable: boolean
+}
 
 export interface PreviewSession {
   sessionId: string
@@ -204,6 +211,7 @@ export interface AppSnapshot {
     homeId: string
     assistantCodingDefaults: ProjectCodingDefaults
     assistantCodingDefaultsInherited: boolean
+    agentRoleCodingDefaults: Record<ConfigurableAgentRole, AgentRoleCodingSettings>
   }
   projects: ProjectSummary[]
   attentions: AttentionView[]
@@ -241,6 +249,7 @@ export interface WorkView {
   evidenceRefs: string[]
   attempts: number
   runAttemptCount: number
+  completedAt: string | null
   body: string
   agentPlan: WorkAgentPlan | null
   blockedBy: string | null
