@@ -4,6 +4,7 @@ import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/can
 import type { GoalPackage } from '../domain/goalPackage'
 import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
+import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { inspectDeliveryProjection } from '../runtime/c1Integrator'
 import {
@@ -178,6 +179,13 @@ export function createAssistantStateReader(options: {
                 projections.map((projection) => [projection.workId, projection]),
               )
               const allWorks = [...goalPackage.works.values()]
+              const attentionWorkIds = new Set(
+                [...goalPackage.attentions.values()]
+                  .filter((attention) => attention.attributes.resolvedAt === null)
+                  .map((attention) => parseWorkAttentionTarget(attention.attributes.target))
+                  .filter((target): target is NonNullable<typeof target> => target !== null)
+                  .map((target) => target.workId),
+              )
               const latestPlanning = allWorks
                 .filter(
                   (work) => isPlanningWork(work.attributes) && isWorkTerminal(work.attributes),
@@ -187,7 +195,9 @@ export function createAssistantStateReader(options: {
                 allWorks
                   .filter(
                     (work) =>
-                      work.attributes.kind === 'engineering' || !isWorkTerminal(work.attributes),
+                      input.includeEvidence ||
+                      !isWorkTerminal(work.attributes) ||
+                      attentionWorkIds.has(work.attributes.id),
                   )
                   .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
                   .map(async (work) => {

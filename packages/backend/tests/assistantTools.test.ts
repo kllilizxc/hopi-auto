@@ -950,7 +950,7 @@ describe('Assistant HOPI tools', () => {
       ],
     })
 
-    await fixture.tools.executeForEvent('EV-revise', 'hopi_control_goal', {
+    await fixture.tools.executeForEvent('EV-revise', 'hopi_control', {
       projectId: 'P-1',
       goalId: 'G-1',
       operation: 'reopen',
@@ -1041,7 +1041,7 @@ describe('Assistant HOPI tools', () => {
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Pause it.' })
 
-    await fixture.tools.executeForEvent('EV-1', 'hopi_control_goal', {
+    await fixture.tools.executeForEvent('EV-1', 'hopi_control', {
       projectId: 'P-1',
       goalId: 'G-1',
       operation: 'pause',

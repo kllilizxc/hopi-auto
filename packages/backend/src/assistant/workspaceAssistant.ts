@@ -323,102 +323,6 @@ export function createWorkspaceAssistant(input: {
         await input.conversation.writeSession(result.session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
         let notificationMessage = input.tools.notificationMessage(toolToken)
         let notificationIntent = input.tools.notificationIntent(toolToken)
-        if (event.attributes.source === 'reflection') {
-          let assistantOwnedAttentionRefs = await input.tools.assistantOwnedAttentionRefs(eventId)
-          if (
-            assistantOwnedAttentionRefs.length > 0 &&
-            notificationIntent !== 'request' &&
-            !input.tools.hasDurableEffect(toolToken)
-          ) {
-            await input.conversation.record(eventId, {
-              kind: 'message',
-              level: 'info',
-              role: 'coordinator',
-              content:
-                'Continuing the Assistant turn because referenced Attention still has no internal continuation or exact operator request.',
-            })
-            result = await input.runner.run(
-              {
-                eventId,
-                prompt: renderAttentionSettlementCorrection(assistantOwnedAttentionRefs),
-                rebuildPrompt,
-                session: result.session,
-                cwd: workspaceRoot,
-                lastMessageFile: join(turnRoot, 'last-message.txt'),
-                transcriptFile: join(turnRoot, 'transcript.log'),
-                toolUrl: input.resolveToolUrl(),
-                toolToken,
-                imageFiles,
-                readableRoots: [resolve(input.homeRoot)],
-                toolMode: 'internal',
-                signal,
-              },
-              observer,
-            )
-            await input.conversation.writeSession(
-              result.session,
-              WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
-            )
-            notificationMessage = input.tools.notificationMessage(toolToken)
-            notificationIntent = input.tools.notificationIntent(toolToken)
-            assistantOwnedAttentionRefs = await input.tools.assistantOwnedAttentionRefs(eventId)
-            if (
-              assistantOwnedAttentionRefs.length > 0 &&
-              notificationIntent !== 'request' &&
-              !input.tools.hasDurableEffect(toolToken)
-            ) {
-              throw new WorkspaceAssistantError(
-                'Assistant left referenced Attention without a durable internal continuation or exact operator request',
-              )
-            }
-          }
-        }
-        if (event.attributes.source === 'user' && event.attributes.context?.replyTo) {
-          const unansweredReferences = async () => {
-            const answered = new Set(input.tools.answeredAttentionRefs(toolToken))
-            return (await input.tools.assistantOwnedAttentionRefs(eventId)).filter(
-              (reference) => !answered.has(reference),
-            )
-          }
-          let unansweredAttentionRefs = await unansweredReferences()
-          if (unansweredAttentionRefs.length > 0) {
-            await input.conversation.record(eventId, {
-              kind: 'message',
-              level: 'info',
-              role: 'coordinator',
-              content:
-                'Continuing the Assistant turn because an explicit Attention reply has not been applied to its exact reference.',
-            })
-            result = await input.runner.run(
-              {
-                eventId,
-                prompt: renderExplicitReplyCorrection(unansweredAttentionRefs),
-                rebuildPrompt,
-                session: result.session,
-                cwd: workspaceRoot,
-                lastMessageFile: join(turnRoot, 'last-message.txt'),
-                transcriptFile: join(turnRoot, 'transcript.log'),
-                toolUrl: input.resolveToolUrl(),
-                toolToken,
-                imageFiles,
-                readableRoots: [resolve(input.homeRoot)],
-                toolMode: 'main',
-                signal,
-              },
-              observer,
-            )
-            await input.conversation.writeSession(
-              result.session,
-              WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
-            )
-            unansweredAttentionRefs = await unansweredReferences()
-            if (unansweredAttentionRefs.length > 0) {
-              throw new WorkspaceAssistantError(
-                'Assistant left an explicit Attention reply without applying its exact answer',
-              )
-            }
-          }
-        }
         const reply = notificationMessage ?? result.reply.trim()
         if (!reply && event.attributes.source !== 'reflection') {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
@@ -651,24 +555,11 @@ function assistantCodexCommand(
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Continue as one normal Assistant conversation for the operator.',
-  'The final model output contains only the operator-facing reply. Never include reasoning, scratch work, or provider thought-envelope markup in it.',
-  'Use HOPI tools only for a requested durable effect. Page context disambiguates references but never implies mutation; explicit intent may choose another scope or Goal.',
-  'Inbox already preserves every public turn. Keep discussion, questions, optional suggestions, and future ideas in conversation unless the operator intends to change current authority. Start Planning only when current authority, design, Work, dependencies, or multi-Work delivery should change.',
-  'Ask before admission only when outcome, target, or operator intent is materially unclear; Planner owns later technical and delivery clarification.',
-  'Use HOPI tools; never edit source/canonical files. Create one Engineering Work directly only for a verifiable delivery defined by Goal authority. Use Planning for multiple Work or Goal/design/existing-Work/DAG changes. One Input gets one direct Work Home-wide; it may span Repos/dependencies and never completes the Goal.',
-  'MCP descriptions and schemas are the sole authority for tool arguments; never inspect files or transcripts to rediscover them.',
-  '[Mandatory Attention check before every final reply]',
-  'Only an explicit Reply action attaches replyTo and exact Attention references; ordinary page context never implies that every open blocker was answered. For each explicit reference call hopi_answer_attention before ending the turn.',
-  'Choose continue to resume the responsibility derived from current Work stage, retry whenever another invocation is wanted in the same unchanged Work outcome/contract/DAG (including transient setup, network, provider, or capacity failure), cancel only to abandon that Work, and revise only when authority or delivery structure must change. Only revise starts Planner. Starting Planning alone never retries Work or resolves Attention. Never pair hopi_start_planning with hopi_answer_attention revise for the same Goal; revise already starts or refreshes Planning.',
-  'Retry does not rebuild, synchronize, revise a contract, or prove an environment repair. Claim repair only after later state or Attempt evidence proves it. Defer Work only changes notBefore and never resolves Attention; trust each returned effect, continuation, Attention settlement, and failed predicates.',
-  'If a referenced Attention still blocks, keep ownership with Assistant while HOPI can repair or schedule it. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply. Claim it cleared only after hopi_answer_attention succeeds and reports the settlement; unrelated Attention remains open.',
-  'hopi_notify_user and hopi_request_user update one turn-local final public-message slot; a later successful call may revise it after fresh state changes the conclusion. Only the final slot is published when the turn ends.',
-  'Every hopi_request_user message must stand alone in the visible conversation: preserve enough material cause and consequence to explain what changed, why HOPI cannot continue, the exact answer or action needed, and any non-obvious effect of viable alternatives. Include a recommendation when one exists. Be proportional; concise never means stripping the context needed to decide.',
-  'Read state at current page scope by omitting IDs; for another explicit scope copy complete canonical IDs. Follow exact returned document or diagnostic paths only when their body is needed; never scan runtime history broadly.',
-  'For every completed Goal update, and whenever asked for a report, output, preview, or other deliverable, call hopi_read_state for that exact Goal with includeEvidence: true and select it from Work Evidence artifacts. Link at least one relevant returned operatorUrl in Markdown when available; if none resolves, say no linked artifact was produced. Never substitute inspectionPath, a design, Work, plan, or latest-Attempt path for the deliverable.',
-  'Adopt only task-relevant current images through the references field of the Goal tool already needed, with a concise purpose. Keep unrelated images in conversation and use returned Goal-local paths in authority.',
-  'The current Inbox turn overrides older conversation. Read scoped current HOPI state before relying on possibly stale session facts.',
+  'Use the current user turn, durable conversation, and HOPI state together; page context is not a mutation.',
+  'Tool schemas and returned canonical state define available effects. Treat an effect as complete only when the tool or a later state read verifies it.',
+  'Create Engineering Work directly for a bounded delivery. Write design and start Planning when authority or decomposition needs to change.',
+  'Attention and Reflection report facts: condition, consequence, clear condition, and evidence. Choose the next ordinary tool action; resolve Attention only after its condition is verified clear.',
+  'Planner sees Goal authority, design, and accepted Input—not conversational prose. Ask the user only for a decision, permission, or external action unavailable to HOPI.',
 ] as const
 
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')

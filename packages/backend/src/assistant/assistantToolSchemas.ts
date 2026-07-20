@@ -41,11 +41,8 @@ export const mainAssistantToolNames = [
   'hopi_create_engineering_work',
   'hopi_write_design',
   'hopi_start_planning',
-  'hopi_control_goal',
-  'hopi_retry_work',
-  'hopi_cancel_work',
-  'hopi_defer_work',
-  'hopi_answer_attention',
+  'hopi_control',
+  'hopi_resolve_attention',
   'hopi_control_preview',
   'hopi_notify_user',
   'hopi_request_user',
@@ -197,43 +194,35 @@ export const assistantToolSchemas = {
       references: goalReferences,
     })
     .strict(),
-  hopi_control_goal: z
+  hopi_control: z
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
-      operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority']),
+      workId: stableIdSchema.optional(),
+      operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer']),
       priority: z.number().int().optional(),
+      notBefore: z.string().datetime({ offset: true }).nullable().optional(),
     })
     .strict()
     .superRefine((value, context) => {
       if (value.operation === 'set_priority' && value.priority === undefined) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_priority requires priority' })
       }
+      const workOperation = ['retry', 'defer'].includes(value.operation)
+      if (workOperation && !value.workId) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} requires workId` })
+      }
+      if (value.operation === 'defer' && value.notBefore === undefined) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'defer requires notBefore' })
+      }
+      if (value.workId && !['retry', 'defer', 'cancel'].includes(value.operation)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} is a Goal operation` })
+      }
+      if (!value.workId && ['retry', 'defer'].includes(value.operation)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} is a Work operation` })
+      }
     }),
-  hopi_retry_work: z
-    .object({
-      projectId: stableIdSchema,
-      goalId: stableIdSchema,
-      workId: stableIdSchema,
-      notBefore: z.string().datetime({ offset: true }).nullable().optional(),
-    })
-    .strict(),
-  hopi_cancel_work: z
-    .object({
-      projectId: stableIdSchema,
-      goalId: stableIdSchema,
-      workId: stableIdSchema,
-    })
-    .strict(),
-  hopi_defer_work: z
-    .object({
-      projectId: stableIdSchema,
-      goalId: stableIdSchema,
-      workId: stableIdSchema,
-      notBefore: z.string().datetime({ offset: true }).nullable(),
-    })
-    .strict(),
-  hopi_answer_attention: z
+  hopi_resolve_attention: z
     .object({
       attentionRef: z
         .string()
@@ -243,18 +232,7 @@ export const assistantToolSchemas = {
         .describe(
           'Copy one complete canonical Attention reference exactly from Inbox Reply context or hopi_read_state. This is not an Attention ID.',
         ),
-      decision: z
-        .enum(['continue', 'retry', 'cancel', 'revise'])
-        .describe(
-          'continue resumes the current responsibility after its represented condition cleared; retry invokes the same unchanged Work lineage again, including after transient setup/network/provider/capacity failure; cancel abandons the Work; revise changes represented authority or delivery structure and alone starts Planning.',
-        ),
-      planningMode: z
-        .enum(['same_contract', 'new_contract_revision'])
-        .describe(
-          'Only for revise. Use new_contract_revision only when Goal outcome, scope, constraints, success, or behavior changes.',
-        )
-        .optional(),
-      references: goalReferences,
+      resolution: z.string().trim().min(1).max(2_000),
     })
     .strict(),
   hopi_control_preview: z
@@ -286,6 +264,39 @@ export const assistantToolRequestSchema = z
     arguments: z.unknown(),
   })
   .strict()
+
+// MCP needs a serializable object schema without Zod effects. Keep cross-field
+// validation in the canonical schemas above, which are parsed again at the
+// mutation boundary.
+const mcpObject = z.object({}).passthrough()
+const mcpWriteDesignSchema = z
+  .object({
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    writes: z.array(z.object({ path: z.string().min(1), content: z.string() }).strict()).optional(),
+    references: goalReferences.optional(),
+  })
+  .strict()
+const mcpControlSchema = z
+  .object({
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    workId: stableIdSchema.optional(),
+    operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer']),
+    priority: z.number().int().optional(),
+    notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .strict()
+const mcpResolveAttentionSchema = z
+  .object({ attentionRef: z.string().min(1), resolution: z.string().trim().min(1).max(2_000) })
+  .strict()
+export const assistantMcpToolSchemas = {
+  ...assistantToolSchemas,
+  hopi_manage_project: mcpObject,
+  hopi_write_design: mcpWriteDesignSchema,
+  hopi_control: mcpControlSchema,
+  hopi_resolve_attention: mcpResolveAttentionSchema,
+} as const
 
 export function parseAssistantToolArguments<Name extends AssistantToolName>(
   name: Name,

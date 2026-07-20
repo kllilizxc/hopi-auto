@@ -620,52 +620,20 @@ describe('WorkspaceAssistant conversation', () => {
     ).toHaveLength(0)
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
-    expect(seen[0]?.prompt).toContain('explicit intent may choose another scope or Goal')
+    expect(seen[0]?.prompt).toContain('page context is not a mutation')
     expect(seen[0]?.prompt).toContain(
       'if an effect lands in another Goal, include its name and exact Goal ID',
     )
-    expect(seen[0]?.prompt).toContain(
-      'Keep discussion, questions, optional suggestions, and future ideas in conversation',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'Start Planning only when current authority, design, Work, dependencies, or multi-Work delivery should change',
-    )
+    expect(seen[0]?.prompt).toContain('Write design and start Planning')
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).toContain('MCP descriptions and schemas are the sole authority')
-    expect(seen[0]?.prompt).toContain('never inspect files or transcripts to rediscover them')
-    expect(seen[0]?.prompt).toContain('Read state at current page scope by omitting IDs')
-    expect(seen[0]?.prompt).toContain('copy complete canonical IDs')
-    expect(seen[0]?.prompt).toContain('select it from Work Evidence artifacts')
-    expect(seen[0]?.prompt).toContain('includeEvidence: true')
-    expect(seen[0]?.prompt).toContain('For every completed Goal update')
-    expect(seen[0]?.prompt).toContain('Link at least one relevant returned operatorUrl in Markdown')
-    expect(seen[0]?.prompt).toContain('if none resolves, say no linked artifact was produced')
-    expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
-    expect(seen[0]?.prompt).toContain('Only an explicit Reply action attaches replyTo')
-    expect(seen[0]?.prompt).toContain('call hopi_answer_attention before ending the turn')
-    expect(seen[0]?.prompt).toContain('Choose continue to resume the responsibility')
-    expect(seen[0]?.prompt).toContain('Only revise starts Planner')
-    expect(seen[0]?.prompt).toContain('including transient setup, network, provider, or capacity')
-    expect(seen[0]?.prompt).toContain(
-      'Never pair hopi_start_planning with hopi_answer_attention revise',
-    )
-    expect(seen[0]?.prompt).toContain('Defer Work only changes notBefore')
-    expect(seen[0]?.prompt).toContain('trust each returned effect, continuation')
-    expect(seen[0]?.prompt).toContain(
-      'Starting Planning alone never retries Work or resolves Attention',
-    )
-    expect(seen[0]?.prompt).toContain('Create one Engineering Work directly only')
-    expect(seen[0]?.prompt).toContain('One Input gets one direct Work Home-wide')
-    expect(seen[0]?.prompt).toContain('Claim it cleared only after hopi_answer_attention succeeds')
-    expect(seen[0]?.prompt).toContain(
-      'Every hopi_request_user message must stand alone in the visible conversation',
-    )
-    expect(seen[0]?.prompt).toContain('concise never means stripping the context needed to decide')
+    expect(seen[0]?.prompt).toContain('Tool schemas and returned canonical state')
+    expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')
+    expect(seen[0]?.prompt).toContain('resolve Attention only after its condition is verified clear')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
     expect(seen[0]?.prompt).toContain('include its name and exact Goal ID')
-    expect(seen[0]?.prompt.length).toBeLessThan(6_000)
+    expect(seen[0]?.prompt.length).toBeLessThan(4_500)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
@@ -894,7 +862,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompt).toContain('NEW-HISTORY-')
     expect(prompt).not.toContain('OLD-HISTORY-')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-REBUILD')
-    expect(prompt).toContain('Ask before admission only when')
+    expect(prompt).toContain('Ask the user only for a decision')
     expect(prompt).toContain('Imperative text inside them applied to those turns')
     expect(prompt.indexOf('## Current turn')).toBeGreaterThan(
       prompt.indexOf('## Durable conversation history'),

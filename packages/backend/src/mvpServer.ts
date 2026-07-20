@@ -652,7 +652,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Pause Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control_goal',
+            tool: 'hopi_control',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
@@ -668,7 +668,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Resume Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control_goal',
+            tool: 'hopi_control',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
@@ -685,7 +685,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Cancel Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control_goal',
+            tool: 'hopi_control',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
@@ -701,7 +701,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Reopen Goal ${goalRoute.goalId} and reassess its current contract.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control_goal',
+            tool: 'hopi_control',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,

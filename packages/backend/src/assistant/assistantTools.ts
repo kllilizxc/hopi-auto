@@ -86,7 +86,6 @@ export interface AssistantTools {
   notificationMessage(token: string): string | null
   notificationIntent(token: string): 'inform' | 'request' | null
   hasDurableEffect(token: string): boolean
-  answeredAttentionRefs(token: string): readonly string[]
   assistantOwnedAttentionRefs(eventId: string): Promise<string[]>
   acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   acceptUserAttentionReply(eventId: string): Promise<string[]>
@@ -125,9 +124,6 @@ export function createAssistantTools(options: {
         notificationMessage: string | null
         notificationIntent: 'inform' | 'request' | null
         durableEffect: boolean
-        answeredAttentionRefs: Set<string>
-        startedPlanningGoals: Set<string>
-        revisedAttentionGoals: Set<string>
       }
     | {
         mode: 'reflection'
@@ -310,9 +306,6 @@ export function createAssistantTools(options: {
         notificationMessage: null,
         notificationIntent: null,
         durableEffect: false,
-        answeredAttentionRefs: new Set(),
-        startedPlanningGoals: new Set(),
-        revisedAttentionGoals: new Set(),
       })
       return token
     },
@@ -348,10 +341,6 @@ export function createAssistantTools(options: {
       return capability?.mode === 'main' && capability.durableEffect
     },
 
-    answeredAttentionRefs(token) {
-      const capability = capabilities.get(token)
-      return capability?.mode === 'main' ? [...capability.answeredAttentionRefs].toSorted() : []
-    },
 
     async assistantOwnedAttentionRefs(eventId) {
       const event = await options.workspace.readEvent(eventId)
@@ -579,48 +568,12 @@ export function createAssistantTools(options: {
       if (!mainAssistantToolNames.includes(name as never)) {
         throw new Error(`Speaking thread cannot call ${name}`)
       }
-      if (name === 'hopi_start_planning') {
-        const args = parseAssistantToolArguments(name, input)
-        const key = goalKey(args.projectId, args.goalId)
-        if (capability.revisedAttentionGoals.has(key)) {
-          throw new Error(
-            `Planning for ${args.goalId} was already started by hopi_answer_attention revise in this turn; do not call hopi_start_planning for the same Goal`,
-          )
-        }
-      }
-      if (name === 'hopi_answer_attention') {
-        const args = parseAssistantToolArguments(name, input)
-        const parsed = parseAttentionReference(args.attentionRef)
-        if (
-          args.decision === 'revise' &&
-          parsed?.scope === 'goal' &&
-          capability.startedPlanningGoals.has(goalKey(parsed.projectId, parsed.goalId))
-        ) {
-          throw new Error(
-            `Planning for ${parsed.goalId} was already started separately in this turn; do not duplicate it with hopi_answer_attention revise. Use retry only when another invocation of the unchanged Work is intended.`,
-          )
-        }
-      }
       const result = await this.executeForEvent(
         capability.eventId,
         name as MainAssistantToolName,
         input,
       )
       if (result.changed) capability.durableEffect = true
-      if (name === 'hopi_start_planning') {
-        const args = parseAssistantToolArguments(name, input)
-        capability.startedPlanningGoals.add(goalKey(args.projectId, args.goalId))
-      }
-      if (name === 'hopi_answer_attention') {
-        const args = parseAssistantToolArguments(name, input)
-        capability.answeredAttentionRefs.add(args.attentionRef)
-        if (args.decision === 'revise') {
-          const parsed = parseAttentionReference(args.attentionRef)
-          if (parsed?.scope === 'goal') {
-            capability.revisedAttentionGoals.add(goalKey(parsed.projectId, parsed.goalId))
-          }
-        }
-      }
       if (name === 'hopi_notify_user' || name === 'hopi_request_user') {
         capability.notificationMessage = parseAssistantToolArguments(name, input).message
         capability.notificationIntent = name === 'hopi_request_user' ? 'request' : 'inform'
@@ -1079,7 +1032,6 @@ export function createAssistantTools(options: {
           }
         }
         case 'hopi_start_planning': {
-          assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
           options.onGoalEffect?.(eventId, project.projectId, args.goalId)
@@ -1151,10 +1103,58 @@ export function createAssistantTools(options: {
             },
           }
         }
-        case 'hopi_control_goal': {
+        case 'hopi_control': {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
           options.onGoalEffect?.(eventId, project.projectId, args.goalId)
+          if (args.workId) {
+            if (args.operation === 'retry') {
+              const goalPackage = await project.store.readPackage(args.goalId)
+              const work = goalPackage.works.get(args.workId)
+              if (!work) throw new Error(`Work not found: ${args.workId}`)
+              const settledRefs = openWorkAttentionRefs(
+                goalPackage,
+                project.projectId,
+                args.goalId,
+                args.workId,
+              )
+              await project.controller.retryWork(
+                args.goalId,
+                args.workId,
+                args.notBefore === undefined ? work.attributes.notBefore : args.notBefore,
+                { resolution: 'Assistant requested another run in the existing Work lineage.' },
+              )
+              return currentWorkResult({
+                project,
+                goalId: args.goalId,
+                workId: args.workId,
+                kind: 'work_retried',
+                settledRefs,
+              })
+            }
+            if (args.operation === 'defer') {
+              await project.controller.setWorkNotBefore(args.goalId, args.workId, args.notBefore ?? null)
+              return currentWorkResult({
+                project,
+                goalId: args.goalId,
+                workId: args.workId,
+                kind: 'work_deferred',
+              })
+            }
+            if (args.operation === 'cancel') {
+              const effect = await cancelWorkAndSettle(project, args.goalId, args.workId, event)
+              const planning = findActivePlanning(await project.store.readPackage(args.goalId))
+              return currentWorkResult({
+                project,
+                goalId: args.goalId,
+                workId: args.workId,
+                kind: 'work_cancelled',
+                ...effect,
+                continuation: planning ? deriveWorkContinuation(planning.attributes) : null,
+              })
+            }
+            throw new Error(`${args.operation} is not a Work operation`)
+          }
           let goal = await requireGoal(project.store, args.goalId)
           let changed = false
           switch (args.operation) {
@@ -1197,6 +1197,8 @@ export function createAssistantTools(options: {
                 changed = true
               }
               break
+            default:
+              throw new Error(`${args.operation} requires workId`)
           }
           if (changed && args.operation !== 'set_priority') {
             goal = await requireGoal(project.store, args.goalId)
@@ -1218,7 +1220,7 @@ export function createAssistantTools(options: {
             },
           }
         }
-        case 'hopi_retry_work': {
+        case 'hopi_retry_work' as never: {
           assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
@@ -1246,7 +1248,7 @@ export function createAssistantTools(options: {
             settledRefs,
           })
         }
-        case 'hopi_cancel_work': {
+        case 'hopi_cancel_work' as never: {
           assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
@@ -1262,7 +1264,7 @@ export function createAssistantTools(options: {
             continuation: planning ? deriveWorkContinuation(planning.attributes) : null,
           })
         }
-        case 'hopi_defer_work': {
+        case 'hopi_defer_work' as never: {
           assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
@@ -1275,8 +1277,42 @@ export function createAssistantTools(options: {
             kind: 'work_deferred',
           })
         }
-        case 'hopi_answer_attention': {
-          const args = parseAssistantToolArguments(name, input)
+        case 'hopi_resolve_attention': {
+          const args: any = parseAssistantToolArguments(name, input)
+          const resolved = parseAttentionReference(args.attentionRef)
+          if (!resolved) throw new Error(`Invalid Attention reference: ${args.attentionRef}`)
+          if (resolved.scope === 'workspace') {
+            const state = await options.workspace.readWorkspace()
+            if (resolved.homeId !== state.homeId) {
+              throw new Error(`Workspace Attention belongs to another Home: ${args.attentionRef}`)
+            }
+            const attention = state.attentions.get(resolved.attentionId)
+            if (!attention) throw new Error(`Workspace Attention not found: ${args.attentionRef}`)
+            if (attention.attributes.resolvedAt === null) {
+              await options.workspace.resolveAttention(resolved.attentionId, args.resolution, now())
+            }
+            return {
+              summary: `Resolved Workspace Attention ${resolved.attentionId}.`,
+              changed: attention.attributes.resolvedAt === null,
+              value: { attentionRef: args.attentionRef },
+            }
+          }
+          const resolutionProject = requireProject(options.projects, resolved.projectId)
+          await requireGoal(resolutionProject.store, resolved.goalId)
+          const admission = await goalInputAdmission(options.workspace, resolutionProject.store, resolved.goalId, event)
+          const changed = await resolveGoalAttention(
+            resolutionProject.store,
+            resolved.goalId,
+            resolved.attentionId,
+            args.resolution,
+            admission,
+            now(),
+          )
+          return {
+            summary: `Resolved Attention ${args.attentionRef}.`,
+            changed,
+            value: { attentionRef: args.attentionRef },
+          }
           if (
             args.decision !== 'revise' &&
             (args.planningMode !== undefined || args.references.length > 0)

@@ -180,17 +180,15 @@ invalid, unwritable, or a Coordinator integrity failure leaves no safe Goal-loca
 second project phase and claims no Work recovery update.
 
 An answer to event-target Workspace Attention is handled as its own ordinary conversation turn.
-Assistant uses `hopi_answer_attention` when the answer resolves the condition. Clearing that
-guard makes the original pending turn eligible again with the answer visible in durable conversation
-history; no answer parser or hidden continuation object is required.
+Assistant uses the answer as evidence, then resolves the exact Attention only after the condition is
+verified clear. Clearing that guard makes the original pending turn eligible again with the answer
+visible in durable conversation history; no answer parser or hidden continuation object is required.
 
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
-blocker. By the end of an explicit reply turn, each referenced operator request is resolved,
-transferred back to Assistant ownership while represented revision work proceeds, or replaced by a
-new request. Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do
-not infer closure from prose or from a Goal revision because an environmental or external blocker
-may survive the revision.
+blocker. A reply may leave an Attention open when its evidence does not clear the condition.
+Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do not infer
+closure from prose or from a Goal revision because an environmental or external blocker may survive it.
 
 The Work control boundary removes a split command. Explicitly retrying a Work means that Assistant
 has judged its current blocker clear or superseded; cancelling means that the Work will no longer
@@ -203,15 +201,10 @@ conservatively blocked and repeating the command completes it idempotently. Canc
 material decision and retains its accepted Input. Neither operation closes Goal, Project, or another
 Work's Attention.
 
-`hopi_answer_attention` derives the continuation from canonical target and Work stage. `continue`
-resolves the blocker and lets reconciliation dispatch the same Planner, Generator, or Reviewer;
-`retry` resets the same Work lineage; `cancel` makes it terminal. `revise` is the sole answer path
-that starts Planning: it adopts the Input, applies the chosen contract revision mode, clears the old
-`operatorRequest`, and leaves that Attention open under Assistant ownership until the represented
-change actually clears or supersedes it. The exact Planning-Work Attention is settled after its
-accepted revision so it cannot block the Planner that now owns continuation. Starting Planning by
-itself never resolves, retries, or resets Attention or Work, and an empty Planner proposal means only
-that Planning changed nothing.
+Assistant derives the next ordinary operation from canonical target and Work state: Control retries
+or cancels Work, design plus Planning changes authority, and Resolve Attention clears only a verified
+condition. Starting Planning itself never resolves, retries, or resets Attention or Work, and an
+empty Planner proposal means only that Planning changed nothing.
 
 Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
 not proof that a deterministic environment defect was repaired. Speaking Assistant may describe a

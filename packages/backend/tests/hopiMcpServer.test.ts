@@ -48,15 +48,13 @@ describe('HOPI MCP server', () => {
     expect(names).toContain('hopi_write_preferences')
     expect(names).toContain('hopi_manage_project')
     expect(names).toContain('hopi_configure_model')
-    expect(names).toContain('hopi_retry_work')
-    expect(names).toContain('hopi_cancel_work')
-    expect(names).toContain('hopi_defer_work')
-    expect(names).toContain('hopi_answer_attention')
-    expect(names).not.toContain('hopi_control_work')
-    expect(names).not.toContain('hopi_resolve_attention')
+    expect(names).toContain('hopi_control')
+    expect(names).toContain('hopi_resolve_attention')
+    expect(names).not.toContain('hopi_retry_work')
+    expect(names).not.toContain('hopi_answer_attention')
     expect(names).not.toContain('hopi_notify_user')
     expect(names).not.toContain('hopi_request_user')
-    expect(tools.tools).toHaveLength(14)
+    expect(tools.tools).toHaveLength(11)
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
     ).toContain('reusable defaults')
@@ -66,12 +64,7 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'Include the returned goalId',
     )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
-      'Does not retry Work or resolve Attention',
-    )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
-      'new_contract_revision',
-    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain('Start Planning')
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
       'includeEvidence: true',
     )
@@ -84,21 +77,13 @@ describe('HOPI MCP server', () => {
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_create_engineering_work')?.description,
     ).toContain('at most one Engineering Work')
-    expect(
-      tools.tools.find((tool) => tool.name === 'hopi_answer_attention')?.description,
-    ).toContain('revise alone starts Planning')
-    const answerSchema = tools.tools.find(
-      (tool) => tool.name === 'hopi_answer_attention',
-    )?.inputSchema
-    expect(answerSchema).toMatchObject({
-      type: 'object',
-      properties: {
-        attentionRef: { type: 'string' },
-        decision: { enum: ['continue', 'retry', 'cancel', 'revise'] },
-      },
+    expect(tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description).toContain('verified clear')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema).toMatchObject({
+      properties: { projectId: { type: 'string' }, writes: { type: 'array' } },
     })
-    expect(JSON.stringify(answerSchema)).not.toContain('anyOf')
-    expect(JSON.stringify(answerSchema)).not.toContain('oneOf')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control')?.inputSchema).toMatchObject({
+      properties: { operation: { enum: ['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer'] } },
+    })
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
@@ -134,7 +119,7 @@ describe('HOPI MCP server', () => {
     expect(names).not.toContain('hopi_write_preferences')
     expect(names).not.toContain('hopi_manage_project')
     expect(names).not.toContain('hopi_configure_model')
-    expect(names).toHaveLength(13)
+    expect(names).toHaveLength(10)
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
       'complete public turn',
     )

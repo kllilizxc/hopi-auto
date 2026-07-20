@@ -364,21 +364,16 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Engineering Work | Admit one cohesive Engineering Work directly from the current Input | Goal Input and one Engineering Work |
 | Start planning | Record the current instruction for a Goal and ensure Planning under either the same contract or a new contract revision | Goal Input and Planning Work; never retries Work or resolves Attention implicitly |
-| Control Goal | Pause, resume, cancel, reopen, or set priority | Validated Goal/control documents |
-| Retry Work | Authorize another attempt in the same Work lineage | Work reset and exact Work Attention settlement |
-| Cancel Work | Make one Work terminal because its delivery is no longer wanted | Goal Input, Work cancellation, exact Work Attention settlement, and any required Planning guard |
-| Defer Work | Change one Work's `notBefore` without changing its contract | Validated Work document |
-| Answer Attention | Apply an explicit answer as `continue`, `retry`, `revise`, or `cancel` to one exact Attention | The named effect followed by Attention settlement, or an Assistant-owned open Attention while revision Planning proceeds |
+| Control | Apply one explicit Goal or Work control operation | Validated Goal or Work document; Work retry and cancellation settle only their exact Work Attention |
+| Resolve Attention | Record that one exact reported condition has cleared | Attention settlement after the owning validator accepts the condition |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Notify operator | Publish one concise message from the current internal Reflection turn | Handled public Inbox reply, then Attention `notifiedAt` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 
-Start Planning, Work control, and Answer Attention return one common result envelope:
-`status`, the exact `effect`, the derived `continuation`, Attention references settled or
-transferred by that effect, and `unresolvedAttentionRefs`. The model does not infer success from the
-requested verb or reconstruct continuation from prose.
+Every mutation returns its verified canonical effect and any Attention references it settled. The
+model does not infer success from the requested verb or reconstruct state from prose.
 
 A failed Preview produces an ordinary Assistant turn with Project and Goal context. Assistant uses
 the existing design and Start planning capabilities when source repair is needed; Preview has no
@@ -434,8 +429,7 @@ is documentation rather than implementation; it does not mechanically request Pl
 Starting Planning never retries, resets, cancels, or resolves Work or Attention. An open Attention
 therefore cannot disappear merely because Planner was invoked. Planner's empty proposal means only
 that Planning changed no canonical contract or DAG; it does not claim that Coordinator will retry a
-blocked responsibility. `Answer Attention: revise` already starts or refreshes that Planning guard,
-so Assistant never pairs it with `Start planning` for the same Goal in one turn.
+blocked responsibility.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
@@ -518,13 +512,10 @@ an Attention-settlement correction changes the conclusion. Only the final slot i
 handled Inbox reply, so revision never creates duplicate operator messages. A failed later call
 leaves the last valid slot intact.
 
-An internal handoff carrying Assistant-owned Attention cannot finish as a no-op. Before publishing
-the turn as handled, Coordinator verifies that every attached still-current reference was resolved,
-received a durable internal effect, or that `request_user` supplied an actionable public reply.
-`notify_user` alone does not settle ownership. On an initial omission Coordinator resumes the same
-Assistant session once with those exact references; a repeated omission follows ordinary Assistant
-failure recovery and keeps the Inbox turn pending. Operator-owned and resolved references are
-already settled. This is a completion postcondition at the execution boundary, not prose parsing.
+Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
+after an ordinary turn when its evidence is insufficient to resolve it. Coordinator records the
+turn normally; a later state change or Assistant turn decides the next action. `notify_user` does
+not settle a blocker, and there is no hidden follow-up model pass that tries to force a decision.
 
 ## Tool Safety And Recovery
 
@@ -541,31 +532,17 @@ Mutation tools follow these rules:
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 - create or reuse targeted Attention when safe automatic recovery is exhausted
 
-`Retry Work` is one atomic recovery intent, not a required pair of model calls. It resets the Work
-control facts and resolves every open Attention targeted exactly at that Work in one gated
-publication. `Cancel Work` settles Attention for the Work it makes terminal. Neither operation
-closes Goal, Project, or another Work's Attention. `Defer Work` changes scheduling time only and
-does not resolve a blocker.
+Control is one atomic operation, not a required pair of model calls. A Work retry resets that Work
+and settles every open Attention targeted exactly at it; cancellation settles only Attention for the
+Work it makes terminal. Deferral changes scheduling time only. No control operation closes a Goal,
+Project, or unrelated Work Attention.
 
-`Answer Attention` is the interface for an explicit operator reply. It derives Project, Goal, Work,
-and continuation from one canonical Attention reference instead of asking the model to repeat those
-identities:
-
-- `continue` records the answer, resolves the condition, and resumes the same responsibility at its
-  current stage; it does not create Planning
-- `retry` applies the Work retry boundary and resumes the same Work
-- `cancel` makes the targeted Work terminal before resolving its Attention
-- `revise` adopts the answer as a Goal change and starts Planning in the selected same-contract or
-  new-contract-revision mode; the old Attention is transferred back to Assistant ownership and stays
-  open until the represented change actually supersedes or clears it. If that Attention targets the
-  exact Planning Work being revised, the accepted revision settles it so Planner is not blocked by
-  its own old request
-
-The default for an answer is exact continuation, not Planner mediation. Planner is used only when
-the answer changes canonical authority, Work decomposition, dependencies, or durable design. There
-is no stored continuation object: Work kind and stage already identify Planner, Generator, or
-Reviewer, and ordinary reconciliation dispatches that responsibility after the Attention gate is
-cleared.
+The Assistant chooses ordinary operations from the verified state: it creates Engineering Work for
+a bounded direct change; writes design and starts Planning when authority or decomposition changes;
+uses Control for lifecycle changes; and resolves Attention only after the owning condition has
+actually cleared. An explicit user reply is evidence for that judgment, never a forced
+`continue`/`retry`/`revise`/`cancel` classification. There is no stored continuation object:
+ordinary reconciliation derives the next responsibility from canonical Work facts.
 
 The decision boundary is invariant across simple and complex Work. If the current Work outcome,
 acceptance contract, dependency graph, and delivery boundary remain valid and another invocation is
