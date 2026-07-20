@@ -64,11 +64,15 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'Include the returned goalId',
     )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain('Start Planning')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
+      'Start Planning',
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
       'resolveAttention: false',
     )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.inputSchema).toMatchObject({
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.inputSchema,
+    ).toMatchObject({
       properties: { resolveAttention: { type: 'boolean', default: true } },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
@@ -83,12 +87,20 @@ describe('HOPI MCP server', () => {
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_create_engineering_work')?.description,
     ).toContain('at most one Engineering Work')
-    expect(tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description).toContain('verified clear')
-    expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema).toMatchObject({
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
+    ).toContain('verified clear')
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
+    ).toMatchObject({
       properties: { projectId: { type: 'string' }, writes: { type: 'array' } },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control')?.inputSchema).toMatchObject({
-      properties: { operation: { enum: ['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer'] } },
+      properties: {
+        operation: {
+          enum: ['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer'],
+        },
+      },
     })
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)

@@ -19,7 +19,8 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
   protocol noise and never substitutes for the summary
 - lossless raw stdout and stderr
 - process-group cancellation and bounded termination
-- read-only access to exact canonical and diagnostic paths under Assistant Home
+- writable Assistant-owned runtime and scratch, read-only linked and canonical roots, and network
+  access under the same boundary for every provider
 - an optional vendor session ID for the speaking Assistant
 - a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
   when an envelope is malformed and cannot be separated without guessing

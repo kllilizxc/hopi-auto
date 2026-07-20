@@ -866,19 +866,17 @@ function renderResponsibilityPrompt(
       : []),
     '',
     'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
-    'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns Git staging and commits.',
+    'Permission follows resource ownership, not command allowlists. Use ordinary shell, network, filesystem, and tools freely inside the resources assigned below.',
+    'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns HOPI-managed task Git metadata, checkpoints, and integration refs.',
     'The Repo manifest is the complete source-root map. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.',
-    'Use $HOPI_RUN_SCRATCH for files retained across Attempts of this Work revision and $HOPI_CACHE_DIR only for reusable caches. A remembered measurement is not evidence when its file or log is absent.',
+    'Use $HOPI_RUN_SCRATCH for retained files and $HOPI_CACHE_DIR for caches; evidence requires a retained file or log.',
     ...(paths.hasImages
       ? [
           'Attached images correspond only to Goal assets cited by the owning Work. Apply their documented purpose and limits.',
         ]
       : []),
     'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
-    'Do not invent workflow states, roles, actions, or control fields.',
-    'If you expose an Agent plan, items are outcome, decision, or dependency boundaries. Fold reads, setup, checks, and result writing into their owner and batch independent operations; use no simple/complex label or target item count.',
     'Targeted Attention is for a blocker this role and retry cannot clear. Name Assistant for HOPI repair; name the operator only for an external decision, credential, permission, or action. Technical diagnostics such as local ports are not operator authority.',
-    'If you stage targeted Attention, result must be attention. Never combine targeted Attention with success, reject, or fail.',
     ...targetedAttentionContract(input),
     '',
   ]
@@ -1034,7 +1032,7 @@ function plannerPrompt(paths: {
     'Resolved Assistant Attention is history. With terminal Work and no targeted Attention, propose target-null completion.',
     'Maintain .hopi/docs/repos.md only when Repo responsibilities or shared contracts are materially stale. It is context, not workflow configuration.',
     'Omitted Evidence is historical. Never repair an unstaged evidenceRef, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run.',
-    'Coordinator owns deterministic proposal schema and DAG validation. Perform semantic and proportionate content checks, but do not build an ad hoc validator that duplicates Coordinator; returned validation diagnostics drive a later Attempt.',
+    'Coordinator validates proposal schema and DAG; use returned diagnostics on retry instead of duplicating its validator.',
     'New Engineering Work frontmatter (Markdown bodies remain free-form):',
     '```yaml',
     '---',
@@ -1095,9 +1093,9 @@ function generatorPrompt() {
     'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
     'The staged canonical context overrides any older .hopi copy in the task branch.',
     'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
-    'Git status and diff are allowed; Git writes such as add, commit, checkout, switch, merge, rebase, reset, or clean are not.',
-    'Do not rerun an unchanged passing check. One passing run after the final relevant source change is sufficient unless distinct acceptance criteria require distinct evidence.',
-    'Batch independent file reads and checks where practical. Extra progress narration and repeated discovery are not implementation evidence.',
+    'The assigned task worktree Git index, HEAD, branch, and shared Git directory are HOPI-managed. Do not mutate them; Coordinator checkpoints source edits after the Run.',
+    'When accepted Work requires branch or PR delivery, use a Run-owned clone under $HOPI_RUN_SCRATCH. Git staging, commits, branch changes, rebases, and pushes are allowed there within the repository and delivery named by Work.',
+    'Do not merge, deploy, mutate production data, or create another unrequested external effect without explicit Work or operator authority.',
     '',
   ]
 }

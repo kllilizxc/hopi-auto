@@ -152,11 +152,19 @@ either one initial Planning Work or one Assistant-dispatched Engineering Work. D
 does not imply Goal completion: after Engineering Work drains, the ordinary final Planning
 assessment still decides whether the Goal is complete, needs more Work, or needs authority.
 
+Agent permission follows resource ownership rather than command allowlists. Within the resources
+named by the current Input or Work, an Agent may use ordinary shell, network, filesystem, and tool
+capabilities freely. Deterministic boundaries protect only HOPI authority and managed Git
+projections, another responsibility's immutable surface, and external side effects not authorized by
+the current Input, Work, or operator. Natural-language authority remains sufficient; HOPI adds no
+permission DSL, capability field, or command taxonomy.
+
 Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
-alone owns mechanical side effects outside those surfaces: Git index, branch checkpoints, canonical
-publication, integration refs, Run-scoped process cleanup, and retry scheduling. Targeted Attention
-means missing operator authority or an external action only; it is never a generic representation of
-a sandbox, Git, port, or tool failure that Coordinator or a later Run can handle.
+alone owns canonical publication, managed task-worktree Git metadata and checkpoints, integration
+refs, Run-scoped process cleanup, and retry scheduling. It does not own Git operations in a
+Run-owned scratch clone when accepted Work requires branch or PR delivery. Targeted Attention means
+missing operator authority or an unavailable external action only; it is never a generic
+representation of a sandbox, Git, port, or tool failure that Coordinator or a later Run can handle.
 
 ### 5. Engineering Work is the isolation boundary
 

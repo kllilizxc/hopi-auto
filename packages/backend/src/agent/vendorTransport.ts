@@ -165,12 +165,7 @@ export async function resolveConfiguredTransportCommand(options: {
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
     }
-    if (
-      (options.input.role === 'generator' ||
-        options.input.role === 'reviewer' ||
-        (options.input.role === 'planner' && Boolean(options.bundle.apiOrigin))) &&
-      options.config.sandbox === 'workspace-write'
-    ) {
+    if (options.config.sandbox === 'workspace-write') {
       cmd.push('-c', 'sandbox_workspace_write.network_access=true')
     }
     if (savedSession) {

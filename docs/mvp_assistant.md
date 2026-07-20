@@ -295,9 +295,9 @@ shows a bounded, safe error summary and at most the latest retry status.
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. It receives normal vendor conversation behavior and a bounded read-only shell
-capability within that runtime directory. It does not receive direct write authority over canonical
-project documents or source trees.
+managed project root. It receives normal shell and network capability and may write its own runtime
+and scratch files. Linked Project source and canonical documents remain read-only; HOPI mutations
+still pass through tools, and source delivery still passes through Engineering Work.
 
 HOPI exposes its tools through one local MCP server with a per-turn capability. Each supported
 vendor adapter injects that same server using the vendor's native non-interactive configuration. The server
@@ -305,9 +305,10 @@ runs inside the Coordinator process and sends every mutation through the same va
 controllers, publisher, and global publication queue used by the rest of HOPI. MCP is a transport
 for model tool calls, not a second durable workflow or an Assistant-specific Action document.
 
-The non-interactive vendor invocation permits tools only for this injected `hopi` MCP server; it
-does not grant broader shell, filesystem, or unrelated MCP write authority. The MCP process has
-only a single-turn capability token, and the backend revokes that token when the turn ends. Tool
+The non-interactive vendor invocation permits the injected `hopi` MCP server plus ordinary local
+inspection and scratch work. Provider adapters expose the same owned-runtime write, linked-root
+read, and network boundary; they do not inherit unrelated personal MCP servers or configuration.
+The MCP process has only a single-turn capability token, and the backend revokes that token when the turn ends. Tool
 approval therefore removes an impossible unattended UI prompt without becoming the authorization
 boundary: server-side capability validation, canonical target validation, controllers, and the
 publisher remain authoritative.
@@ -456,7 +457,8 @@ Goal's exact canonical design prefix, the tool strips it instead of creating a n
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
-The Assistant never implements source changes itself. When current authority already defines one
+The Assistant never implements source changes itself because doing so would bypass Engineering Work,
+Reviewer, and C1 rather than because shell writes are globally unsafe. When current authority already defines one
 cohesive and independently verifiable delivery, it may create one Engineering Work and leave
 Generator, Reviewer, worktree isolation, and C1 unchanged. When the operator asks to establish or
 revise durable design before implementation, Assistant writes design and requests Planning; Planner

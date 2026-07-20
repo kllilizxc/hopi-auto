@@ -321,8 +321,8 @@ export function createWorkspaceAssistant(input: {
         }
 
         await input.conversation.writeSession(result.session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
-        let notificationMessage = input.tools.notificationMessage(toolToken)
-        let notificationIntent = input.tools.notificationIntent(toolToken)
+        const notificationMessage = input.tools.notificationMessage(toolToken)
+        const notificationIntent = input.tools.notificationIntent(toolToken)
         const reply = notificationMessage ?? result.reply.trim()
         if (!reply && event.attributes.source !== 'reflection') {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
@@ -404,6 +404,24 @@ async function prepareAssistantWorkspace(
       assistantClaudeMcpConfigPath(input.cwd),
       `${JSON.stringify({ mcpServers: { hopi: server } }, null, 2)}\n`,
     )
+    await Bun.write(
+      assistantClaudeSettingsPath(input.cwd),
+      `${JSON.stringify(
+        {
+          sandbox: {
+            enabled: true,
+            failIfUnavailable: true,
+            autoAllowBashIfSandboxed: true,
+            allowUnsandboxedCommands: false,
+            filesystem: {
+              allowWrite: input.toolMode === 'reflection' ? [] : [input.cwd],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
     return
   }
 
@@ -427,6 +445,13 @@ async function prepareAssistantWorkspace(
           grep: 'allow',
           glob: 'allow',
           list: 'allow',
+          edit:
+            input.toolMode === 'reflection'
+              ? 'deny'
+              : assistantEditPermissions(input.cwd, input.readableRoots ?? []),
+          bash: input.toolMode === 'reflection' ? 'deny' : 'allow',
+          webfetch: input.toolMode === 'reflection' ? 'deny' : 'allow',
+          websearch: input.toolMode === 'reflection' ? 'deny' : 'allow',
           external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
         },
       },
@@ -461,10 +486,14 @@ function assistantClaudeCommand(
     '--mcp-config',
     assistantClaudeMcpConfigPath(input.cwd),
     '--strict-mcp-config',
+    '--settings',
+    assistantClaudeSettingsPath(input.cwd),
     '--setting-sources',
     '',
     '--allowedTools',
-    'mcp__hopi__*,Read,Glob,Grep',
+    input.toolMode === 'reflection'
+      ? 'mcp__hopi__*,Read,Glob,Grep'
+      : 'mcp__hopi__*,Read,Glob,Grep,Bash,WebFetch,WebSearch',
     '--print',
     '--output-format',
     'stream-json',
@@ -495,10 +524,22 @@ function assistantClaudeMcpConfigPath(cwd: string) {
   return join(cwd, 'claude-mcp.json')
 }
 
+function assistantClaudeSettingsPath(cwd: string) {
+  return join(cwd, 'claude-settings.json')
+}
+
 function externalDirectoryPermissions(roots: readonly string[]) {
   return {
     '*': 'deny',
     ...Object.fromEntries(roots.map((root) => [`${root.replace(/\/$/, '')}/**`, 'allow'])),
+  }
+}
+
+function assistantEditPermissions(cwd: string, readableRoots: readonly string[]) {
+  return {
+    '*': 'allow',
+    ...Object.fromEntries(readableRoots.map((root) => [`${root.replace(/\/$/, '')}/**`, 'deny'])),
+    [`${cwd.replace(/\/$/, '')}/**`]: 'allow',
   }
 }
 
@@ -524,7 +565,12 @@ function assistantCodexCommand(
 ) {
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
-  command.push('-a', config.approvalPolicy, '-s', 'read-only')
+  const sandbox = input.toolMode === 'reflection' ? 'read-only' : 'workspace-write'
+  command.push('-a', config.approvalPolicy)
+  if (sandbox === 'workspace-write') {
+    command.push('-c', 'sandbox_workspace_write.network_access=true')
+  }
+  command.push('-s', sandbox)
   if (config.reasoningEffort) {
     command.push('-c', `model_reasoning_effort="${config.reasoningEffort}"`)
   }
@@ -557,6 +603,7 @@ function assistantCodexCommand(
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'Use the current user turn, durable conversation, and HOPI state together; page context is not a mutation.',
   'Tool schemas and returned canonical state define available effects. Treat an effect as complete only when the tool or a later state read verifies it.',
+  'Your runtime workspace is writable and shell and network are available. Linked source and canonical HOPI state are read-only; use HOPI tools for state and Engineering Work for source delivery.',
   'Create Engineering Work directly for a bounded delivery. Write design and start Planning when authority or decomposition needs to change.',
   'Attention and Reflection report facts: condition, consequence, clear condition, and evidence. Choose the next ordinary tool action; resolve Attention only after its condition is verified clear.',
   'Planner sees Goal authority, design, and accepted Input—not conversational prose. Ask the user only for a decision, permission, or external action unavailable to HOPI.',
@@ -626,24 +673,6 @@ function renderTurn(event: InboxEventDocument, preference: AssistantPreferenceDo
   ]
     .filter(Boolean)
     .join('\n\n')
-}
-
-function renderAttentionSettlementCorrection(references: readonly string[]) {
-  return [
-    '[Attention settlement correction for the current internal turn.]',
-    'The previous response left the exact Assistant-owned Attention references below open without a durable internal continuation or actionable operator request.',
-    references.join('\n'),
-    'Re-read current state, including the latest finished Planning outcome. For each reference, call hopi_answer_attention with continue after a represented repair, retry whenever the Work outcome/contract/DAG stays unchanged and another invocation is wanted (including transient setup, network, provider, or capacity failure), cancel only for explicit abandonment, or revise only when authority must change. Starting Planning alone never settles it, and revise already includes Planning. Do not ask the operator to repeat a decision already preserved by the current Input or Planning outcome. Only if one exact decision, authorization, or external action remains, call hopi_request_user with one proportional, self-contained request that preserves the material cause, blocking consequence, exact need, non-obvious alternative effects, and a recommendation when one exists. hopi_notify_user alone does not settle this check. Do not finish as a no-op.',
-  ].join('\n\n')
-}
-
-function renderExplicitReplyCorrection(references: readonly string[]) {
-  return [
-    '[Explicit Attention reply correction for the current user turn.]',
-    'The previous response did not apply the answer to these still-open exact references:',
-    references.join('\n'),
-    'Re-read current state, including the latest finished Planning outcome, and call hopi_answer_attention once for each reference. Choose continue for the current responsibility, retry whenever another invocation is wanted in the unchanged Work outcome/contract/DAG, cancel only for explicit abandonment, or revise only when authority must change. Transient setup, network, provider, or capacity failure remains retry unless represented authority must change. Starting Planning alone is not an answer, revise already includes Planning, and an already preserved decision must not be asked again. Then give the operator one concise outcome.',
-  ].join('\n\n')
 }
 
 function renderPreference(preference: AssistantPreferenceDocument, writable: boolean) {

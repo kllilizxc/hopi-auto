@@ -97,13 +97,24 @@ describe('WorkspaceAssistant conversation', () => {
 
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
     const mcpConfig = await Bun.file(join(cwd, 'claude-mcp.json')).json()
+    const settings = await Bun.file(join(cwd, 'claude-settings.json')).json()
     expect(result).toEqual({
       reply: finalReply,
       session: vendorSession('claude', 'claude-session'),
     })
-    for (const expected of ['--mcp-config', '--strict-mcp-config', '--resume', 'claude-session']) {
+    for (const expected of [
+      '--mcp-config',
+      '--strict-mcp-config',
+      '--settings',
+      '--resume',
+      'claude-session',
+    ]) {
       expect(args).toContain(expected)
     }
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('Bash')
+    expect(settings).toMatchObject({
+      sandbox: { filesystem: { allowWrite: [cwd] } },
+    })
     expect(args).toContain(dirname(imagePath))
     expect(args).toContain(readableRoot)
     expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
@@ -318,7 +329,19 @@ describe('WorkspaceAssistant conversation', () => {
       expect(args).toContain(expected)
     }
     expect(config.mcp.hopi.environment.HOPI_TOOL_TOKEN).toBe('opencode-token')
-    expect(config.permission).toMatchObject({ '*': 'deny', 'hopi_*': 'allow', read: 'allow' })
+    expect(config.permission).toMatchObject({
+      '*': 'deny',
+      'hopi_*': 'allow',
+      read: 'allow',
+      bash: 'allow',
+      webfetch: 'allow',
+      websearch: 'allow',
+      edit: {
+        '*': 'allow',
+        [`${readableRoot}/**`]: 'deny',
+        [`${cwd}/**`]: 'allow',
+      },
+    })
     expect(config.permission.external_directory).toEqual({
       '*': 'deny',
       [`${readableRoot}/**`]: 'allow',
@@ -375,6 +398,7 @@ describe('WorkspaceAssistant conversation', () => {
         '#!/usr/bin/env bun',
         'const outputIndex = process.argv.indexOf("-o")',
         'await Bun.write(process.argv[outputIndex + 1], "")',
+        'await Bun.write(process.argv[outputIndex + 1] + ".args", JSON.stringify(process.argv.slice(2)))',
         'console.log(JSON.stringify({type:"thread.started",thread_id:"thread-empty"}))',
         'console.log(JSON.stringify({type:"item.completed",item:{id:"item-0",type:"agent_message",text:""}}))',
         'console.log(JSON.stringify({type:"turn.completed"}))',
@@ -412,6 +436,11 @@ describe('WorkspaceAssistant conversation', () => {
       reply: '',
       session: codexSession('thread-empty'),
     })
+    const reflectionArgs = JSON.parse(
+      await Bun.file(join(temporaryRoot, 'RF-empty', 'last-message.txt.args')).text(),
+    ) as string[]
+    expect(reflectionArgs).toContain('read-only')
+    expect(reflectionArgs).not.toContain('sandbox_workspace_write.network_access=true')
     await expect(run('EV-empty')).rejects.toThrow('empty Assistant message')
   })
 
@@ -553,6 +582,8 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).toContain('model_provider="hopi_chatgpt_https"')
     expect(args).toContain('model_providers.hopi_chatgpt_https.supports_websockets=false')
     expect(args).toContain('resume')
+    expect(args).toContain('workspace-write')
+    expect(args).toContain('sandbox_workspace_write.network_access=true')
     expect(args.slice(args.indexOf('resume'))).toContain('-i')
     expect(args).toContain(imagePath)
   })
@@ -628,7 +659,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
     expect(seen[0]?.prompt).toContain('Tool schemas and returned canonical state')
     expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')
-    expect(seen[0]?.prompt).toContain('resolve Attention only after its condition is verified clear')
+    expect(seen[0]?.prompt).toContain(
+      'resolve Attention only after its condition is verified clear',
+    )
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
@@ -919,9 +952,11 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         calls += 1
-        await tools.execute(input.toolToken, 'hopi_answer_attention', {
-          attentionRef: `project:P-1/goal:G-1/attention:${attention.attributes.id}`,
-          decision: 'retry',
+        await tools.execute(input.toolToken, 'hopi_control', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'plan-initial',
+          operation: 'retry',
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
@@ -956,16 +991,13 @@ describe('WorkspaceAssistant conversation', () => {
     ).not.toBeNull()
   })
 
-  test('continues the same session when an internal handoff leaves Attention unnotified', async () => {
+  test('lets one internal Assistant pass request the exact missing operator decision', async () => {
     const prompts: string[] = []
     const sessions: Array<string | null> = []
     const fixture = await setup((tools) => ({
       async run(input) {
         prompts.push(input.prompt)
         sessions.push(input.session?.sessionId ?? null)
-        if (prompts.length === 1) {
-          return { reply: '', session: codexSession('thread-settlement') }
-        }
         await tools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window: today or tomorrow?',
         })
@@ -985,14 +1017,10 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-settlement')
 
-    expect(prompts).toHaveLength(2)
+    expect(prompts).toHaveLength(1)
     expect(prompts[0]).toContain('A hopi_request_user message is the complete public turn')
     expect(prompts[0]).toContain('material cause, blocking consequence, exact need')
-    expect(prompts[1]).toContain('[Attention settlement correction')
-    expect(prompts[1]).toContain(reference)
-    expect(prompts[1]).toContain('one proportional, self-contained request')
-    expect(prompts[1]).toContain('non-obvious alternative effects')
-    expect(sessions).toEqual([null, 'thread-settlement'])
+    expect(sessions).toEqual([null])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
       status: 'handled',
       visibility: 'public',
@@ -1007,20 +1035,14 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('publishes only the revised final notification after Attention correction', async () => {
+  test('publishes one notification after the Assistant resolves verified-clear Attention', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
         calls += 1
-        if (calls === 1) {
-          await tools.execute(input.toolToken, 'hopi_notify_user', {
-            message: 'The blocker is still being investigated.',
-          })
-          return { reply: '', session: codexSession('thread-revised-notification') }
-        }
-        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: 'project:P-1/goal:G-1/attention:A-revised-notification',
-          decision: 'continue',
+          resolution: 'The represented blocker was verified clear.',
         })
         await tools.execute(input.toolToken, 'hopi_notify_user', {
           message: 'The blocker was cleared and internal work has resumed.',
@@ -1041,7 +1063,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-revised-notification')
 
-    expect(calls).toBe(2)
+    expect(calls).toBe(1)
     expect(
       (await fixture.workspace.readEvent('EV-revised-notification'))?.attributes,
     ).toMatchObject({
@@ -1056,14 +1078,11 @@ describe('WorkspaceAssistant conversation', () => {
     ).not.toBeNull()
   })
 
-  test('does not let prior informational delivery silently settle Assistant-owned Attention', async () => {
+  test('uses a fresh operator request when prior informational delivery did not settle Attention', async () => {
     const prompts: string[] = []
     const fixture = await setup((tools) => ({
       async run(input) {
         prompts.push(input.prompt)
-        if (prompts.length === 1) {
-          return { reply: '', session: codexSession('thread-informational-owner') }
-        }
         await tools.execute(input.toolToken, 'hopi_request_user', {
           message: 'Choose the release window: today or tomorrow?',
         })
@@ -1086,8 +1105,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-informational-owner')
 
-    expect(prompts).toHaveLength(2)
-    expect(prompts[1]).toContain('[Attention settlement correction')
+    expect(prompts).toHaveLength(1)
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-informational-owner')
         ?.attributes,
@@ -1098,7 +1116,7 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('does not silently handle a handoff after two Attention omissions', async () => {
+  test('does not invent a hidden correction pass when an internal handoff makes no effect', async () => {
     const fixture = await setup(() => ({
       async run() {
         return { reply: '', session: codexSession('thread-omission') }
@@ -1115,12 +1133,16 @@ describe('WorkspaceAssistant conversation', () => {
       },
     })
 
-    await expect(fixture.assistant.process('EV-omission')).rejects.toThrow(
-      'without a durable internal continuation or exact operator request',
-    )
+    await fixture.assistant.process('EV-omission')
 
-    expect((await fixture.workspace.readEvent('EV-omission'))?.attributes.status).toBe('pending')
-    expect((await fixture.conversation.readTurn('EV-omission'))?.manifest.status).toBe('failed')
+    expect((await fixture.workspace.readEvent('EV-omission'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes
+        .resolvedAt,
+    ).toBeNull()
   })
 
   test('publishes only the explicit operator request before transferring linked Attention', async () => {
@@ -1186,10 +1208,14 @@ describe('WorkspaceAssistant conversation', () => {
             session: codexSession('thread-attention'),
           }
         }
-        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+        await tools.execute(input.toolToken, 'hopi_start_planning', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          mode: 'new_contract_revision',
+        })
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: 'project:P-1/goal:G-1/attention:A-choice',
-          decision: 'revise',
-          planningMode: 'new_contract_revision',
+          resolution: 'The operator replaced the prior direction and Planning now represents it.',
         })
         return {
           reply: 'I dropped the old direction and requested the revised plan.',
@@ -1262,7 +1288,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(goalPackage.attentions.get('A-choice')?.attributes).toMatchObject({
       notifiedAt: expect.any(String),
       operatorRequest: null,
-      resolvedAt: null,
+      resolvedAt: expect.any(String),
     })
     expect(goalPackage.inputs).toHaveLength(1)
     expect(goalPackage.inputs[0]?.body).toBe(
@@ -1270,7 +1296,7 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
-  test('continues an explicit Reply until its exact Attention answer is applied', async () => {
+  test('applies an explicit Attention reply in one Assistant pass', async () => {
     let calls = 0
     const prompts: string[] = []
     const reference = 'project:P-1/goal:G-1/attention:A-explicit-reply'
@@ -1278,15 +1304,9 @@ describe('WorkspaceAssistant conversation', () => {
       async run(input) {
         calls += 1
         prompts.push(input.prompt)
-        if (calls === 1) {
-          return {
-            reply: 'I will start Planning.',
-            session: codexSession('thread-explicit-reply'),
-          }
-        }
-        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: reference,
-          decision: 'continue',
+          resolution: 'The operator explicitly chose to continue.',
         })
         return {
           reply: 'The answer was applied and the original responsibility can continue.',
@@ -1323,9 +1343,8 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-explicit-answer')
 
-    expect(calls).toBe(2)
-    expect(prompts[1]).toContain('[Explicit Attention reply correction')
-    expect(prompts[1]).toContain('Starting Planning alone is not an answer')
+    expect(calls).toBe(1)
+    expect(prompts).toHaveLength(1)
     expect((await fixture.workspace.readEvent('EV-explicit-answer'))?.attributes).toMatchObject({
       status: 'handled',
       reply: 'The answer was applied and the original responsibility can continue.',

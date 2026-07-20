@@ -330,7 +330,7 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-04` | Targeted Attention is the only durable unattended-progress blocker; a silent spinner is never a blocker state.                |
 | `INV-05` | Delivery checkouts stay on their recorded branch and change only by a clean, exact accepted-release fast-forward.             |
 | `INV-06` | Generator changes remain isolated until successful Reviewer evidence and C1 publication.                                      |
-| `INV-07` | Reviewer is read-only across every Repo in its assigned workspace.                                                            |
+| `INV-07` | Reviewer may write owned scratch and cache but is read-only across every candidate Repo in its assigned workspace.                    |
 | `INV-08` | Public Assistant turns remain FIFO; internal Reflection never speaks or mutates directly.                                     |
 | `INV-09` | One semantic Attention notification produces one public reply and one acknowledgement, not duplicates.                        |
 | `INV-10` | Restart recovers from durable documents, refs, and logs without fabricating success or repeating C1.                          |

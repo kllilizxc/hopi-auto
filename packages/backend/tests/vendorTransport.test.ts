@@ -275,8 +275,8 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('grants workspace-write Engineering Runs network access', async () => {
-    for (const role of ['generator', 'reviewer']) {
+  test('grants every workspace-write responsibility network access', async () => {
+    for (const role of ['planner', 'generator', 'reviewer']) {
       await Bun.write(bundle.promptFile, `# prompt for ${role}\n`)
 
       const command = await resolveConfiguredTransportCommand({
@@ -287,7 +287,7 @@ describe('resolveConfiguredTransportCommand', () => {
           sandbox: 'workspace-write',
           approvalPolicy: 'never',
         } satisfies RoleTransportConfig,
-        bundle,
+        bundle: { ...bundle, apiOrigin: undefined },
         input: { ...input, role },
       })
 

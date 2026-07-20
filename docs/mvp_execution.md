@@ -350,9 +350,10 @@ expected value. Planner completion remains the separate `target: null` form.
 A targeted Attention proposal is valid only with `result: attention`. `success`, `reject`, or `fail`
 combined with targeted Attention is an invalid pass result and normalizes to ordinary `fail` without
 publishing the proposed Attention. A responsibility must not classify its own sandbox restrictions,
-Git metadata access, unavailable local port, or missing optional tool as operator authority. It
-records those facts in the result and raw transcript; bounded recovery and Background Reflection
-decide whether repair or eventual user escalation is useful.
+protected managed-Git metadata, unavailable local port, or missing optional tool as operator
+authority. It uses an owned scratch resource when that satisfies the Work; otherwise it records the
+operational mismatch in the result and raw transcript so bounded recovery and Background Reflection
+can repair or eventually escalate it.
 
 Valid results by responsibility pass:
 
@@ -772,9 +773,12 @@ When the Work body explicitly cites a Goal image asset, Generator receives both 
 path and the actual image input. It must apply the documented purpose rather than infer that every
 visual detail is a requirement.
 
-Generator may inspect Git status and diff but never writes the Git index, creates commits, changes
-branches, merges, rebases, or resets. Coordinator snapshots safe task-worktree changes after the Run;
-an inability to run `git add` inside the model sandbox is therefore expected and is never a blocker.
+The assigned task worktree's Git index, HEAD, branch, and shared Git directory are HOPI-managed;
+Generator edits its source files while Coordinator snapshots safe changes after the Run. This
+restriction does not apply globally to Git. When accepted Work requires branch or PR delivery,
+Generator may clone into `$HOPI_RUN_SCRATCH` and freely stage, commit, switch, rebase, and push there.
+Remote mutation must stay within the repository and delivery named by Work; merge, deployment,
+production-data mutation, or another unrequested external effect still requires explicit authority.
 
 A responsibility Run resolves ordinary project paths only from the Repo IDs and roots in its
 `HOPI_REPOS_FILE`, and reads integration truth only through the immutable context bundle. It never
@@ -1017,6 +1021,10 @@ listed by their owning Work. Planner and Reviewer processes start from their Run
 those roots read-only; Generator alone receives write access to its assigned task worktrees.
 Managed integration roots are never Agent-writable. Reviewer checks and Generator checkpointing
 cover every assigned root as one logical result.
+
+All responsibilities may write their Run root, `$HOPI_RUN_SCRATCH`, and `$HOPI_CACHE_DIR`, use the
+network, and run ordinary tools. Planner writes durable decisions only to Proposal. Reviewer directs
+generated output and caches to its owned roots and leaves the candidate snapshot immutable.
 
 Coordinator recovery treats unexpected managed-integration source as system-owned projection drift:
 it archives the observed bytes and patches outside the worktree, rematerializes the recorded release,

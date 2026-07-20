@@ -1,10 +1,10 @@
 import { stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
-import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { inspectDeliveryProjection } from '../runtime/c1Integrator'
 import {
@@ -182,7 +182,11 @@ export function createAssistantStateReader(options: {
               const attentionWorkIds = new Set(
                 [...goalPackage.attentions.values()]
                   .filter((attention) => attention.attributes.resolvedAt === null)
-                  .map((attention) => parseWorkAttentionTarget(attention.attributes.target))
+                  .map((attention) =>
+                    attention.attributes.target === null
+                      ? null
+                      : parseWorkAttentionTarget(attention.attributes.target),
+                  )
                   .filter((target): target is NonNullable<typeof target> => target !== null)
                   .map((target) => target.workId),
               )

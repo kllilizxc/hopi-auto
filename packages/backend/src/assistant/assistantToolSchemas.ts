@@ -216,16 +216,25 @@ export const assistantToolSchemas = {
       }
       const workOperation = ['retry', 'defer'].includes(value.operation)
       if (workOperation && !value.workId) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} requires workId` })
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${value.operation} requires workId`,
+        })
       }
       if (value.operation === 'defer' && value.notBefore === undefined) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: 'defer requires notBefore' })
       }
       if (value.workId && !['retry', 'defer', 'cancel'].includes(value.operation)) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} is a Goal operation` })
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${value.operation} is a Goal operation`,
+        })
       }
       if (!value.workId && ['retry', 'defer'].includes(value.operation)) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: `${value.operation} is a Work operation` })
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${value.operation} is a Work operation`,
+        })
       }
     }),
   hopi_resolve_attention: z
