@@ -21,8 +21,8 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - process-group cancellation and bounded termination
 - writable Assistant-owned runtime and scratch, read-only linked and canonical roots, and network
   access under the same boundary for every provider
-- no ambient provider skill, app, plugin, or workflow authority in speaking Assistant or Reflection;
-  durable execution is admitted through HOPI before responsibility Agents receive execution tools
+- speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
+  Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
 - a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
   when an envelope is malformed and cannot be separated without guessing

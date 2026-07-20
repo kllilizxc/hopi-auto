@@ -308,14 +308,17 @@ for model tool calls, not a second durable workflow or an Assistant-specific Act
 The non-interactive vendor invocation permits the injected `hopi` MCP server plus ordinary local
 inspection and scratch work. Provider adapters expose the same owned-runtime write, linked-root
 read, and network boundary; they do not inherit unrelated personal MCP servers or configuration.
-Speaking Assistant and Reflection also exclude provider-owned automatic skill catalogs, apps,
-plugins, and workflow tools: those are alternate execution surfaces, not HOPI product authority,
-and can otherwise turn a routing decision into direct delivery. This is one control-plane boundary,
-not intent-specific classification; responsibility Agents remain free to use execution capabilities
-within accepted Work. The MCP process has only a single-turn capability token, and the backend
-revokes that token when the turn ends. Tool approval therefore removes an impossible unattended UI
-prompt without becoming the authorization boundary: server-side capability validation, canonical
-target validation, controllers, and the publisher remain authoritative.
+The speaking Assistant may use provider skills and ordinary execution tools, but the HOPI contract
+is injected at the provider's developer-instruction boundary: semantic ownership is decided before
+tool choice, and a provider capability never substitutes for admitting durable delivery to a Goal or
+Engineering Work. Provider apps, plugins, memories, and workflow tools remain excluded because they
+introduce competing product authority rather than execution capability. Reflection has only HOPI
+read/handoff authority and receives no provider skill catalog. Responsibility Agents remain free to
+use execution capabilities within accepted Work. The MCP process has only a single-turn capability
+token, and the backend revokes that token when the turn ends. Tool approval therefore removes an
+impossible unattended UI prompt without becoming the authorization boundary: server-side
+capability validation, canonical target validation, controllers, and the publisher remain
+authoritative.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Their digest is derived from those exact

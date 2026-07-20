@@ -441,6 +441,16 @@ describe('WorkspaceAssistant conversation', () => {
     ) as string[]
     expect(reflectionArgs).toContain('read-only')
     expect(reflectionArgs).not.toContain('sandbox_workspace_write.network_access=true')
+    expect(reflectionArgs).toContain('skills.include_instructions=false')
+    expect(reflectionArgs).toContain('skills.bundled.enabled=false')
+    for (const feature of [
+      'browser_use',
+      'computer_use',
+      'image_generation',
+      'workspace_dependencies',
+    ]) {
+      expect(reflectionArgs[reflectionArgs.indexOf(feature) - 1]).toBe('--disable')
+    }
     await expect(run('EV-empty')).rejects.toThrow('empty Assistant message')
   })
 
@@ -581,23 +591,28 @@ describe('WorkspaceAssistant conversation', () => {
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
     expect(args).toContain('model_provider="hopi_chatgpt_https"')
     expect(args).toContain('model_providers.hopi_chatgpt_https.supports_websockets=false')
-    expect(args).toContain('skills.include_instructions=false')
-    expect(args).toContain('skills.bundled.enabled=false')
+    expect(args).not.toContain('skills.include_instructions=false')
+    expect(args).not.toContain('skills.bundled.enabled=false')
     expect(args).toContain('include_apps_instructions=false')
     expect(args).toContain('include_collaboration_mode_instructions=false')
-    for (const feature of [
-      'apps',
-      'browser_use',
-      'computer_use',
-      'goals',
-      'image_generation',
-      'memories',
-      'multi_agent',
-      'plugins',
-      'workspace_dependencies',
-    ]) {
+    const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
+    expect(developerInstructions).toContain(
+      'Choose the smallest semantic owner before selecting tools',
+    )
+    expect(developerInstructions).toContain('never replace Goal or Engineering Work delivery')
+    for (const feature of ['apps', 'goals', 'memories', 'multi_agent', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
+    }
+    for (const feature of [
+      'browser_use',
+      'computer_use',
+      'image_generation',
+      'workspace_dependencies',
+    ]) {
+      expect(
+        args.findIndex((arg, index) => arg === feature && args[index - 1] === '--disable'),
+      ).toBe(-1)
     }
     expect(args).toContain('resume')
     expect(args).toContain('workspace-write')
@@ -679,7 +694,7 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(seen[0]?.prompt).toContain('write design and start Planning')
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).toContain('provider-native facilities are inspection aids')
+    expect(seen[0]?.prompt).toContain('never replace Goal or Engineering Work delivery')
     expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')
     expect(seen[0]?.prompt).toContain(
       'resolve Attention only after its condition is verified clear',

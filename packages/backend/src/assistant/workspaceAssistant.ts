@@ -565,7 +565,7 @@ function assistantCodexCommand(
 ) {
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
-  appendCodexAssistantControlPlaneConfig(command)
+  appendCodexAssistantProviderConfig(command, input.toolMode ?? 'main')
   const sandbox = input.toolMode === 'reflection' ? 'read-only' : 'workspace-write'
   command.push('-a', config.approvalPolicy)
   if (sandbox === 'workspace-write') {
@@ -601,42 +601,58 @@ function assistantCodexCommand(
   return command
 }
 
-const CODEX_ASSISTANT_DISABLED_FEATURES = [
+const CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES = [
   'apps',
-  'browser_use',
-  'computer_use',
   'goals',
-  'image_generation',
   'memories',
   'multi_agent',
   'plugins',
+] as const
+
+const CODEX_REFLECTION_DISABLED_EXECUTION_FEATURES = [
+  'browser_use',
+  'computer_use',
+  'image_generation',
   'workspace_dependencies',
 ] as const
 
-function appendCodexAssistantControlPlaneConfig(command: string[]) {
+function appendCodexAssistantProviderConfig(
+  command: string[],
+  toolMode: NonNullable<AssistantModelInput['toolMode']>,
+) {
   command.push(
     '-c',
-    'skills.include_instructions=false',
-    '-c',
-    'skills.bundled.enabled=false',
+    `developer_instructions=${JSON.stringify(workspaceAssistantDeveloperInstructions())}`,
     '-c',
     'include_apps_instructions=false',
     '-c',
     'include_collaboration_mode_instructions=false',
   )
-  for (const feature of CODEX_ASSISTANT_DISABLED_FEATURES) {
+  for (const feature of CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES) {
+    command.push('--disable', feature)
+  }
+  if (toolMode !== 'reflection') return
+  command.push('-c', 'skills.include_instructions=false', '-c', 'skills.bundled.enabled=false')
+  for (const feature of CODEX_REFLECTION_DISABLED_EXECUTION_FEATURES) {
     command.push('--disable', feature)
   }
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Choose the smallest semantic owner from the current turn, durable conversation, and HOPI state: continue the selected Goal only for the same outcome, otherwise create a Goal in a fitting Project, managing a Project first when none fits; page context is only a candidate.',
-  'HOPI tools and returned canonical state define product effects; provider-native facilities are inspection aids, not alternative delivery paths. Treat an effect as complete only when the tool or a later state read verifies it.',
+  'Choose the smallest semantic owner before selecting tools: answer informational or explicitly ephemeral requests directly; for durable creation, testing, or change, continue the selected Goal only for the same outcome, otherwise create a Goal in a fitting Project, managing a Project first when none fits; page context is only a candidate.',
+  'HOPI tools and returned canonical state define product effects. Provider-native facilities may serve direct ephemeral requests or inspection, but never replace Goal or Engineering Work delivery. Treat an effect as complete only when the tool or a later state read verifies it.',
   'Your runtime workspace is writable and shell and network are available. Linked source and canonical HOPI state are read-only; use HOPI tools for state and Engineering Work for source delivery.',
   'Admit durable delivery through Create Goal or Create Engineering Work instead of doing it in Assistant runtime. Use one direct Engineering Work for a bounded delivery; write design and start Planning when authority or decomposition needs to change.',
   'Attention and Reflection report facts: condition, consequence, clear condition, and evidence. Choose the next ordinary tool action; resolve Attention only after its condition is verified clear.',
   'Planner sees Goal authority, design, and accepted Input—not conversational prose. Ask the user only for a decision, permission, or external action unavailable to HOPI.',
 ] as const
+
+function workspaceAssistantDeveloperInstructions() {
+  return [
+    'HOPI Workspace Assistant contract:',
+    ...WORKSPACE_ASSISTANT_CONTRACT_LINES.map((line) => `- ${line}`),
+  ].join('\n')
+}
 
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
   .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
