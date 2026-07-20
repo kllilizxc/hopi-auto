@@ -1,5 +1,5 @@
-import { readdir, realpath, rm, stat } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { mkdir, readdir, realpath, rm, rmdir, stat } from 'node:fs/promises'
+import { dirname, relative, resolve } from 'node:path'
 import { ROOT_PROJECT_PATH, normalizeProjectPath, resolveProjectPath } from '../domain/projectPath'
 
 export type ProjectDirectorySelection =
@@ -93,6 +93,37 @@ export async function inspectGitProjectDirectory(
 export async function initializeEmptyGitRepository(
   path: string,
 ): Promise<Extract<ProjectDirectorySelection, { kind: 'git_repository' }>> {
+  const requestedPath = resolve(path)
+  let createdDirectory = false
+  try {
+    await mkdir(requestedPath)
+    createdDirectory = true
+  } catch (error) {
+    if (filesystemErrorCode(error) === 'ENOENT') {
+      throw new ProjectDirectoryError(
+        'not_directory',
+        `Parent directory must already exist: ${dirname(requestedPath)}`,
+      )
+    }
+    if (filesystemErrorCode(error) !== 'EEXIST') {
+      throw new ProjectDirectoryError(
+        'initialization_failed',
+        `Cannot create repository directory at ${requestedPath}: ${errorMessage(error)}`,
+      )
+    }
+  }
+
+  try {
+    return await initializeExistingEmptyGitRepository(requestedPath)
+  } catch (error) {
+    if (createdDirectory) await rmdir(requestedPath).catch(() => undefined)
+    throw error
+  }
+}
+
+async function initializeExistingEmptyGitRepository(
+  path: string,
+): Promise<Extract<ProjectDirectorySelection, { kind: 'git_repository' }>> {
   const selection = await classifyProjectDirectory(path)
   if (selection.kind === 'git_repository') {
     if (selection.path === selection.repoPath && selection.projectPath === ROOT_PROJECT_PATH) {
@@ -175,4 +206,8 @@ async function runGit(cwd: string, args: string[], allowFailure = false) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function filesystemErrorCode(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : null
 }

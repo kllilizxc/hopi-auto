@@ -1281,20 +1281,21 @@ Current Browser implementation: `packages/backend/tests/browser/assistantProvide
 | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Risk    | A selected subdirectory is widened to its Git root, or empty/non-Git selection initializes or captures source without consent. |
 | Reality | Production host-chooser boundary, Browser UI, Server, durable Project links, real Git/worktrees, preparation, and Preview.      |
-| Fixture | One empty directory, one non-empty non-Git directory, and one monorepo with a selected app plus an out-of-scope sibling sentinel. |
+| Fixture | One missing leaf under an existing parent, one empty directory, one non-empty non-Git directory, and one monorepo with a selected app plus an out-of-scope sibling sentinel. |
 | Cost    | Zero provider calls; role outcomes are deterministic because model wording cannot change path or Git safety.                    |
 
 Actions:
 
 1. Return a non-empty non-Git directory from the chooser and verify rejection without filesystem or Project effects.
 2. Return an empty directory, require explicit UI confirmation, then initialize it as one `main` Repo and create the Project.
-3. Select `apps/storefront` inside an existing monorepo and create a separate Project from that source scope.
-4. Reload Coordinator and UI, then run one deterministic Planning/Engineering/Review/C1 path inside the selected app.
-5. Run Repo preparation and Preview from the reviewed scoped integration and attempt one out-of-scope task mutation.
+3. Give Assistant the missing-leaf path, then verify it initializes the Repo, links the Project, and creates the requested Goal without asking the operator to create the directory.
+4. Select `apps/storefront` inside an existing monorepo and create a separate Project from that source scope.
+5. Reload Coordinator and UI, then run one deterministic Planning/Engineering/Review/C1 path inside the selected app.
+6. Run Repo preparation and Preview from the reviewed scoped integration and attempt one out-of-scope task mutation.
 
 Pass conditions:
 
-- Empty initialization occurs only after confirmation and a second emptiness check; failure removes only Git metadata created by that attempt.
+- Empty or missing-leaf initialization occurs only after explicit intent and a second boundary check; it never creates missing ancestors, and failure removes only Git metadata plus a newly created leaf that remains empty.
 - A non-empty non-Git directory and `.git`/`.hopi` metadata scopes are rejected without mutation or a partial Project link.
 - `projects.yml` stores the canonical Git `repoPath` plus portable `projectPath`, and reload renders the selected source scope.
 - Project `AGENTS.md`, `scripts/hopi/prepare`, responsibility cwd, and Preview resolve beneath `projectPath` while Git/worktree ownership remains at the Repo root.

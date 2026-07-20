@@ -105,10 +105,10 @@ describe('Assistant HOPI tools', () => {
     ).rejects.toThrow('only from a public user turn')
   })
 
-  test('initializes an explicitly named empty repository through Project management', async () => {
+  test('creates and initializes an explicitly named missing repository through Project management', async () => {
     const fixture = await setup()
-    const repoRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-init-'))
-    const canonicalRepoRoot = await realpath(repoRoot)
+    const parentRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-init-'))
+    const repoRoot = join(parentRoot, 'missing-repo')
     try {
       await fixture.workspace.receiveEvent({
         eventId: 'EV-initialize',
@@ -123,7 +123,7 @@ describe('Assistant HOPI tools', () => {
         changed: true,
         value: {
           operation: 'initialize_repository',
-          selection: { repoPath: canonicalRepoRoot, projectPath: '.' },
+          selection: { repoPath: await realpath(repoRoot), projectPath: '.' },
         },
       })
       expect(await git(repoRoot, ['branch', '--show-current'])).toBe('main')
@@ -134,7 +134,7 @@ describe('Assistant HOPI tools', () => {
         }),
       ).toMatchObject({ changed: false })
     } finally {
-      await rm(repoRoot, { recursive: true, force: true })
+      await rm(parentRoot, { recursive: true, force: true })
     }
   })
 

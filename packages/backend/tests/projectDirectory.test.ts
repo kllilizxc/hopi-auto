@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -82,18 +82,45 @@ describe('project directory selection', () => {
     })
   })
 
+  test('creates one missing leaf directory before initializing it', async () => {
+    const selectedPath = join(temporaryRoot, 'new-product')
+
+    const selection = await initializeEmptyGitRepository(selectedPath)
+    const canonicalPath = await realpath(selectedPath)
+    expect(selection).toEqual({
+      kind: 'git_repository',
+      path: canonicalPath,
+      repoPath: canonicalPath,
+      projectPath: '.',
+    })
+    expect(await git(selectedPath, ['branch', '--show-current'])).toBe('main')
+    expect(await git(selectedPath, ['log', '-1', '--pretty=%s'])).toBe(
+      'chore: initialize repository',
+    )
+  })
+
+  test('does not create missing ancestors', async () => {
+    const missingParent = join(temporaryRoot, 'missing-parent')
+    const selectedPath = join(missingParent, 'new-product')
+
+    await expect(initializeEmptyGitRepository(selectedPath)).rejects.toMatchObject({
+      code: 'not_directory',
+      message: `Parent directory must already exist: ${missingParent}`,
+    })
+    await expect(stat(missingParent).catch(() => null)).resolves.toBeNull()
+  })
+
   test('never initializes a nested or non-empty repository implicitly', async () => {
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     const nestedPath = join(repoPath, 'new-product')
     const existingPath = join(temporaryRoot, 'existing')
-    await mkdir(nestedPath)
     await mkdir(existingPath)
     await Bun.write(join(existingPath, 'source.txt'), 'existing\n')
 
     await expect(initializeEmptyGitRepository(nestedPath)).rejects.toBeInstanceOf(
       ProjectDirectoryError,
     )
-    await expect(Bun.file(join(nestedPath, '.git')).exists()).resolves.toBe(false)
+    await expect(stat(nestedPath).catch(() => null)).resolves.toBeNull()
     await expect(initializeEmptyGitRepository(existingPath)).rejects.toThrow(
       'will not commit its existing contents automatically',
     )

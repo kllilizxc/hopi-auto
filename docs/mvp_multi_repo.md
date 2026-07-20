@@ -105,13 +105,16 @@ by another Project in the same Assistant Home, Coordinator appends the smallest 
 `projectId` remains an API compatibility boundary for migrations, fixtures, and automation, but is
 not a product-form decision.
 
-An empty directory outside every Git worktree is an explicit new-project candidate. The UI asks for
-confirmation, then Coordinator revalidates that it is still empty, initializes `main`, creates one
-HOPI-owned empty bootstrap commit, and returns the new Repo. Failure removes only the `.git` directory
-created by that attempt. HOPI never initializes a nested Repo inside an existing worktree. A non-empty
-non-Git directory is reported without mutation because automatically staging its contents could
-capture secrets or generated files. Browser automation injects deterministic chooser results rather
-than pretending that a text field proves the native boundary.
+An empty directory outside every Git worktree is an explicit new-project candidate. An explicitly
+named missing leaf directory is the same candidate when its parent already exists; repository
+initialization creates that one leaf without recursively creating ancestors. The UI asks for
+confirmation, then Coordinator revalidates the boundary, initializes `main`, creates one HOPI-owned
+empty bootstrap commit, and returns the new Repo. Failure removes only the `.git` directory created by
+that attempt and, when HOPI created the leaf, removes it only if it is still empty. HOPI never
+initializes a nested Repo inside an existing worktree. A non-empty non-Git directory is reported
+without mutation because automatically staging its contents could capture secrets or generated
+files. Browser automation injects deterministic chooser results rather than pretending that a text
+field proves the native boundary.
 
 Create submits the complete `{ primaryRepoId, repos[] }` set once. Coordinator resolves every Git
 root, Project-relative path, and common directory, then rejects duplicate IDs or Git identities

@@ -371,7 +371,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Capability | Purpose | Durable effect |
 | --- | --- | --- |
 | Read HOPI state | Read Projects, Goals, design, Work, Attention, Evidence, Attempts, and derived Kanban | None |
-| Manage Project | Link a Project, add or rebind its Repos, or initialize an explicitly named empty directory | Assistant-home Project links and, for initialization, the selected Repo |
+| Manage Project | Link a Project, add or rebind its Repos, or initialize an explicitly named empty or missing leaf directory | Assistant-home Project links and, for initialization, the selected Repo |
 | Configure models | Set or inherit the Assistant or one Project's coding defaults | Assistant adapter config or Assistant-home Project settings |
 | Write preferences | Replace durable cross-Project user defaults | Assistant-home `preference.md` |
 | Create Goal | Create one Goal, record the current instruction, and start either one direct Engineering Work or initial Planning | Goal package and Goal Input |
@@ -402,8 +402,10 @@ own public HTTP UI routes or duplicate their mutation logic.
 
 `link_project` is the Project-creation operation; there is no separate `create` operation. With no
 operator-supplied path, Assistant asks for the Project directory instead of calling a topology tool.
-For an explicitly named empty directory it first initializes the repository, then links that Repo as
-the new Project in the same turn.
+For an explicitly named empty directory, or a missing leaf whose parent exists, it first initializes
+the repository, then links that Repo as the new Project in the same turn. The repository operation
+creates the missing leaf itself; Assistant never asks the operator to run `mkdir`. Missing ancestors,
+non-empty non-Git directories, and paths nested in an existing worktree remain validation failures.
 
 Project management, model configuration, and preference writes require a public user turn. An
 internal Reflection handoff may diagnose Project state and ask the operator for a missing path, but

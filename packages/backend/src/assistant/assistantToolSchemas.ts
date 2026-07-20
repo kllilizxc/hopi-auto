@@ -89,7 +89,13 @@ export const assistantToolSchemas = {
     z
       .object({
         operation: z.literal('initialize_repository'),
-        path: z.string().trim().min(1),
+        path: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            'Operator-supplied repository path. The final directory may be empty or missing; when missing, its parent must already exist and HOPI creates the final directory automatically.',
+          ),
       })
       .strict(),
     z

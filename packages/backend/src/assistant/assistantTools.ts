@@ -41,7 +41,11 @@ import type {
   PlanningInputAdmission,
 } from '../runtime/goalController'
 import type { PreviewManager } from '../runtime/previewManager'
-import { classifyProjectDirectory, initializeEmptyGitRepository } from '../runtime/projectDirectory'
+import {
+  ProjectDirectoryError,
+  classifyProjectDirectory,
+  initializeEmptyGitRepository,
+} from '../runtime/projectDirectory'
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -626,9 +630,14 @@ export function createAssistantTools(options: {
           assertPublicUserTurn(event, 'Project management')
           const args = parseAssistantToolArguments(name, input)
           if (args.operation === 'initialize_repository') {
-            const current = await classifyProjectDirectory(args.path)
+            const current = await classifyProjectDirectory(args.path).catch((error) => {
+              if (error instanceof ProjectDirectoryError && error.code === 'not_directory') {
+                return null
+              }
+              throw error
+            })
             const alreadyInitialized =
-              current.kind === 'git_repository' &&
+              current?.kind === 'git_repository' &&
               current.path === current.repoPath &&
               current.projectPath === '.'
             const selection = alreadyInitialized
