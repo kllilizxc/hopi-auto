@@ -394,8 +394,8 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
-  test('uses Claude thinking content and ignores count-only thinking progress', () => {
-    const progress = normalizeProcessOutputLine({
+  test('uses Claude thinking content and ignores content-free progress telemetry', () => {
+    const thinkingProgress = normalizeProcessOutputLine({
       format: 'claude_stream_json',
       stream: 'stdout',
       role: 'assistant',
@@ -403,6 +403,17 @@ describe('normalizeProcessOutputLine', () => {
         type: 'system',
         subtype: 'thinking_tokens',
         estimated_tokens: 57,
+      }),
+    })
+    const taskProgress = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'task-1',
+        elapsed_time_seconds: 1.5,
       }),
     })
     const thinking = normalizeProcessOutputLine({
@@ -423,7 +434,8 @@ describe('normalizeProcessOutputLine', () => {
       }),
     })
 
-    expect(progress).toEqual([])
+    expect(thinkingProgress).toEqual([])
+    expect(taskProgress).toEqual([])
     expect(thinking).toEqual([
       {
         kind: 'transcript',

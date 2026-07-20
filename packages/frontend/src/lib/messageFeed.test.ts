@@ -516,6 +516,32 @@ describe('unified message feed adapters', () => {
     expect(items).toEqual([])
   })
 
+  test('keeps legacy content-free provider progress out of conversational Activity rows', () => {
+    const items = runEventsToMessageFeed(
+      [
+        transcript('task-progress', 'status', 'task progress', {
+          transport: 'claude',
+          vendorEventType: 'system.task_progress',
+        }),
+        transcript('thinking-progress', 'status', 'thinking tokens', {
+          transport: 'claude',
+          vendorEventType: 'system.thinking_tokens',
+        }),
+        transcript('answer', 'assistant', 'Implemented the projection.', {
+          transport: 'claude',
+        }),
+      ],
+      { namespace: 'attempt:R-1', groupId: 'R-1', active: true },
+    )
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'assistant_message',
+        text: 'Implemented the projection.',
+      }),
+    ])
+  })
+
   test('keeps an activity row identity stable when its older tool call is prepended', () => {
     const options = { namespace: 'attempt:R-1', groupId: 'R-1', active: false }
     const result = transcript('tool-end', 'tool_result', '4 pass, 0 fail', {

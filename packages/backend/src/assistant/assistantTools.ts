@@ -51,6 +51,7 @@ import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
+import { AssistantToolRequestError } from './assistantToolRequestError'
 import {
   type AssistantToolName,
   type MainAssistantToolName,
@@ -185,7 +186,7 @@ export function createAssistantTools(options: {
   ) {
     const before = await project.store.readPackage(goalId)
     const work = before.works.get(workId)
-    if (!work) throw new Error(`Work not found: ${workId}`)
+    if (!work) throw new AssistantToolRequestError(`Work not found: ${workId}`)
     const admission = await goalInputAdmission(options.workspace, project.store, goalId, event)
     const affectedWorkIds = dependentWorkIds(before, workId)
     if (work.attributes.stage !== 'cancelled') {
@@ -353,10 +354,13 @@ export function createAssistantTools(options: {
         if (!parsed) continue
         if (parsed.scope === 'workspace') {
           if (parsed.homeId !== workspace.homeId) {
-            throw new Error(`Workspace Attention reference belongs to another Home: ${reference}`)
+            throw new AssistantToolRequestError(
+              `Workspace Attention reference belongs to another Home: ${reference}`,
+            )
           }
           const attention = workspace.attentions.get(parsed.attentionId)
-          if (!attention) throw new Error(`Workspace Attention not found: ${reference}`)
+          if (!attention)
+            throw new AssistantToolRequestError(`Workspace Attention not found: ${reference}`)
           if (
             attention.attributes.resolvedAt === null &&
             (attention.attributes.operatorRequest ?? null) === null
@@ -366,11 +370,15 @@ export function createAssistantTools(options: {
           continue
         }
         const project = options.projects.get(parsed.projectId)
-        if (!project) throw new Error(`Attention Project is unavailable: ${parsed.projectId}`)
+        if (!project)
+          throw new AssistantToolRequestError(
+            `Attention Project is unavailable: ${parsed.projectId}`,
+          )
         const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
           parsed.attentionId,
         )
-        if (!attention) throw new Error(`Goal Attention not found: ${reference}`)
+        if (!attention)
+          throw new AssistantToolRequestError(`Goal Attention not found: ${reference}`)
         if (
           attention.attributes.target !== null &&
           attention.attributes.resolvedAt === null &&
@@ -405,10 +413,13 @@ export function createAssistantTools(options: {
         if (!parsed) continue
         if (parsed.scope === 'workspace') {
           if (parsed.homeId !== workspace.homeId) {
-            throw new Error(`Workspace Attention reference belongs to another Home: ${reference}`)
+            throw new AssistantToolRequestError(
+              `Workspace Attention reference belongs to another Home: ${reference}`,
+            )
           }
           const attention = workspace.attentions.get(parsed.attentionId)
-          if (!attention) throw new Error(`Workspace Attention not found: ${reference}`)
+          if (!attention)
+            throw new AssistantToolRequestError(`Workspace Attention not found: ${reference}`)
           if (attention.attributes.resolvedAt !== null) continue
           const changed =
             attention.attributes.notifiedAt === null ||
@@ -424,10 +435,14 @@ export function createAssistantTools(options: {
           continue
         }
         const project = options.projects.get(parsed.projectId)
-        if (!project) throw new Error(`Attention Project is unavailable: ${parsed.projectId}`)
+        if (!project)
+          throw new AssistantToolRequestError(
+            `Attention Project is unavailable: ${parsed.projectId}`,
+          )
         const goalPackage = await project.store.readPackage(parsed.goalId)
         const attention = goalPackage.attentions.get(parsed.attentionId)
-        if (!attention) throw new Error(`Goal Attention not found: ${reference}`)
+        if (!attention)
+          throw new AssistantToolRequestError(`Goal Attention not found: ${reference}`)
         if (
           await acknowledgeGoalAttention(
             project.store,
@@ -449,7 +464,9 @@ export function createAssistantTools(options: {
             (requestReference !== undefined &&
               (current.attributes.operatorRequest ?? null) !== requestReference))
         ) {
-          throw new Error(`Goal Attention could not be acknowledged: ${reference}`)
+          throw new AssistantToolRequestError(
+            `Goal Attention could not be acknowledged: ${reference}`,
+          )
         }
       }
       return acknowledged
@@ -464,7 +481,9 @@ export function createAssistantTools(options: {
       const expectedRequest = event.attributes.context.replyTo
       const parsedRequest = parseInboxEventReference(expectedRequest)
       if (!parsedRequest || parsedRequest.homeId !== workspace.homeId) {
-        throw new Error(`Inbox replyTo belongs to another Home: ${expectedRequest}`)
+        throw new AssistantToolRequestError(
+          `Inbox replyTo belongs to another Home: ${expectedRequest}`,
+        )
       }
       const requestEvent = workspace.events.get(parsedRequest.eventId)
       if (
@@ -473,14 +492,18 @@ export function createAssistantTools(options: {
         requestEvent.attributes.status !== 'handled' ||
         requestEvent.attributes.disposition !== 'operator-requested'
       ) {
-        throw new Error(`Inbox replyTo is not an active operator request: ${expectedRequest}`)
+        throw new AssistantToolRequestError(
+          `Inbox replyTo is not an active operator request: ${expectedRequest}`,
+        )
       }
       const references = normalizeInboxAttentionReferences(event.attributes.context)
       if (
         references.length === 0 ||
         references.some((reference) => !parseAttentionReference(reference))
       ) {
-        throw new Error('Explicit Attention reply requires complete canonical Attention references')
+        throw new AssistantToolRequestError(
+          'Explicit Attention reply requires complete canonical Attention references',
+        )
       }
       const requestReferences = new Set(
         requestEvent.attributes.context
@@ -490,16 +513,22 @@ export function createAssistantTools(options: {
       const accepted: string[] = []
       for (const reference of references) {
         if (!requestReferences.has(reference)) {
-          throw new Error(`Attention was not requested by replyTo: ${reference}`)
+          throw new AssistantToolRequestError(
+            `Attention was not requested by replyTo: ${reference}`,
+          )
         }
         const parsed = parseAttentionReference(reference)
-        if (!parsed) throw new Error(`Invalid Attention reference: ${reference}`)
+        if (!parsed)
+          throw new AssistantToolRequestError(`Invalid Attention reference: ${reference}`)
         if (parsed.scope === 'workspace') {
           if (parsed.homeId !== workspace.homeId) {
-            throw new Error(`Workspace Attention reference belongs to another Home: ${reference}`)
+            throw new AssistantToolRequestError(
+              `Workspace Attention reference belongs to another Home: ${reference}`,
+            )
           }
           const current = workspace.attentions.get(parsed.attentionId)
-          if (!current) throw new Error(`Workspace Attention not found: ${reference}`)
+          if (!current)
+            throw new AssistantToolRequestError(`Workspace Attention not found: ${reference}`)
           if (current.attributes.resolvedAt !== null) continue
           const operatorRequest = current.attributes.operatorRequest ?? null
           if (operatorRequest === null) {
@@ -511,11 +540,15 @@ export function createAssistantTools(options: {
           continue
         }
         const project = options.projects.get(parsed.projectId)
-        if (!project) throw new Error(`Attention Project is unavailable: ${parsed.projectId}`)
+        if (!project)
+          throw new AssistantToolRequestError(
+            `Attention Project is unavailable: ${parsed.projectId}`,
+          )
         const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
           parsed.attentionId,
         )
-        if (!attention) throw new Error(`Goal Attention not found: ${reference}`)
+        if (!attention)
+          throw new AssistantToolRequestError(`Goal Attention not found: ${reference}`)
         if (attention.attributes.resolvedAt !== null) continue
         const operatorRequest = attention.attributes.operatorRequest ?? null
         if (operatorRequest === null) {
@@ -537,11 +570,11 @@ export function createAssistantTools(options: {
       const capability = capabilities.get(token)
       if (!capability || capability.expiresAt < Date.now()) {
         capabilities.delete(token)
-        throw new Error('Assistant tool capability is invalid or expired')
+        throw new AssistantToolRequestError('Assistant tool capability is invalid or expired')
       }
       if (capability.mode === 'reflection') {
         if (!reflectionAssistantToolNames.includes(name as never)) {
-          throw new Error(`Reflection cannot call ${name}`)
+          throw new AssistantToolRequestError(`Reflection cannot call ${name}`)
         }
         if (name === 'hopi_read_state') {
           const args = parseAssistantToolArguments(name, input)
@@ -551,8 +584,10 @@ export function createAssistantTools(options: {
             value: await options.state.read({ ...args, includeEvidence: false }),
           }
         }
-        if (name !== 'hopi_handoff_to_main') throw new Error(`Unsupported Reflection tool: ${name}`)
-        if (capability.handedOff) throw new Error('Reflection already handed off one brief')
+        if (name !== 'hopi_handoff_to_main')
+          throw new AssistantToolRequestError(`Unsupported Reflection tool: ${name}`)
+        if (capability.handedOff)
+          throw new AssistantToolRequestError('Reflection already handed off one brief')
         const args = parseAssistantToolArguments(name, input)
         if (args.context) {
           const project = requireProject(options.projects, args.context.projectId)
@@ -567,7 +602,7 @@ export function createAssistantTools(options: {
         }
       }
       if (!mainAssistantToolNames.includes(name as never)) {
-        throw new Error(`Speaking thread cannot call ${name}`)
+        throw new AssistantToolRequestError(`Speaking thread cannot call ${name}`)
       }
       const result = await this.executeForEvent(
         capability.eventId,
@@ -584,9 +619,9 @@ export function createAssistantTools(options: {
 
     async executeForEvent(eventId, name, input) {
       const event = await options.workspace.readEvent(eventId)
-      if (!event) throw new Error(`Inbox turn not found: ${eventId}`)
+      if (!event) throw new AssistantToolRequestError(`Inbox turn not found: ${eventId}`)
       if (event.attributes.status !== 'pending') {
-        throw new Error(`Inbox turn is already handled: ${eventId}`)
+        throw new AssistantToolRequestError(`Inbox turn is already handled: ${eventId}`)
       }
 
       switch (name) {
@@ -609,7 +644,11 @@ export function createAssistantTools(options: {
             const pageContext = context?.projectId
               ? ` Current page context is ${context.projectId}${context.goalId ? ` / ${context.goalId}` : ''}; omit projectId and goalId to use it exactly.`
               : ''
-            throw new Error(`${detail}.${pageContext}`)
+            const message = `${detail}.${pageContext}`
+            if (error instanceof AssistantToolRequestError) {
+              throw new AssistantToolRequestError(message)
+            }
+            throw new Error(message)
           }
           return {
             summary: 'Read current HOPI state.',
@@ -775,7 +814,7 @@ export function createAssistantTools(options: {
                 (dispatched.project.projectId !== project.projectId ||
                   dispatched.goalId !== targetGoalId)
               ) {
-                throw new Error(
+                throw new AssistantToolRequestError(
                   `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
                 )
               }
@@ -785,7 +824,9 @@ export function createAssistantTools(options: {
                 (existing.attributes.title !== args.title ||
                   !existing.body.includes(args.objective))
               ) {
-                throw new Error(`Goal ${targetGoalId} already exists with different content`)
+                throw new AssistantToolRequestError(
+                  `Goal ${targetGoalId} already exists with different content`,
+                )
               }
               const admission = await goalInputAdmission(
                 options.workspace,
@@ -803,7 +844,7 @@ export function createAssistantTools(options: {
               let work: WorkDocument
               if (existing) {
                 if (!dispatched) {
-                  throw new Error(
+                  throw new AssistantToolRequestError(
                     `Goal ${targetGoalId} already exists; use create_engineering_work or request_planning for a new instruction`,
                   )
                 }
@@ -894,7 +935,9 @@ export function createAssistantTools(options: {
             existing.attributes.title !== args.title ||
             !existing.body.includes(args.objective)
           ) {
-            throw new Error(`Goal ${goalId} already exists with different content`)
+            throw new AssistantToolRequestError(
+              `Goal ${goalId} already exists with different content`,
+            )
           } else {
             const goalPackage = await project.store.readPackage(goalId)
             const openPlanning = [...goalPackage.works.values()].find(
@@ -909,7 +952,7 @@ export function createAssistantTools(options: {
                 references: references.planning,
               })
             } else if (admission.write) {
-              throw new Error(
+              throw new AssistantToolRequestError(
                 `Goal ${goalId} already exists; use request_planning or reopen it for a new instruction`,
               )
             }
@@ -954,7 +997,7 @@ export function createAssistantTools(options: {
               (dispatched.project.projectId !== project.projectId ||
                 dispatched.goalId !== args.goalId)
             ) {
-              throw new Error(
+              throw new AssistantToolRequestError(
                 `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
               )
             }
@@ -1023,7 +1066,9 @@ export function createAssistantTools(options: {
             const content = new TextEncoder().encode(normalizeMarkdown(source))
             if (current && equalBytes(current, content)) continue
             if (supportingWrites.some((write) => write.path === path)) {
-              throw new Error(`Design write conflicts with adopted reference document: ${path}`)
+              throw new AssistantToolRequestError(
+                `Design write conflicts with adopted reference document: ${path}`,
+              )
             }
             supportingWrites.push({
               path,
@@ -1104,7 +1149,9 @@ export function createAssistantTools(options: {
                   attentionIds: settlementRefs.map((reference) => {
                     const parsed = parseAttentionReference(reference)
                     if (!parsed || parsed.scope !== 'goal') {
-                      throw new Error(`Invalid Planning Attention reference: ${reference}`)
+                      throw new AssistantToolRequestError(
+                        `Invalid Planning Attention reference: ${reference}`,
+                      )
                     }
                     return parsed.attentionId
                   }),
@@ -1176,7 +1223,7 @@ export function createAssistantTools(options: {
             if (args.operation === 'retry') {
               const goalPackage = await project.store.readPackage(args.goalId)
               const work = goalPackage.works.get(args.workId)
-              if (!work) throw new Error(`Work not found: ${args.workId}`)
+              if (!work) throw new AssistantToolRequestError(`Work not found: ${args.workId}`)
               const settledRefs = openWorkAttentionRefs(
                 goalPackage,
                 project.projectId,
@@ -1222,7 +1269,7 @@ export function createAssistantTools(options: {
                 continuation: planning ? deriveWorkContinuation(planning.attributes) : null,
               })
             }
-            throw new Error(`${args.operation} is not a Work operation`)
+            throw new AssistantToolRequestError(`${args.operation} is not a Work operation`)
           }
           let goal = await requireGoal(project.store, args.goalId)
           let changed = false
@@ -1232,7 +1279,7 @@ export function createAssistantTools(options: {
                 await project.controller.pauseGoal(args.goalId)
                 changed = true
               } else if (goal.attributes.lifecycle !== 'paused') {
-                throw new Error(
+                throw new AssistantToolRequestError(
                   `Goal ${args.goalId} cannot be paused from ${goal.attributes.lifecycle}`,
                 )
               }
@@ -1242,7 +1289,7 @@ export function createAssistantTools(options: {
                 await project.controller.resumeGoal(args.goalId)
                 changed = true
               } else if (goal.attributes.lifecycle !== 'active') {
-                throw new Error(
+                throw new AssistantToolRequestError(
                   `Goal ${args.goalId} cannot be resumed from ${goal.attributes.lifecycle}`,
                 )
               }
@@ -1260,14 +1307,15 @@ export function createAssistantTools(options: {
               }
               break
             case 'set_priority':
-              if (args.priority === undefined) throw new Error('set_priority requires priority')
+              if (args.priority === undefined)
+                throw new AssistantToolRequestError('set_priority requires priority')
               if (goal.attributes.priority !== args.priority) {
                 goal = await project.controller.setPriority(args.goalId, args.priority)
                 changed = true
               }
               break
             default:
-              throw new Error(`${args.operation} requires workId`)
+              throw new AssistantToolRequestError(`${args.operation} requires workId`)
           }
           if (changed && args.operation !== 'set_priority') {
             goal = await requireGoal(project.store, args.goalId)
@@ -1292,14 +1340,20 @@ export function createAssistantTools(options: {
         case 'hopi_resolve_attention': {
           const args = parseAssistantToolArguments(name, input)
           const resolved = parseAttentionReference(args.attentionRef)
-          if (!resolved) throw new Error(`Invalid Attention reference: ${args.attentionRef}`)
+          if (!resolved)
+            throw new AssistantToolRequestError(`Invalid Attention reference: ${args.attentionRef}`)
           if (resolved.scope === 'workspace') {
             const state = await options.workspace.readWorkspace()
             if (resolved.homeId !== state.homeId) {
-              throw new Error(`Workspace Attention belongs to another Home: ${args.attentionRef}`)
+              throw new AssistantToolRequestError(
+                `Workspace Attention belongs to another Home: ${args.attentionRef}`,
+              )
             }
             const attention = state.attentions.get(resolved.attentionId)
-            if (!attention) throw new Error(`Workspace Attention not found: ${args.attentionRef}`)
+            if (!attention)
+              throw new AssistantToolRequestError(
+                `Workspace Attention not found: ${args.attentionRef}`,
+              )
             const projectTarget = parseProjectAttentionTarget(attention.attributes.target)
             if (projectTarget) requireProject(options.projects, projectTarget.projectId)
             if (attention.attributes.resolvedAt === null) {
@@ -1367,7 +1421,9 @@ export function createAssistantTools(options: {
               value: result,
             }
           }
-          throw new Error(`Unsupported Preview operation: ${args.operation satisfies never}`)
+          throw new AssistantToolRequestError(
+            `Unsupported Preview operation: ${args.operation satisfies never}`,
+          )
         }
         case 'hopi_notify_user':
         case 'hopi_request_user': {
@@ -1376,7 +1432,9 @@ export function createAssistantTools(options: {
             event.attributes.source !== 'reflection' ||
             event.attributes.visibility !== 'internal'
           ) {
-            throw new Error(`${name} is available only for an internal Reflection turn`)
+            throw new AssistantToolRequestError(
+              `${name} is available only for an internal Reflection turn`,
+            )
           }
           if (name === 'hopi_notify_user') {
             await assertCompletionArtifactsLinked({
@@ -1444,7 +1502,7 @@ async function assertCompletionArtifactsLinked(input: {
     if (operatorUrls.length === 0 || operatorUrls.some((url) => input.message.includes(url))) {
       continue
     }
-    throw new Error(
+    throw new AssistantToolRequestError(
       `Completed Goal ${parsed.goalId} has available Evidence artifacts. Include at least one relevant operatorUrl in hopi_notify_user after reading the exact Goal with includeEvidence: true. Available operatorUrl values: ${operatorUrls.slice(0, 8).join(', ')}`,
     )
   }
@@ -1485,7 +1543,7 @@ function assertPublicUserTurn(
   subject: string,
 ) {
   if (event.attributes.source !== 'user' || event.attributes.visibility !== 'public') {
-    throw new Error(`${subject} can be changed only from a public user turn`)
+    throw new AssistantToolRequestError(`${subject} can be changed only from a public user turn`)
   }
 }
 
@@ -1628,17 +1686,21 @@ async function prepareGoalReferences(
           )[0]
       : null
     if (!sourceEvent) {
-      throw new Error(`Attachment is not owned by a public Inbox turn: ${reference.attachmentRef}`)
+      throw new AssistantToolRequestError(
+        `Attachment is not owned by a public Inbox turn: ${reference.attachmentRef}`,
+      )
     }
     const attachment = await workspace.resolveAttachment(reference.attachmentRef)
     if (!attachment) {
-      throw new Error(`Attachment is not a supported durable image: ${reference.attachmentRef}`)
+      throw new AssistantToolRequestError(
+        `Attachment is not a supported durable image: ${reference.attachmentRef}`,
+      )
     }
     const assetPath = store.paths.asset(goalId, attachment.contentHash, attachment.fileName)
     const currentAsset = await currentBytes(store, assetPath)
     if (currentAsset) {
       if ((await hashBytes(currentAsset)) !== attachment.contentHash) {
-        throw new Error(`Immutable Goal image content mismatch: ${assetPath}`)
+        throw new AssistantToolRequestError(`Immutable Goal image content mismatch: ${assetPath}`)
       }
     } else {
       writes.push({
@@ -1741,7 +1803,9 @@ async function goalInputAdmission(
     const current = parseInputDocument(await file.text())
     const rendered = renderInputDocument(current)
     if (rendered !== expected)
-      throw new Error(`Goal Input conflicts with Inbox turn ${event.attributes.id}`)
+      throw new AssistantToolRequestError(
+        `Goal Input conflicts with Inbox turn ${event.attributes.id}`,
+      )
     return { path, document, write: null }
   }
   return {
@@ -1762,7 +1826,8 @@ async function resolveGoalAttention(
   const path = store.paths.attentionDocument(goalId, attentionId)
   const absolutePath = store.paths.absolute(path)
   const file = Bun.file(absolutePath)
-  if (!(await file.exists())) throw new Error(`Goal Attention not found: ${attentionId}`)
+  if (!(await file.exists()))
+    throw new AssistantToolRequestError(`Goal Attention not found: ${attentionId}`)
   const source = await file.text()
   const attention = parseAttentionDocument(source)
   if (attention.attributes.resolvedAt !== null) return false
@@ -1799,13 +1864,13 @@ async function assertAttentionBlockerChanged(
   const match = target ? parseWorkAttentionTarget(target) : null
   if (!match) return
   if (match.projectId !== store.paths.projectId || match.goalId !== goalId) {
-    throw new Error(`Goal Attention has an invalid Work target: ${target}`)
+    throw new AssistantToolRequestError(`Goal Attention has an invalid Work target: ${target}`)
   }
   const work = (await store.readPackage(goalId)).works.get(match.workId)
   if (!work || isWorkTerminal(work.attributes)) return
   const profile = await readSoftwareDeliveryProfile()
   if (work.attributes.attempts >= profile.retry.maxAttempts) {
-    throw new Error(
+    throw new AssistantToolRequestError(
       `Work ${match.workId} is still exhausted; retry, cancel, or revise it before resolving Attention`,
     )
   }
@@ -1813,7 +1878,7 @@ async function assertAttentionBlockerChanged(
 
 function requireProject(projects: ReadonlyMap<string, AssistantToolProject>, projectId: string) {
   const project = projects.get(projectId)
-  if (!project) throw new Error(`Project not found: ${projectId}`)
+  if (!project) throw new AssistantToolRequestError(`Project not found: ${projectId}`)
   return project
 }
 
@@ -1823,7 +1888,7 @@ function assertLinkedRepos(project: AssistantToolProject, repoIds: readonly stri
   )
   for (const repoId of repoIds) {
     if (!linked.has(repoId)) {
-      throw new Error(`Engineering Work references unlinked Repo ${repoId}`)
+      throw new AssistantToolRequestError(`Engineering Work references unlinked Repo ${repoId}`)
     }
   }
 }
@@ -1855,7 +1920,7 @@ function isTerminalWork(work: WorkDocument | undefined) {
 
 async function requireGoal(store: GoalPackageStore, goalId: string) {
   const goal = await store.readGoal(goalId)
-  if (!goal) throw new Error(`Goal not found: ${goalId}`)
+  if (!goal) throw new AssistantToolRequestError(`Goal not found: ${goalId}`)
   return goal
 }
 
@@ -1871,7 +1936,7 @@ function designPath(path: string, goalId: string) {
     normalized.split('/').includes('.hopi') ||
     normalized.split('/').some((part) => !part || part === '.' || part === '..')
   ) {
-    throw new Error(`Invalid Goal design path: ${path}`)
+    throw new AssistantToolRequestError(`Invalid Goal design path: ${path}`)
   }
   return normalized
 }
@@ -1884,7 +1949,7 @@ function normalizeMarkdown(content: string) {
 function assertPortableGoalText(label: string, content: string) {
   const reference = findNonPortableGoalImageReference(content)
   if (reference) {
-    throw new Error(
+    throw new AssistantToolRequestError(
       `${label} cannot cite non-portable image path ${reference}; adopt the image through references and let Planning cite the returned Goal-local asset path`,
     )
   }

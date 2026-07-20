@@ -993,6 +993,13 @@ describe('MVP server', () => {
       role: 'planner',
       content: 'Planning the Engineering Work DAG.',
     })
+    await attempt.record({
+      kind: 'transcript',
+      transport: 'claude',
+      entryKind: 'status',
+      summary: 'task progress',
+      vendorEventType: 'system.task_progress',
+    })
     await Bun.write(
       join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'transcript.log'),
       'stdout: {"type":"turn.completed","usage":{"input_tokens":400,"cached_input_tokens":250,"output_tokens":30,"reasoning_output_tokens":10}}\n',
@@ -1097,7 +1104,7 @@ describe('MVP server', () => {
           planId: 'planner-plan',
           status: 'active',
           items: [{ completed: true }, { completed: false }],
-          streamIndex: 2,
+          streamIndex: 3,
         },
       ],
     })

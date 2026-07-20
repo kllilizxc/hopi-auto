@@ -15,8 +15,9 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - one prompt plus optional local image paths
 - one injected `hopi` MCP server with the current turn capability
 - normalized message, tool-call, tool-result, status, and error events
-- provider-native thinking summaries normalized as internal status; count-only thinking progress is
-  protocol noise and never substitutes for the summary
+- provider-native thinking summaries normalized as internal status; count-only thinking progress
+  and provider task-progress heartbeats are protocol noise and never substitute for a summary,
+  plan snapshot, or tool event
 - lossless raw stdout and stderr
 - process-group cancellation and bounded termination
 - writable Assistant-owned runtime and scratch, read-only linked and canonical roots, and network

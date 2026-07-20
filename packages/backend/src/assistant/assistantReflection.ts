@@ -388,7 +388,7 @@ function reflectionPrompt(
     'You are a disposable read-only thinking run for the workspace Assistant.',
     'Assess only this trigger and compact semantic delta, not workspace history.',
     'Do not mutate canonical files or source. You only have hopi_read_state and hopi_handoff_to_main.',
-    'Use hopi_read_state only after the delta identifies a concrete candidate, scoped to its exact Project or Goal.',
+    'Use hopi_read_state only after the delta identifies a concrete candidate. Omit IDs for a home:<homeId> target; otherwise copy the exact Project and optional Goal IDs from Project state.',
     'Use local read-only shell access only for an exact diagnostic path already present in state. Never scan .hopi or search historical Runs speculatively.',
     'When several urgent candidates exist, normally restore an event-target Workspace Attention first because it blocks a speaking turn; choose another only when its consequence is materially more urgent.',
     'Call hopi_handoff_to_main at most once only when the speaking Assistant should revalidate a useful action or user decision; otherwise finish silently.',

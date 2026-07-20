@@ -107,7 +107,14 @@ export function runEventsToMessageFeed(
 ): MessageFeedItem[] {
   type VisibleRunEvent = Exclude<RunAttemptEvent, { kind: 'plan' }>
   const visibleEvents = events.filter(
-    (event): event is VisibleRunEvent => event.kind !== 'plan',
+    (event): event is VisibleRunEvent =>
+      event.kind !== 'plan' &&
+      !(
+        event.kind === 'transcript' &&
+        event.transport === 'claude' &&
+        (event.vendorEventType === 'system.thinking_tokens' ||
+          event.vendorEventType === 'system.task_progress')
+      ),
   )
 
   return visibleEvents.map((event) => {

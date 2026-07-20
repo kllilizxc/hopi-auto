@@ -84,12 +84,12 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema
         .describe(
-          'Exact canonical Project ID, including its P- prefix. Omit to use current page context.',
+          'Exact Project ID copied from current Project state. Never use the Home ID from a home: reference. Omit to use current page context.',
         )
         .optional(),
       goalId: stableIdSchema
         .describe(
-          'Exact canonical Goal ID, including its G- prefix. Omit to use current page context.',
+          'Exact Goal ID copied from current Project state. Omit to use current page context.',
         )
         .optional(),
       includeEvidence: z
@@ -286,8 +286,10 @@ export const assistantToolSchemas = {
       brief: z.string().trim().min(1).max(12_000),
       context: z
         .object({
-          projectId: stableIdSchema,
-          goalId: stableIdSchema,
+          projectId: stableIdSchema.describe(
+            'Exact Project ID from current Project state; never a Home ID.',
+          ),
+          goalId: stableIdSchema.describe('Exact Goal ID from current Project state.'),
         })
         .strict()
         .optional(),

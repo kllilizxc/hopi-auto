@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ConfigurableAgentRole } from '../src/agent/adapterConfig'
 import { createAssistantStateReader } from '../src/assistant/assistantState'
+import { AssistantToolRequestError } from '../src/assistant/assistantToolRequestError'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import type { InboxContext } from '../src/domain/assistantWorkspaceDocuments'
 import {
@@ -1593,7 +1594,12 @@ describe('Assistant HOPI tools', () => {
 
     await expect(
       fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {
-        projectId: 'live-conversation',
+        projectId: 'H-home',
+      }),
+    ).rejects.toBeInstanceOf(AssistantToolRequestError)
+    await expect(
+      fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {
+        projectId: 'H-home',
       }),
     ).rejects.toThrow(
       'Current page context is P-1 / G-2; omit projectId and goalId to use it exactly',

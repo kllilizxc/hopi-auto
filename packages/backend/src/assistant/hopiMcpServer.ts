@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current state: active Runs, Work control facts, open Attention, the latest finished Planning outcome, latest diagnostics, and exact paths. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page scope; otherwise copy complete canonical IDs.',
+      'Read compact current state: active Runs, Work control facts, open Attention, the latest finished Planning outcome, latest diagnostics, and exact paths. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page or Home scope. Otherwise copy exact Project and optional Goal IDs from Project state; never copy the Home ID from a home: reference into projectId.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },

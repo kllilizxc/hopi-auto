@@ -21,6 +21,7 @@ import type {
 import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
+import { AssistantToolRequestError } from './assistantToolRequestError'
 
 export const DEFAULT_ATTEMPT_STALE_AFTER_MS = 10 * 60 * 1_000
 
@@ -713,6 +714,6 @@ async function pathExists(path: string) {
 
 function requireProject(projects: ReadonlyMap<string, AssistantStateProject>, projectId: string) {
   const project = projects.get(projectId)
-  if (!project) throw new Error(`Project not found: ${projectId}`)
+  if (!project) throw new AssistantToolRequestError(`Project not found: ${projectId}`)
   return project
 }

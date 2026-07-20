@@ -419,6 +419,10 @@ default Activity stream or become the fallback summary for an otherwise unexplai
 This classification changes presentation, not truth: the original line remains available for
 debugging, while terminal vendor errors and all unclassified `stderr` retain their existing error
 semantics. The same adapter classification applies to responsibility Runs and Assistant turns.
+The same boundary applies to structured stdout telemetry that carries no operator-meaningful
+content: provider heartbeats such as Claude `task_progress` remain raw transcript diagnostics and do
+not become normalized status rows. Model-authored summaries, plan snapshots, tool events, retries,
+and terminal errors keep their normal semantics.
 
 One provider-neutral responsibility session belongs to each
 `Project + Goal + Work + responsibility + Work contractRevision` tuple. It contains both the saved

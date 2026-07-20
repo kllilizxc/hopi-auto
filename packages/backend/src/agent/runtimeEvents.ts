@@ -41,3 +41,14 @@ export type AgentRuntimeEvent =
       vendorEventType?: string
     }
   | AgentPlanEvent
+
+const NON_PRESENTABLE_VENDOR_TELEMETRY = new Set(['system.thinking_tokens', 'system.task_progress'])
+
+export function isPresentableAgentRuntimeEvent(event: AgentRuntimeEvent): boolean {
+  return !(
+    event.kind === 'transcript' &&
+    event.transport === 'claude' &&
+    event.vendorEventType !== undefined &&
+    NON_PRESENTABLE_VENDOR_TELEMETRY.has(event.vendorEventType)
+  )
+}

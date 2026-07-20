@@ -2,7 +2,12 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { RoleRunner } from './agent/RoleRunner'
 import { type ConfigurableAgentRole, WORKFLOW_ROLE_KEYS } from './agent/adapterConfig'
-import type { AgentPlanEvent, AgentRuntimeEvent } from './agent/runtimeEvents'
+import {
+  type AgentPlanEvent,
+  type AgentRuntimeEvent,
+  isPresentableAgentRuntimeEvent,
+} from './agent/runtimeEvents'
+import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
 import type { InboxEventDocument } from './domain/assistantWorkspaceDocuments'
@@ -553,10 +558,12 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               attemptRoute.workId,
               attemptRoute.runId,
             )
-            const indexedEvents = (events ?? []).map((event, streamIndex) => ({
-              ...event,
-              streamIndex,
-            }))
+            const indexedEvents = (events ?? [])
+              .map((event, streamIndex) => ({
+                ...event,
+                streamIndex,
+              }))
+              .filter(isPresentableAgentRuntimeEvent)
             return json(
               paginateItems(indexedEvents, readPageRequest(url, 80, 200), {
                 scope: `attempt-events:${attemptRoute.projectId}:${attemptRoute.goalId}:${attemptRoute.workId}:${attemptRoute.runId}`,
@@ -774,6 +781,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         return json({ error: 'Not found' }, 404)
       } catch (error) {
         if (error instanceof ApiError) return json({ error: error.message }, error.status)
+        if (error instanceof AssistantToolRequestError) {
+          return json({ error: error.message }, 400)
+        }
         if (error instanceof AssistantImageAttachmentError) {
           return json({ error: error.message }, 400)
         }
@@ -1232,7 +1242,7 @@ async function presentAssistantFeedEntry(runtime: MvpRuntime, entry: AssistantFe
       routeClaim: entry.event.attributes.routeClaim ?? null,
       body: entry.event.body,
       runtimeStatus: entry.runtimeStatus,
-      runtimeEvents: turn?.events ?? [],
+      runtimeEvents: (turn?.events ?? []).filter(isPresentableAgentRuntimeEvent),
       runtimeError: turn?.manifest.error ?? null,
     },
   }

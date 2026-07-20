@@ -97,6 +97,28 @@ describe('parseVendorAssistantOutput', () => {
     })
   })
 
+  test('preserves Claude error-list detail and recognizes a missing conversation', () => {
+    const message = 'No conversation found with session ID: missing-session'
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          session_id: 'missing-session',
+          errors: [message],
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'missing-session',
+      terminalError: {
+        message,
+        sessionInvalid: true,
+      },
+    })
+  })
+
   test('extracts current OpenCode text and session identity', () => {
     expect(
       parseVendorAssistantOutput(

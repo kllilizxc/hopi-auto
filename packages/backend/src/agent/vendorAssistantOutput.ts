@@ -53,7 +53,7 @@ export function parseVendorAssistantOutput(
     if (eventType === 'result') {
       const terminalReason = stringValue(parsed.terminal_reason)
       const result = stringValue(parsed.result)
-      const error = errorText(parsed.error)
+      const error = errorText(parsed.error) ?? errorListText(parsed.errors)
       const status = numberValue(parsed.api_error_status)
       if (parsed.is_error === true) {
         const failure = result ?? error ?? claudeFailureSummary(status, terminalReason)
@@ -147,6 +147,15 @@ function objectValue(value: unknown) {
 function errorText(value: unknown) {
   if (typeof value === 'string') return stringValue(value)
   return stringValue(objectValue(value)?.message)
+}
+
+function errorListText(value: unknown) {
+  if (!Array.isArray(value)) return undefined
+  const errors = value.flatMap((entry) => {
+    const detail = errorText(entry)
+    return detail ? [detail] : []
+  })
+  return errors.length > 0 ? errors.join('\n') : undefined
 }
 
 function numberValue(value: unknown) {

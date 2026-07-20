@@ -286,7 +286,10 @@ Runtime events improve observability but never authorize a Goal or Work transiti
 The configured vendor owns transient retry inside one invocation. HOPI treats the vendor's
 structured terminal result as authoritative: a terminal error is recorded as the turn failure and
 shown to the operator rather than accepted as Assistant speech, retried by Coordinator, or treated
-as evidence that a cached session is incompatible. `system` is only a transport envelope;
+as evidence that a cached session is incompatible. The adapter preserves the vendor's exact
+non-empty terminal diagnostic whether it is supplied as a scalar error, result, or error list before
+classifying the failure. A session identity reported only by a terminal error is not persisted.
+`system` is only a transport envelope;
 initialization and retry telemetry remain nonterminal. HOPI rebuilds durable conversation history
 exactly once only when the adapter explicitly reports that the cached session itself is missing or
 incompatible. Raw vendor output remains diagnostic truth in `transcript.log`, while the conversation
@@ -509,6 +512,16 @@ inlining those potentially large files. Assistant decides what else to read. Thi
 conversation responsive and lets the architecture improve automatically with model tool-use
 capability.
 
+Tool scope is structurally namespaced by its argument and canonical reference, not inferred from an
+ID's human-readable prefix. `home:<homeId>/...` references describe Home-owned Inbox or Attention
+state, so their Home ID is never a Project argument. A workspace-wide state read omits Project and
+Goal arguments, while a scoped read copies the exact Project and optional Goal IDs returned inside
+current Project state. The tool boundary verifies that the Project actually belongs to the Home and
+returns an ordinary tool-request rejection for a mismatched namespace instead of a server fault.
+The same boundary classifies every explicit capability, argument, replay, and current-state guard
+rejection as a tool result. Unexpected storage, publication, and implementation failures remain
+server faults with their diagnostic stack.
+
 A Goal-scoped read may explicitly request Evidence detail when the current user question requires a
 deliverable body or artifact, such as "where is the report". That opt-in returns the bounded Evidence
 body and gives each resolved artifact two deliberately distinct projections: `inspectionPath` is an
@@ -696,9 +709,10 @@ The Assistant drawer shows one chronological conversation:
   newest received message can still change, nor retain a standalone completion after that completion
   is absorbed into its public reply
 - normalized model messages and useful tool activity appear while a turn runs
-- native provider thinking summaries appear only as internal collapsed activity. Token-count progress
-  such as Claude `thinking_tokens` is hidden, and a provider thought envelope can never become the
-  final operator-facing reply
+- native provider thinking summaries appear only as internal collapsed activity. Count-only or
+  content-free progress telemetry such as Claude `thinking_tokens` and `task_progress` is hidden;
+  it remains available in the raw transcript but never creates a conversation row. A provider
+  thought envelope can never become the final operator-facing reply
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking
   turn itself fails

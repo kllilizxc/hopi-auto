@@ -191,6 +191,52 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
+  test('does not persist a session identity reported only by a Claude terminal error', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-startup-error')
+    const error = 'sandbox required but unavailable'
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `console.log(JSON.stringify({type:"result",subtype:"error_during_execution",is_error:true,session_id:"unusable-session",errors:[${JSON.stringify(error)}]}))`,
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-startup-error')
+    const sessions: string[] = []
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await expect(
+      runner.run(
+        {
+          eventId: 'EV-startup-error',
+          prompt: 'Continue.',
+          session: null,
+          cwd,
+          lastMessageFile: join(cwd, 'last-message.txt'),
+          transcriptFile: join(cwd, 'transcript.log'),
+          toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+          toolToken: 'startup-error-token',
+        },
+        {
+          onSession: (session) => {
+            sessions.push(session.sessionId)
+          },
+        },
+      ),
+    ).rejects.toThrow(error)
+    expect(sessions).toEqual([])
+  })
+
   test('fails closed when Claude cannot separate a malformed thought envelope', async () => {
     const binary = join(temporaryRoot, 'fake-claude-malformed-thought')
     await Bun.write(

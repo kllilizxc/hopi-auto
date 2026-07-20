@@ -123,21 +123,23 @@ export function createConfiguredAssistantModelRunner(options: {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
         if (stream === 'stdout') {
           const output = parseVendorAssistantOutput(transport, line)
-          if (output.sessionId && output.sessionId !== observedSessionId) {
-            observedSessionId = output.sessionId
-            await observer?.onSession?.({ transport, sessionId: output.sessionId })
-          }
           if (output.terminalError) {
             terminalError = output.terminalError
-          } else if (output.finalText) {
-            finalReply = output.finalText
-            finalMessageId = output.messageId
-          } else if (output.assistantText) {
-            if (output.messageId && output.messageId !== finalMessageId) {
-              finalReply = output.assistantText
+          } else {
+            if (output.sessionId && output.sessionId !== observedSessionId) {
+              observedSessionId = output.sessionId
+              await observer?.onSession?.({ transport, sessionId: output.sessionId })
+            }
+            if (output.finalText) {
+              finalReply = output.finalText
               finalMessageId = output.messageId
-            } else {
-              finalReply += `${finalReply ? '\n' : ''}${output.assistantText}`
+            } else if (output.assistantText) {
+              if (output.messageId && output.messageId !== finalMessageId) {
+                finalReply = output.assistantText
+                finalMessageId = output.messageId
+              } else {
+                finalReply += `${finalReply ? '\n' : ''}${output.assistantText}`
+              }
             }
           }
         } else if (!isNonFatalProcessDiagnostic({ format: transcriptFormat, stream, line })) {

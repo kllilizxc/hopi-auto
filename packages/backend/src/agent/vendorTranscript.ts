@@ -277,7 +277,7 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   if (eventType === 'system') {
-    if (eventSubtype === 'thinking_tokens') return []
+    if (eventSubtype === 'thinking_tokens' || eventSubtype === 'task_progress') return []
     return [
       transcriptEvent('claude', 'status', claudeSystemSummary(value, eventSubtype), {
         vendorEventType: `system.${eventSubtype ?? 'status'}`,
