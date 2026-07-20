@@ -455,8 +455,11 @@ writable-root configuration without loading the operator's global Codex configur
 also explicitly selects a ChatGPT-authenticated provider with WebSocket support disabled, so Codex
 uses HTTPS streaming directly instead of attempting WebSocket and falling back. Authentication
 remains available, but unrelated personal MCP servers, plugins, defaults, and transport preferences
-cannot delay or fail delivery. Project source instructions and capabilities explicitly assigned by
-HOPI remain available. Other vendors provide the equivalent isolation at their adapter boundary.
+cannot delay or fail delivery. The speaking Assistant additionally suppresses Codex's automatic
+skills and host-app/workflow capabilities because delivery must first enter HOPI as a Goal or
+Engineering Work. Responsibility Agents keep the execution capabilities available inside their
+accepted Work; Project source instructions and capabilities explicitly assigned by HOPI remain
+available. Other vendors provide the equivalent control-plane isolation at their adapter boundary.
 
 Goal reference images are passed only through a transport with an explicit image-input contract.
 If a selected responsibility transport cannot accept them, RoleRunner fails visibly before the

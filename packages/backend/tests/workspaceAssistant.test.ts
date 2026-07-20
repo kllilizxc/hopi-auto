@@ -581,6 +581,24 @@ describe('WorkspaceAssistant conversation', () => {
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
     expect(args).toContain('model_provider="hopi_chatgpt_https"')
     expect(args).toContain('model_providers.hopi_chatgpt_https.supports_websockets=false')
+    expect(args).toContain('skills.include_instructions=false')
+    expect(args).toContain('skills.bundled.enabled=false')
+    expect(args).toContain('include_apps_instructions=false')
+    expect(args).toContain('include_collaboration_mode_instructions=false')
+    for (const feature of [
+      'apps',
+      'browser_use',
+      'computer_use',
+      'goals',
+      'image_generation',
+      'memories',
+      'multi_agent',
+      'plugins',
+      'workspace_dependencies',
+    ]) {
+      expect(args).toContain(feature)
+      expect(args[args.indexOf(feature) - 1]).toBe('--disable')
+    }
     expect(args).toContain('resume')
     expect(args).toContain('workspace-write')
     expect(args).toContain('sandbox_workspace_write.network_access=true')
@@ -661,7 +679,7 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(seen[0]?.prompt).toContain('write design and start Planning')
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).toContain('Tool schemas and returned canonical state')
+    expect(seen[0]?.prompt).toContain('provider-native facilities are inspection aids')
     expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')
     expect(seen[0]?.prompt).toContain(
       'resolve Attention only after its condition is verified clear',
