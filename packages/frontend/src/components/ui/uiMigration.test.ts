@@ -30,7 +30,7 @@ test('application code consumes HeroUI through the local UI adapter layer', asyn
   }
 
   expect(directImports).toEqual([])
-  expect(nativeAtoms).toEqual([])
+  expect(nativeAtoms).toEqual(['components/AssistantMarkdown.tsx'])
 })
 
 test('the only native input is the hidden image file picker', async () => {

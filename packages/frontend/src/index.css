@@ -2845,25 +2845,30 @@ button:disabled,
 
 .unified-feed-message-row {
   display: flex;
+  justify-content: center; /* keep center by default for assistant */
 }
 
 .unified-feed-message-row.user {
-  justify-content: flex-end;
+  justify-content: flex-end; /* user messages go to the right */
 }
 
 .unified-feed-message-row.assistant {
-  justify-content: flex-start;
+  justify-content: center; /* assistant messages in center */
 }
 
 .unified-feed-message {
   width: 100%;
-  max-width: min(100%, 52rem);
+  max-width: min(100%, 46rem);
   min-width: 0;
+  margin: 0 auto;
 }
 
 .unified-feed-message-row.user .unified-feed-message {
   width: auto;
   max-width: min(86%, 42rem);
+  margin: 0; /* remove auto centering for user */
+  display: flex;
+  justify-content: flex-end;
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message {
@@ -2916,6 +2921,8 @@ button:disabled,
 }
 
 .unified-feed-message__bubble {
+  width: fit-content;
+  max-width: 100%;
   padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--color-accent-500) 22%, transparent);
   border-radius: 17px 17px 5px 17px;
@@ -2934,9 +2941,9 @@ button:disabled,
 
 .unified-feed-message__text {
   padding: 3px 2px;
-  color: var(--color-neutral-200);
-  font-size: 12px;
-  line-height: 1.7;
+  color: var(--color-neutral-100);
+  font-size: 13.5px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -3021,10 +3028,11 @@ button:disabled,
 }
 
 .assistant-message-markdown code {
-  padding: 0.12em 0.36em;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--color-neutral-800) 82%, transparent);
-  color: var(--color-neutral-100);
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
+  border: 1px solid var(--color-neutral-750);
+  background: color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
+  color: var(--color-neutral-50);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.92em;
 }
@@ -3126,11 +3134,13 @@ button:disabled,
 }
 
 .unified-feed-activity {
-  max-width: min(100%, 52rem);
+  max-width: min(100%, 46rem);
+  margin: 0 auto;
 }
 
 .unified-feed-live-activity {
-  max-width: min(100%, 52rem);
+  max-width: min(100%, 46rem);
+  margin: 0 auto;
 }
 
 .unified-feed-live-activity__entries {
@@ -3194,7 +3204,8 @@ button:disabled,
   display: flex;
   width: 100%;
   min-height: 32px;
-  max-width: min(100%, 52rem);
+  max-width: min(100%, 46rem);
+  margin: 0 auto;
   align-items: center;
   gap: 7px;
   padding: 8px 15px;
@@ -3218,14 +3229,14 @@ button:disabled,
 .unified-feed-command {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid transparent;
+  border: 1px solid var(--color-neutral-800);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-white) 1.2%, transparent);
+  background: var(--color-neutral-900);
 }
 
 .unified-feed-command[data-expanded="true"] {
-  border-color: var(--color-neutral-800);
-  background: var(--color-neutral-900);
+  border-color: color-mix(in srgb, var(--color-accent-500) 40%, transparent);
+  background: var(--color-neutral-875);
 }
 
 .unified-feed-command.error {
@@ -3440,7 +3451,8 @@ button:disabled,
 
 .unified-feed-action-row {
   display: grid;
-  max-width: min(100%, 52rem);
+  max-width: min(100%, 46rem);
+  margin: 4px auto;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 9px;
   margin: 4px 0;
@@ -3509,7 +3521,8 @@ button:disabled,
 .unified-feed-system-update {
   display: grid;
   width: calc(100% - 26px);
-  max-width: min(calc(100% - 26px), 52rem);
+  max-width: min(calc(100% - 26px), 46rem);
+  margin: 7px auto;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 9px;
   margin: 7px 13px;
@@ -5027,7 +5040,7 @@ samp {
 .unified-feed-message__text,
 .unified-message-feed--compact .unified-feed-message__text,
 .unified-message-feed--compact .unified-feed-message__bubble {
-  font-size: 12px;
+  font-size: 13.5px;
 }
 
 .unified-feed-activity > .app-disclosure__heading > .app-disclosure__trigger:hover,
@@ -7330,4 +7343,57 @@ samp {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+
+/* Thinking Block */
+.assistant-markdown-chunks {
+  display: grid;
+  gap: 12px;
+}
+
+.assistant-thinking {
+  border-left: 2px solid color-mix(in srgb, var(--color-neutral-700) 50%, transparent);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+  border-radius: 4px 10px 10px 4px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+
+.assistant-thinking__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-neutral-450);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+
+.assistant-thinking__toggle:hover {
+  background: color-mix(in srgb, var(--color-neutral-800) 50%, transparent);
+  color: var(--color-neutral-200);
+}
+
+.assistant-thinking__icon {
+  color: var(--color-accent-500);
+  opacity: 0.8;
+}
+
+.assistant-thinking__content {
+  padding: 4px 14px 12px 14px;
+  color: var(--color-neutral-400);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.assistant-thinking__content .assistant-message-markdown {
+  opacity: 0.85;
 }

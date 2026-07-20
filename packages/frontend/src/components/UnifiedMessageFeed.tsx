@@ -674,7 +674,7 @@ function CommandActivityEntry({
 function StatusActivityEntry({ item }: { item: MessageFeedItem }) {
   return (
     <div className={cn('unified-feed-status', item.kind === 'error' && 'error')}>
-      <p>{item.text}</p>
+      <AssistantMessageText text={item.text} />
     </div>
   )
 }

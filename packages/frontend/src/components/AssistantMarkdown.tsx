@@ -1,9 +1,10 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import Markdown, {
   type Components as MarkdownComponents,
   type UrlTransform,
 } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ChevronRight, ChevronDown, Brain } from 'lucide-react'
 import { AppLink } from './ui'
 
 const ASSISTANT_MARKDOWN_PLUGINS = [remarkGfm]
@@ -29,7 +30,8 @@ const assistantMarkdownUrlTransform: UrlTransform = (url, key) => {
   return url
 }
 
-export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+const MarkdownRenderer = memo(function MarkdownRenderer({ text }: { text: string }) {
+  if (!text.trim()) return null
   return (
     <Markdown
       components={ASSISTANT_MARKDOWN_COMPONENTS}
@@ -41,6 +43,62 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
     >
       {text}
     </Markdown>
+  )
+})
+
+function ThinkingBlock({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className={`assistant-thinking ${expanded ? 'expanded' : ''}`}>
+      <button
+        className="assistant-thinking__toggle"
+        onClick={() => setExpanded(!expanded)}
+        type="button"
+      >
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <Brain size={14} className="assistant-thinking__icon" />
+        <span>Thinking Process</span>
+      </button>
+      {expanded && (
+        <div className="assistant-thinking__content">
+          <MarkdownRenderer text={content} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+  const chunks = []
+  const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/gi
+  let lastIndex = 0
+  let match
+
+  while ((match = thinkingRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      chunks.push({ type: 'text', content: text.substring(lastIndex, match.index) })
+    }
+    chunks.push({ type: 'thinking', content: match[1] })
+    lastIndex = thinkingRegex.lastIndex
+  }
+  if (lastIndex < text.length) {
+    chunks.push({ type: 'text', content: text.substring(lastIndex) })
+  }
+
+  if (chunks.length <= 1 && chunks[0]?.type === 'text') {
+    return <MarkdownRenderer text={text} />
+  }
+
+  return (
+    <div className="assistant-markdown-chunks">
+      {chunks.map((chunk, i) => (
+        chunk.type === 'thinking' ? (
+          <ThinkingBlock key={i} content={chunk.content} />
+        ) : (
+          <MarkdownRenderer key={i} text={chunk.content} />
+        )
+      ))}
+    </div>
   )
 })
 
