@@ -29,7 +29,7 @@ if (mode !== 'reflection') {
       'hopi_manage_project',
       {
         description:
-          'Link or rebind Projects and Repos, or initialize an explicitly named empty directory. Use only operator-supplied paths.',
+          'Create a Project with link_project from operator-supplied Repo paths; there is no create operation. If no path was supplied, ask for it before calling this tool. For an explicitly named empty directory, call initialize_repository first, then link_project in the same turn. Also link or rebind Repos.',
         inputSchema: assistantMcpToolSchemas.hopi_manage_project,
       },
       (args) => callTool('hopi_manage_project', args),

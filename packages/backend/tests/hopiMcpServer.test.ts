@@ -55,6 +55,12 @@ describe('HOPI MCP server', () => {
     expect(names).not.toContain('hopi_notify_user')
     expect(names).not.toContain('hopi_request_user')
     expect(tools.tools).toHaveLength(11)
+    expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
+      'there is no create operation',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
+      'If no path was supplied, ask for it',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
     ).toContain('reusable defaults')

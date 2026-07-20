@@ -400,6 +400,11 @@ collect intent, so they are not separate Assistant tools. The model receives or 
 path or decision and invokes the underlying Project operation. HOPI does not let Assistant call its
 own public HTTP UI routes or duplicate their mutation logic.
 
+`link_project` is the Project-creation operation; there is no separate `create` operation. With no
+operator-supplied path, Assistant asks for the Project directory instead of calling a topology tool.
+For an explicitly named empty directory it first initializes the repository, then links that Repo as
+the new Project in the same turn.
+
 Project management, model configuration, and preference writes require a public user turn. An
 internal Reflection handoff may diagnose Project state and ask the operator for a missing path, but
 cannot originate a new Project binding or configuration preference.
