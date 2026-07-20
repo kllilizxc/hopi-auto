@@ -60,7 +60,7 @@ if (mode !== 'reflection') {
     'hopi_create_goal',
     {
       description:
-        'Create a Goal and record this turn. Set singular initialWork for one cohesive, verifiable delivery; omit it for Planning. Direct Work does not complete the Goal. Adopt images by attachmentRef and purpose. Include the returned goalId.',
+        'Create a Goal and record this turn with exactly one required firstWork. Author its title, objective, and acceptanceCriteria. Choose planning when decisions, authority, or decomposition remain. Choose engineering only for one complete, verifiable Work that preserves every explicit Goal constraint; never silently substitute a named model, tool, workflow, or delivery path. Direct Work does not complete the Goal. Adopt images by attachmentRef and purpose. Include the returned goalId.',
       inputSchema: assistantMcpToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),

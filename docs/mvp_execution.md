@@ -140,8 +140,8 @@ Assistant home and project Git are not one atomic store. HOPI uses a simple idem
    operation-specific single-gate publications and publish Goal Input for source `(homeId, eventId)`
    as the accepted authority receipt. Dedicated operational retry and defer tools instead audit
    their exact canonical control effect without adopting the current Inbox body as Goal authority.
-   Goal creation atomically establishes the Goal, its Input receipt, and either the initial Planning
-   guard or one Assistant-dispatched Engineering Work. Existing-Goal direct admission atomically
+   Goal creation atomically establishes the Goal, its Input receipt, and the caller-authored first
+   Planning or Assistant-dispatched Engineering Work. Existing-Goal direct admission atomically
    publishes its Input, supporting references, superseded completion proposal, and Work gate.
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.

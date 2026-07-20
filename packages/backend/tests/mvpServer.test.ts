@@ -414,6 +414,15 @@ describe('MVP server', () => {
               goalId: 'G-pixel-sprite-experiment',
               title: 'Generate a right-moving pixel spritesheet',
               objective: 'Create and evaluate the first WAN 2.2 Animate pixel-art character asset.',
+              firstWork: {
+                kind: 'planning',
+                title: 'Plan the WAN 2.2 Animate spritesheet',
+                objective:
+                  'Decide how to create and evaluate the pixel-art spritesheet with WAN 2.2 Animate.',
+                acceptanceCriteria: [
+                  'The plan preserves WAN 2.2 Animate as an explicit implementation constraint.',
+                ],
+              },
             },
           }),
         })

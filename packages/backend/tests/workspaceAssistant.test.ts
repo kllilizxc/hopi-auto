@@ -692,7 +692,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'if an effect lands in another Goal, include its name and exact Goal ID',
     )
-    expect(seen[0]?.prompt).toContain('write design and start Planning')
+    expect(seen[0]?.prompt).toContain('Author Create Goal firstWork explicitly')
+    expect(seen[0]?.prompt).toContain(
+      'a named model, tool, workflow, or delivery path cannot be silently substituted',
+    )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
     expect(seen[0]?.prompt).toContain('never replace Goal or Engineering Work delivery')
     expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')

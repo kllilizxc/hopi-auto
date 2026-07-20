@@ -69,6 +69,12 @@ try {
     goalId: GOAL_ID,
     title: 'Preserve migration state',
     objective: 'Keep the complete portable Project state valid after Home and Repo paths move.',
+    firstWork: {
+      kind: 'planning',
+      title: 'Plan portable Project migration',
+      objective: 'Plan how to preserve Project state when Home and Repo paths move.',
+      acceptanceCriteria: ['The migration plan preserves every portable Project reference.'],
+    },
     references: [
       { attachmentRef, purpose: 'Preserve this exact visual reference across migration.' },
     ],

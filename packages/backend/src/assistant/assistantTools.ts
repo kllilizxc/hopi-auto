@@ -748,12 +748,20 @@ export function createAssistantTools(options: {
           const project = requireProject(options.projects, args.projectId)
           const goalId =
             args.goalId ?? deriveReadableId('G', args.title, await project.store.listGoalIds())
-          if (args.initialWork) {
-            const initialWork = args.initialWork
-            assertPortableGoalText('Engineering Work title', initialWork.title)
-            assertPortableGoalText('Engineering Work objective', initialWork.objective)
-            for (const criterion of initialWork.acceptanceCriteria) {
-              assertPortableGoalText('Engineering Work acceptance criterion', criterion)
+          const firstWork = args.firstWork
+          const firstWorkLabel =
+            firstWork.kind === 'planning' ? 'Planning Work' : 'Engineering Work'
+          assertPortableGoalText(`${firstWorkLabel} title`, firstWork.title)
+          assertPortableGoalText(`${firstWorkLabel} objective`, firstWork.objective)
+          for (const criterion of firstWork.acceptanceCriteria) {
+            assertPortableGoalText(`${firstWorkLabel} acceptance criterion`, criterion)
+          }
+          if (firstWork.kind === 'engineering') {
+            const initialWork = {
+              title: firstWork.title,
+              objective: firstWork.objective,
+              acceptanceCriteria: firstWork.acceptanceCriteria,
+              repos: firstWork.repos,
             }
             assertLinkedRepos(project, initialWork.repos)
             const workspace = await options.workspace.readWorkspace()
@@ -835,12 +843,13 @@ export function createAssistantTools(options: {
                 work = created
               }
               return {
-                summary: `Created Goal ${targetGoalId} with Engineering Work ${work.attributes.id}.`,
+                summary: `Created Goal ${targetGoalId} with direct Engineering Work ${work.attributes.id}; initial Planning was explicitly skipped.`,
                 changed: !dispatched,
                 value: {
                   projectId: project.projectId,
                   goalId: targetGoalId,
                   workId: work.attributes.id,
+                  firstWorkKind: 'engineering',
                   references: references.planning,
                   remainingAttentionRefs: await remainingGoalAttentionRefs(
                     project.store,
@@ -875,6 +884,11 @@ export function createAssistantTools(options: {
               acceptedInput: admission.document,
               supportingWrites: references.writes,
               planningReferences: references.planning,
+              firstPlanningWork: {
+                title: firstWork.title,
+                objective: firstWork.objective,
+                acceptanceCriteria: firstWork.acceptanceCriteria,
+              },
             })
           } else if (
             existing.attributes.title !== args.title ||
@@ -890,20 +904,22 @@ export function createAssistantTools(options: {
               planningChanged = !openPlanning.body
                 .split(/\r?\n/)
                 .some((line) => line.trim() === `- ${admission.path}`)
-              await project.controller.ensurePlanning(
-                goalId,
-                `Clarify and plan accepted Inbox turn ${eventId}.`,
-                admission,
-                { supportingWrites: references.writes, references: references.planning },
-              )
+              await project.controller.ensurePlanning(goalId, firstWork.objective, admission, {
+                supportingWrites: references.writes,
+                references: references.planning,
+              })
             } else if (admission.write) {
               throw new Error(
                 `Goal ${goalId} already exists; use request_planning or reopen it for a new instruction`,
               )
             }
           }
+          const planningWork = [...(await project.store.readPackage(goalId)).works.values()].find(
+            (work) => work.attributes.kind === 'planning',
+          )
+          if (!planningWork) throw new Error('Initial Planning Work was not published')
           return {
-            summary: `Created Goal ${goalId}.`,
+            summary: `Created Goal ${goalId} with Planning Work ${planningWork.attributes.id}.`,
             changed:
               !existing ||
               Boolean(admission.write) ||
@@ -912,6 +928,8 @@ export function createAssistantTools(options: {
             value: {
               projectId: project.projectId,
               goalId,
+              workId: planningWork.attributes.id,
+              firstWorkKind: 'planning',
               references: references.planning,
               remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, goalId),
             },

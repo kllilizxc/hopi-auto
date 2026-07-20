@@ -147,9 +147,11 @@ Coordinator integration is deterministic kernel behavior, not another responsibi
 stage. Project overrides, arbitrary passes, capability matching, workflow expressions, and a
 workflow editor are deferred.
 
-Planning is a responsibility, not a mandatory admission stage. Goal creation atomically publishes
-either one initial Planning Work or one Assistant-dispatched Engineering Work. Direct admission
-does not imply Goal completion: after Engineering Work drains, the ordinary final Planning
+Planning is a responsibility, not a mandatory admission stage. Goal creation requires its caller to
+author and explicitly select one Planning or Engineering first Work, then publishes it atomically
+with the Goal and accepted Input. Coordinator derives structural Work fields but not its semantic
+assignment. Direct admission does not imply Goal completion: after Engineering Work drains, the
+ordinary final Planning
 assessment still decides whether the Goal is complete, needs more Work, or needs authority.
 
 Agent permission follows resource ownership rather than command allowlists. Within the resources

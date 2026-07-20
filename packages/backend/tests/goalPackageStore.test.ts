@@ -36,6 +36,11 @@ describe('createGoalPackageStore', () => {
       constraints: ['Never mutate a user checkout.'],
       successCriteria: ['All MVP acceptance scenarios pass.'],
       priority: 10,
+      firstPlanningWork: {
+        title: 'Plan the MVP alignment',
+        objective: 'Decide how to replace the legacy workflow authority safely.',
+        acceptanceCriteria: ['The plan is sufficient to publish the Engineering Work DAG.'],
+      },
     })
 
     expect(goalPackage.goal.attributes).toEqual({
@@ -55,8 +60,9 @@ describe('createGoalPackageStore', () => {
     )
     expect(goalPackage.goal.body).not.toContain('## Non-Goals')
     const planning = [...goalPackage.works.values()][0]
-    expect(planning?.body).toContain('Clarify the current Goal contract and accepted Inputs')
-    expect(planning?.body).not.toContain('Replace every legacy workflow authority.')
+    expect(planning?.attributes.title).toBe('Plan the MVP alignment')
+    expect(planning?.body).toContain('Decide how to replace the legacy workflow authority safely.')
+    expect(planning?.body).toContain('The plan is sufficient to publish the Engineering Work DAG.')
     expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-1'))).text()).toContain(
       '## Current Design',
     )

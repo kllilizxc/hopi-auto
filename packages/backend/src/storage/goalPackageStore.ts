@@ -37,6 +37,11 @@ export interface CreateCanonicalGoalInput {
   acceptedInput?: InputDocument
   supportingWrites?: PublicationWrite[]
   planningReferences?: readonly PlanningReference[]
+  firstPlanningWork?: {
+    title: string
+    objective: string
+    acceptanceCriteria: readonly string[]
+  }
   initialEngineeringWork?: {
     id: string
     title: string
@@ -112,6 +117,9 @@ export function createGoalPackageStore(
       if (input.initialEngineeringWork && !acceptedInputPath) {
         throw new Error('Initial Assistant Engineering Work requires accepted Goal Input')
       }
+      if (input.firstPlanningWork && input.initialEngineeringWork) {
+        throw new Error('Goal creation requires exactly one first Work contract')
+      }
       const initialWork = input.initialEngineeringWork
         ? createAssistantEngineeringWork({
             ...input.initialEngineeringWork,
@@ -120,7 +128,7 @@ export function createGoalPackageStore(
             acceptedInputPath: acceptedInputPath ?? '',
             references: input.planningReferences,
           })
-        : initialPlanningWork(input, acceptedInputPath)
+        : createInitialPlanningWork(input, acceptedInputPath)
 
       await publisher.publish({
         root: paths.publicationRoot,
@@ -329,14 +337,23 @@ function initialGoalDocument(input: CreateCanonicalGoalInput): GoalDocument {
   }
 }
 
-function initialPlanningWork(
+function createInitialPlanningWork(
   input: CreateCanonicalGoalInput,
   acceptedInputPath: string | null,
 ): WorkDocument {
+  const contract = input.firstPlanningWork ?? {
+    title: 'Clarify and plan the Goal',
+    objective:
+      'Clarify the current Goal contract and accepted Inputs, then update design and the sparse Engineering Work DAG.',
+    acceptanceCriteria: [
+      'Material ambiguity is resolved or raised through targeted Attention.',
+      'The design documents and sparse Engineering Work DAG are current.',
+    ],
+  }
   return {
     attributes: {
       id: 'plan-initial',
-      title: 'Clarify and plan the Goal',
+      title: contract.title.trim(),
       kind: 'planning',
       stage: 'plan',
       notBefore: null,
@@ -348,12 +365,11 @@ function initialPlanningWork(
     body: [
       '## Objective',
       '',
-      'Clarify the current Goal contract and accepted Inputs, then update design and the sparse Engineering Work DAG.',
+      contract.objective.trim(),
       '',
       '## Acceptance Criteria',
       '',
-      '- Material ambiguity is resolved or raised through targeted Attention.',
-      '- The design documents and sparse Engineering Work DAG are current.',
+      ...contract.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
       '',
       ...(acceptedInputPath ? ['## Accepted Inputs', '', `- ${acceptedInputPath}`, ''] : []),
       ...(input.planningReferences?.length

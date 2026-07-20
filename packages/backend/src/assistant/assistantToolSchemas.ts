@@ -32,6 +32,21 @@ const directEngineeringWorkSchema = z
   })
   .strict()
 
+const firstWorkSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('planning'),
+      title: z.string().trim().min(1),
+      objective: z.string().trim().min(1),
+      acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
+    })
+    .strict(),
+  directEngineeringWorkSchema
+    .omit({ dependsOn: true })
+    .extend({ kind: z.literal('engineering') })
+    .strict(),
+])
+
 export const mainAssistantToolNames = [
   'hopi_read_state',
   'hopi_manage_project',
@@ -151,7 +166,9 @@ export const assistantToolSchemas = {
       title: z.string().trim().min(1),
       objective: z.string().trim().min(1),
       priority: z.number().int().optional(),
-      initialWork: directEngineeringWorkSchema.omit({ dependsOn: true }).optional(),
+      firstWork: firstWorkSchema.describe(
+        'Required first Work. Choose planning when decisions or decomposition remain; choose engineering only for one complete, verifiable Work that preserves every explicit Goal constraint.',
+      ),
       references: goalReferences,
     })
     .strict(),

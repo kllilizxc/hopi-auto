@@ -374,7 +374,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Manage Project | Link a Project, add or rebind its Repos, or initialize an explicitly named empty or missing leaf directory | Assistant-home Project links and, for initialization, the selected Repo |
 | Configure models | Set or inherit the Assistant or one Project's coding defaults | Assistant adapter config or Assistant-home Project settings |
 | Write preferences | Replace durable cross-Project user defaults | Assistant-home `preference.md` |
-| Create Goal | Create one Goal, record the current instruction, and start either one direct Engineering Work or initial Planning | Goal package and Goal Input |
+| Create Goal | Create one Goal, record the current instruction, and explicitly author its first Planning or Engineering Work | Goal package, Goal Input, and exactly one first Work |
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Engineering Work | Admit one cohesive Engineering Work directly from the current Input | Goal Input and one Engineering Work |
 | Start planning | Record the current instruction for a Goal and ensure Planning under either the same contract or a new contract revision | Goal Input and Planning Work; never retries Work or resolves Attention implicitly |
@@ -428,11 +428,22 @@ existing durable Inbox attachment reference and a free-form purpose. This is an 
 not a model-produced Action result or semantic schema. The speaking Assistant selects it; the
 backend only validates provenance and performs the deterministic copy and Markdown publication.
 
-`Create Goal` is complete admission of the current user instruction: it creates the Goal Input and
-either one initial Planning guard or one direct Engineering Work in one publication. `Create
-Engineering Work` provides the same bounded admission for an existing active Goal with no open
-Planning Work. The Work contract must be complete and proportionate; it may name existing
-dependencies and several Repos, but the tool accepts one Work rather than an array.
+`Create Goal` is complete admission of the current user instruction: its required `firstWork`
+explicitly selects `planning` or `engineering` and supplies that Work's title, objective, and
+acceptance criteria. HOPI publishes the Goal Input and exactly that first Work in one publication;
+it never infers omission as "no Work" or silently chooses a responsibility. An Engineering first
+Work also names its Repos. HOPI owns structural facts such as ID, initial stage, revision, empty
+dependencies, and dispatch provenance, while the speaking Assistant owns the semantic Work
+contract. `Create Engineering Work` provides the same bounded admission for an existing active Goal
+with no open Planning Work. A Work contract must be complete and proportionate; it may name several
+Repos, but Goal creation accepts one Work rather than an array.
+
+The Assistant selects Engineering only when that one Work preserves every explicit Goal constraint
+and can be verified without an unresolved operator decision. A named model, tool, workflow, or
+delivery path is part of the contract rather than permission to substitute an available capability.
+Otherwise it selects Planning and states the concrete decisions or decomposition that Planning must
+produce. The product's explicit Create-with-Planning UI supplies its own Planning contract through
+the same domain boundary.
 
 One Inbox Input may directly admit at most one Engineering Work across every Goal in the Home.
 The canonical `assistantDispatch` reference and event-scoped serialization make exact replay

@@ -46,6 +46,12 @@ test('contracts one ordinary Assistant instruction through Planner, Generator, R
           goalId: GOAL_ID,
           title: 'Deliver deterministic feature',
           objective: 'Change the fixture feature from 1 to 2 and integrate it safely.',
+          firstWork: {
+            kind: 'planning',
+            title: 'Plan deterministic feature delivery',
+            objective: 'Plan how to change the fixture feature from 1 to 2 and verify it.',
+            acceptanceCriteria: ['The plan is sufficient to publish verifiable Engineering Work.'],
+          },
         })
         return {
           reply: 'Created the delivery Goal.',

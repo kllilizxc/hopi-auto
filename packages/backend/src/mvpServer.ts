@@ -440,6 +440,15 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               title: body.title,
               objective: body.objective,
               priority: body.priority,
+              firstWork: {
+                kind: 'planning',
+                title: `Plan ${body.title}`,
+                objective: `Produce the design and Engineering Work needed to achieve this Goal: ${body.objective}`,
+                acceptanceCriteria: [
+                  'Material ambiguity is resolved or raised through targeted Attention.',
+                  'The design and Engineering Work DAG are sufficient to deliver the Goal.',
+                ],
+              },
             },
             reply: `Created Goal ${goalId}.`,
             disposition: 'tool:create_goal',

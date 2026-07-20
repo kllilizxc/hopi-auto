@@ -161,6 +161,12 @@ function createAssistant(): AssistantModelRunner & { eventIds: string[]; created
                 goalId: GOAL_B,
                 title: 'Deliver B',
                 objective: 'Deliver feature B.',
+                firstWork: {
+                  kind: 'planning',
+                  title: 'Plan feature B',
+                  objective: 'Plan the work needed to deliver feature B.',
+                  acceptanceCriteria: ['The plan is sufficient to create Engineering Work.'],
+                },
               },
             }),
           })

@@ -70,6 +70,20 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'Include the returned goalId',
     )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'exactly one required firstWork',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'never silently substitute a named model, tool, workflow, or delivery path',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema).toMatchObject(
+      {
+        required: expect.arrayContaining(['projectId', 'title', 'objective', 'firstWork']),
+        properties: {
+          firstWork: { anyOf: expect.any(Array) },
+        },
+      },
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
       'Start Planning',
     )

@@ -393,9 +393,12 @@ decision that changes expected behavior increment `contractRevision`. Explicit r
 increments it. Priority, lifecycle alone, Work decomposition, retry, findings, and `notBefore`
 do not.
 
-A new Goal is active and includes exactly one initial Work: either Planning Work, or one
-Assistant-dispatched Engineering Work at `generate`. Direct Engineering admission does not assert
-that the Work completes the Goal; it only removes an unnecessary initial Planning pass. A
+A new Goal is active and includes exactly one explicitly selected first Work: either Planning Work,
+or one Assistant-dispatched Engineering Work at `generate`. The admission caller authors the Work
+title, objective, and acceptance criteria; Coordinator supplies only structural fields such as ID,
+initial stage, revision, dependency invariants, and dispatch provenance. Direct Engineering
+admission does not assert that the Work completes the Goal; it only removes an unnecessary initial
+Planning pass. A
 non-active Goal cannot own a live Run lease:
 Coordinator interrupts that Goal's admitted Runs without disturbing other Goals. Pause therefore
 prevents new dispatch, interrupts running passes, and rejects any racing result publication or
@@ -548,13 +551,16 @@ replaces its concise Objective with the latest trigger, and preserves plus appen
 reference paths; otherwise it creates a stable ID from the triggering event or planning cause. The
 Objective describes the current reason to plan, not an append-only trigger history.
 
-When selected, the initial Planning Work is a concise control envelope. Its body points Planner at
-the current Goal and its accepted Input paths; it does not copy the Goal objective. Goal creation omits empty optional
-constraints, non-goals, and success-criteria sections instead of storing placeholder text. The Goal
-contract and verbatim Input remain separate first-class documents because normalization and source
-provenance are different facts.
+When selected, the initial Planning Work is a concise, caller-authored assignment: its title,
+objective, and acceptance criteria state why Planning is needed and which planning result is
+expected. Its body also points Planner at the current Goal and accepted Input paths; it does not copy
+the Goal objective. Generic Planner responsibility belongs to the role prompt and result validator,
+not repeated fixed prose in every Work. Goal creation omits empty optional constraints, non-goals,
+and success-criteria sections instead of storing placeholder text. The Goal contract and verbatim
+Input remain separate first-class documents because normalization and source provenance are
+different facts.
 
-Triggers include Goal creation without a directly admitted Engineering Work, material contract
+Triggers include Goal creation with a Planning first Work, material contract
 change, resume, reopen, stale output, an explicit
 speaking-Assistant planning request after Attention, and an active Goal with neither nonterminal
 Work nor a current completion proposal.

@@ -321,6 +321,7 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       title: '优化整体前端样式',
       objective: '统一并优化整个前端界面。',
+      firstWork: planningFirstWork('规划整体前端样式优化。'),
     })
 
     expect(result).toMatchObject({
@@ -344,6 +345,12 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-launch',
       title: 'Launch',
       objective: 'Ship the first release.',
+      firstWork: {
+        kind: 'planning',
+        title: 'Plan the launch',
+        objective: 'Decide how to stage and verify the first release.',
+        acceptanceCriteria: ['The release plan is sufficient to create Engineering Work.'],
+      },
     })
 
     const goalPackage = await fixture.goalStore.readPackage('G-launch')
@@ -353,6 +360,13 @@ describe('Assistant HOPI tools', () => {
     expect(goalPackage.inputs[0]?.body).toBe('Create the launch Goal.\n')
     expect(goalPackage.works.get('plan-initial')?.body).toContain('## Accepted Inputs')
     expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-1.md')
+    expect(goalPackage.works.get('plan-initial')?.attributes.title).toBe('Plan the launch')
+    expect(goalPackage.works.get('plan-initial')?.body).toContain(
+      'Decide how to stage and verify the first release.',
+    )
+    expect(goalPackage.works.get('plan-initial')?.body).toContain(
+      'The release plan is sufficient to create Engineering Work.',
+    )
   })
 
   test('creates a Goal with one direct Engineering Work instead of initial Planning', async () => {
@@ -367,7 +381,8 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-direct',
       title: 'Rename the reader entry',
       objective: 'Use the requested reader-facing title without changing other labels.',
-      initialWork: {
+      firstWork: {
+        kind: 'engineering',
         title: 'Rename the reader entry',
         objective: 'Change the reader entry title and preserve every unrelated label.',
         acceptanceCriteria: [
@@ -405,7 +420,8 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       title: 'Rename the reader entry',
       objective: 'Use the requested reader-facing title.',
-      initialWork: {
+      firstWork: {
+        kind: 'engineering',
         title: 'Rename the reader entry',
         objective: 'Change the reader entry title.',
         acceptanceCriteria: ['The reader entry uses the requested title.'],
@@ -667,6 +683,7 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-image',
       title: 'Reference board',
       objective: 'Recreate the board layout.',
+      firstWork: planningFirstWork('Plan how to recreate the selected board reference.'),
       references: [
         {
           attachmentRef: selectedRef,
@@ -717,6 +734,7 @@ describe('Assistant HOPI tools', () => {
         goalId: 'G-invalid-image-path',
         title: 'Reference layout',
         objective: `Recreate ${attachmentRef}.`,
+        firstWork: planningFirstWork('Plan how to recreate the selected layout reference.'),
         references: [
           {
             attachmentRef,
@@ -741,6 +759,7 @@ describe('Assistant HOPI tools', () => {
         goalId: 'G-local-image-path',
         title: 'Reference layout',
         objective: 'Recreate /home/user/.codex/generated_images/reference.png.',
+        firstWork: planningFirstWork('Plan how to recreate the generated layout reference.'),
       }),
     ).rejects.toThrow('/home/user/.codex/generated_images/reference.png')
     expect(await fixture.goalStore.readGoal('G-local-image-path')).toBeNull()
@@ -2476,4 +2495,13 @@ async function createTestRepo(path: string) {
 
 function pngBytes(marker = 0) {
   return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker])
+}
+
+function planningFirstWork(objective: string) {
+  return {
+    kind: 'planning' as const,
+    title: 'Plan the Goal',
+    objective,
+    acceptanceCriteria: ['The plan is sufficient to create verifiable Engineering Work.'],
+  }
 }
