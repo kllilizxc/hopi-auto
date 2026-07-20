@@ -426,10 +426,12 @@ a non-blocking suggestion conversation-only unless the operator intends it to ch
 or delivery. `Write design` is the corresponding explicit adoption when the requested durable effect
 is documentation rather than implementation; it does not mechanically request Planning.
 
-Starting Planning never retries, resets, cancels, or resolves Work or Attention. An open Attention
-therefore cannot disappear merely because Planner was invoked. Planner's empty proposal means only
-that Planning changed no canonical contract or DAG; it does not claim that Coordinator will retry a
-blocked responsibility.
+Starting Planning never retries, resets, or cancels Engineering Work. By default it atomically
+settles open Attention attached to the current Inbox turn only when that Attention targets the exact
+Planning Work being started; `resolveAttention: false` preserves it. It never settles Goal, Project,
+Engineering Work, or unrelated Planning Attention. Planner's empty proposal means only that Planning
+changed no canonical contract or DAG; it does not claim that Coordinator will retry a blocked
+responsibility.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from

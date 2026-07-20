@@ -203,8 +203,10 @@ Work's Attention.
 
 Assistant derives the next ordinary operation from canonical target and Work state: Control retries
 or cancels Work, design plus Planning changes authority, and Resolve Attention clears only a verified
-condition. Starting Planning itself never resolves, retries, or resets Attention or Work, and an
-empty Planner proposal means only that Planning changed nothing.
+condition. Starting Planning defaults to settling current-turn Attention targeted exactly at that
+Planning Work because the accepted Input supersedes its old question; the caller may preserve it
+explicitly. It never resolves other Attention, retries Engineering Work, or resets Engineering Work.
+An empty Planner proposal means only that Planning changed nothing.
 
 Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
 not proof that a deterministic environment defect was repaired. Speaking Assistant may describe a

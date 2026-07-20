@@ -89,7 +89,8 @@ if (mode !== 'reflection') {
   server.registerTool(
     'hopi_start_planning',
     {
-      description: 'Start Planning for a Goal. The selected mode controls its contract revision.',
+      description:
+        'Start Planning for a Goal. By default this atomically resolves current-turn Attention only when it targets the exact Planning Work being started; pass resolveAttention: false to preserve it. The selected mode controls contract revision.',
       inputSchema: assistantMcpToolSchemas.hopi_start_planning,
     },
     (args) => callTool('hopi_start_planning', args),

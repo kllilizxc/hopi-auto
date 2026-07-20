@@ -1257,7 +1257,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
   })
 
-  test('starting Planning never settles its exact referenced Attention', async () => {
+  test('starting Planning settles attached Attention targeting that Planning Work by default', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await fixture.controller.ensureResponsibilityFailureAttention(
@@ -1282,21 +1282,61 @@ describe('Assistant HOPI tools', () => {
       {
         projectId: 'P-1',
         goalId: 'G-1',
-        mode: 'same_contract',
+        mode: 'new_contract_revision',
       },
     )
 
     const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
     expect(planned.value).toMatchObject({
-      attention: { settledRefs: [], transferredRefs: [] },
-      unresolvedAttentionRefs: [reference],
+      attention: { settledRefs: [reference], transferredRefs: [] },
+      unresolvedAttentionRefs: [],
     })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-replan-attention.md')
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: null,
+      resolvedAt: expect.any(String),
+      operatorRequest: null,
     })
-    expect(goalPackage.attentions.get(attention.attributes.id)?.body).not.toContain('## Resolution')
+    expect(goalPackage.attentions.get(attention.attributes.id)?.body).toContain(
+      'Accepted Inbox turn EV-replan-attention superseded the prior Planning question.',
+    )
+  })
+
+  test('starting Planning preserves attached Planning Attention when explicitly requested', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await fixture.controller.ensureResponsibilityFailureAttention(
+      'G-1',
+      'plan-initial',
+      'planner',
+      'The current implementation lineage needs a new represented plan.',
+    )
+    const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-preserve-attention',
+      content: 'Record partial context but keep the current question open.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+
+    const planned = await fixture.tools.executeForEvent(
+      'EV-preserve-attention',
+      'hopi_start_planning',
+      {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        mode: 'same_contract',
+        resolveAttention: false,
+      },
+    )
+
+    expect(planned.value).toMatchObject({
+      attention: { settledRefs: [], transferredRefs: [] },
+      unresolvedAttentionRefs: [reference],
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
+        ?.attributes.resolvedAt,
+    ).toBeNull()
   })
 
   test('answers a blocked Planner with one represented material revision', async () => {

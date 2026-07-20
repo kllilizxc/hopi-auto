@@ -1048,6 +1048,41 @@ export function createAssistantTools(options: {
             args.goalId,
             args.references,
           )
+          const before = await project.store.readPackage(args.goalId)
+          const activePlanning = findActivePlanning(before)
+          const settlementRefs =
+            args.resolveAttention && activePlanning && event.attributes.context
+              ? normalizeInboxAttentionReferences(event.attributes.context).filter((reference) => {
+                  const parsed = parseAttentionReference(reference)
+                  if (
+                    !parsed ||
+                    parsed.scope !== 'goal' ||
+                    parsed.projectId !== project.projectId ||
+                    parsed.goalId !== args.goalId
+                  ) {
+                    return false
+                  }
+                  const attention = before.attentions.get(parsed.attentionId)
+                  return (
+                    attention?.attributes.resolvedAt === null &&
+                    attention.attributes.target ===
+                      workAttentionTarget(project.projectId, args.goalId, activePlanning.attributes.id)
+                  )
+                })
+              : []
+          const planningSettlement: PlanningAttentionSettlement | undefined =
+            settlementRefs.length > 0
+              ? {
+                  attentionIds: settlementRefs.map((reference) => {
+                    const parsed = parseAttentionReference(reference)
+                    if (!parsed || parsed.scope !== 'goal') {
+                      throw new Error(`Invalid Planning Attention reference: ${reference}`)
+                    }
+                    return parsed.attentionId
+                  }),
+                  resolution: `Accepted Inbox turn ${eventId} superseded the prior Planning question.`,
+                }
+              : undefined
           let planning: WorkDocument
           if (args.mode === 'new_contract_revision') {
             await project.controller.applyMaterialInstruction(args.goalId, {
@@ -1058,6 +1093,7 @@ export function createAssistantTools(options: {
                 supportingWrites: references.writes,
                 references: references.planning,
               },
+              planningSettlement,
             })
             project.reconciler?.interruptRuns(args.goalId)
             const current = await project.store.readPackage(args.goalId)
@@ -1073,6 +1109,7 @@ export function createAssistantTools(options: {
               `Interpret accepted Inbox turn ${eventId} against the current Goal and design.`,
               admission,
               { supportingWrites: references.writes, references: references.planning },
+              planningSettlement,
             )
           }
           const unresolvedAttentionRefs = await remainingGoalAttentionRefs(
@@ -1080,7 +1117,7 @@ export function createAssistantTools(options: {
             args.goalId,
           )
           return {
-            summary: `Planning started for ${args.goalId} without settling Attention.`,
+            summary: `Planning started for ${args.goalId}; settled ${settlementRefs.length} attached Planning Attention reference(s).`,
             changed: true,
             value: {
               status: 'accepted',
@@ -1098,7 +1135,7 @@ export function createAssistantTools(options: {
                 workId: planning.attributes.id,
                 stage: planning.attributes.stage,
               },
-              attention: { settledRefs: [], transferredRefs: [] },
+              attention: { settledRefs: settlementRefs, transferredRefs: [] },
               unresolvedAttentionRefs,
             },
           }

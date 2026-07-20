@@ -75,6 +75,7 @@ export interface GoalController {
       content: string
       acceptedInput?: PlanningInputAdmission
       planningContext?: PlanningContext
+      planningSettlement?: PlanningAttentionSettlement
     },
   ): Promise<GoalDocument>
   ensureAttemptsAttention(goalId: string, workId: string): Promise<AttentionDocument>
@@ -365,6 +366,7 @@ export function createGoalController(
           `Reassess accepted Inbox event ${input.eventId}.`,
           input.acceptedInput,
           input.planningContext,
+          input.planningSettlement,
         )
         return (await store.readPackage(goalId)).goal
       }
@@ -374,6 +376,7 @@ export function createGoalController(
         `Interpret accepted Inbox event ${input.eventId} and update the contract, design, and Work plan.`,
         input.acceptedInput,
         input.planningContext,
+        input.planningSettlement,
       )
       goalPackage = await store.readPackage(goalId)
       for (const attention of goalPackage.attentions.values()) {

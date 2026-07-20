@@ -191,6 +191,12 @@ export const assistantToolSchemas = {
           'Use same_contract when Goal outcome and success remain unchanged; use new_contract_revision only when outcome, scope, constraints, success, or behavior changes.',
         )
         .default('same_contract'),
+      resolveAttention: z
+        .boolean()
+        .describe(
+          'Defaults to true: atomically resolve current-turn Attention only when it targets the exact Planning Work being started. Pass false to preserve it.',
+        )
+        .default(true),
       references: goalReferences,
     })
     .strict(),

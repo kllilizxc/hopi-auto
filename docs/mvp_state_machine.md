@@ -244,8 +244,9 @@ invalidate the current Planner; merely discussing a possible change does not.
 An explicit reply carries `replyTo` and exact Attention references as evidence, not a required
 decision. Assistant reads the current state and applies ordinary tools: direct Work creation,
 design plus Planning, Control, or Attention resolution. Resolving an Attention validates the
-reported condition again; a reply alone does not clear it. Starting Planning never retries Work or
-resolves Attention implicitly. Ordinary page-scoped turns carry no inferred Attention references.
+reported condition again; a reply alone does not clear it. Starting Planning settles attached
+Attention by default only when it targets the exact Planning Work being restarted, and may preserve
+it explicitly. Ordinary page-scoped turns carry no inferred Attention references.
 If evidence does not establish a safe effect, the Attention remains open for a later Assistant turn
 or an explicit user request.
 

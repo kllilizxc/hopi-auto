@@ -65,6 +65,12 @@ describe('HOPI MCP server', () => {
       'Include the returned goalId',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain('Start Planning')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
+      'resolveAttention: false',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.inputSchema).toMatchObject({
+      properties: { resolveAttention: { type: 'boolean', default: true } },
+    })
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
       'includeEvidence: true',
     )
