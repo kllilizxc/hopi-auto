@@ -1,3 +1,4 @@
+import { splitAssistantText } from './assistantText'
 import type {
   AgentRuntimeEvent,
   AgentTranscriptEntryKind,
@@ -276,6 +277,7 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   }
 
   if (eventType === 'system') {
+    if (eventSubtype === 'thinking_tokens') return []
     return [
       transcriptEvent('claude', 'status', claudeSystemSummary(value, eventSubtype), {
         vendorEventType: `system.${eventSubtype ?? 'status'}`,
@@ -454,14 +456,40 @@ function normalizeContentBlocks(
   for (const block of blocks) {
     const value = objectValue(block)
     const blockType = stringValue(value?.type)
+    if (blockType === 'thinking') {
+      const thinking = stringValue(value?.thinking)
+      if (thinking) {
+        events.push(
+          transcriptEvent(transport, 'status', thinking, {
+            vendorEventType: `${vendorEventType}.thinking`,
+          }),
+        )
+      }
+      continue
+    }
+
     if (blockType === 'text') {
       const text = extractText(value)
-      if (text) {
+      const parts = splitAssistantText(text)
+      if (parts.thoughtText) {
+        events.push(
+          transcriptEvent(transport, 'status', parts.thoughtText, {
+            vendorEventType: `${vendorEventType}.thinking`,
+          }),
+        )
+      }
+      if (parts.malformedThoughtEnvelope) {
+        events.push(
+          transcriptEvent(transport, 'status', 'Provider emitted a malformed thought envelope.', {
+            vendorEventType: `${vendorEventType}.protocol_error`,
+          }),
+        )
+      } else if (parts.visibleText) {
         events.push(
           transcriptEvent(
             transport,
             defaultKind === 'assistant' ? 'assistant' : 'tool_result',
-            text,
+            parts.visibleText,
             {
               vendorEventType,
             },

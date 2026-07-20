@@ -52,7 +52,9 @@ describe('WorkspaceAssistant conversation', () => {
         `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
         `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
         'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
-        `console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:${JSON.stringify(finalReply)}}))`,
+        'console.log(JSON.stringify({type:"system",subtype:"thinking_tokens",estimated_tokens:42,session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"assistant",message:{id:"message-1",content:[{type:"thinking",thinking:"Checking the image."}]},session_id:"claude-session"}))',
+        `console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:${JSON.stringify(`<thought>Private reasoning.</thought>\n${finalReply}`)}}))`,
         '',
       ].join('\n'),
     )
@@ -72,18 +74,26 @@ describe('WorkspaceAssistant conversation', () => {
       resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     })
 
-    const result = await runner.run({
-      eventId: 'EV-claude',
-      prompt: 'Inspect the image.',
-      session: vendorSession('claude', 'claude-session'),
-      cwd,
-      lastMessageFile: join(cwd, 'last-message.txt'),
-      transcriptFile: join(cwd, 'transcript.log'),
-      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
-      toolToken: 'claude-token',
-      imageFiles: [imagePath],
-      readableRoots: [readableRoot],
-    })
+    const events: AgentRuntimeEvent[] = []
+    const result = await runner.run(
+      {
+        eventId: 'EV-claude',
+        prompt: 'Inspect the image.',
+        session: vendorSession('claude', 'claude-session'),
+        cwd,
+        lastMessageFile: join(cwd, 'last-message.txt'),
+        transcriptFile: join(cwd, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'claude-token',
+        imageFiles: [imagePath],
+        readableRoots: [readableRoot],
+      },
+      {
+        onEvent: (event) => {
+          events.push(event)
+        },
+      },
+    )
 
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
     const mcpConfig = await Bun.file(join(cwd, 'claude-mcp.json')).json()
@@ -99,6 +109,16 @@ describe('WorkspaceAssistant conversation', () => {
     expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
     expect(await Bun.file(promptFile).text()).toContain(imagePath)
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
+    expect(events).toContainEqual({
+      kind: 'transcript',
+      transport: 'claude',
+      entryKind: 'status',
+      summary: 'Checking the image.',
+      vendorEventType: 'assistant.thinking',
+    })
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ vendorEventType: 'system.thinking_tokens' }),
+    )
   })
 
   test('throws a Claude terminal provider error instead of accepting its synthetic reply', async () => {
@@ -155,6 +175,47 @@ describe('WorkspaceAssistant conversation', () => {
         vendorEventType: 'result.api_error',
       }),
     )
+  })
+
+  test('fails closed when Claude cannot separate a malformed thought envelope', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-malformed-thought')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:"<thought\\nPrivate reasoning followed by an indistinguishable answer."}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-malformed-thought')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'dontAsk',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await expect(
+      runner.run({
+        eventId: 'EV-malformed-thought',
+        prompt: 'Continue.',
+        session: vendorSession('claude', 'claude-session'),
+        cwd,
+        lastMessageFile: join(cwd, 'last-message.txt'),
+        transcriptFile: join(cwd, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'malformed-thought-token',
+      }),
+    ).rejects.toThrow(
+      'Claude returned a malformed thought envelope instead of a separable final reply.',
+    )
+    expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('<thought')
+    expect(await Bun.file(join(cwd, 'last-message.txt')).exists()).toBe(false)
   })
 
   test('rebuilds directly instead of resuming an incompatible vendor session', async () => {

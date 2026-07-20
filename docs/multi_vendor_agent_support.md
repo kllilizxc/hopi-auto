@@ -15,11 +15,14 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - one prompt plus optional local image paths
 - one injected `hopi` MCP server with the current turn capability
 - normalized message, tool-call, tool-result, status, and error events
+- provider-native thinking summaries normalized as internal status; count-only thinking progress is
+  protocol noise and never substitutes for the summary
 - lossless raw stdout and stderr
 - process-group cancellation and bounded termination
 - read-only access to exact canonical and diagnostic paths under Assistant Home
 - an optional vendor session ID for the speaking Assistant
-- a final plain-text reply or an explicit transport failure
+- a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
+  when an envelope is malformed and cannot be separated without guessing
 
 Vendor commands, event shapes, session flags, permission flags, and configuration files stay inside
 the adapter. Canonical documents, Inbox ordering, Attention delivery, Reflection handoff, Work

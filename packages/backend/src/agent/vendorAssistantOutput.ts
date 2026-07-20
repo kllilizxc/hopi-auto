@@ -1,3 +1,4 @@
+import { splitAssistantText } from './assistantText'
 import type { AgentTranscriptTransport } from './runtimeEvents'
 
 export type AssistantTransport = Exclude<AgentTranscriptTransport, 'process'>
@@ -66,9 +67,20 @@ export function parseVendorAssistantOutput(
           },
         }
       }
+      const text = splitAssistantText(result)
+      if (text.malformedThoughtEnvelope) {
+        return {
+          sessionId,
+          terminalError: {
+            message:
+              'Claude returned a malformed thought envelope instead of a separable final reply.',
+            sessionInvalid: false,
+          },
+        }
+      }
       return {
         sessionId,
-        finalText: result,
+        finalText: text.visibleText,
       }
     }
     if (eventType !== 'assistant') return { sessionId }
@@ -111,7 +123,9 @@ function contentText(value: unknown) {
   if (!Array.isArray(value)) return undefined
   const parts = value.flatMap((entry) => {
     const block = objectValue(entry)
-    return block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+    if (block?.type !== 'text' || typeof block.text !== 'string') return []
+    const text = splitAssistantText(block.text)
+    return text.malformedThoughtEnvelope || !text.visibleText ? [] : [text.visibleText]
   })
   return parts.length > 0 ? parts.join('\n') : undefined
 }

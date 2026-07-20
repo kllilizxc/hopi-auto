@@ -606,6 +606,7 @@ function assistantCodexCommand(
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'Continue as one normal Assistant conversation for the operator.',
+  'The final model output contains only the operator-facing reply. Never include reasoning, scratch work, or provider thought-envelope markup in it.',
   'Use HOPI tools only for a requested durable effect. Page context disambiguates references but never implies mutation; explicit intent may choose another scope or Goal.',
   'Inbox already preserves every public turn. Keep discussion, questions, optional suggestions, and future ideas in conversation unless the operator intends to change current authority. Request Planning only when current plan or delivery should change.',
   'Ask before admission only when outcome, target, or operator intent is materially unclear; Planner owns later technical and delivery clarification.',

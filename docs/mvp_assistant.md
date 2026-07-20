@@ -616,6 +616,9 @@ The Assistant drawer shows one chronological conversation:
   newest received message can still change, nor retain a standalone completion after that completion
   is absorbed into its public reply
 - normalized model messages and useful tool activity appear while a turn runs
+- native provider thinking summaries appear only as internal collapsed activity. Token-count progress
+  such as Claude `thinking_tokens` is hidden, and a provider thought envelope can never become the
+  final operator-facing reply
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking
   turn itself fails

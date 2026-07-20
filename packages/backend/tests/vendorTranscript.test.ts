@@ -394,6 +394,61 @@ describe('normalizeProcessOutputLine', () => {
     ])
   })
 
+  test('uses Claude thinking content and ignores count-only thinking progress', () => {
+    const progress = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'system',
+        subtype: 'thinking_tokens',
+        estimated_tokens: 57,
+      }),
+    })
+    const thinking = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'thinking', thinking: 'Reviewing the current Goal state.' },
+            {
+              type: 'text',
+              text: '<thought>Checking one last invariant.</thought>\nThe Goal is ready.',
+            },
+          ],
+        },
+      }),
+    })
+
+    expect(progress).toEqual([])
+    expect(thinking).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'claude',
+        entryKind: 'status',
+        summary: 'Reviewing the current Goal state.',
+        vendorEventType: 'assistant.thinking',
+      },
+      {
+        kind: 'transcript',
+        transport: 'claude',
+        entryKind: 'status',
+        summary: 'Checking one last invariant.',
+        vendorEventType: 'assistant.thinking',
+      },
+      {
+        kind: 'transcript',
+        transport: 'claude',
+        entryKind: 'assistant',
+        summary: 'The Goal is ready.',
+        vendorEventType: 'assistant',
+      },
+    ])
+  })
+
   test('keeps Claude retry detail and honors terminal is_error over a success subtype', () => {
     const retry = normalizeProcessOutputLine({
       format: 'claude_stream_json',

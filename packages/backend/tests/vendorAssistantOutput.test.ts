@@ -40,6 +40,38 @@ describe('parseVendorAssistantOutput', () => {
     ).toEqual({ sessionId: 'session-1', finalText: text })
   })
 
+  test('removes a complete Claude thought envelope from the final reply', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          session_id: 'session-1',
+          result: '<thought>Internal reasoning.</thought>\nVisible answer.',
+        }),
+      ),
+    ).toEqual({ sessionId: 'session-1', finalText: 'Visible answer.' })
+  })
+
+  test('rejects a malformed Claude thought envelope instead of exposing reasoning', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          session_id: 'session-1',
+          result: '<thought\nInternal reasoning followed by an indistinguishable answer.',
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'session-1',
+      terminalError: {
+        message: 'Claude returned a malformed thought envelope instead of a separable final reply.',
+        sessionInvalid: false,
+      },
+    })
+  })
+
   test('treats a Claude error result as terminal even when its subtype says success', () => {
     expect(
       parseVendorAssistantOutput(
