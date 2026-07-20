@@ -336,6 +336,8 @@ The authority is split by concern rather than repeated in one large document:
 
 - Assistant receives every instruction as a normal conversation turn; selected Project or Goal is context
   only, and canonical effects occur only through HOPI tool calls.
+- Durable work uses the smallest semantic owner: the same outcome continues its Goal, a different
+  outcome in the same product creates a Goal, and a different product creates a Project before its Goal.
 - UI and Assistant expose the same semantic product operations through shared domain commands;
   pickers, navigation, and dialogs remain presentation rather than new workflow concepts.
 - Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as

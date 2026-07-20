@@ -651,11 +651,15 @@ describe('WorkspaceAssistant conversation', () => {
     ).toHaveLength(0)
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
-    expect(seen[0]?.prompt).toContain('page context is not a mutation')
+    expect(seen[0]?.prompt).toContain('page context is only a candidate')
+    expect(seen[0]?.prompt).toContain('continue the selected Goal only for the same outcome')
+    expect(seen[0]?.prompt).toContain(
+      'Admit durable delivery through Create Goal or Create Engineering Work',
+    )
     expect(seen[0]?.prompt).toContain(
       'if an effect lands in another Goal, include its name and exact Goal ID',
     )
-    expect(seen[0]?.prompt).toContain('Write design and start Planning')
+    expect(seen[0]?.prompt).toContain('write design and start Planning')
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
     expect(seen[0]?.prompt).toContain('Tool schemas and returned canonical state')
     expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')

@@ -108,7 +108,7 @@ export function createAssistantTools(options: {
     role: ConfigurableAgentRole,
     input: ProjectCodingDefaultsInput | null,
   ): Promise<void>
-  onProjectTopologyChanged?: (eventId: string) => void
+  onProjectTopologyChanged?: (eventId: string, project: LinkedProject) => void | Promise<void>
   onProjectAttentionResolved?: (projectId: string) => void | Promise<void>
   onGoalEffect?: (eventId: string, projectId: string, goalId: string) => void
   onProjectDispatchEffect?: (eventId: string, projectId: string) => void
@@ -685,7 +685,7 @@ export function createAssistantTools(options: {
           }
           const previous = before.find((candidate) => candidate.projectId === project.projectId)
           const changed = !sameProjectTopology(previous, project)
-          if (changed) options.onProjectTopologyChanged?.(eventId)
+          if (changed) await options.onProjectTopologyChanged?.(eventId, project)
           return {
             summary: changed
               ? `Updated Project ${project.projectId} topology.`

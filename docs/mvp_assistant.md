@@ -332,6 +332,12 @@ appropriate HOPI tool without conducting a delivery interview; Planner owns tech
 clarification discovered after admission. Current canonical state overrides thread memory, and the
 current Inbox turn overrides suggestions from older conversation.
 
+For durable work, Assistant chooses the smallest semantic owner. It continues the selected Goal only
+when the requested outcome is the same, creates a new Goal when the product and Repos still fit an
+existing Project, and manages a new Project before creating the Goal when none fits. Page context is
+only a candidate owner. When the required Project path is missing, that path is a material ambiguity
+and Assistant asks one concise question instead of doing the delivery in its own runtime.
+
 ## User Preferences
 
 Speaking Assistant receives the current Assistant-home `preference.md` content and digest on every
@@ -398,6 +404,10 @@ refresh prevents a successful tool call from stopping its own Assistant session.
 write and refresh is harmless because restart reads the same durable Project links. Model setting
 changes do not require a runtime rebuild; changing Assistant transport clears only the incompatible
 vendor session under the existing session rule.
+
+The changed Project is nevertheless visible to later HOPI tool calls in that same speaking turn.
+This lets Assistant call Manage Project and then Create Goal as two ordinary semantic operations;
+execution and reconciliation still begin only from the rebuilt runtime after the final reply.
 
 Create Goal, Create Engineering Work, Write design, and Start planning share one optional reference input containing an
 existing durable Inbox attachment reference and a free-form purpose. This is an MCP tool argument,

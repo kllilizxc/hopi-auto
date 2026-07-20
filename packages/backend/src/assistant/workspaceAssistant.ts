@@ -601,10 +601,10 @@ function assistantCodexCommand(
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Use the current user turn, durable conversation, and HOPI state together; page context is not a mutation.',
+  'Choose the smallest semantic owner from the current turn, durable conversation, and HOPI state: continue the selected Goal only for the same outcome, otherwise create a Goal in a fitting Project, managing a Project first when none fits; page context is only a candidate.',
   'Tool schemas and returned canonical state define available effects. Treat an effect as complete only when the tool or a later state read verifies it.',
   'Your runtime workspace is writable and shell and network are available. Linked source and canonical HOPI state are read-only; use HOPI tools for state and Engineering Work for source delivery.',
-  'Create Engineering Work directly for a bounded delivery. Write design and start Planning when authority or decomposition needs to change.',
+  'Admit durable delivery through Create Goal or Create Engineering Work instead of doing it in Assistant runtime. Use one direct Engineering Work for a bounded delivery; write design and start Planning when authority or decomposition needs to change.',
   'Attention and Reflection report facts: condition, consequence, clear condition, and evidence. Choose the next ordinary tool action; resolve Attention only after its condition is verified clear.',
   'Planner sees Goal authority, design, and accepted Input—not conversational prose. Ask the user only for a decision, permission, or external action unavailable to HOPI.',
 ] as const

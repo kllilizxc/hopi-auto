@@ -21,7 +21,7 @@ import {
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
-import type { LinkedProjectRepo } from '../domain/project'
+import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
 import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
 import { PublicationCoordinator } from '../publication/publisher'
@@ -125,7 +125,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const preview = createPreviewManager(options.homeRoot)
   const assistantToolUrl = options.assistantToolUrl
 
-  for (const linked of linkedProjects) {
+  const createProjectRuntime = (linked: LinkedProject): MvpProjectRuntime => {
     const store = createGoalPackageStore(
       linked.integrationRoot,
       linked.projectId,
@@ -167,7 +167,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
         await preview.stop(projectId, 'release_updated')
       },
     })
-    projects.set(linked.projectId, {
+    return {
       projectId: linked.projectId,
       primaryRepoId: linked.primaryRepoId,
       repos: [...linked.repos],
@@ -178,7 +178,11 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       store,
       controller,
       reconciler,
-    })
+    }
+  }
+
+  for (const linked of linkedProjects) {
+    projects.set(linked.projectId, createProjectRuntime(linked))
   }
 
   const boot = await bootstrapCoordinator({
@@ -230,7 +234,10 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     state: assistantState,
     readAgentRoleCodingDefaults: readAgentRoleModelSettings,
     updateAgentRoleCodingDefaultsForTurn: updateAgentRoleModelSettingsForTurn,
-    onProjectTopologyChanged: (eventId) => topologyChangedEvents.add(eventId),
+    onProjectTopologyChanged: (eventId, linkedProject) => {
+      projects.set(linkedProject.projectId, createProjectRuntime(linkedProject))
+      topologyChangedEvents.add(eventId)
+    },
     onProjectAttentionResolved: (projectId) => restoreProjectEligibility(projectId),
     onGoalEffect: (eventId, projectId, goalId) => protectAssistantGoal(eventId, projectId, goalId),
     onProjectDispatchEffect: (eventId, projectId) => protectAssistantProject(eventId, projectId),

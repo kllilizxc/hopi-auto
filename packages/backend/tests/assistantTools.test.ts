@@ -2295,7 +2295,9 @@ async function setup(
         inherited: input === null,
       })
     },
-    onProjectTopologyChanged: (eventId) => topologyChangedEventIds.push(eventId),
+    onProjectTopologyChanged: (eventId) => {
+      topologyChangedEventIds.push(eventId)
+    },
     onProjectAttentionResolved: (projectId) => {
       restoredProjectIds.push(projectId)
     },

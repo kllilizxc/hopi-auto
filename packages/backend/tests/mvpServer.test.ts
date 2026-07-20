@@ -367,7 +367,7 @@ describe('MVP server', () => {
     expect((await fetch(`${base}/api/state`)).status).toBe(200)
   })
 
-  test('keeps the final Assistant reply before refreshing Project topology and model session', async () => {
+  test('exposes a linked Project to later same-turn tools before refreshing runtime', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-project-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'assistant-project-repo'))
     let speakingRuns = 0
@@ -403,6 +403,29 @@ describe('MVP server', () => {
           },
         })
 
+        const goalResponse = await fetch(input.toolUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: input.toolToken,
+            name: 'hopi_create_goal',
+            arguments: {
+              projectId: 'P-via-assistant',
+              goalId: 'G-pixel-sprite-experiment',
+              title: 'Generate a right-moving pixel spritesheet',
+              objective: 'Create and evaluate the first WAN 2.2 Animate pixel-art character asset.',
+            },
+          }),
+        })
+        expect(goalResponse.status).toBe(200)
+        expect(await goalResponse.json()).toMatchObject({
+          changed: true,
+          value: {
+            projectId: 'P-via-assistant',
+            goalId: 'G-pixel-sprite-experiment',
+          },
+        })
+
         const modelResponse = await fetch(input.toolUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -424,12 +447,28 @@ describe('MVP server', () => {
           },
         })
         return {
-          reply: 'Linked Project P-via-assistant and changed the Assistant model.',
+          reply:
+            'Linked Project P-via-assistant, created its first Goal, and changed the Assistant model.',
           session: { transport: 'codex', sessionId: 'session-before-model-change' },
         }
       },
     }
-    const server = createServer({ rootDir: homeRoot, port: 0, assistantRunner })
+    const server = createServer({
+      rootDir: homeRoot,
+      port: 0,
+      assistantRunner,
+      roleRunner: {
+        async run() {
+          return {
+            result: 'fail',
+            summary: 'Test runner does not execute newly scheduled Planning.',
+            artifacts: [],
+            exitCode: 1,
+            failureKind: 'operational',
+          }
+        },
+      },
+    })
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
 
@@ -439,6 +478,7 @@ describe('MVP server', () => {
     })
     let reply: string | null = null
     let topologyVisible = false
+    let goalVisible = false
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const [feed, state] = await Promise.all([
         request(base, '/api/assistant/feed?limit=20'),
@@ -453,7 +493,17 @@ describe('MVP server', () => {
           (project) => project.projectId === 'P-via-assistant',
         ),
       )
-      if (reply && topologyVisible) {
+      goalVisible = Boolean(
+        (
+          state.projects as Array<{
+            projectId: string
+            goals: Array<{ id: string }>
+          }>
+        )
+          .find((project) => project.projectId === 'P-via-assistant')
+          ?.goals.some((goal) => goal.id === 'G-pixel-sprite-experiment'),
+      )
+      if (reply && topologyVisible && goalVisible) {
         expect(state).toMatchObject({
           home: {
             agentRoleCodingDefaults: {
@@ -469,8 +519,11 @@ describe('MVP server', () => {
       await Bun.sleep(20)
     }
 
-    expect(reply).toBe('Linked Project P-via-assistant and changed the Assistant model.')
+    expect(reply).toBe(
+      'Linked Project P-via-assistant, created its first Goal, and changed the Assistant model.',
+    )
     expect(topologyVisible).toBe(true)
+    expect(goalVisible).toBe(true)
     expect(speakingRuns).toBe(1)
     expect(
       await Bun.file(join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')).exists(),
