@@ -974,6 +974,26 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-1',
       operation: 'reopen',
     })
+    const reopenedPackage = await fixture.goalStore.readPackage('G-1')
+    expect(reopenedPackage.goal.attributes).toMatchObject({
+      lifecycle: 'active',
+      contractRevision: 2,
+    })
+    expect(
+      [...reopenedPackage.works.values()].filter(
+        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+      ),
+    ).toHaveLength(1)
+    await expect(
+      fixture.tools.executeForEvent('EV-revise', 'hopi_create_engineering_work', {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        title: 'Bypass reopened planning',
+        objective: 'Attempt a direct delivery while Planning owns the Goal.',
+        acceptanceCriteria: ['The delivery is complete.'],
+        repos: [fixture.primaryRepoId],
+      }),
+    ).rejects.toThrow('cannot bypass current Planning Work')
     const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_start_planning', {
       projectId: 'P-1',
       goalId: 'G-1',

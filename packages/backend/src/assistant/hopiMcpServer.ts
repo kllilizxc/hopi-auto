@@ -29,7 +29,7 @@ if (mode !== 'reflection') {
       'hopi_manage_project',
       {
         description:
-          'Create a Project with link_project from operator-supplied Repo paths; there is no create operation. If no path was supplied, ask for it before calling this tool. For an explicitly named empty directory or a missing final directory whose parent exists, call initialize_repository first, then link_project in the same turn. initialize_repository creates that missing final directory automatically, so never ask the operator to run mkdir. Also link or rebind Repos.',
+          'Project topology operations. link_project links or rebinds an existing Git Repo. initialize_repository initializes an explicitly named empty directory or a missing leaf whose parent exists; it creates that leaf. Missing ancestors, non-empty non-Git directories, and nested worktrees are rejected.',
         inputSchema: assistantMcpToolSchemas.hopi_manage_project,
       },
       (args) => callTool('hopi_manage_project', args),
@@ -60,7 +60,7 @@ if (mode !== 'reflection') {
     'hopi_create_goal',
     {
       description:
-        'Create a Goal and record this turn with exactly one required firstWork. Author its title, objective, and acceptanceCriteria. Choose planning when decisions, authority, or decomposition remain. Choose engineering only for one complete, verifiable Work that preserves every explicit Goal constraint; never silently substitute a named model, tool, workflow, or delivery path. Direct Work does not complete the Goal. Adopt images by attachmentRef and purpose. Include the returned goalId.',
+        'Creates a Goal, records the current Inbox Input, adopts selected image references, and creates exactly one supplied firstWork. A planning firstWork materializes Planning; an engineering firstWork materializes one Engineering Work at generate. The returned value contains the canonical Goal and Work identities.',
       inputSchema: assistantMcpToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
@@ -70,7 +70,7 @@ if (mode !== 'reflection') {
     'hopi_create_engineering_work',
     {
       description:
-        'Adopt turn to create at most one Engineering Work in an active Goal; one turn gets one Home-wide direct Work. Include Repos and dependencies. Use Planning for multiple Work or Goal/design/Work/DAG changes. Adopt images by attachmentRef and purpose.',
+        'Records the current Inbox Input and creates one supplied Engineering Work at generate in an active Goal with no nonterminal Planning Work. The Work declares Repos and dependencies. One Inbox Input can directly admit at most one Engineering Work Home-wide.',
       inputSchema: assistantMcpToolSchemas.hopi_create_engineering_work,
     },
     (args) => callTool('hopi_create_engineering_work', args),
@@ -80,7 +80,7 @@ if (mode !== 'reflection') {
     'hopi_write_design',
     {
       description:
-        'Create or update Goal-local design Markdown. Write paths are relative to the Goal design root. Relevant Inbox images may be adopted by reference and purpose. This changes documentation only; request Planning separately when delivery should change.',
+        'Creates or updates Goal-local design Markdown and can adopt selected Inbox images. Paths are relative to the Goal design root. The effect changes documentation only.',
       inputSchema: assistantMcpToolSchemas.hopi_write_design,
     },
     (args) => callTool('hopi_write_design', args),
@@ -90,7 +90,7 @@ if (mode !== 'reflection') {
     'hopi_start_planning',
     {
       description:
-        'Start Planning for a Goal. By default this atomically resolves current-turn Attention only when it targets the exact Planning Work being started; pass resolveAttention: false to preserve it. The selected mode controls contract revision.',
+        'Records the current Inbox Input and materializes Planning for an active Goal. mode controls whether the contract revision changes. resolveAttention defaults to true and settles only current-turn Attention targeting that exact Planning Work; false preserves it.',
       inputSchema: assistantMcpToolSchemas.hopi_start_planning,
     },
     (args) => callTool('hopi_start_planning', args),
@@ -99,7 +99,8 @@ if (mode !== 'reflection') {
   server.registerTool(
     'hopi_control',
     {
-      description: 'Apply one validated Goal or Work control operation.',
+      description:
+        'Applies one validated Goal or Work control transition. Reopening a done or cancelled Goal makes it active, increments contractRevision, clears completion, records the current Inbox Input, and materializes Planning. Retry and defer require a Work identity.',
       inputSchema: assistantMcpToolSchemas.hopi_control,
     },
     (args) => callTool('hopi_control', args),

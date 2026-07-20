@@ -56,10 +56,10 @@ describe('HOPI MCP server', () => {
     expect(names).not.toContain('hopi_request_user')
     expect(tools.tools).toHaveLength(11)
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
-      'there is no create operation',
+      'link_project links or rebinds',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
-      'If no path was supplied, ask for it',
+      'Missing ancestors',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
@@ -68,13 +68,13 @@ describe('HOPI MCP server', () => {
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'Include the returned goalId',
+      'canonical Goal and Work identities',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'exactly one required firstWork',
+      'exactly one supplied firstWork',
     )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'never silently substitute a named model, tool, workflow, or delivery path',
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
+      'Choose planning',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema).toMatchObject(
       {
@@ -85,10 +85,10 @@ describe('HOPI MCP server', () => {
       },
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
-      'Start Planning',
+      'materializes Planning',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
-      'resolveAttention: false',
+      'false preserves it',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.inputSchema,
@@ -106,7 +106,10 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_create_engineering_work')?.description,
-    ).toContain('at most one Engineering Work')
+    ).toContain('active Goal with no nonterminal Planning Work')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control')?.description).toContain(
+      'increments contractRevision',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
     ).toContain('verified clear')

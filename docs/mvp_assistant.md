@@ -295,9 +295,14 @@ shows a bounded, safe error summary and at most the latest retry status.
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. It receives normal shell and network capability and may write its own runtime
-and scratch files. Linked Project source and canonical documents remain read-only; HOPI mutations
-still pass through tools, and source delivery still passes through Engineering Work.
+managed project root. Each turn receives an exact execution-environment projection derived from the
+provider sandbox. The current adapters expose network access, no privilege escalation or host
+environment mutation, and one writable runtime root. Linked Project source and canonical documents
+remain read-only; HOPI mutations pass through tools, and source delivery passes through Engineering
+Work. The runtime root is provider scratch space: its paths are neither canonical nor
+operator-addressable. Canonical Evidence with an available `operatorUrl` is operator-addressable. The
+projection explicitly reports whether HOPI mutation tools are available in the current turn, so the
+model does not infer capability from filesystem permissions.
 
 HOPI exposes its tools through one local MCP server with a per-turn capability. Each supported
 vendor adapter injects that same server using the vendor's native non-interactive configuration. The server
@@ -308,17 +313,16 @@ for model tool calls, not a second durable workflow or an Assistant-specific Act
 The non-interactive vendor invocation permits the injected `hopi` MCP server plus ordinary local
 inspection and scratch work. Provider adapters expose the same owned-runtime write, linked-root
 read, and network boundary; they do not inherit unrelated personal MCP servers or configuration.
-The speaking Assistant may use provider skills and ordinary execution tools, but the HOPI contract
-is injected at the provider's developer-instruction boundary: semantic ownership is decided before
-tool choice, and a provider capability never substitutes for admitting durable delivery to a Goal or
-Engineering Work. Provider apps, plugins, memories, and workflow tools remain excluded because they
-introduce competing product authority rather than execution capability. Reflection has only HOPI
-read/handoff authority and receives no provider skill catalog. Responsibility Agents remain free to
-use execution capabilities within accepted Work. The MCP process has only a single-turn capability
-token, and the backend revokes that token when the turn ends. Tool approval therefore removes an
-impossible unattended UI prompt without becoming the authorization boundary: server-side
-capability validation, canonical target validation, controllers, and the publisher remain
-authoritative.
+The speaking Assistant may use provider skills and ordinary execution tools. Its prompt contains
+the environment projection, current scoped state observation, resource ownership, and HOPI effect
+semantics rather than a prescribed tool-selection procedure. Provider apps, plugins, memories, and
+workflow tools remain excluded because they introduce competing product authority rather than
+execution capability. Reflection has only HOPI read/handoff authority and receives no provider
+skill catalog. Responsibility Agents remain free to use execution capabilities within accepted
+Work. The MCP process has only a single-turn capability token, and the backend revokes that token
+when the turn ends. Tool approval therefore removes an impossible unattended UI prompt without
+becoming the authorization boundary: server-side capability validation, canonical target
+validation, controllers, and the publisher remain authoritative.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Their digest is derived from those exact
@@ -333,17 +337,13 @@ event-target Attention. Coordinator does not rerun the same failed invocation: a
 Assistant decision may explicitly retry after the condition changes. This keeps transport failure at
 the execution boundary instead of turning it into a hidden workflow retry policy.
 
-Before admission, Assistant asks only when the requested outcome, target Project/Goal, or operator
-intent is materially unclear. Once an instruction is clear enough to admit, Assistant calls the
-appropriate HOPI tool without conducting a delivery interview; Planner owns technical and design
-clarification discovered after admission. Current canonical state overrides thread memory, and the
-current Inbox turn overrides suggestions from older conversation.
-
-For durable work, Assistant chooses the smallest semantic owner. It continues the selected Goal only
-when the requested outcome is the same, creates a new Goal when the product and Repos still fit an
-existing Project, and manages a new Project before creating the Goal when none fits. Page context is
-only a candidate owner. When the required Project path is missing, that path is a material ambiguity
-and Assistant asks one concise question instead of doing the delivery in its own runtime.
+The model receives the current operator turn, bounded durable conversation, preferences, execution
+environment, page context, and a timestamped scoped state observation. Goal and Project tools expose
+validated preconditions and effects. Its goal is an effect whose scope, durability, and accessibility
+match the operator's intent; conversation reports that effect but does not substitute for it. No
+deterministic classifier maps prose, tool failures, or page context to a required operation; the model
+judges the semantic owner and any missing authority from those facts. Current tool validation remains
+authoritative when the observation or thread memory is stale.
 
 ## User Preferences
 
@@ -438,19 +438,15 @@ contract. `Create Engineering Work` provides the same bounded admission for an e
 with no open Planning Work. A Work contract must be complete and proportionate; it may name several
 Repos, but Goal creation accepts one Work rather than an array.
 
-The Assistant selects Engineering only when that one Work preserves every explicit Goal constraint
-and can be verified without an unresolved operator decision. A named model, tool, workflow, or
-delivery path is part of the contract rather than permission to substitute an available capability.
-Otherwise it selects Planning and states the concrete decisions or decomposition that Planning must
-produce. The product's explicit Create-with-Planning UI supplies its own Planning contract through
-the same domain boundary.
+Planning and Engineering first Work have distinct domain effects and preconditions. A named model,
+tool, workflow, or delivery path remains part of accepted authority. The product's explicit
+Create-with-Planning UI supplies its Planning contract through the same domain boundary.
 
 One Inbox Input may directly admit at most one Engineering Work across every Goal in the Home.
 The canonical `assistantDispatch` reference and event-scoped serialization make exact replay
 idempotent and reject a different or second direct Work. If the instruction needs multiple new
-Work, changes Goal contract, revises existing Work, changes durable design, or requires graph
-reordering, Assistant requests Planning. Direct admission never claims Goal completion; final
-Planning remains unchanged.
+Work, the direct admission boundary rejects the second effect. Direct admission never claims Goal
+completion; final Planning remains unchanged.
 
 `Start planning` is unnecessary after same-turn Goal creation unless Assistant deliberately
 escalates a just-admitted Work after discovering that Planning is required. Repeating an exact
@@ -492,12 +488,19 @@ Goal's exact canonical design prefix, the tool strips it instead of creating a n
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
-The Assistant never implements source changes itself because doing so would bypass Engineering Work,
-Reviewer, and C1 rather than because shell writes are globally unsafe. When current authority already defines one
-cohesive and independently verifiable delivery, it may create one Engineering Work and leave
-Generator, Reviewer, worktree isolation, and C1 unchanged. When the operator asks to establish or
-revise durable design before implementation, Assistant writes design and requests Planning; Planner
-reads the published design and owns any multi-Work or existing-Work rewrite.
+When page context identifies a Project or Goal, the turn also receives a compact, timestamped state
+observation containing the scoped Goal lifecycle and revision, nonterminal Work, open Attention,
+active Runs, and available Evidence artifacts. This observation helps the model relate the current
+instruction to existing delivery without prescribing an operation. It is not canonical authority:
+every mutation still passes through the ordinary tool validator against current state, so a stale
+observation cannot publish an invalid effect.
+
+The available effects remain facts of the architecture. Assistant runtime writes do not integrate
+linked source; Engineering Work, Reviewer, and C1 own that delivery path. Goal and Work tools expose
+their preconditions and durable effects, including the fact that reopening a terminal Goal advances
+its contract revision and materializes Planning. The model selects among those effects from the
+operator's objective, conversation, scoped state, and environment. HOPI does not encode shell-error
+parsing, package-manager rules, or automatic command-to-Work fallback.
 
 Read tools return current bounded documents and projections rather than staging every linked Goal
 into every prompt. Their runtime section identifies the latest Run and Attempt and supplies paths to

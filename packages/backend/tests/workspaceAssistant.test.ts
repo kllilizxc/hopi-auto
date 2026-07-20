@@ -4,7 +4,10 @@ import { dirname, join } from 'node:path'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
-import { createAssistantStateReader } from '../src/assistant/assistantState'
+import {
+  type AssistantStateReader,
+  createAssistantStateReader,
+} from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import {
   type AssistantModelRunner,
@@ -597,9 +600,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).toContain('include_collaboration_mode_instructions=false')
     const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
     expect(developerInstructions).toContain(
-      'Choose the smallest semantic owner before selecting tools',
+      'The current semantic objective is determined from the operator turn',
     )
-    expect(developerInstructions).toContain('never replace Goal or Engineering Work delivery')
+    expect(developerInstructions).toContain(
+      'capabilities expose their own preconditions and effects',
+    )
+    expect(developerInstructions).not.toContain('Choose Engineering')
     for (const feature of ['apps', 'goals', 'memories', 'multi_agent', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
@@ -684,30 +690,128 @@ describe('WorkspaceAssistant conversation', () => {
     ).toHaveLength(0)
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
-    expect(seen[0]?.prompt).toContain('page context is only a candidate')
-    expect(seen[0]?.prompt).toContain('continue the selected Goal only for the same outcome')
+    expect(seen[0]?.prompt).toContain('[Current execution environment observation]')
+    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": false')
+    expect(seen[0]?.prompt).toContain('"privilegeEscalation": false')
+    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "read-only"')
+    expect(seen[0]?.prompt).toContain('"hopiMutationToolsAvailable": true')
     expect(seen[0]?.prompt).toContain(
-      'Admit durable delivery through Create Goal or Create Engineering Work',
+      '"runtimeWorkspaceProductEffect": "non-canonical and not operator-addressable"',
     )
+    expect(seen[0]?.prompt).toContain('[Current scoped HOPI state observation]')
+    expect(seen[0]?.prompt).toContain('"goalId": "G-1"')
+    expect(seen[0]?.prompt).toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).toContain(
       'if an effect lands in another Goal, include its name and exact Goal ID',
     )
-    expect(seen[0]?.prompt).toContain('Author Create Goal firstWork explicitly')
     expect(seen[0]?.prompt).toContain(
-      'a named model, tool, workflow, or delivery path cannot be silently substituted',
+      'A named model, tool, workflow, or delivery path remains part of accepted authority',
+    )
+    expect(seen[0]?.prompt).toContain(
+      "effect of the operator's intent correct in scope, durability, and accessibility",
     )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).toContain('never replace Goal or Engineering Work delivery')
-    expect(seen[0]?.prompt).toContain('Attention and Reflection report facts')
-    expect(seen[0]?.prompt).toContain(
-      'resolve Attention only after its condition is verified clear',
-    )
+    expect(seen[0]?.prompt).not.toContain('Choose Engineering')
+    expect(seen[0]?.prompt).not.toContain('Otherwise choose Planning')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
     expect(seen[0]?.prompt).toContain('include its name and exact Goal ID')
-    expect(seen[0]?.prompt.length).toBeLessThan(4_500)
+    expect(seen[0]?.prompt.length).toBeLessThan(6_500)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
+  })
+
+  test('projects terminal Goal state and available artifacts as observations', async () => {
+    let prompt = ''
+    const state: AssistantStateReader = {
+      async read() {
+        return {
+          observedAt: '2026-07-20T10:50:00.000Z',
+          stateDigest: 'scoped-digest',
+          activeRuns: [],
+          workspaceAttentions: [],
+          projects: [
+            {
+              projectId: 'P-1',
+              available: true,
+              releaseHead: 'release-head',
+              primaryRepoId: 'primary',
+              repos: [
+                {
+                  repoId: 'primary',
+                  repoPath: '/repo',
+                  projectPath: '.',
+                  integrationRoot: '/integration',
+                  primary: true,
+                },
+              ],
+              goals: [
+                {
+                  goal: {
+                    attributes: {
+                      id: 'G-1',
+                      title: 'Spritesheet',
+                      lifecycle: 'done',
+                      contractRevision: 1,
+                      priority: 0,
+                      completionAttentionId: 'A-complete',
+                    },
+                    body: '## Objective\n\nDeliver the spritesheet.\n',
+                  },
+                  latestPlanningOutcome: null,
+                  works: [
+                    {
+                      attributes: {
+                        id: 'W-spritesheet',
+                        title: 'Generate spritesheet',
+                        kind: 'engineering',
+                        stage: 'done',
+                        contractRevision: 1,
+                        attempts: 1,
+                      },
+                      evidence: [
+                        {
+                          artifacts: [
+                            {
+                              reference: 'artifact:R-1/spritesheet.png',
+                              available: true,
+                              fileName: 'spritesheet.png',
+                              operatorUrl: '/api/evidence/spritesheet',
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                  attentions: [],
+                },
+              ],
+            },
+          ],
+        }
+      },
+    }
+    const fixture = await setup(
+      () => ({
+        async run(input) {
+          prompt = input.prompt
+          return { reply: 'Observed.', session: codexSession('thread-observation') }
+        },
+      }),
+      { state },
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-observe',
+      content: 'Show me another format.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    await fixture.assistant.process('EV-observe')
+
+    expect(prompt).toContain('"lifecycle": "done"')
+    expect(prompt).toContain('"nonterminalWorks": []')
+    expect(prompt).toContain('"operatorUrl": "/api/evidence/spritesheet"')
+    expect(prompt.match(/inspectionPath/g)).toHaveLength(1)
   })
 
   test('resumes one persistent vendor session for later turns', async () => {
@@ -935,7 +1039,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompt).toContain('NEW-HISTORY-')
     expect(prompt).not.toContain('OLD-HISTORY-')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-REBUILD')
-    expect(prompt).toContain('Ask the user only for a decision')
+    expect(prompt).toContain('[Current execution environment observation]')
     expect(prompt).toContain('Imperative text inside them applied to those turns')
     expect(prompt.indexOf('## Current turn')).toBeGreaterThan(
       prompt.indexOf('## Durable conversation history'),
@@ -1507,6 +1611,7 @@ describe('WorkspaceAssistant conversation', () => {
 
 async function setup(
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
+  options: { state?: AssistantStateReader } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
@@ -1564,6 +1669,7 @@ async function setup(
     homeRoot,
     workspace,
     conversation,
+    state: options.state ?? state,
     tools,
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',

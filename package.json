@@ -39,6 +39,7 @@
     "e2e:live:026": "cd packages/backend && bun run tests/live/longConversationRecovery.live.ts",
     "e2e:live:028": "cd packages/backend && bun run tests/live/projectAttentionRecovery.live.ts",
     "e2e:live:032": "cd packages/backend && bun run tests/live/preferenceJudgment.live.ts",
+    "e2e:live:033": "cd packages/backend && bun run tests/live/environmentJudgment.live.ts",
     "e2e:regression": "cd packages/backend && bun run tests/e2e/regression.ts",
     "e2e:regression:live": "cd packages/backend && bun run tests/e2e/regression.ts --live",
     "e2e": "bun run e2e:preflight && bun run e2e:live",
