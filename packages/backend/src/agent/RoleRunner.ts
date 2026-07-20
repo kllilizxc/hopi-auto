@@ -5,6 +5,10 @@ import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaul
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
+import {
+  type PersistentProcessTranscriptNormalizer,
+  createPersistentProcessTranscriptNormalizer,
+} from './persistentTranscriptNormalizer'
 import type { AgentRuntimeEvent, AgentTranscriptTransport } from './runtimeEvents'
 import {
   type AssistantTransport,
@@ -12,11 +16,7 @@ import {
   isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from './vendorAssistantOutput'
-import {
-  type ProcessTranscriptFormat,
-  isNonFatalProcessDiagnostic,
-  normalizeProcessOutputLine,
-} from './vendorTranscript'
+import { type ProcessTranscriptFormat, isNonFatalProcessDiagnostic } from './vendorTranscript'
 import { type RoleTransportConfig, resolveConfiguredTransportCommand } from './vendorTransport'
 
 export const PASS_RESULTS = ['success', 'reject', 'attention', 'fail'] as const
@@ -92,13 +92,20 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const config = await this.resolveConfig(input)
     await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
-    let session = transport && input.session?.transport === transport ? input.session : null
+    const compatibilityKey = roleSessionCompatibilityKey(config)
+    let session =
+      transport &&
+      input.session?.transport === transport &&
+      input.session.compatibilityKey === compatibilityKey
+        ? input.session
+        : null
     if (input.session && !session) {
       await observer?.onEvent?.({
         kind: 'message',
         level: 'info',
         role: 'coordinator',
-        content: 'Configured responsibility transport changed; starting a new Session.',
+        content:
+          'Configured responsibility execution boundary changed; starting a new Session while retaining its workspace.',
       })
       await observer?.onSessionInvalid?.()
     }
@@ -127,7 +134,15 @@ export class ConfiguredRoleRunner implements RoleRunner {
         session,
         fullAccess: this.fullAccess(input),
       })
-      return executeProcess(command, input, observer, this.heartbeatMs, transcriptFile, session)
+      return executeProcess(
+        command,
+        input,
+        observer,
+        this.heartbeatMs,
+        transcriptFile,
+        session,
+        compatibilityKey,
+      )
     }
 
     if (session) {
@@ -192,6 +207,13 @@ export class ConfiguredRoleRunner implements RoleRunner {
     if (!resultAllowed(input.responsibility, parsed.value.result)) {
       return failedResult(`${input.responsibility} cannot return ${parsed.value.result}`, exitCode)
     }
+    if (parsed.value.result === 'success' && execution.infrastructureFailure) {
+      await observer?.onSessionInvalid?.()
+      return failedResult(
+        `${input.responsibility} reported success while a required execution capability remained unavailable: ${execution.infrastructureFailure}`,
+        exitCode,
+      )
+    }
     return { ...parsed.value, exitCode }
   }
 }
@@ -208,6 +230,45 @@ function roleExecutionIdentity(config: RoleTransportConfig): RoleExecutionIdenti
 function resumableTransport(config: RoleTransportConfig): AssistantTransport | null {
   if ('cmd' in config) return null
   return config.transport
+}
+
+export function roleSessionCompatibilityKey(config: RoleTransportConfig): string | null {
+  if ('cmd' in config) return null
+  if (config.transport === 'codex') {
+    return JSON.stringify({
+      version: 1,
+      transport: config.transport,
+      binary: config.binary ?? 'codex',
+      cwdMode: config.cwdMode,
+      baseRef: config.baseRef ?? null,
+      model: config.model ?? null,
+      profile: config.profile ?? null,
+      reasoningEffort: config.reasoningEffort ?? null,
+      sandbox: config.sandbox,
+      approvalPolicy: config.approvalPolicy,
+    })
+  }
+  if (config.transport === 'claude') {
+    return JSON.stringify({
+      version: 1,
+      transport: config.transport,
+      binary: config.binary ?? 'claude',
+      cwdMode: config.cwdMode,
+      baseRef: config.baseRef ?? null,
+      model: config.model ?? null,
+      permissionMode: config.permissionMode,
+    })
+  }
+  return JSON.stringify({
+    version: 1,
+    transport: config.transport,
+    binary: config.binary ?? 'opencode',
+    cwdMode: config.cwdMode,
+    baseRef: config.baseRef ?? null,
+    model: config.model ?? null,
+    agent: config.agent ?? null,
+    variant: config.variant ?? null,
+  })
 }
 
 export class MockRoleRunner implements RoleRunner {
@@ -367,10 +428,18 @@ async function executeProcess(
   heartbeatMs: number,
   transcriptFile: string,
   session: VendorSession | null,
+  compatibilityKey: string | null,
 ) {
   const tempDir = join(input.context.runtimeScratchDir, 'tmp')
   const cacheDir = input.context.runtimeCacheDir
   await Promise.all([mkdir(tempDir, { recursive: true }), mkdir(cacheDir, { recursive: true })])
+  const normalizerStateFile = join(input.context.runtimeScratchDir, 'transcript-normalizer.json')
+  const resumeNormalizerState =
+    command.sessionTransport === 'claude' && session?.transport === 'claude'
+  const transcriptNormalizer = await createPersistentProcessTranscriptNormalizer({
+    stateFile: normalizerStateFile,
+    resumeState: resumeNormalizerState,
+  })
   const child = Bun.spawn(command.cmd, {
     cwd: input.cwd,
     stdout: 'pipe',
@@ -419,7 +488,7 @@ async function executeProcess(
           const line = `Process-group cleanup failed: ${errorMessage(error)}`
           stderr.push(line)
           await recordLine('stderr', line)
-          await emitLine(observer, format, 'stderr', input, line)
+          await emitLine(observer, transcriptNormalizer, format, 'stderr', input, line)
           throw error
         }
         return exitCode
@@ -433,6 +502,7 @@ async function executeProcess(
             await observer?.onSession?.({
               transport: command.sessionTransport,
               sessionId: output.sessionId,
+              ...(compatibilityKey ? { compatibilityKey } : {}),
             })
           }
           if (output.terminalError) {
@@ -440,17 +510,23 @@ async function executeProcess(
             sessionInvalid ||= output.terminalError.sessionInvalid
           }
         }
-        await emitLine(observer, format, 'stdout', input, line)
+        await emitLine(observer, transcriptNormalizer, format, 'stdout', input, line)
       }),
       consumeLines(child.stderr as ReadableStream<Uint8Array>, async (line) => {
         await recordLine('stderr', line)
         if (!isNonFatalProcessDiagnostic({ format, stream: 'stderr', line })) stderr.push(line)
         if (session && isExplicitSessionFailure(line)) sessionInvalid = true
-        await emitLine(observer, format, 'stderr', input, line)
+        await emitLine(observer, transcriptNormalizer, format, 'stderr', input, line)
       }),
     ])
     await transcriptTail
-    return { exitCode, stderr: stderr.values(), terminalError, sessionInvalid }
+    return {
+      exitCode,
+      stderr: stderr.values(),
+      terminalError,
+      sessionInvalid,
+      infrastructureFailure: transcriptNormalizer.unresolvedInfrastructureFailure(),
+    }
   } finally {
     clearInterval(heartbeat)
     input.signal?.removeEventListener('abort', abort)
@@ -459,17 +535,19 @@ async function executeProcess(
 
 async function emitLine(
   observer: RoleRunObserver | undefined,
+  transcriptNormalizer: PersistentProcessTranscriptNormalizer,
   format: ProcessTranscriptFormat,
   stream: 'stdout' | 'stderr',
   input: RoleRunInput,
   line: string,
 ) {
-  for (const event of normalizeProcessOutputLine({
+  const events = await transcriptNormalizer.normalize({
     format,
     stream,
     role: input.responsibility,
     line,
-  })) {
+  })
+  for (const event of events) {
     await observer?.onEvent?.(event)
   }
 }

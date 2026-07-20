@@ -531,6 +531,46 @@ describe('RoleContextStager', () => {
     ).toBe(true)
   })
 
+  test('projects the latest reproducer and prior Generator proof into the current repair view', async () => {
+    const fixture = await createFixture(true)
+    const artifactReference = 'artifact:R-review/reproducer.txt'
+    const artifactPath = join(
+      runStoragePath(fixture.homeRoot, 'R-review'),
+      'artifacts',
+      'reproducer.txt',
+    )
+    await mkdir(join(runStoragePath(fixture.homeRoot, 'R-review'), 'artifacts'), {
+      recursive: true,
+    })
+    await Bun.write(artifactPath, 'bun test regression\n')
+    await publishEngineeringWork(
+      fixture,
+      '## Acceptance Criteria\n\n- The implementation is verified.\n',
+      [artifactReference],
+    )
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-repair-view',
+      responsibility: 'generator',
+      previousGenerator: {
+        runId: 'R-generator',
+        summary: 'Changed the validator.',
+        commands: [{ command: 'Tool call: Bash (bun test unit)', outcome: 'completed' }],
+      },
+    })
+    const projectedPath = join(bundle.contextRoot, 'evidence-artifacts', '001-reproducer.txt')
+    const prompt = await Bun.file(bundle.promptFile).text()
+
+    expect(await Bun.file(projectedPath).text()).toBe('bun test regression\n')
+    expect(prompt).toContain(`- ${artifactReference} -> ${projectedPath}`)
+    expect(prompt).toContain('Previous claimed summary (not proof): Changed the validator.')
+    expect(prompt).toContain('[completed] Tool call: Bash (bun test unit)')
+  })
+
   test('stages transitive dependency Evidence and resolves its Run artifacts', async () => {
     const fixture = await createFixture(true)
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
@@ -711,16 +751,23 @@ describe('RoleContextStager', () => {
     expect(await Bun.file(join(authorityRoot, ...obsoletePath.split('/'))).exists()).toBe(false)
     expect(bundle.guardFiles[obsoletePath]).toBeUndefined()
     expect(bundle.artifactManifestFile).toBeDefined()
+    const projectedArtifactPath = join(
+      bundle.contextRoot,
+      'evidence-artifacts',
+      '001-001-proof.txt',
+    )
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
       version: 1,
       artifacts: [
         {
           reference: artifactReference,
-          path: artifactPath,
+          path: projectedArtifactPath,
           evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-base')],
         },
       ],
     })
+    expect(await Bun.file(projectedArtifactPath).text()).toBe('accepted predecessor proof\n')
+    expect((await stat(projectedArtifactPath)).mode & 0o222).toBe(0)
     expect((await stat(bundle.artifactManifestFile ?? '')).mode & 0o222).toBe(0)
     expect(await Bun.file(bundle.contextFile).text()).toContain('Evidence artifact manifest:')
     expect(await Bun.file(bundle.promptFile).text()).toContain('$HOPI_EVIDENCE_ARTIFACTS_FILE')
@@ -849,6 +896,7 @@ async function createFixture(withAgents: boolean, withPrepare = false) {
 async function publishEngineeringWork(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   body = '## Acceptance Criteria\n\n- The implementation is verified.\n',
+  artifacts: string[] = [],
 ) {
   const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
   const source = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
@@ -866,7 +914,7 @@ async function publishEngineeringWork(
             producerRun: 'project:project-1/goal:goal-1/work:W-1/run:R-review',
             coordinatorCheck: null,
             owner: 'project:project-1/goal:goal-1/work:W-1',
-            artifacts: [],
+            artifacts,
           },
           body: '## Responsibility Result\n\n- Result: reject\n\n## Summary\n\nRepair this first.\n',
         }),

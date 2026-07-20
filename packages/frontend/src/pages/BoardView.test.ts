@@ -83,6 +83,19 @@ test('Work Attempt messages reuse the shared breathing tail activity', async () 
   expect(source).not.toContain(':runtime-status')
 })
 
+test('Attempt result summary stays collapsed and bounded above the activity stream', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+
+  expect(source).toContain('className="attempt-summary"')
+  expect(source).toContain('<strong>Result summary</strong>')
+  expect(source).toContain('bodyClassName="attempt-summary__body"')
+  expect(source).not.toContain('<p className="attempt-summary">')
+  expect(styles).toMatch(
+    /\.attempt-summary__body\s*\{[^}]*max-height:\s*min\(24vh, 180px\);[^}]*overflow:\s*auto;/,
+  )
+})
+
 test('Work and Attempt switches warm their message caches before changing visible content', async () => {
   const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
 

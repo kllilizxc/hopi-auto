@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { normalizeProcessOutputLine } from '../src/agent/vendorTranscript'
+import {
+  createProcessTranscriptNormalizer,
+  normalizeProcessOutputLine,
+} from '../src/agent/vendorTranscript'
 
 describe('normalizeProcessOutputLine', () => {
   test('normalizes Codex JSONL agent messages and tool interactions with invocation keys', () => {
@@ -398,6 +401,244 @@ describe('normalizeProcessOutputLine', () => {
         summary: 'File contents loaded.',
         vendorEventType: 'user',
       },
+    ])
+  })
+
+  test('reduces Claude task tools into complete resumable plan snapshots', () => {
+    const first = createProcessTranscriptNormalizer()
+    const normalize = (line: unknown) =>
+      first.normalize({
+        format: 'claude_stream_json',
+        stream: 'stdout',
+        role: 'generator',
+        line: JSON.stringify(line),
+      })
+
+    expect(
+      normalize({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'call-create-1',
+              name: 'TaskCreate',
+              input: { subject: 'Implement the projection', activeForm: 'Implementing' },
+            },
+          ],
+        },
+      }),
+    ).toEqual([])
+    expect(
+      normalize({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call-create-1',
+              content: 'Task #1 created successfully: Implement the projection',
+            },
+          ],
+        },
+        tool_use_result: {
+          task: { id: '1', subject: 'Implement the projection', status: 'pending' },
+        },
+      }),
+    ).toEqual([
+      {
+        kind: 'plan',
+        transport: 'claude',
+        planId: 'claude-tasks',
+        status: 'active',
+        items: [{ text: 'Implement the projection', completed: false }],
+        vendorEventType: 'user.task_create',
+      },
+    ])
+
+    const resumed = createProcessTranscriptNormalizer(first.state())
+    const resume = (line: unknown) =>
+      resumed.normalize({
+        format: 'claude_stream_json',
+        stream: 'stdout',
+        role: 'generator',
+        line: JSON.stringify(line),
+      })
+    expect(
+      resume({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'call-update-1',
+              name: 'TaskUpdate',
+              input: { taskId: '1', status: 'completed' },
+            },
+          ],
+        },
+      }),
+    ).toEqual([])
+    expect(
+      resume({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call-update-1',
+              content: 'Updated task #1 status',
+            },
+          ],
+        },
+        tool_use_result: { success: true, taskId: '1' },
+      }),
+    ).toEqual([
+      {
+        kind: 'plan',
+        transport: 'claude',
+        planId: 'claude-tasks',
+        status: 'completed',
+        items: [{ text: 'Implement the projection', completed: true }],
+        vendorEventType: 'user.task_update',
+      },
+    ])
+  })
+
+  test('uses Claude TaskList and legacy TodoWrite as authoritative plan snapshots', () => {
+    const normalizer = createProcessTranscriptNormalizer()
+    const normalize = (line: unknown) =>
+      normalizer.normalize({
+        format: 'claude_stream_json',
+        stream: 'stdout',
+        role: 'generator',
+        line: JSON.stringify(line),
+      })
+
+    normalize({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'call-list',
+            name: 'TaskList',
+            input: { includeCompleted: true },
+          },
+        ],
+      },
+    })
+    expect(
+      normalize({
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'call-list', content: '2 tasks' }],
+        },
+        tool_use_result: {
+          tasks: [
+            { id: '1', subject: 'Inspect', status: 'completed' },
+            { id: '2', subject: 'Implement', status: 'in_progress' },
+          ],
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'plan',
+        status: 'active',
+        items: [
+          { text: 'Inspect', completed: true },
+          { text: 'Implement', completed: false },
+        ],
+        vendorEventType: 'user.task_list',
+      }),
+    ])
+
+    normalize({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'call-todos',
+            name: 'TodoWrite',
+            input: {
+              todos: [
+                { content: 'Review', status: 'completed' },
+                { content: 'Verify', status: 'completed' },
+              ],
+            },
+          },
+        ],
+      },
+    })
+    expect(
+      normalize({
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'call-todos', content: 'Todos updated' }],
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'plan',
+        status: 'completed',
+        items: [
+          { text: 'Review', completed: true },
+          { text: 'Verify', completed: true },
+        ],
+        vendorEventType: 'user.todo_write',
+      }),
+    ])
+  })
+
+  test('does not merge untouched Claude Session tasks into a resumed Attempt plan', () => {
+    const normalizer = createProcessTranscriptNormalizer({
+      version: 1,
+      claudeTasks: [
+        { id: '1', text: 'Finished in an earlier Attempt', status: 'completed' },
+        { id: '2', text: 'Continue this repair', status: 'pending' },
+      ],
+    })
+    const normalize = (line: unknown) =>
+      normalizer.normalize({
+        format: 'claude_stream_json',
+        stream: 'stdout',
+        role: 'generator',
+        line: JSON.stringify(line),
+      })
+
+    normalize({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'call-update-current',
+            name: 'TaskUpdate',
+            input: { taskId: '2', status: 'in_progress' },
+          },
+        ],
+      },
+    })
+    expect(
+      normalize({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call-update-current',
+              content: 'Updated task #2 status',
+            },
+          ],
+        },
+        tool_use_result: { success: true, taskId: '2' },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'plan',
+        items: [{ text: 'Continue this repair', completed: false }],
+      }),
     ])
   })
 

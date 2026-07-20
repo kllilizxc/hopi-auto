@@ -231,6 +231,20 @@ describe('ProjectReconciler', () => {
         join(fixture.runner.sessionWorkspacesByRun[1]?.path ?? '', 'continuity.txt'),
       ).exists(),
     ).toBe(false)
+    const generatorAttempts = (await fixture.attempts.list('project-1', 'goal-1', 'W-1')).filter(
+      (attempt) => attempt.responsibility === 'generator',
+    )
+    const repairPrompt = await fixture.attempts.readMetadata(
+      'project-1',
+      'goal-1',
+      'W-1',
+      generatorAttempts[0]?.runId ?? '',
+    )
+    expect(repairPrompt?.runPrompt).toContain(
+      '### Current Repair View (Diagnostics, Not Authority)',
+    )
+    expect(repairPrompt?.runPrompt).toContain('Previous claimed summary (not proof)')
+    expect(repairPrompt?.runPrompt).toContain('[completed] Tool call: Bash (bun test focused)')
   })
 
   test('turns Planner semantic failure into one ordinary Work Attention', async () => {
@@ -813,6 +827,22 @@ class DeliveryScriptRunner implements RoleRunner {
       else if (this.options.plannerResult === 'success') await this.plan(input)
     }
     if (input.responsibility === 'generator') {
+      await observer?.onEvent?.({
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_call',
+        summary: 'Tool call: Bash (bun test focused)',
+        toolName: 'Bash',
+        toolInvocationKey: `verify-${input.runId}`,
+      })
+      await observer?.onEvent?.({
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'tool_result',
+        summary: 'Focused checks passed.',
+        toolName: 'Bash',
+        toolInvocationKey: `verify-${input.runId}`,
+      })
       for (const repo of input.context.repoRoots) {
         await mkdir(join(repo.path, 'src'), { recursive: true })
         await Bun.write(join(repo.path, 'src', 'feature.ts'), 'export const feature = 2\n')

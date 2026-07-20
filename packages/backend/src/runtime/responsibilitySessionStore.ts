@@ -9,6 +9,7 @@ const vendorSessionSchema = z
   .object({
     transport: z.enum(['codex', 'claude', 'opencode']),
     sessionId: z.string().trim().min(1),
+    compatibilityKey: z.string().trim().min(1).optional(),
   })
   .strict()
 

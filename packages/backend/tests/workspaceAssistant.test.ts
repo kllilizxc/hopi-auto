@@ -58,6 +58,8 @@ describe('WorkspaceAssistant conversation', () => {
         'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
         'console.log(JSON.stringify({type:"system",subtype:"thinking_tokens",estimated_tokens:42,session_id:"claude-session"}))',
         'console.log(JSON.stringify({type:"assistant",message:{id:"message-1",content:[{type:"thinking",thinking:"Checking the image."}]},session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"call-task",name:"TaskCreate",input:{subject:"Inspect the image"}}]},session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"call-task",content:"Task #1 created successfully"}]},tool_use_result:{task:{id:"1",subject:"Inspect the image",status:"pending"}},session_id:"claude-session"}))',
         `console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:${JSON.stringify(`<thought>Private reasoning.</thought>\n${finalReply}`)}}))`,
         '',
       ].join('\n'),
@@ -133,6 +135,17 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(events).not.toContainEqual(
       expect.objectContaining({ vendorEventType: 'system.thinking_tokens' }),
+    )
+    expect(events).toContainEqual({
+      kind: 'plan',
+      transport: 'claude',
+      planId: 'claude-tasks',
+      status: 'active',
+      items: [{ text: 'Inspect the image', completed: false }],
+      vendorEventType: 'user.task_create',
+    })
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ entryKind: 'tool_call', toolName: 'TaskCreate' }),
     )
   })
 

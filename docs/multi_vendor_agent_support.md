@@ -14,7 +14,9 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 
 - one prompt plus optional local image paths
 - one injected `hopi` MCP server with the current turn capability
-- normalized message, tool-call, tool-result, status, and error events
+- normalized message, plan-snapshot, tool-call, tool-result, status, and error events; Codex todo
+  snapshots and Claude task operations project to the same plan contract instead of provider-shaped
+  conversation rows
 - provider-native thinking summaries normalized as internal status; count-only thinking progress
   and provider task-progress heartbeats are protocol noise and never substitute for a summary,
   plan snapshot, or tool event
@@ -25,6 +27,11 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
   Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
+- a vendor-session compatibility identity derived from the effective transport, model, reasoning,
+  sandbox, and permission configuration; incompatible or legacy identities are not resumed
+- narrowly normalized tool execution failures that distinguish unavailable infrastructure from an
+  ordinary command, test, or implementation failure, allowing a later successful use of the same
+  capability in the invocation to clear the diagnostic
 - a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
   when an envelope is malformed and cannot be separated without guessing
 

@@ -112,6 +112,14 @@ fixed role contract needed to act on it. HOPI may inline an objective, acceptanc
 Input, or latest Evidence summary to make the assignment salient, but the projection always names
 the owning document and is discarded with the Run.
 
+That projection keeps a stable authority prefix and a bounded current-state suffix. The prefix owns
+the role contract and complete Work; the suffix owns the latest candidate delta, prior observed
+checks, Evidence findings, and Run-local paths to copied reproducer artifacts. A previous Agent
+summary is a claim, never proof. This shape lets a healthy vendor Session and provider prompt cache
+retain its code map without making accumulated conversation or an obsolete Run path authoritative.
+The Session is reused only while its transport, model, execution boundary, and Work contract remain
+compatible and its last invocation has no unresolved execution-infrastructure failure.
+
 ### 2. A Goal is a bounded document package
 
 A Goal is one product concept backed by separate contract, design, Input, Work, Attention, and
@@ -265,6 +273,11 @@ display text and completion state. The snapshot is observability, not workflow a
 - it never creates Work, changes a Work stage, satisfies a dependency, or contributes Evidence;
 - the latest snapshot from the latest running Attempt replaces earlier snapshots instead of merging
   them across retries, resumed sessions, responsibilities, or Runs;
+- adapters may retain only vendor task identity and title inside the matching vendor Session cache
+  so an incremental update after native Session resume can still name the affected task. The current
+  Attempt snapshot contains only tasks created, updated, or authoritatively listed in that Attempt;
+  untouched historical tasks are not merged into it. The cache is discarded with the vendor Session,
+  transport change, or Work contract revision;
 - Kanban shows Agent plan items as one compact segmented progress track, collapsed by default. Each
   item owns one segment; expanding the track reveals the complete current list, and the running
   segment uses a restrained pulsing full fill with a quiet same-color glow. Completed segments and
@@ -450,8 +463,10 @@ value, while older records without a captured execution show an explicit unavail
 than today's Home role setting. One horizontally scrollable fact strip combines that execution
 identity with revision/recovery timing and the selected Attempt's cost diagnostics. It omits Stage,
 Responsibility, and Repositories because the Lane, Attempt list, and Work contract already own that
-context. The diagnostic stream is not another workflow authority. A separate polished Diagnostics
-product is deferred.
+context. A terminal result summary is a collapsed single-line preview above Activity, not an
+unbounded fixed paragraph: expanding it exposes the full text in a bounded diagnostic region so the
+message stream retains useful height. The diagnostic stream is not another workflow authority. A
+separate polished Diagnostics product is deferred.
 
 Active Goals reconcile without manual Start until they complete, pause, cancel, reach
 `notBefore`, or need Attention.

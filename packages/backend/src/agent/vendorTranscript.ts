@@ -11,6 +11,31 @@ export type ProcessTranscriptFormat =
   | 'claude_stream_json'
   | 'opencode_json'
 
+type ClaudeTaskStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface ProcessTranscriptNormalizerState {
+  version: 1
+  claudeTasks: Array<{
+    id: string
+    text: string
+    status: ClaudeTaskStatus
+  }>
+}
+
+export interface ProcessTranscriptNormalizer {
+  normalize(options: NormalizeProcessOutputLineOptions): AgentRuntimeEvent[]
+  state(): ProcessTranscriptNormalizerState | null
+  stateRevision(): number
+  unresolvedInfrastructureFailure(): string | null
+}
+
+export interface NormalizeProcessOutputLineOptions {
+  format: ProcessTranscriptFormat
+  stream: 'stdout' | 'stderr'
+  role: string
+  line: string
+}
+
 const NON_FATAL_CODEX_MODEL_REFRESH_TIMEOUT =
   /^(?:\S+\s+)?ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit\s*$/
 
@@ -26,12 +51,33 @@ export function isNonFatalProcessDiagnostic(options: {
   )
 }
 
-export function normalizeProcessOutputLine(options: {
-  format: ProcessTranscriptFormat
-  stream: 'stdout' | 'stderr'
-  role: string
-  line: string
-}): AgentRuntimeEvent[] {
+export function createProcessTranscriptNormalizer(
+  initialState?: unknown,
+): ProcessTranscriptNormalizer {
+  const claudeTasks = new ClaudeTaskPlanTracker(initialState)
+  const toolHealth = new ToolExecutionHealthTracker()
+  return {
+    normalize: (options) => {
+      const events = normalizeProcessOutputLineWithState(options, claudeTasks)
+      toolHealth.observe(events)
+      return events
+    },
+    state: () => claudeTasks.state(),
+    stateRevision: () => claudeTasks.stateRevision(),
+    unresolvedInfrastructureFailure: () => toolHealth.unresolvedFailure(),
+  }
+}
+
+export function normalizeProcessOutputLine(
+  options: NormalizeProcessOutputLineOptions,
+): AgentRuntimeEvent[] {
+  return normalizeProcessOutputLineWithState(options)
+}
+
+function normalizeProcessOutputLineWithState(
+  options: NormalizeProcessOutputLineOptions,
+  claudeTasks?: ClaudeTaskPlanTracker,
+): AgentRuntimeEvent[] {
   if (isNonFatalProcessDiagnostic(options)) return []
 
   if (options.format === 'plain') {
@@ -53,7 +99,7 @@ export function normalizeProcessOutputLine(options: {
     case 'codex_jsonl':
       return normalizeCodexEvent(parsed)
     case 'claude_stream_json':
-      return normalizeClaudeEvent(parsed)
+      return normalizeClaudeEvent(parsed, claudeTasks)
     case 'opencode_json':
       return normalizeOpencodeEvent(parsed)
   }
@@ -249,7 +295,264 @@ function normalizeCodexCommandExecutionEvent(
   ]
 }
 
-function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
+type ClaudeTaskRecord = {
+  id: string
+  text: string
+  status: ClaudeTaskStatus
+}
+
+type ClaudeTaskOperation =
+  | { kind: 'create'; text: string }
+  | { kind: 'update'; id: string; text?: string; status?: ClaudeTaskStatus }
+  | { kind: 'list' }
+  | { kind: 'replace'; tasks: ClaudeTaskRecord[] }
+
+class ClaudeTaskPlanTracker {
+  private readonly tasks = new Map<string, ClaudeTaskRecord>()
+  private readonly pending = new Map<string, ClaudeTaskOperation>()
+  private readonly visibleTaskIds = new Set<string>()
+  private revision = 0
+
+  constructor(initialState: unknown) {
+    const state = objectValue(initialState)
+    if (state?.version !== 1) return
+    const tasks = arrayValue(state.claudeTasks)
+    if (!tasks) return
+    for (const candidate of tasks) {
+      const task = parseClaudeTaskRecord(candidate)
+      if (!task || this.tasks.has(task.id)) {
+        this.tasks.clear()
+        return
+      }
+      this.tasks.set(task.id, task)
+    }
+  }
+
+  state(): ProcessTranscriptNormalizerState | null {
+    if (this.tasks.size === 0) return null
+    return {
+      version: 1,
+      claudeTasks: [...this.tasks.values()].map((task) => ({ ...task })),
+    }
+  }
+
+  stateRevision() {
+    return this.revision
+  }
+
+  handleToolUse(value: Record<string, unknown> | undefined): AgentRuntimeEvent[] | undefined {
+    const toolName = extractToolName(value)
+    if (!toolName || !isClaudeTaskTool(toolName)) return undefined
+    const invocationKey = extractToolInvocationKey(value, 'tool_call')
+    const input = objectValue(value?.input)
+    if (!invocationKey || !input) return undefined
+
+    let operation: ClaudeTaskOperation | null = null
+    if (toolName === 'TaskCreate') {
+      const text = stringValue(input.subject)
+      if (text) operation = { kind: 'create', text }
+    } else if (toolName === 'TaskUpdate') {
+      const id = stringValue(input.taskId) ?? stringValue(input.task_id)
+      if (id) {
+        operation = {
+          kind: 'update',
+          id,
+          text: stringValue(input.subject),
+          status: claudeTaskStatus(input.status),
+        }
+      }
+    } else if (toolName === 'TaskList') {
+      operation = { kind: 'list' }
+    } else if (toolName === 'TodoWrite') {
+      const tasks = parseClaudeTodoWrite(input.todos)
+      if (tasks) operation = { kind: 'replace', tasks }
+    }
+
+    if (!operation) return undefined
+    this.pending.set(invocationKey, operation)
+    return []
+  }
+
+  handleToolResult(
+    value: Record<string, unknown> | undefined,
+    root: Record<string, unknown> | undefined,
+  ): AgentRuntimeEvent[] | undefined {
+    const invocationKey = extractToolInvocationKey(value, 'tool_result')
+    if (!invocationKey) return undefined
+    const operation = this.pending.get(invocationKey)
+    if (!operation) return undefined
+    this.pending.delete(invocationKey)
+
+    if (claudeToolResultFailed(value, root)) {
+      return [
+        transcriptEvent('claude', 'error', extractText(value) ?? 'Claude task update failed.', {
+          vendorEventType: `user.${claudeTaskOperationName(operation)}`,
+        }),
+      ]
+    }
+
+    if (operation.kind === 'create') {
+      const id = extractClaudeCreatedTaskId(value, root)
+      if (!id) return []
+      const resultTask = extractClaudeResultTask(root)
+      this.tasks.set(id, {
+        id,
+        text: stringValue(resultTask?.subject) ?? operation.text,
+        status: claudeTaskStatus(resultTask?.status) ?? 'pending',
+      })
+      this.visibleTaskIds.add(id)
+    } else if (operation.kind === 'update') {
+      const current = this.tasks.get(operation.id)
+      if (!current) return []
+      this.tasks.set(operation.id, {
+        id: operation.id,
+        text: operation.text ?? current.text,
+        status: operation.status ?? current.status,
+      })
+      this.visibleTaskIds.add(operation.id)
+    } else if (operation.kind === 'list') {
+      const tasks = extractClaudeTaskList(value, root)
+      if (!tasks) return []
+      this.tasks.clear()
+      this.visibleTaskIds.clear()
+      for (const task of tasks) {
+        this.tasks.set(task.id, task)
+        this.visibleTaskIds.add(task.id)
+      }
+    } else {
+      this.tasks.clear()
+      this.visibleTaskIds.clear()
+      for (const task of operation.tasks) {
+        this.tasks.set(task.id, task)
+        this.visibleTaskIds.add(task.id)
+      }
+    }
+
+    this.revision += 1
+    return this.planEvents(`user.${claudeTaskOperationName(operation)}`)
+  }
+
+  private planEvents(vendorEventType: string): AgentRuntimeEvent[] {
+    const items = [...this.visibleTaskIds].flatMap((id) => {
+      const task = this.tasks.get(id)
+      return task ? [{ text: task.text, completed: task.status === 'completed' }] : []
+    })
+    if (items.length === 0) return []
+    return [
+      {
+        kind: 'plan',
+        transport: 'claude',
+        planId: 'claude-tasks',
+        status: items.every((item) => item.completed) ? 'completed' : 'active',
+        items,
+        vendorEventType,
+      },
+    ]
+  }
+}
+
+function isClaudeTaskTool(toolName: string) {
+  return (
+    toolName === 'TaskCreate' ||
+    toolName === 'TaskUpdate' ||
+    toolName === 'TaskList' ||
+    toolName === 'TodoWrite'
+  )
+}
+
+function claudeTaskOperationName(operation: ClaudeTaskOperation) {
+  switch (operation.kind) {
+    case 'create':
+      return 'task_create'
+    case 'update':
+      return 'task_update'
+    case 'list':
+      return 'task_list'
+    case 'replace':
+      return 'todo_write'
+  }
+}
+
+function claudeTaskStatus(value: unknown): ClaudeTaskStatus | undefined {
+  const status = stringValue(value)
+  return status === 'pending' || status === 'in_progress' || status === 'completed'
+    ? status
+    : undefined
+}
+
+function parseClaudeTaskRecord(value: unknown): ClaudeTaskRecord | null {
+  const record = objectValue(value)
+  const id = stringValue(record?.id) ?? stringValue(record?.taskId) ?? stringValue(record?.task_id)
+  const text =
+    stringValue(record?.text) ?? stringValue(record?.subject) ?? stringValue(record?.content)
+  const status = claudeTaskStatus(record?.status)
+  return id && text && status ? { id, text, status } : null
+}
+
+function parseClaudeTodoWrite(value: unknown): ClaudeTaskRecord[] | null {
+  const todos = arrayValue(value)
+  if (!todos) return null
+  const tasks = todos.flatMap((candidate, index) => {
+    const record = objectValue(candidate)
+    const text = stringValue(record?.content) ?? stringValue(record?.subject)
+    const status = claudeTaskStatus(record?.status)
+    return text && status ? [{ id: `todo-${index + 1}`, text, status }] : []
+  })
+  return tasks.length === todos.length ? tasks : null
+}
+
+function extractClaudeResultTask(root: Record<string, unknown> | undefined) {
+  return objectValue(objectValue(root?.tool_use_result)?.task)
+}
+
+function extractClaudeCreatedTaskId(
+  value: Record<string, unknown> | undefined,
+  root: Record<string, unknown> | undefined,
+) {
+  const task = extractClaudeResultTask(root)
+  const direct =
+    stringValue(task?.id) ??
+    stringValue(objectValue(root?.tool_use_result)?.taskId) ??
+    stringValue(objectValue(root?.tool_use_result)?.task_id)
+  if (direct) return direct
+  return extractText(value)?.match(/Task\s+#([^\s]+)\s+created/i)?.[1]
+}
+
+function extractClaudeTaskList(
+  value: Record<string, unknown> | undefined,
+  root: Record<string, unknown> | undefined,
+): ClaudeTaskRecord[] | null {
+  const result = root?.tool_use_result
+  const candidates = [
+    arrayValue(result),
+    arrayValue(objectValue(result)?.tasks),
+    parseJsonArray(stringValue(value?.content)),
+  ]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    const tasks = candidate.map(parseClaudeTaskRecord)
+    if (tasks.every((task): task is ClaudeTaskRecord => task !== null)) return tasks
+  }
+  return null
+}
+
+function parseJsonArray(value: string | undefined): unknown[] | undefined {
+  if (!value) return undefined
+  const parsed = parseJson(value)
+  return arrayValue(parsed) ?? arrayValue(objectValue(parsed)?.tasks)
+}
+
+function claudeToolResultFailed(
+  value: Record<string, unknown> | undefined,
+  root: Record<string, unknown> | undefined,
+) {
+  return value?.is_error === true || objectValue(root?.tool_use_result)?.success === false
+}
+
+function normalizeClaudeEvent(
+  parsed: unknown,
+  claudeTasks?: ClaudeTaskPlanTracker,
+): AgentRuntimeEvent[] {
   const value = objectValue(parsed)
   const eventType = stringValue(value?.type)
   const eventSubtype = stringValue(value?.subtype)
@@ -257,11 +560,17 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
   const blocks = arrayValue(message?.content) ?? arrayValue(value?.content) ?? []
 
   if (eventType === 'assistant') {
-    return normalizeContentBlocks('claude', eventType, blocks, 'assistant')
+    return normalizeContentBlocks('claude', eventType, blocks, 'assistant', {
+      claudeTasks,
+      root: value,
+    })
   }
 
   if (eventType === 'user') {
-    return normalizeContentBlocks('claude', eventType, blocks, 'tool_result')
+    return normalizeContentBlocks('claude', eventType, blocks, 'tool_result', {
+      claudeTasks,
+      root: value,
+    })
   }
 
   if (eventType === 'result') {
@@ -465,6 +774,10 @@ function normalizeContentBlocks(
   vendorEventType: string,
   blocks: unknown[],
   defaultKind: Extract<AgentTranscriptEntryKind, 'assistant' | 'tool_result'>,
+  options: {
+    claudeTasks?: ClaudeTaskPlanTracker
+    root?: Record<string, unknown>
+  } = {},
 ) {
   const events: AgentRuntimeEvent[] = []
 
@@ -515,6 +828,11 @@ function normalizeContentBlocks(
     }
 
     if (blockType === 'tool_use') {
+      const taskEvents = options.claudeTasks?.handleToolUse(value)
+      if (taskEvents !== undefined) {
+        events.push(...taskEvents)
+        continue
+      }
       const toolName = extractToolName(value)
       events.push(
         transcriptEvent(transport, 'tool_call', buildToolCallSummary(toolName, value), {
@@ -527,16 +845,70 @@ function normalizeContentBlocks(
     }
 
     if (blockType === 'tool_result') {
+      const taskEvents = options.claudeTasks?.handleToolResult(value, options.root)
+      if (taskEvents !== undefined) {
+        events.push(...taskEvents)
+        continue
+      }
+      const failed = claudeToolResultFailed(value, options.root)
       events.push(
-        transcriptEvent(transport, 'tool_result', extractText(value) ?? 'Tool result', {
-          toolInvocationKey: extractToolInvocationKey(value, 'tool_result') ?? undefined,
-          vendorEventType,
-        }),
+        transcriptEvent(
+          transport,
+          failed ? 'error' : 'tool_result',
+          extractText(value) ?? 'Tool result',
+          {
+            toolInvocationKey: extractToolInvocationKey(value, 'tool_result') ?? undefined,
+            vendorEventType,
+          },
+        ),
       )
     }
   }
 
   return events
+}
+
+class ToolExecutionHealthTracker {
+  private readonly toolsByInvocation = new Map<string, string>()
+  private readonly unresolvedByTool = new Map<string, string>()
+
+  observe(events: readonly AgentRuntimeEvent[]) {
+    for (const event of events) {
+      if (event.kind !== 'transcript') continue
+      if (event.entryKind === 'tool_call') {
+        if (event.toolInvocationKey && event.toolName) {
+          this.toolsByInvocation.set(event.toolInvocationKey, event.toolName)
+        }
+        continue
+      }
+      if (event.entryKind !== 'tool_result' && event.entryKind !== 'error') continue
+      const toolName =
+        event.toolName ??
+        (event.toolInvocationKey ? this.toolsByInvocation.get(event.toolInvocationKey) : undefined)
+      if (!toolName) continue
+      if (event.toolInvocationKey) this.toolsByInvocation.delete(event.toolInvocationKey)
+      if (event.entryKind === 'error' && isExecutionInfrastructureFailure(event.summary)) {
+        this.unresolvedByTool.set(toolName, `${toolName}: ${compactSummary(event.summary)}`)
+      } else {
+        this.unresolvedByTool.delete(toolName)
+      }
+    }
+  }
+
+  unresolvedFailure() {
+    return this.unresolvedByTool.values().next().value ?? null
+  }
+}
+
+function isExecutionInfrastructureFailure(summary: string) {
+  return (
+    /sandbox is required but failed to initialize/i.test(summary) ||
+    /failed to create bridge sockets/i.test(summary) ||
+    /requested permissions?.{0,160}(?:haven't|have not|hasn't|has not) been granted/i.test(
+      summary,
+    ) ||
+    /permission (?:to use|for).{0,160}(?:not granted|denied by (?:policy|settings))/i.test(summary)
+  )
 }
 
 function transcriptEvent(

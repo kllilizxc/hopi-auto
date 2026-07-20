@@ -1524,7 +1524,18 @@ function AttemptHistory({
               <span>{selectedAttempt.application ?? 'responsibility process'}</span>
             </header>
             {selectedAttempt.summary && (
-              <p className="attempt-summary">{selectedAttempt.summary}</p>
+              <AppDisclosure
+                className="attempt-summary"
+                bodyClassName="attempt-summary__body"
+                summary={
+                  <span className="attempt-summary__heading">
+                    <strong>Result summary</strong>
+                    <small aria-hidden="true">{selectedAttempt.summary}</small>
+                  </span>
+                }
+              >
+                <p>{selectedAttempt.summary}</p>
+              </AppDisclosure>
             )}
             <Suspense fallback={<MessageFeedSkeleton density="compact" />}>
               <UnifiedMessageFeed

@@ -1379,8 +1379,9 @@ Pass conditions:
 - `W-consume` never dispatches before `W-produce` is terminal and accepted.
 - The dependent immutable authority includes the transitive predecessor Works and their referenced
   Evidence, but does not widen to unrelated terminal Works or historical Runs.
-- `evidence-artifacts.json` maps portable `artifact:<run>/<path>` references to existing immutable
-  files, names the owning Evidence documents, and is read-only.
+- `evidence-artifacts.json` maps portable `artifact:<run>/<path>` references to current-Run read-only
+  copies, names the owning Evidence documents, and is read-only; canonical Evidence retains the
+  immutable source reference.
 - The dependent Agent can consume the artifact through its staged context without a Run lookup API,
   Assistant-home path, user checkout path, or model-memory handoff.
 - Both Works retain their own Evidence, C1 reaches one clean release head, the selected delivery

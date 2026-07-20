@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
+import { createPersistentProcessTranscriptNormalizer } from '../agent/persistentTranscriptNormalizer'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import {
   type AssistantTransport,
@@ -9,7 +10,7 @@ import {
   isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from '../agent/vendorAssistantOutput'
-import { isNonFatalProcessDiagnostic, normalizeProcessOutputLine } from '../agent/vendorTranscript'
+import { isNonFatalProcessDiagnostic } from '../agent/vendorTranscript'
 import { type RoleTransportConfig, appendCodexHttpsOnlyConfig } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
@@ -135,6 +136,10 @@ export function createConfiguredAssistantModelRunner(options: {
       let finalMessageId: string | undefined
       let terminalError: VendorAssistantTerminalError | undefined
       const transcriptFormat = assistantTranscriptFormat(transport)
+      const transcriptNormalizer = await createPersistentProcessTranscriptNormalizer({
+        stateFile: join(input.cwd, 'transcript-normalizer.json'),
+        resumeState: transport === 'claude' && session?.transport === 'claude',
+      })
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
         await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
@@ -163,7 +168,7 @@ export function createConfiguredAssistantModelRunner(options: {
           stderr.push(line)
         }
 
-        for (const event of normalizeProcessOutputLine({
+        for (const event of await transcriptNormalizer.normalize({
           format: transcriptFormat,
           stream,
           role: 'assistant',

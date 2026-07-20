@@ -26,6 +26,7 @@ import {
   AppScrollShadow,
   AppSpinner,
   AppSurface,
+  AppSwitch,
   AppTextField,
   CountBadge,
   SelectField,
@@ -639,20 +640,19 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </p>
 
-      <label className="project-agent-access">
+      <AppSwitch
+        className="project-agent-access"
+        isDisabled={agentAccessPending}
+        isSelected={fullAgentAccess}
+        onChange={(selected) => void changeAgentAccess(selected)}
+      >
         <span>
           <strong>Full agent access</strong>
           <small>
             Let this Project's agents use your full local filesystem, commands, and network.
           </small>
         </span>
-        <input
-          type="checkbox"
-          checked={fullAgentAccess}
-          disabled={agentAccessPending}
-          onChange={(event) => void changeAgentAccess(event.target.checked)}
-        />
-      </label>
+      </AppSwitch>
 
       <div className="project-repos">
         <div className="project-repos-heading">

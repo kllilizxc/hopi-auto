@@ -373,7 +373,10 @@ Every responsibility Run receives an immutable context bundle staged from the cu
 root: applicable `AGENTS.md`, Goal contract, design, owning Work, relevant project documents, and
 the Work/Evidence closure reachable through the owning Work's `dependsOn` edges. A Run-local
 read-only artifact manifest resolves every portable `artifact:<runId>/<name>` cited by that staged
-Evidence to its immutable stored file. Dependency history outside that DAG closure remains omitted;
+Evidence to an immutable stored file and a current-Run copy. The prompt names the copy for execution,
+so a repair never has to discover or request access to a previous Run directory. The immutable
+artifact remains provenance; the copy is only a disposable input projection. Dependency history
+outside that DAG closure remains omitted;
 the model never has to query historical Run streams merely to recover an accepted predecessor
 result. Goal-local image assets explicitly cited by the owning Work are staged with that bundle and
 supplied through the transport's image-input mechanism. This bundle, not the task
@@ -406,6 +409,13 @@ stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bo
 the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
 Work and cannot replace Evidence or a canonical gate.
 
+Vendor-native task tracking is normalized at this boundary. A Codex todo snapshot is already
+complete. Claude `TaskCreate`, `TaskUpdate`, and `TaskList` operations are reduced into the same
+complete plan snapshot; their ordinary tool rows are suppressed to avoid presenting one internal
+plan change twice. The reducer cache belongs to the exact vendor Session and Work contract revision,
+not to Work state, and is cleared whenever that Session is rebuilt or replaced. Raw task operations
+remain in `transcript.log`.
+
 Full raw output remains on disk, while process memory retains only bounded diagnostic tails needed
 for an exit summary or Preview startup response. Responsibility and Assistant runners keep the most
 recent unclassified stderr lines rather than every line from a long process. Preview likewise keeps
@@ -435,6 +445,15 @@ operational retry, or a Generator/Reviewer feedback loop. A different Work, resp
 material Work revision never inherits either. Every invocation still receives the complete current
 assignment and canonical paths, which supersede remembered conversation.
 
+Vendor conversation reuse additionally requires an exact execution compatibility identity covering
+transport, model, reasoning variant, sandbox, permission mode, and other adapter fields that can
+change what the resumed process may understand or execute. Legacy or mismatched identities are
+discarded before invocation. A narrowly recognized unresolved infrastructure failure from a tool
+result, such as required sandbox initialization or execution permission failure, also invalidates
+the vendor conversation after that invocation; the responsibility workspace and canonical Attempt
+record remain. Ordinary command failures, failing tests, model findings, and source defects do not
+invalidate a Session.
+
 The responsibility workspace is runtime state, not authority. It retains partial media, logs, and
 other files that an interrupted process would otherwise lose; the next Attempt receives its exact
 path instead of searching neighboring Run directories. A model's remembered measurements never
@@ -455,6 +474,14 @@ channel. Assistant prose, command output, test failures, and documents carried i
 stdout event cannot invalidate the Session merely because they contain words such as `session`,
 `missing`, or `invalid`. This keeps one completed responsibility result authoritative and prevents a
 second model pass from clearing or replacing its proposal.
+
+The same narrow adapter boundary records unresolved execution-infrastructure failures independently
+from model prose. If a responsibility nevertheless writes `success` after its required execution
+capability failed and did not later recover in the same invocation, RoleRunner normalizes the pass to
+an operational failure and rebuilds the vendor Session for a later bounded retry. It does not infer
+success from edits, a summary, or a zero process exit. A later successful use of that capability in
+the same invocation clears the transient diagnostic. This guard covers the ability to obtain proof,
+not the semantic adequacy of the proof; Reviewer and Work acceptance remain model judgments.
 
 Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, approval, and provider
 configuration without loading the operator's global Codex configuration. Provider access is selected
@@ -763,12 +790,19 @@ Planning without replacing Agent judgment with a completion heuristic.
 Generator edits only the stable task worktree. Its current assignment inlines the owning Work
 objective and acceptance criteria, plus the latest referenced Evidence as the reason for a retry when
 present. It reads the Work contract, design, current target state, and findings from the staged
-canonical context bundle; changes source and normal project docs; runs focused checks; and produces
+canonical context bundle; changes source and normal project docs; runs proportionate checks; and produces
 Evidence. It returns `success`, `attention`, or `fail`: attention means Assistant management is
 required, while fail means this Run did not complete valid implementation proof. A published fail
 keeps the Engineering Work, does not consume a Reviewer-repair attempt, and creates Work Attention
 instead of redispatching Generator unchanged or inventing a Goal-wide Planning guard. Speaking
 Assistant decides whether the exact recovery is retry, Planning, cancellation, or operator action.
+
+The current assignment presents one bounded repair view after the stable Work authority: changed
+files relative to the release base, the previous Generator's claimed summary, and its observed
+command outcomes. These are diagnostic starting points, not another checklist or completion state;
+missing observed checks are stated explicitly. Latest Reviewer artifacts are copied into the current
+Run and mapped beside the findings. Generator may use its resumed code map to avoid repeating healthy
+discovery, but it must use the current view and current paths rather than remembered Run locations.
 
 Generator treats a Reviewer reproducer as evidence that an accepted invariant is false, not as the
 scope of the repair. It fixes the owning invariant, checks adjacent representations and representative

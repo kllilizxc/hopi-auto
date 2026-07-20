@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TransportContextBundle } from '../agent/vendorTransport'
 import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/assistantPreference'
@@ -36,6 +36,18 @@ export interface PrepareRoleContextInput {
   repoRoots?: readonly RoleRepoRoot[]
   apiOrigin?: string
   runtimeScratchDir?: string
+  previousGenerator?: PreviousGeneratorObservation | null
+}
+
+export interface PreviousGeneratorObservation {
+  runId: string
+  summary: string | null
+  commands: readonly PreviousGeneratorCommand[]
+}
+
+export interface PreviousGeneratorCommand {
+  command: string
+  outcome: 'completed' | 'failed' | 'unfinished'
 }
 
 export interface RoleRepoRoot {
@@ -161,15 +173,34 @@ export function createRoleContextStager(
       const evidencePaths = authorityFiles
         .filter((file) => file.path.startsWith(`${paths.evidenceRoot(input.goalId)}/`))
         .map((file) => file.path)
-      const evidenceArtifacts = await resolveEvidenceArtifacts(
+      const resolvedEvidenceArtifacts = await resolveEvidenceArtifacts(
         absoluteHomeRoot,
         authorityFiles,
         paths,
         input.goalId,
       )
+      const evidenceArtifacts = await projectEvidenceArtifacts(
+        resolvedEvidenceArtifacts,
+        contextRoot,
+      )
       const artifactManifestFile =
         evidenceArtifacts.length > 0 ? join(contextRoot, 'evidence-artifacts.json') : undefined
-      const assignment = createRunAssignment(input, paths, parsedGoal, parsedWork, authorityFiles)
+      const repairView =
+        input.responsibility === 'generator'
+          ? {
+              candidate: await inspectCurrentCandidate(repoRoots),
+              previousGenerator: input.previousGenerator ?? null,
+            }
+          : null
+      const assignment = createRunAssignment(
+        input,
+        paths,
+        parsedGoal,
+        parsedWork,
+        authorityFiles,
+        evidenceArtifacts,
+        repairView,
+      )
       const operatorPreference =
         input.responsibility === 'planner'
           ? await snapshotOperatorPreference(publisher, absoluteHomeRoot)
@@ -435,6 +466,85 @@ async function resolveEvidenceArtifacts(
     .sort((left, right) => left.reference.localeCompare(right.reference))
 }
 
+interface ProjectedEvidenceArtifact {
+  reference: string
+  path: string
+  evidence: string[]
+}
+
+async function projectEvidenceArtifacts(
+  artifacts: Awaited<ReturnType<typeof resolveEvidenceArtifacts>>,
+  contextRoot: string,
+): Promise<ProjectedEvidenceArtifact[]> {
+  if (artifacts.length === 0) return []
+  const projectionRoot = join(contextRoot, 'evidence-artifacts')
+  await mkdir(projectionRoot, { recursive: true })
+  return Promise.all(
+    artifacts.map(async (artifact, index) => {
+      const parsed = parsePortableArtifactReference(artifact.reference)
+      if (!parsed) {
+        throw new RoleContextStagingError(
+          `Invalid portable Evidence artifact reference: ${artifact.reference}`,
+        )
+      }
+      const basename = posix.basename(parsed.artifactPath).replaceAll(/[^A-Za-z0-9._-]/g, '_')
+      const path = join(
+        projectionRoot,
+        `${String(index + 1).padStart(3, '0')}-${basename || 'artifact'}`,
+      )
+      await copyFile(artifact.path, path)
+      await chmod(path, 0o444)
+      return { reference: artifact.reference, path, evidence: artifact.evidence }
+    }),
+  )
+}
+
+interface CandidateInspection {
+  files: string[]
+  omitted: number
+  unavailable: string[]
+}
+
+async function inspectCurrentCandidate(
+  repoRoots: readonly RoleRepoRoot[],
+): Promise<CandidateInspection> {
+  const files = new Set<string>()
+  const unavailable: string[] = []
+  for (const repo of repoRoots) {
+    try {
+      const [committed, working] = await Promise.all([
+        gitOutput(repo.path, [
+          'diff',
+          '--name-only',
+          HOPI_RELEASE_REF,
+          'HEAD',
+          '--',
+          '.',
+          ':(exclude).hopi/**',
+        ]),
+        gitOutput(repo.path, [
+          'status',
+          '--porcelain=v1',
+          '--untracked-files=all',
+          '--',
+          '.',
+          ':(exclude).hopi/**',
+        ]),
+      ])
+      for (const path of committed.split('\n').filter(Boolean)) files.add(`${repo.repoId}:${path}`)
+      for (const line of working.split('\n').filter(Boolean)) {
+        const path = line.slice(3).trim().split(' -> ').at(-1)
+        if (path) files.add(`${repo.repoId}:${path}`)
+      }
+    } catch (error) {
+      unavailable.push(`${repo.repoId}: ${errorMessage(error).slice(0, 500)}`)
+    }
+  }
+  const sorted = [...files].sort()
+  const visible = sorted.slice(0, 80)
+  return { files: visible, omitted: sorted.length - visible.length, unavailable }
+}
+
 function selectGuardFiles(
   input: PrepareRoleContextInput,
   files: readonly PublicationSnapshotFile[],
@@ -603,7 +713,15 @@ interface RunAssignment {
     body: string
   }
   acceptedInputs: Array<{ path: string; sourceEventId: string; body: string }>
-  latestEvidence: { path: string; body: string } | null
+  latestEvidence: {
+    path: string
+    body: string
+    artifacts: Array<{ reference: string; path: string }>
+  } | null
+  repairView: {
+    candidate: CandidateInspection
+    previousGenerator: PreviousGeneratorObservation | null
+  } | null
 }
 
 function createRunAssignment(
@@ -612,6 +730,8 @@ function createRunAssignment(
   goal: ReturnType<typeof parseGoalDocument>,
   work: ReturnType<typeof parseWorkDocument>,
   authorityFiles: readonly PublicationSnapshotFile[],
+  evidenceArtifacts: readonly ProjectedEvidenceArtifact[],
+  repairView: RunAssignment['repairView'],
 ): RunAssignment {
   const byPath = new Map(authorityFiles.map((file) => [file.path, file]))
   const goalPath = paths.goalDocument(input.goalId)
@@ -654,6 +774,9 @@ function createRunAssignment(
       ? {
           path: latestEvidencePath,
           body: parseEvidenceDocument(decode(latestEvidenceFile.content)).body,
+          artifacts: evidenceArtifacts
+            .filter((artifact) => artifact.evidence.includes(latestEvidencePath))
+            .map(({ reference, path }) => ({ reference, path })),
         }
       : null
 
@@ -673,6 +796,7 @@ function createRunAssignment(
     },
     acceptedInputs,
     latestEvidence,
+    repairView,
   }
 }
 
@@ -988,11 +1112,64 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           '<latest-evidence>',
           assignment.latestEvidence.body.trim(),
           '</latest-evidence>',
+          ...(assignment.latestEvidence.artifacts.length > 0
+            ? [
+                '',
+                '#### Current Reproducer Artifacts',
+                '',
+                'Use these current-Run copies instead of remembered or Evidence-embedded historical Run paths:',
+                ...assignment.latestEvidence.artifacts.map(
+                  (artifact) => `- ${artifact.reference} -> ${artifact.path}`,
+                ),
+              ]
+            : []),
         ]
       : []),
+    ...renderRepairView(assignment.repairView),
     '',
   ]
   return [...primary, ...supporting]
+}
+
+function renderRepairView(repairView: RunAssignment['repairView']) {
+  if (!repairView) return []
+  const previous = repairView.previousGenerator
+  if (
+    !previous &&
+    repairView.candidate.files.length === 0 &&
+    repairView.candidate.unavailable.length === 0
+  ) {
+    return []
+  }
+  return [
+    '',
+    '### Current Repair View (Diagnostics, Not Authority)',
+    '',
+    'Changed files relative to the current release base:',
+    ...(repairView.candidate.files.length > 0
+      ? repairView.candidate.files.map((path) => `- ${path}`)
+      : ['- No candidate changes observed.']),
+    ...(repairView.candidate.omitted > 0
+      ? [`- … ${repairView.candidate.omitted} additional changed files omitted.`]
+      : []),
+    ...(repairView.candidate.unavailable.length > 0
+      ? [
+          'Candidate inspection diagnostics:',
+          ...repairView.candidate.unavailable.map((diagnostic) => `- ${diagnostic}`),
+        ]
+      : []),
+    '',
+    ...(previous
+      ? [
+          `Previous Generator Attempt: ${previous.runId}`,
+          `Previous claimed summary (not proof): ${previous.summary ?? 'No terminal summary was recorded.'}`,
+          'Observed execution commands:',
+          ...(previous.commands.length > 0
+            ? previous.commands.map((command) => `- [${command.outcome}] ${command.command}`)
+            : ['- No command execution was observed.']),
+        ]
+      : ['Previous Generator Attempt: none.', 'Observed execution commands: none.']),
+  ]
 }
 
 function plannerPrompt(paths: {
@@ -1080,10 +1257,10 @@ function generatorPrompt() {
   return [
     '## Generator',
     '',
-    'Implement the owning Engineering Work in the current stable task worktree and run focused checks.',
+    'Implement the owning Engineering Work in the stable task worktree and run proportionate checks that prove it.',
     'Treat a Reviewer reproducer as evidence that an accepted invariant is false, not as the repair scope. Repair the owning invariant, check adjacent representations and representative variants, and derive persisted projections from their canonical owner instead of adding pairwise exceptions. Use proportionate judgment; no checklist artifact is required.',
     'A repair Run still owns the complete Work. After the final relevant change, reassess every materially affected acceptance criterion; passing only the latest reproducer is not success.',
-    'Replay the latest Reviewer reproducer before claiming success. When it is stable and the existing Project test or validator stack can express it, persist it at the nearest owning boundary; otherwise explain why the retained proof is stronger in the result summary.',
+    'Replay the latest Reviewer reproducer before success, using its current-Run artifact mapping rather than historical Evidence paths. When stable and expressible by the existing test or validator stack, persist it at the nearest owning boundary; otherwise explain why retained proof is stronger.',
     'Implement the accepted contract, not a broader imagined platform. Generalize only where the Work names reusable enforcement or the existing architecture makes that boundary necessary for correctness.',
     'Read Project guidance and every selected Repo preparation entrypoint before rediscovering setup. A Repo Preparation Diagnostic appended below is exact preflight input, not separate Work.',
     'Each selected Repo owns its own scripts/hopi/prepare. Repair only the failing candidate entrypoints in this Work; never route one Repo through another or make a primary adapter orchestrate the manifest.',
@@ -1091,7 +1268,6 @@ function generatorPrompt() {
     'The public Project Preview API targets the current integrated release and is not candidate evidence. When material runtime proof is needed, execute the task worktree preview directly with the Run manifest.',
     'For operator-facing runtime or interaction changes, exercise the candidate primary path after the final relevant change when its existing entrypoint permits it. Apply proportional judgment; this is not a fixed browser checklist.',
     'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
-    'The staged canonical context overrides any older .hopi copy in the task branch.',
     'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
     'The assigned task worktree Git index, HEAD, branch, and shared Git directory are HOPI-managed. Do not mutate them; Coordinator checkpoints source edits after the Run.',
     'When accepted Work requires branch or PR delivery, use a Run-owned clone under $HOPI_RUN_SCRATCH. Git staging, commits, branch changes, rebases, and pushes are allowed there within the repository and delivery named by Work.',
@@ -1137,7 +1313,7 @@ function resultInstruction(responsibility: Responsibility) {
     'Replace the zero-byte Result file with exactly one JSON object:',
     '',
     '```json',
-    '{"result":"success","summary":"Concise evidence-backed result","artifacts":[]}',
+    '{"result":"<choose one allowed result>","summary":"Concise evidence-backed result","artifacts":[]}',
     '```',
     '',
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
@@ -1147,7 +1323,7 @@ function resultInstruction(responsibility: Responsibility) {
         ]
       : responsibility === 'generator'
         ? [
-            'success = implementation and proof complete; fail = execution failed without a durable blocker.',
+            'success = implementation and observed proof complete; unexecuted edits or claims are not success. fail = execution failed without a durable blocker.',
           ]
         : [
             'success = criteria pass; reject = implementation defect; fail = review failed without a durable blocker.',
@@ -1177,6 +1353,10 @@ async function gitBytes(cwd: string, args: string[]) {
     throw new RoleContextStagingError(`git ${args.join(' ')} failed in ${cwd}: ${stderr.trim()}`)
   }
   return new Uint8Array(stdout)
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function safeJoin(root: string, relativePath: string) {

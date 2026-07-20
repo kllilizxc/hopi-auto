@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { ConfiguredRoleRunner } from '../src/agent/RoleRunner'
+import { ConfiguredRoleRunner, roleSessionCompatibilityKey } from '../src/agent/RoleRunner'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
+import type { VendorSession } from '../src/agent/vendorAssistantOutput'
 import type { RoleContextBundle } from '../src/runtime/roleContextStager'
 
 const temporaryRoots: string[] = []
@@ -243,6 +244,72 @@ describe('ConfiguredRoleRunner', () => {
     expect(sessions).toEqual(['codex:thread-generator'])
   })
 
+  test('keeps Claude task identity across resumed responsibility Attempts', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `const resumed = Bun.argv.includes("--resume")
+      console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))
+      if (resumed) {
+        console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"call-update",name:"TaskUpdate",input:{taskId:"1",status:"completed"}}]}}))
+        console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"call-update",content:"Updated task #1 status"}]},tool_use_result:{success:true,taskId:"1"}}))
+      } else {
+        console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"call-create",name:"TaskCreate",input:{subject:"Implement the projection"}}]}}))
+        console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"call-create",content:"Task #1 created successfully"}]},tool_use_result:{task:{id:"1",subject:"Implement the projection",status:"pending"}}}))
+      }
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:"done"}))
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"continued",artifacts:[]}))`,
+    )
+    const config = {
+      transport: 'claude',
+      binary,
+      cwdMode: 'root',
+      permissionMode: 'dontAsk',
+    } as const
+    const runner = new ConfiguredRoleRunner({ resolveConfig: () => config })
+    const firstEvents: AgentRuntimeEvent[] = []
+    const secondEvents: AgentRuntimeEvent[] = []
+    let session: VendorSession | null = null
+
+    await runner.run(fixture.input('generator', fixture.repoRoot), {
+      onEvent: (event) => {
+        firstEvents.push(event)
+      },
+      onSession: (nextSession) => {
+        session = nextSession
+      },
+    })
+    expect(session).not.toBeNull()
+    await runner.run(
+      {
+        ...fixture.input('generator', fixture.repoRoot),
+        session,
+      },
+      {
+        onEvent: (event) => {
+          secondEvents.push(event)
+        },
+      },
+    )
+
+    expect(firstEvents).toContainEqual(
+      expect.objectContaining({
+        kind: 'plan',
+        items: [{ text: 'Implement the projection', completed: false }],
+      }),
+    )
+    expect(secondEvents).toContainEqual(
+      expect.objectContaining({
+        kind: 'plan',
+        status: 'completed',
+        items: [{ text: 'Implement the projection', completed: true }],
+      }),
+    )
+    expect([...firstEvents, ...secondEvents]).not.toContainEqual(
+      expect.objectContaining({ entryKind: 'tool_call', toolName: 'TaskUpdate' }),
+    )
+  })
+
   test('rebuilds an explicitly invalid saved session once inside the same Attempt', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(
@@ -252,20 +319,23 @@ describe('ConfiguredRoleRunner', () => {
     const sessions: string[] = []
     const messages: string[] = []
     let invalidations = 0
-    const runner = new ConfiguredRoleRunner({
-      resolveConfig: () => ({
-        transport: 'codex',
-        binary,
-        cwdMode: 'root',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'never',
-      }),
-    })
+    const config = {
+      transport: 'codex',
+      binary,
+      cwdMode: 'root',
+      sandbox: 'workspace-write',
+      approvalPolicy: 'never',
+    } as const
+    const runner = new ConfiguredRoleRunner({ resolveConfig: () => config })
 
     const result = await runner.run(
       {
         ...fixture.input('planner', fixture.proposalRoot),
-        session: { transport: 'codex', sessionId: 'thread-missing' },
+        session: {
+          transport: 'codex',
+          sessionId: 'thread-missing',
+          compatibilityKey: roleSessionCompatibilityKey(config) ?? undefined,
+        },
       },
       {
         onEvent: (event) => {
@@ -303,20 +373,23 @@ describe('ConfiguredRoleRunner', () => {
       }`,
     )
     let invalidations = 0
-    const runner = new ConfiguredRoleRunner({
-      resolveConfig: () => ({
-        transport: 'codex',
-        binary,
-        cwdMode: 'root',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'never',
-      }),
-    })
+    const config = {
+      transport: 'codex',
+      binary,
+      cwdMode: 'root',
+      sandbox: 'workspace-write',
+      approvalPolicy: 'never',
+    } as const
+    const runner = new ConfiguredRoleRunner({ resolveConfig: () => config })
 
     const result = await runner.run(
       {
         ...fixture.input('planner', fixture.proposalRoot),
-        session: { transport: 'codex', sessionId: 'thread-valid' },
+        session: {
+          transport: 'codex',
+          sessionId: 'thread-valid',
+          compatibilityKey: roleSessionCompatibilityKey(config) ?? undefined,
+        },
       },
       {
         onSessionInvalid: () => {
@@ -326,6 +399,102 @@ describe('ConfiguredRoleRunner', () => {
     )
 
     expect(result).toMatchObject({ result: 'success', summary: 'resumed' })
+    expect(invalidations).toBe(0)
+  })
+
+  test('does not resume a legacy Session without the current execution compatibility identity', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeCodex(
+      fixture.root,
+      `const resumed = Bun.argv.includes("resume")
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:resumed ? "unexpected resume" : "fresh boundary",artifacts:[]}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+    let invalidations = 0
+
+    const result = await runner.run(
+      {
+        ...fixture.input('planner', fixture.proposalRoot),
+        session: { transport: 'codex', sessionId: 'legacy-thread' },
+      },
+      {
+        onSessionInvalid: () => {
+          invalidations += 1
+        },
+      },
+    )
+
+    expect(result).toMatchObject({ result: 'success', summary: 'fresh boundary' })
+    expect(invalidations).toBe(1)
+  })
+
+  test('rejects success and invalidates the Session when tool infrastructure stays unavailable', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-broken"}))
+      console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"bash-1",name:"Bash",input:{command:"bun test"}}]}}))
+      console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"bash-1",is_error:true,content:"Sandbox is required but failed to initialize: Failed to create bridge sockets after 5 attempts."}]},tool_use_result:{success:false}}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-broken",result:"done"}))
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"implemented",artifacts:[]}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+    let invalidations = 0
+
+    const result = await runner.run(fixture.input('generator', fixture.repoRoot), {
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    expect(result.summary).toContain('required execution capability remained unavailable')
+    expect(invalidations).toBe(1)
+  })
+
+  test('keeps success when the same execution capability recovers in the invocation', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"bash-1",name:"Bash",input:{command:"bun test"}}]}}))
+      console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"bash-1",is_error:true,content:"Sandbox is required but failed to initialize."}]},tool_use_result:{success:false}}))
+      console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"bash-2",name:"Bash",input:{command:"bun test"}}]}}))
+      console.log(JSON.stringify({type:"user",message:{content:[{type:"tool_result",tool_use_id:"bash-2",content:"1 pass"}]},tool_use_result:{success:true}}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-recovered",result:"done"}))
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"verified",artifacts:[]}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+    let invalidations = 0
+
+    const result = await runner.run(fixture.input('generator', fixture.repoRoot), {
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'success', summary: 'verified' })
     expect(invalidations).toBe(0)
   })
 })
@@ -409,6 +578,13 @@ async function createFixture() {
 
 async function fakeCodex(root: string, code: string) {
   const path = join(root, `fake-codex-${crypto.randomUUID()}`)
+  await Bun.write(path, `#!/usr/bin/env bun\n${code}\n`)
+  await chmod(path, 0o755)
+  return path
+}
+
+async function fakeClaude(root: string, code: string) {
+  const path = join(root, `fake-claude-${crypto.randomUUID()}`)
   await Bun.write(path, `#!/usr/bin/env bun\n${code}\n`)
   await chmod(path, 0o755)
   return path
