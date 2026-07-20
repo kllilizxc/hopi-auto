@@ -6,6 +6,7 @@ import {
   type ProjectPreparer,
   createProjectPreparer,
 } from './projectPreparation'
+import { runtimeCacheRoot } from './runPaths'
 
 export type PreviewStatus = 'starting' | 'running' | 'stopped' | 'failed'
 export type PreviewStoppedReason = 'release_updated'
@@ -104,6 +105,7 @@ export function createPreviewManager(
     const preparation = await preparer.prepare({
       projectRoot: paths.projectRoot,
       runtimeDir: paths.preparationRoot,
+      cacheDir: runtimeCacheRoot(homeRoot),
       timeoutMs: options.preparationTimeoutMs,
       primaryRepoId: input.primaryRepoId,
       repoRoots: input.repoRoots,

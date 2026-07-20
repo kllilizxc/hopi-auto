@@ -17,6 +17,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
     })
 
     expect(result).toMatchObject({ kind: 'absent', exitCode: null })
@@ -35,6 +36,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
     })
 
     expect(result).toMatchObject({ kind: 'ready', exitCode: 0 })
@@ -47,6 +49,51 @@ describe('ProjectPreparer', () => {
     expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
   })
 
+  test('supplies the Home-owned persistent cache outside the checkout', async () => {
+    const fixture = await createFixture()
+    await writeAdapter(
+      fixture.repo,
+      'const cache = process.env.HOPI_CACHE_DIR; if (!cache) throw new Error("missing cache"); await Bun.write(`${cache}/probe`, "cached"); console.log(`cache=${cache}`)',
+    )
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'add prepare'])
+
+    const result = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
+    })
+
+    expect(result).toMatchObject({ kind: 'ready', exitCode: 0 })
+    expect(result.logs).toContain(`cache=${fixture.cache}`)
+    expect(await Bun.file(join(fixture.cache, 'probe')).text()).toBe('cached')
+    expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
+  })
+
+  test('terminates the complete preparation process group on timeout', async () => {
+    const fixture = await createFixture()
+    await writeAdapter(
+      fixture.repo,
+      'Bun.spawn([process.execPath, "-e", `await Bun.sleep(300); await Bun.write(process.env.HOPI_PREPARE_RUNTIME_DIR + "/descendant.txt", "alive")`], { stdout: "inherit", stderr: "inherit", env: process.env }); await Bun.sleep(10_000)',
+    )
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'add prepare'])
+
+    const result = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
+      timeoutMs: 50,
+    })
+
+    expect(result).toMatchObject({ kind: 'failed', exitCode: null })
+    expect(result.logs).toContain('timed out after 50ms')
+    await Bun.sleep(400)
+    expect(
+      await Bun.file(join(fixture.runtime, 'repos', '000-primary', 'descendant.txt')).exists(),
+    ).toBe(false)
+  })
+
   test('fails when preparation mutates Project source', async () => {
     const fixture = await createFixture()
     await writeAdapter(fixture.repo, 'await Bun.write("generated.txt", "unexpected\\n")')
@@ -56,6 +103,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
     })
 
     expect(result.kind).toBe('source_changed')
@@ -88,6 +136,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
       primaryRepoId: 'web',
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
@@ -109,6 +158,7 @@ describe('ProjectPreparer', () => {
     const failed = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: join(fixture.runtime, 'failed'),
+      cacheDir: fixture.cache,
       primaryRepoId: 'web',
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
@@ -130,6 +180,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
       goalId: 'G-北京-ai-调研',
     })
 
@@ -147,6 +198,7 @@ describe('ProjectPreparer', () => {
     const result = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
     })
 
     expect(result.kind).toBe('skipped_dirty')
@@ -159,6 +211,7 @@ async function createFixture() {
   roots.push(root)
   const repo = join(root, 'repo')
   const runtime = join(root, 'runtime')
+  const cache = join(root, 'cache')
   await mkdir(repo, { recursive: true })
   await Bun.write(join(repo, 'README.md'), '# Project\n')
   await git(repo, ['init', '-b', 'main'])
@@ -166,7 +219,7 @@ async function createFixture() {
   await git(repo, ['config', 'user.email', 'hopi@example.test'])
   await git(repo, ['add', '.'])
   await git(repo, ['commit', '-m', 'initial'])
-  return { repo, runtime }
+  return { repo, runtime, cache }
 }
 
 async function writeAdapter(repo: string, body: string) {

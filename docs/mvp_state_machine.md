@@ -238,15 +238,27 @@ selected page context creates no transition.
 The durable Inbox turn is receipt; a successful mutation tool call is adoption. A suggestion that is
 useful as conversation context but is not intended to change current authority stays in Inbox and
 causes no state transition. HOPI does not add a Note entity, suggestion status, classifier, or
-keyword-triggered route. Calling Request Planning explicitly adopts the turn as Goal Input and may
+keyword-triggered route. Calling Start Planning explicitly adopts the turn as Goal Input and may
 invalidate the current Planner; merely discussing a possible change does not.
 
-A Goal-local answer tool publishes Project effects and Goal Input before resolving Attention, then
-Assistant continues the same conversation turn. An answer to event-target Workspace Attention resolves
-that guard and handles only the answer turn; the original turn remains pending and runs again with
-the answer visible in durable conversation history. Project-target Attention resolves only after
-deterministic repair validation. A process stop therefore leaves a guard open or a turn pending
-rather than requiring a hidden continuation state.
+`hopi_answer_attention` takes one canonical Attention reference and one of four decisions. `continue`
+resolves the condition and resumes the current Work responsibility; `retry` resets the same Work
+lineage; `cancel` makes that Work terminal; and `revise` adopts changed authority and ensures
+Planning. Work kind and stage derive the continuation, so no stored continuation object is needed.
+An answer to event-target Workspace Attention resolves that guard and handles only the answer turn;
+the original turn remains pending and runs again with the answer visible in durable conversation
+history. Project-target Attention resolves only after deterministic repair validation. A process
+stop therefore leaves a guard open or a turn pending rather than requiring a hidden state.
+
+An explicit reply turn carries `replyTo` plus exact Attention references. Its final state cannot
+retain the same operator request: the Attention is resolved, returned to Assistant ownership during
+revision, or replaced by a new request. Ordinary page-scoped turns carry no inferred Attention
+references. Starting Planning alone never retries Work, resolves Attention, or selects a different
+continuation; an empty Planner proposal ends only that Planning pass.
+
+When `revise` targets the exact active Planning Work, its accepted authority update settles that old
+Attention before Planner resumes. Other Work Attention remains open under Assistant ownership while
+the independent Planning guard represents the revision.
 
 Tool effects are idempotent by qualified source turn `(homeId, eventId)`, target identity, current
 canonical guards, and expected content. Matching Goal Input proves that Goal accepted the source
@@ -313,7 +325,7 @@ stateDiagram-v2
     state "done" as Done
     state "cancelled" as Cancelled
 
-    [*] --> Active : create Goal and Planning Work
+    [*] --> Active : create Goal and one initial Work
     Active --> Active : material contract change and planning guard
     Active --> Paused : explicit Pause
     Paused --> Paused : instruction may edit contract
@@ -328,6 +340,12 @@ stateDiagram-v2
 Material objective, scope, constraint, non-goal, success-criterion, or behavior-changing decision
 changes increment `contractRevision`. Resume preserves the revision unless its instruction changes
 the contract. Reopen always increments it and ensures new Planning Work.
+
+The initial Work is either one Planning Work or one Assistant-dispatched Engineering Work at
+`generate`. The latter is allowed only when the accepted Input already defines one cohesive Work;
+it is an admission shortcut, not a completion claim. Manual Goal creation continues to choose
+Planning. One accepted Inbox Input may directly publish at most one Engineering Work across the
+Home, while Planner remains the only responsibility that may publish a multi-Work plan.
 
 Goal lifecycle is both an admission guard and a Run-lease guard. Once a Goal leaves `active`,
 Coordinator aborts every live Run for that Goal before doing more Goal work; Runs owned by other
@@ -531,7 +549,7 @@ runnable.
   resolved Work-target Attention. The third failure creates ordinary Work-target Attention; resolving
   that exact Attention starts a fresh episode. There is no stored operational counter or failure kind.
 - Explicit Work retry publishes the attempt reset and resolution of open Attention targeted exactly
-  at that Work in one gated operation. It and `set_not_before` do not adopt the current Inbox event as
+  at that Work in one gated operation. It and Defer Work do not adopt the current Inbox event as
   Goal Input. Work cancellation is a material decision and retains its Input while settling only
   Attention for Work it makes terminal. Neither action closes broader or unrelated Attention.
 - `attention` leaves Work stage and attempts unchanged. Speaking Assistant may request Planning;

@@ -201,11 +201,11 @@ function createAssistant(): AssistantModelRunner & { materialRevisionRequests: n
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             token: input.toolToken,
-            name: 'hopi_request_planning',
+            name: 'hopi_start_planning',
             arguments: {
               projectId: PROJECT_ID,
               goalId: GOAL_ID,
-              materialContractChange: true,
+              mode: 'new_contract_revision',
             },
           }),
         })

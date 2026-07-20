@@ -123,14 +123,25 @@ function validateNewGoal(goalId: string, goalPackage: GoalPackage) {
   const planning = [...goalPackage.works.values()].filter(
     (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
   )
+  const engineering = [...goalPackage.works.values()].filter((work) =>
+    isEngineeringWork(work.attributes),
+  )
+  const planningAdmission = planning.length === 1 && engineering.length === 0
+  const directAdmission =
+    planning.length === 0 &&
+    engineering.length === 1 &&
+    engineering[0]?.attributes.stage === 'generate' &&
+    engineering[0].attributes.assistantDispatch !== undefined
   if (
     goal.lifecycle !== 'active' ||
     goal.contractRevision !== 1 ||
     goal.completionAttentionId !== null ||
-    planning.length !== 1 ||
-    [...goalPackage.works.values()].some((work) => isEngineeringWork(work.attributes))
+    (!planningAdmission && !directAdmission)
   ) {
-    throw invalid(goalId, 'new Goal must start active at revision 1 with one Planning Work')
+    throw invalid(
+      goalId,
+      'new Goal must start active at revision 1 with one Planning Work or one Assistant-dispatched Engineering Work',
+    )
   }
 }
 
@@ -181,6 +192,13 @@ function validateWorkTransition(goalId: string, previous: WorkDocument, next: Wo
   const after = next.attributes
   if (before.id !== after.id || before.kind !== after.kind) {
     throw invalid(goalId, `Work identity or kind changed: ${before.id}`)
+  }
+  if (
+    isEngineeringWork(before) &&
+    isEngineeringWork(after) &&
+    before.assistantDispatch !== after.assistantDispatch
+  ) {
+    throw invalid(goalId, `Work Assistant dispatch provenance changed: ${before.id}`)
   }
   if (isWorkTerminal(before)) {
     if (JSON.stringify(before) !== JSON.stringify(after) || previous.body !== next.body) {

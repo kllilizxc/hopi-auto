@@ -138,9 +138,11 @@ Assistant home and project Git are not one atomic store. HOPI uses a simple idem
 1. The pending Assistant turn is already durable before the configured model runs.
 2. Each mutating HOPI tool names and validates its own target. Material Goal or Work decisions use
    operation-specific single-gate publications and publish Goal Input for source `(homeId, eventId)`
-   as the accepted authority receipt. Operational `retry` and `set_not_before` controls instead audit
+   as the accepted authority receipt. Dedicated operational retry and defer tools instead audit
    their exact canonical control effect without adopting the current Inbox body as Goal authority.
-   Goal creation establishes the Goal and initial Planning guard before its Input receipt.
+   Goal creation atomically establishes the Goal, its Input receipt, and either the initial Planning
+   guard or one Assistant-dispatched Engineering Work. Existing-Goal direct admission atomically
+   publishes its Input, supporting references, superseded completion proposal, and Work gate.
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
@@ -178,22 +180,21 @@ invalid, unwritable, or a Coordinator integrity failure leaves no safe Goal-loca
 second project phase and claims no Work recovery update.
 
 An answer to event-target Workspace Attention is handled as its own ordinary conversation turn.
-Assistant uses the HOPI Attention/control tool when the answer resolves the condition. Clearing that
+Assistant uses `hopi_answer_attention` when the answer resolves the condition. Clearing that
 guard makes the original pending turn eligible again with the answer visible in durable conversation
 history; no answer parser or hidden continuation object is required.
 
-The same settlement rule applies to every targeted Attention discovered through current state, even
-when the user writes from another page or does not explicitly reply to the notification. After an
-accepted Goal mutation, the tool result includes still-open canonical Attention references for that
-Goal. Speaking Assistant decides whether the current instruction or completed effect made each
-related blocker false or superseded, then explicitly resolves it or leaves it open and communicates
-the remaining decision. Page context and `attentionRefs` improve identity but never replace this
-judgment. Planner and Coordinator do not infer closure from prose or from a Goal revision because an
-environmental or external blocker may survive the revision.
+Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
+turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
+blocker. By the end of an explicit reply turn, each referenced operator request is resolved,
+transferred back to Assistant ownership while represented revision work proceeds, or replaced by a
+new request. Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do
+not infer closure from prose or from a Goal revision because an environmental or external blocker
+may survive the revision.
 
-One deterministic exception removes a split command at the Work control boundary. Explicitly
-retrying a Work means that Assistant has judged its current blocker clear or superseded; cancelling
-means that the Work will no longer run. The corresponding control tool therefore settles every open
+The Work control boundary removes a split command. Explicitly retrying a Work means that Assistant
+has judged its current blocker clear or superseded; cancelling means that the Work will no longer
+run. The corresponding dedicated tool therefore settles every open
 Attention targeted exactly at that Work as part of the same logical operation. Retry publishes the
 Work reset and Attention resolution together, with resolution as the final gate, but does not copy
 the current Inbox event into Goal Input or set `resolutionInput`; its audit authority is the existing
@@ -202,13 +203,15 @@ conservatively blocked and repeating the command completes it idempotently. Canc
 material decision and retains its accepted Input. Neither operation closes Goal, Project, or another
 Work's Attention.
 
-The same atomic boundary applies when the current Inbox turn carries an exact Attention reference
-targeted at the Planning Work that `Request planning` creates or refreshes. Accepting that turn into
-the Planning Work is the represented continuation of the blocker, so the tool publishes its Goal
-Input, Planning update, and that exact resolution together with the resolution as final gate. It
-does not settle an unreferenced Attention, an Attention for another Work, or Project Attention. This
-prevents the old Planning Attention from blocking the Planning pass that now owns its repair without
-adding a second model call or another recovery state.
+`hopi_answer_attention` derives the continuation from canonical target and Work stage. `continue`
+resolves the blocker and lets reconciliation dispatch the same Planner, Generator, or Reviewer;
+`retry` resets the same Work lineage; `cancel` makes it terminal. `revise` is the sole answer path
+that starts Planning: it adopts the Input, applies the chosen contract revision mode, clears the old
+`operatorRequest`, and leaves that Attention open under Assistant ownership until the represented
+change actually clears or supersedes it. The exact Planning-Work Attention is settled after its
+accepted revision so it cannot block the Planner that now owns continuation. Starting Planning by
+itself never resolves, retries, or resets Attention or Work, and an empty Planner proposal means only
+that Planning changed nothing.
 
 Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
 not proof that a deterministic environment defect was repaired. Speaking Assistant may describe a
@@ -960,6 +963,12 @@ The manifest is context, not delegation authority: a Repo script never scans run
 prepares another Repo, or substitutes for another Repo's missing entrypoint. Repeated invocation,
 rather than a stored initialized flag or lockfile fingerprint, is the freshness check.
 
+Coordinator also supplies the Home-owned persistent `HOPI_CACHE_DIR` to every preparation invocation.
+That cache lives outside managed integration and task worktrees, so a clean Reviewer rematerialization
+does not discard reusable downloads; cache contents remain an optimization and never evidence. Each
+preparation script runs as the leader of its own process group. A bounded timeout terminates that
+whole group, including descendants holding output streams, before Coordinator reports the failure.
+
 A missing script is allowed only while Generator can bootstrap it in the ordinary Engineering Work
 that already owns that Repo. HOPI does not create an Init or Repair Work. A Repo that needs no setup
 still owns an explicit executable no-op script, so absence never ambiguously means either "ready" or
@@ -1119,7 +1128,17 @@ session; Pause never turns hidden process memory into canonical state.
 
 Assistant never edits source or canonical files directly. Its local MCP server is an adapter over
 existing controllers and the global publisher. Reply prose, tool-result summaries, and raw vendor
-events are never parsed for control state. Planner still owns delivery decomposition.
+events are never parsed for control state. When one accepted Input already defines one cohesive,
+independently verifiable delivery within the current Goal contract, Assistant may publish exactly
+one new Engineering Work through that adapter. The Work may depend on existing Engineering Work
+and span several linked Repos. Planner still owns delivery decomposition, material Goal revisions,
+durable design decisions, existing-Work rewrites, and every multi-Work publication.
+
+The direct-Work tool has a singular schema and records immutable `assistantDispatch` provenance.
+One Inbox Input has one such allowance across the Home; a matching repeat returns the existing Work,
+while a different or second direct admission fails before publication. Goal-scoped speaking barriers
+keep Generator admission behind the final Assistant reply. Direct Work follows the ordinary
+Generator, Reviewer, and C1 profile and does not change final Planner assessment.
 
 The MCP tool descriptions and JSON schemas injected into the Assistant turn are the only authority
 for tool arguments. Assistant calls those tools directly and never searches Project files,
@@ -1159,9 +1178,12 @@ Older Runs may therefore preserve useful source but cannot publish state.
 
 The bounded HOPI state read is a current-state index, not a dump of the durable archive. It returns
 Projects, Goals, scoped design, every Engineering Work, nonterminal Planning Work, open Attention,
-derived Kanban facts, and an explicit list of active Runs. Historical Planning, resolved Attention,
-and Evidence bodies remain canonical documents but are not inlined by default. Evidence references
-on Work and local Project paths preserve the route to that history without a query DSL.
+the latest finished Planning outcome per Goal, derived Kanban facts, and an explicit list of active
+Runs. Historical Planning, resolved Attention, and Evidence bodies remain canonical documents but
+are not inlined by default. The compact Work form replaces cumulative Evidence arrays with a count
+and latest reference; local Project paths preserve the route to history without a query DSL. A
+Goal-scoped `includeEvidence` read deliberately expands bounded Evidence bodies and artifacts only
+when the answer requires the deliverable itself.
 
 For each visible Work the state read returns a small runtime diagnostic descriptor: current
 projection, active responsibility when present, latest Attempt summary, last event time, stale

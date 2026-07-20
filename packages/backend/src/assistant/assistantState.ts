@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { type WorkDocument, isWorkTerminal } from '../domain/canonicalDocuments'
+import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
@@ -84,6 +84,10 @@ interface DigestProject {
   releaseHead: string | null
   goals: Array<{
     goal: { attributes: unknown }
+    latestPlanningOutcome: {
+      attributes: unknown
+      runtime: { latestAttempt: { status: string } | null; stale: boolean }
+    } | null
     works: Array<{
       attributes: unknown
       runtime: {
@@ -132,7 +136,7 @@ export function createAssistantStateReader(options: {
       const workspaceAttentions = [...workspace.attentions.values()]
         .filter((attention) => attention.attributes.resolvedAt === null)
         .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
-        .map((attention) => ({ ...attention.attributes, body: attention.body }))
+        .map((attention) => ({ ...attention.attributes, body: boundedText(attention.body, 1_200) }))
 
       const projects = await Promise.all(
         selected.map(async (project) => {
@@ -173,8 +177,14 @@ export function createAssistantStateReader(options: {
               const projectionByWork = new Map(
                 projections.map((projection) => [projection.workId, projection]),
               )
+              const allWorks = [...goalPackage.works.values()]
+              const latestPlanning = allWorks
+                .filter(
+                  (work) => isPlanningWork(work.attributes) && isWorkTerminal(work.attributes),
+                )
+                .toSorted((left, right) => comparePlanningRecency(left, right, goalPackage))[0]
               const works = await Promise.all(
-                [...goalPackage.works.values()]
+                allWorks
                   .filter(
                     (work) =>
                       work.attributes.kind === 'engineering' || !isWorkTerminal(work.attributes),
@@ -215,10 +225,12 @@ export function createAssistantStateReader(options: {
                             work,
                             goalPackage,
                           })
-                        : readWorkEvidenceIndex({ project, goalId, work, goalPackage })
+                        : readWorkEvidenceSummary({ project, goalId, work, goalPackage })
                       : null
                     return {
-                      attributes: work.attributes,
+                      attributes: input.includeEvidence
+                        ? work.attributes
+                        : compactWorkAttributes(work),
                       path: project.store.paths.absolute(
                         project.store.paths.workDocument(goalId, work.attributes.id),
                       ),
@@ -228,6 +240,32 @@ export function createAssistantStateReader(options: {
                     }
                   }),
               )
+              const latestPlanningOutcome = latestPlanning
+                ? {
+                    attributes: compactWorkAttributes(latestPlanning),
+                    path: project.store.paths.absolute(
+                      project.store.paths.workDocument(goalId, latestPlanning.attributes.id),
+                    ),
+                    runtime: await readWorkRuntime({
+                      homeRoot,
+                      projectRoot: project.projectRoot,
+                      projectId: project.projectId,
+                      goalId,
+                      workId: latestPlanning.attributes.id,
+                      activeResponsibility: null,
+                      attemptSnapshot,
+                      attemptStore: options.attempts,
+                      observedAt,
+                      staleAfterMs,
+                    }),
+                    evidence: readWorkEvidenceSummary({
+                      project,
+                      goalId,
+                      work: latestPlanning,
+                      goalPackage,
+                    }),
+                  }
+                : null
               const design = input.goalId
                 ? await options.publisher.snapshotTree(
                     project.store.paths.publicationRoot,
@@ -238,16 +276,17 @@ export function createAssistantStateReader(options: {
               return {
                 goal: {
                   attributes: goalPackage.goal.attributes,
-                  body: boundedText(goalPackage.goal.body, 4_000),
+                  body: boundedText(goalPackage.goal.body, input.includeEvidence ? 4_000 : 800),
                   path: project.store.paths.absolute(project.store.paths.goalDocument(goalId)),
                 },
+                latestPlanningOutcome,
                 works,
                 attentions: [...goalPackage.attentions.values()]
                   .filter((attention) => attention.attributes.resolvedAt === null)
                   .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
                   .map((attention) => ({
                     attributes: attention.attributes,
-                    body: boundedText(attention.body, 4_000),
+                    body: boundedText(attention.body, input.includeEvidence ? 4_000 : 1_200),
                     path: project.store.paths.absolute(
                       project.store.paths.attentionDocument(goalId, attention.attributes.id),
                     ),
@@ -318,24 +357,71 @@ export function createAssistantStateReader(options: {
   }
 }
 
-function readWorkEvidenceIndex(input: {
+function readWorkEvidenceSummary(input: {
   project: AssistantStateProject
   goalId: string
   work: WorkDocument
   goalPackage: GoalPackage
 }) {
-  return input.work.attributes.evidenceRefs.map((evidenceId) => {
-    const evidence = input.goalPackage.evidence.get(evidenceId)
-    if (!evidence) throw new Error(`Work references missing Evidence: ${evidenceId}`)
-    return {
+  const references = input.work.attributes.evidenceRefs
+  const evidenceId = references.at(-1)
+  if (!evidenceId) return { count: 0, latest: null }
+  const evidence = input.goalPackage.evidence.get(evidenceId)
+  if (!evidence) throw new Error(`Work references missing Evidence: ${evidenceId}`)
+  return {
+    count: references.length,
+    latest: {
       id: evidence.attributes.id,
       producerRun: evidence.attributes.producerRun,
       artifactCount: evidence.attributes.artifacts.length,
       path: input.project.store.paths.absolute(
         input.project.store.paths.evidenceDocument(input.goalId, evidenceId),
       ),
-    }
-  })
+    },
+  }
+}
+
+function compactWorkAttributes(work: WorkDocument) {
+  const attributes = work.attributes
+  return {
+    id: attributes.id,
+    title: boundedText(attributes.title, 160),
+    kind: attributes.kind,
+    stage: attributes.stage,
+    notBefore: attributes.notBefore,
+    dependsOn: attributes.dependsOn,
+    contractRevision: attributes.contractRevision,
+    attempts: attributes.attempts,
+    ...(attributes.kind === 'engineering'
+      ? {
+          repos: attributes.repos,
+          ...(attributes.assistantDispatch
+            ? { assistantDispatch: attributes.assistantDispatch }
+            : {}),
+        }
+      : {}),
+  }
+}
+
+function comparePlanningRecency(left: WorkDocument, right: WorkDocument, goalPackage: GoalPackage) {
+  const leftCreatedAt = latestWorkEvidenceCreatedAt(left, goalPackage)
+  const rightCreatedAt = latestWorkEvidenceCreatedAt(right, goalPackage)
+  return (
+    rightCreatedAt.localeCompare(leftCreatedAt) ||
+    planningOrdinal(right.attributes.id) - planningOrdinal(left.attributes.id) ||
+    right.attributes.id.localeCompare(left.attributes.id)
+  )
+}
+
+function latestWorkEvidenceCreatedAt(work: WorkDocument, goalPackage: GoalPackage) {
+  const evidenceId = work.attributes.evidenceRefs.at(-1)
+  return evidenceId ? (goalPackage.evidence.get(evidenceId)?.attributes.createdAt ?? '') : ''
+}
+
+function planningOrdinal(workId: string) {
+  if (workId === 'plan-initial') return 1
+  const ordinal = /^plan-(\d+)$/.exec(workId)?.[1]
+  return ordinal ? Number.parseInt(ordinal, 10) : 0
 }
 
 async function readWorkEvidence(input: {
@@ -519,6 +605,16 @@ async function semanticDigest(
       releaseHead: project.releaseHead,
       goals: project.goals.map((goal) => ({
         goal: goal.goal.attributes,
+        latestPlanningOutcome: goal.latestPlanningOutcome
+          ? {
+              attributes: goal.latestPlanningOutcome.attributes,
+              terminalAttempt:
+                goal.latestPlanningOutcome.runtime.latestAttempt?.status === 'running'
+                  ? null
+                  : (goal.latestPlanningOutcome.runtime.latestAttempt ?? null),
+              stale: goal.latestPlanningOutcome.runtime.stale,
+            }
+          : null,
         works: goal.works.map((work) => ({
           attributes: work.attributes,
           terminalAttempt:

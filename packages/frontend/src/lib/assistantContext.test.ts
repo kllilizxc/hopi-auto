@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { AssistantFeedEntry, AttentionView, InboxEventView } from './apiTypes'
 import {
   findAttentionNotificationEventId,
+  findLatestNeedsYouGroupId,
   groupNeedsYouAttentions,
   resolveAssistantInboxContext,
 } from './assistantContext'
@@ -47,7 +48,7 @@ describe('Assistant automatic context', () => {
     expect(resolveAssistantInboxContext(null, null)).toBeUndefined()
   })
 
-  test('binds unresolved internal Goal Attention without exposing its body', () => {
+  test('does not infer open Attention from ordinary page context', () => {
     expect(
       resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, null, [
         attention({
@@ -61,10 +62,6 @@ describe('Assistant automatic context', () => {
     ).toEqual({
       projectId: 'P-1',
       goalId: 'G-current',
-      attentionRefs: [
-        'project:P-1/goal:G-current/attention:A-1',
-        'project:P-1/goal:G-current/attention:A-2',
-      ],
     })
   })
 
@@ -190,6 +187,23 @@ describe('Assistant automatic context', () => {
       ]),
     ).toEqual([['inbox:EV-public', ['A-1', 'A-2']]])
   })
+
+  test('selects the newest visible message that still needs a reply', () => {
+    expect(
+      findLatestNeedsYouGroupId(
+        [
+          message('older', 'inbox:EV-older'),
+          message('ordinary', 'inbox:EV-ordinary'),
+          message('newer', 'inbox:EV-newer'),
+          message('optimistic'),
+        ],
+        new Map([
+          ['inbox:EV-older', 1],
+          ['inbox:EV-newer', 2],
+        ]),
+      ),
+    ).toBe('inbox:EV-newer')
+  })
 })
 
 const NOW = '2026-07-12T00:00:00.000Z'
@@ -231,5 +245,16 @@ function attention(overrides: Partial<AttentionView>): AttentionView {
     operatorRequest: null,
     body: 'Needs a decision.',
     ...overrides,
+  }
+}
+
+function message(id: string, groupId?: string) {
+  return {
+    id,
+    createdAt: NOW,
+    kind: 'assistant_message' as const,
+    role: 'assistant' as const,
+    text: id,
+    ...(groupId ? { groupId } : {}),
   }
 }

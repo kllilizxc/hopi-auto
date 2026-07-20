@@ -1,8 +1,10 @@
+import { createAssistantEngineeringWork } from '../domain/assistantEngineeringWork'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
   type GoalDocument,
   type WorkDocument,
+  isEngineeringWork,
   isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
@@ -11,6 +13,8 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
+import type { InboxEventReference } from '../domain/inboxEventReference'
+import { deriveReadableId } from '../domain/stableId'
 import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -33,6 +37,18 @@ export interface PlanningAttentionSettlement {
 
 export interface WorkRetrySettlement {
   resolution: string
+  acceptedInput?: PlanningInputAdmission
+}
+
+export interface AssistantEngineeringAdmission {
+  title: string
+  objective: string
+  acceptanceCriteria: readonly string[]
+  repos: readonly string[]
+  dependsOn: readonly string[]
+  assistantDispatch: InboxEventReference
+  acceptedInput: PlanningInputAdmission
+  context?: PlanningContext
 }
 
 export interface GoalControllerOptions {
@@ -41,6 +57,10 @@ export interface GoalControllerOptions {
 }
 
 export interface GoalController {
+  admitAssistantEngineeringWork(
+    goalId: string,
+    input: AssistantEngineeringAdmission,
+  ): Promise<WorkDocument>
   ensurePlanning(
     goalId: string,
     reason: string,
@@ -100,6 +120,90 @@ export function createGoalController(
   const now = options.now ?? (() => new Date())
 
   return {
+    async admitAssistantEngineeringWork(goalId, input) {
+      const goalPackage = await store.readPackage(goalId)
+      const existing = [...goalPackage.works.values()].find(
+        (work) =>
+          isEngineeringWork(work.attributes) &&
+          work.attributes.assistantDispatch === input.assistantDispatch,
+      )
+      const workId =
+        existing?.attributes.id ?? deriveReadableId('W', input.title, [...goalPackage.works.keys()])
+      const work = createAssistantEngineeringWork({
+        id: workId,
+        title: input.title,
+        objective: input.objective,
+        acceptanceCriteria: input.acceptanceCriteria,
+        repos: input.repos,
+        dependsOn: input.dependsOn,
+        contractRevision: goalPackage.goal.attributes.contractRevision,
+        assistantDispatch: input.assistantDispatch,
+        acceptedInputPath: input.acceptedInput.path,
+        references: input.context?.references,
+      })
+      if (!isEngineeringWork(work.attributes)) {
+        throw new GoalControllerError('Assistant Engineering Work builder returned Planning Work')
+      }
+      if (existing) {
+        if (!isEngineeringWork(existing.attributes)) {
+          throw new GoalControllerError(
+            'Assistant dispatch provenance belongs to non-Engineering Work',
+          )
+        }
+        if (
+          existing.attributes.title === work.attributes.title &&
+          JSON.stringify(existing.attributes.repos) === JSON.stringify(work.attributes.repos) &&
+          JSON.stringify(existing.attributes.dependsOn) ===
+            JSON.stringify(work.attributes.dependsOn) &&
+          existing.attributes.contractRevision === work.attributes.contractRevision &&
+          existing.body === work.body
+        ) {
+          return existing
+        }
+        throw new GoalControllerError(
+          `Inbox Input already directly admitted Engineering Work ${existing.attributes.id}`,
+        )
+      }
+      if (goalPackage.goal.attributes.lifecycle !== 'active') {
+        throw new GoalControllerError('Direct Engineering Work requires an active Goal')
+      }
+      if (
+        [...goalPackage.works.values()].some(
+          (candidate) =>
+            isPlanningWork(candidate.attributes) && candidate.attributes.stage === 'plan',
+        )
+      ) {
+        throw new GoalControllerError('Direct Engineering Work cannot bypass current Planning Work')
+      }
+      for (const dependencyId of input.dependsOn) {
+        const dependency = goalPackage.works.get(dependencyId)
+        if (!dependency || !isEngineeringWork(dependency.attributes)) {
+          throw new GoalControllerError(
+            `Direct Engineering Work dependency is missing or not Engineering Work: ${dependencyId}`,
+          )
+        }
+        if (dependency.attributes.stage === 'cancelled') {
+          throw new GoalControllerError(
+            `Direct Engineering Work cannot depend on cancelled Work: ${dependencyId}`,
+          )
+        }
+      }
+
+      const completionWrites = await supersededCompletionWrites(store, goalId, goalPackage, now())
+      await store.publishGoal(goalId, {
+        supportingWrites: [
+          ...(input.context?.supportingWrites ?? []),
+          ...(input.acceptedInput.write ? [input.acceptedInput.write] : []),
+          ...completionWrites,
+        ],
+        gateWrite: {
+          path: store.paths.workDocument(goalId, work.attributes.id),
+          expectedHash: null,
+          content: renderWorkDocument(work),
+        },
+      })
+      return work
+    },
     async ensurePlanning(goalId, reason, acceptedInput, context = {}, settlement = undefined) {
       const goalPackage = await store.readPackage(goalId)
       const existing = [...goalPackage.works.values()].find(
@@ -649,6 +753,7 @@ export function createGoalController(
         attributes: { ...work.attributes, attempts: 0, notBefore },
       }
       const writes: PublicationWrite[] = []
+      if (settlement?.acceptedInput?.write) writes.push(settlement.acceptedInput.write)
       if (work.attributes.attempts !== 0 || work.attributes.notBefore !== notBefore) {
         const path = store.paths.workDocument(goalId, workId)
         const source = await Bun.file(store.paths.absolute(path)).text()
@@ -673,13 +778,16 @@ export function createGoalController(
               ...attention.attributes,
               operatorRequest: null,
               resolvedAt: now().toISOString(),
-              resolutionInput: null,
+              resolutionInput: settlement.acceptedInput?.path ?? null,
             },
             body: [
               attention.body.trimEnd(),
               '',
               '## Resolution',
               '',
+              ...(settlement.acceptedInput
+                ? [`Answer Input: \`${settlement.acceptedInput.path}\``, '']
+                : []),
               settlement.resolution.trim(),
               '',
             ].join('\n'),
@@ -923,6 +1031,37 @@ async function replaceGoal(store: GoalPackageStore, goalId: string, next: GoalDo
       content: renderGoalDocument(next),
     },
   })
+}
+
+async function supersededCompletionWrites(
+  store: GoalPackageStore,
+  goalId: string,
+  goalPackage: GoalPackage,
+  resolvedAt: Date,
+) {
+  const writes: PublicationWrite[] = []
+  for (const attention of goalPackage.attentions.values()) {
+    if (attention.attributes.target !== null || attention.attributes.resolvedAt !== null) continue
+    const path = store.paths.attentionDocument(goalId, attention.attributes.id)
+    const source = await Bun.file(store.paths.absolute(path)).text()
+    const resolved = parseAttentionDocument(source)
+    resolved.attributes.operatorRequest = null
+    resolved.attributes.resolvedAt = resolvedAt.toISOString()
+    resolved.body = [
+      resolved.body.trimEnd(),
+      '',
+      '## Resolution',
+      '',
+      'Superseded by a newly admitted Engineering Work.',
+      '',
+    ].join('\n')
+    writes.push({
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderAttentionDocument(resolved),
+    })
+  }
+  return writes
 }
 
 async function resolveAsSuperseded(

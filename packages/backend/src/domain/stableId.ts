@@ -10,7 +10,11 @@ export function assertStableId(value: string, label: string) {
   if (!STABLE_ID_PATTERN.test(value)) throw new Error(`Invalid ${label}: ${value}`)
 }
 
-export function deriveReadableId(prefix: 'P' | 'G', source: string, usedIds: Iterable<string>) {
+export function deriveReadableId(
+  prefix: 'P' | 'G' | 'W',
+  source: string,
+  usedIds: Iterable<string>,
+) {
   const prefixMarker = `${prefix}-`
   const sourceWithoutPrefix = source
     .trim()
@@ -18,7 +22,7 @@ export function deriveReadableId(prefix: 'P' | 'G', source: string, usedIds: Ite
     .startsWith(prefixMarker.toLocaleLowerCase('en-US'))
     ? source.trim().slice(prefixMarker.length)
     : source
-  const fallback = prefix === 'P' ? 'project' : 'goal'
+  const fallback = prefix === 'P' ? 'project' : prefix === 'G' ? 'goal' : 'work'
   const stem = readableStem(sourceWithoutPrefix, fallback)
   const base = `${prefix}-${stem}`
   const used = new Set([...usedIds].map(comparisonKey))

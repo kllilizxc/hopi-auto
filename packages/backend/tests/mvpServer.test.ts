@@ -302,11 +302,11 @@ describe('MVP server', () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             token: input.toolToken,
-            name: 'hopi_request_planning',
+            name: 'hopi_start_planning',
             arguments: {
               projectId: 'P-1',
               goalId: 'G-1',
-              materialContractChange: true,
+              mode: 'new_contract_revision',
             },
           }),
         })

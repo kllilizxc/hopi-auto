@@ -715,7 +715,7 @@ Current implementation: `packages/backend/tests/browser/operationalRecovery.brow
 (`bun run e2e:browser:014`) uses a real failing child process, restarts the production Server between
 failures, retains raw stdout/stderr, renders and answers the blocker through the browser, and completes
 the same Planning Work in a fresh episode through deterministic Planner, Generator, Reviewer, and C1.
-The Assistant fixture intentionally calls only `hopi_control_work: retry`; the test asserts that the
+The Assistant fixture intentionally calls only `hopi_answer_attention: retry`; the test asserts that the
 original Work Attention resolves without a second model tool call.
 
 ### HOPI-E2E-015: Pause And Resume During An Active Run
@@ -1224,7 +1224,7 @@ Pass conditions:
 
 - Project Attention reason and creation time appear in the banner and Current Focus.
 - Covered Work has `project_ineligible` and `waiting`, never an invented `Needs you` badge.
-- Only a successful `hopi_resolve_attention` closes the original Attention, restores eligibility,
+- Only a successful `hopi_answer_attention: continue` closes the original Attention, restores eligibility,
   and wakes a Planner Attempt.
 - While Planner runs, the Project banner is absent and the Planning card is visibly working.
 - A later execution-boundary failure creates a new Project Attention with a different identity and

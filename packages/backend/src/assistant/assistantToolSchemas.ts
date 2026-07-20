@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { parseAttentionReference } from '../domain/attentionReference'
 import { projectCodingDefaultsInputSchema } from '../domain/projectCodingDefaults'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
@@ -15,17 +16,36 @@ const goalReferences = z
   .max(4)
   .default([])
 
+const directEngineeringWorkSchema = z
+  .object({
+    title: z.string().trim().min(1),
+    objective: z.string().trim().min(1),
+    acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
+    repos: z
+      .array(stableIdSchema)
+      .min(1)
+      .refine((values) => new Set(values).size === values.length, 'repos must be unique'),
+    dependsOn: z
+      .array(stableIdSchema)
+      .refine((values) => new Set(values).size === values.length, 'dependsOn must be unique')
+      .default([]),
+  })
+  .strict()
+
 export const mainAssistantToolNames = [
   'hopi_read_state',
   'hopi_manage_project',
   'hopi_configure_model',
   'hopi_write_preferences',
   'hopi_create_goal',
+  'hopi_create_engineering_work',
   'hopi_write_design',
-  'hopi_request_planning',
+  'hopi_start_planning',
   'hopi_control_goal',
-  'hopi_control_work',
-  'hopi_resolve_attention',
+  'hopi_retry_work',
+  'hopi_cancel_work',
+  'hopi_defer_work',
+  'hopi_answer_attention',
   'hopi_control_preview',
   'hopi_notify_user',
   'hopi_request_user',
@@ -128,6 +148,14 @@ export const assistantToolSchemas = {
       title: z.string().trim().min(1),
       objective: z.string().trim().min(1),
       priority: z.number().int().optional(),
+      initialWork: directEngineeringWorkSchema.omit({ dependsOn: true }).optional(),
+      references: goalReferences,
+    })
+    .strict(),
+  hopi_create_engineering_work: directEngineeringWorkSchema
+    .extend({
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
       references: goalReferences,
     })
     .strict(),
@@ -156,11 +184,16 @@ export const assistantToolSchemas = {
         })
       }
     }),
-  hopi_request_planning: z
+  hopi_start_planning: z
     .object({
-      projectId: stableIdSchema,
-      goalId: stableIdSchema,
-      materialContractChange: z.boolean().default(false),
+      projectId: stableIdSchema.describe('Exact canonical Project ID.'),
+      goalId: stableIdSchema.describe('Exact canonical Goal ID.'),
+      mode: z
+        .enum(['same_contract', 'new_contract_revision'])
+        .describe(
+          'Use same_contract when Goal outcome and success remain unchanged; use new_contract_revision only when outcome, scope, constraints, success, or behavior changes.',
+        )
+        .default('same_contract'),
       references: goalReferences,
     })
     .strict(),
@@ -177,32 +210,53 @@ export const assistantToolSchemas = {
         context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_priority requires priority' })
       }
     }),
-  hopi_control_work: z
+  hopi_retry_work: z
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
       workId: stableIdSchema,
-      operation: z.enum(['retry', 'cancel', 'set_not_before']),
       notBefore: z.string().datetime({ offset: true }).nullable().optional(),
     })
     .strict(),
-  hopi_resolve_attention: z
+  hopi_cancel_work: z
     .object({
-      scope: z.enum(['workspace', 'goal']),
-      attentionId: stableIdSchema,
-      projectId: stableIdSchema.optional(),
-      goalId: stableIdSchema.optional(),
-      resolution: z.string().trim().min(1),
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
+      workId: stableIdSchema,
     })
-    .strict()
-    .superRefine((value, context) => {
-      if (value.scope === 'goal' && (!value.projectId || !value.goalId)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Goal Attention requires projectId and goalId',
+    .strict(),
+  hopi_defer_work: z
+    .object({
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
+      workId: stableIdSchema,
+      notBefore: z.string().datetime({ offset: true }).nullable(),
+    })
+    .strict(),
+  hopi_answer_attention: z
+    .object({
+      attentionRef: z
+        .string()
+        .refine((value) => parseAttentionReference(value) !== null, {
+          message: 'attentionRef must be one complete canonical Attention reference',
         })
-      }
-    }),
+        .describe(
+          'Copy one complete canonical Attention reference exactly from Inbox Reply context or hopi_read_state. This is not an Attention ID.',
+        ),
+      decision: z
+        .enum(['continue', 'retry', 'cancel', 'revise'])
+        .describe(
+          'continue resumes the current responsibility after its represented condition cleared; retry invokes the same unchanged Work lineage again, including after transient setup/network/provider/capacity failure; cancel abandons the Work; revise changes represented authority or delivery structure and alone starts Planning.',
+        ),
+      planningMode: z
+        .enum(['same_contract', 'new_contract_revision'])
+        .describe(
+          'Only for revise. Use new_contract_revision only when Goal outcome, scope, constraints, success, or behavior changes.',
+        )
+        .optional(),
+      references: goalReferences,
+    })
+    .strict(),
   hopi_control_preview: z
     .object({
       projectId: stableIdSchema,

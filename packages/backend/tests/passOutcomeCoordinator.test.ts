@@ -52,6 +52,35 @@ describe('PassOutcomeCoordinator', () => {
     )
   })
 
+  test('rejects Planner attempts to forge Assistant dispatch provenance', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-forged-dispatch', 'planner')
+    const path = fixture.store.paths.workDocument('goal-1', 'W-forged')
+    const work = engineeringWork('W-forged', 'generate')
+    await Bun.write(
+      join(context.proposalRoot, ...path.split('/')),
+      renderWorkDocument({
+        ...work,
+        attributes: {
+          ...work.attributes,
+          assistantDispatch: 'home:H-1/event:EV-1',
+        },
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-forged-dispatch', 'planner', context, 'success'),
+    )
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary: expect.stringContaining(
+        'Planner may not create Assistant-dispatched Engineering Work',
+      ),
+    })
+    expect((await fixture.store.readPackage('goal-1')).works.has('W-forged')).toBe(false)
+  })
+
   test('stales a Planner result when a new Goal Input arrives after staging', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-new-input', 'planner')

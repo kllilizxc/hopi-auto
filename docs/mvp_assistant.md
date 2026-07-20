@@ -183,12 +183,16 @@ HOPI tools override stale conversational assumptions.
 `hopi_read_state` returns a bounded current-state slice by default, not the whole durable archive. It exposes
 active Runs explicitly; includes every Engineering Work plus only nonterminal Planning Work; and
 inlines open Attention and each visible Work's latest Attempt while representing Goal, Work, and
-design documents with compact current facts plus canonical paths. Exact bodies remain readable from
-those paths when the current question requires them.
-Referenced Evidence is represented by a compact ID, producer, artifact count, and canonical document
-path. Historical Planning, resolved Attention, and Evidence bodies remain first-class Project
-documents and are read from those paths only when needed. This keeps current control facts prominent
-without introducing pagination, a query language, or a second history store.
+design documents with compact current facts plus canonical paths. The default Work projection omits
+cumulative Evidence-reference arrays and returns only their count and latest reference. It also
+returns the latest finished Planning outcome once per Goal, so an empty Planning handoff is visible
+without restaging historical Planning or scanning every Evidence document. Exact bodies remain
+readable from returned paths when the current question requires them.
+An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
+artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
+other Evidence remain first-class Project documents and are read from exact paths only when needed.
+This keeps current control facts prominent without introducing pagination, a query language, or a
+second history store.
 
 Every speaking-thread prompt names the immutable current Inbox event. Because even a bounded state
 result can be much longer than the operator's message, `hopi_read_state` repeats that event ID,
@@ -356,20 +360,28 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Manage Project | Link a Project, add or rebind its Repos, or initialize an explicitly named empty directory | Assistant-home Project links and, for initialization, the selected Repo |
 | Configure models | Set or inherit the Assistant or one Project's coding defaults | Assistant adapter config or Assistant-home Project settings |
 | Write preferences | Replace durable cross-Project user defaults | Assistant-home `preference.md` |
-| Create Goal | Create one Goal, record the current instruction, and start its initial Planning | Goal package and Goal Input |
+| Create Goal | Create one Goal, record the current instruction, and start either one direct Engineering Work or initial Planning | Goal package and Goal Input |
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
-| Request planning | Record the current instruction for a Goal and ensure Planning | Goal Input and Planning Work; also settles an exact referenced Attention targeted at that Planning Work |
+| Create Engineering Work | Admit one cohesive Engineering Work directly from the current Input | Goal Input and one Engineering Work |
+| Start planning | Record the current instruction for a Goal and ensure Planning under either the same contract or a new contract revision | Goal Input and Planning Work; never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or set priority | Validated Goal/control documents |
-| Control Work | Retry, cancel, or change `notBefore` | Validated Work documents; retry/cancel also settle exact Work Attention |
-| Resolve Attention | Record an operator answer after any required Goal/Work effects | Goal Input and Attention resolution |
+| Retry Work | Authorize another attempt in the same Work lineage | Work reset and exact Work Attention settlement |
+| Cancel Work | Make one Work terminal because its delivery is no longer wanted | Goal Input, Work cancellation, exact Work Attention settlement, and any required Planning guard |
+| Defer Work | Change one Work's `notBefore` without changing its contract | Validated Work document |
+| Answer Attention | Apply an explicit answer as `continue`, `retry`, `revise`, or `cancel` to one exact Attention | The named effect followed by Attention settlement, or an Assistant-owned open Attention while revision Planning proceeds |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Notify operator | Publish one concise message from the current internal Reflection turn | Handled public Inbox reply, then Attention `notifiedAt` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 
+Start Planning, Work control, and Answer Attention return one common result envelope:
+`status`, the exact `effect`, the derived `continuation`, Attention references settled or
+transferred by that effect, and `unresolvedAttentionRefs`. The model does not infer success from the
+requested verb or reconstruct continuation from prose.
+
 A failed Preview produces an ordinary Assistant turn with Project and Goal context. Assistant uses
-the existing design and Request planning capabilities when source repair is needed; Preview has no
+the existing design and Start planning capabilities when source repair is needed; Preview has no
 special repair operation or repair workflow.
 
 Every semantic operation available in the product UI is also available to the speaking Assistant
@@ -391,29 +403,39 @@ write and refresh is harmless because restart reads the same durable Project lin
 changes do not require a runtime rebuild; changing Assistant transport clears only the incompatible
 vendor session under the existing session rule.
 
-Create Goal, Write design, and Request planning share one optional reference input containing an
+Create Goal, Create Engineering Work, Write design, and Start planning share one optional reference input containing an
 existing durable Inbox attachment reference and a free-form purpose. This is an MCP tool argument,
 not a model-produced Action result or semantic schema. The speaking Assistant selects it; the
 backend only validates provenance and performs the deterministic copy and Markdown publication.
 
 `Create Goal` is complete admission of the current user instruction: it creates the Goal Input and
-the initial Planning guard in one publication. `Request planning` is therefore unnecessary for that
-same instruction and is normally used for a later instruction against an existing Goal, including a
-design change that should now be implemented. If Assistant repeats the idempotent request anyway, it
-must not create another Input or Planning Work. HOPI does not add tool-order state just to forbid a
-harmless model retry.
+either one initial Planning guard or one direct Engineering Work in one publication. `Create
+Engineering Work` provides the same bounded admission for an existing active Goal with no open
+Planning Work. The Work contract must be complete and proportionate; it may name existing
+dependencies and several Repos, but the tool accepts one Work rather than an array.
 
-`Request planning` is an authority boundary, not a general way to remember conversation. Calling it
+One Inbox Input may directly admit at most one Engineering Work across every Goal in the Home.
+The canonical `assistantDispatch` reference and event-scoped serialization make exact replay
+idempotent and reject a different or second direct Work. If the instruction needs multiple new
+Work, changes Goal contract, revises existing Work, changes durable design, or requires graph
+reordering, Assistant requests Planning. Direct admission never claims Goal completion; final
+Planning remains unchanged.
+
+`Start planning` is unnecessary after same-turn Goal creation unless Assistant deliberately
+escalates a just-admitted Work after discovering that Planning is required. Repeating an exact
+successful direct admission returns the existing Work rather than consuming another allowance.
+
+`Start planning` is an authority boundary, not a general way to remember conversation. Calling it
 adopts the current turn as Goal Input and may invalidate an active Planner. Assistant therefore leaves
 a non-blocking suggestion conversation-only unless the operator intends it to change the current plan
 or delivery. `Write design` is the corresponding explicit adoption when the requested durable effect
 is documentation rather than implementation; it does not mechanically request Planning.
 
-When that current turn references an open Attention targeted exactly at the Planning Work being
-created or refreshed, the accepted Planning continuation and Attention settlement are one gated
-publication. The resolution is the final gate, so a crash remains conservatively blocked and an
-idempotent repeat finishes it. No unreferenced, other-Work, Project, or Workspace Attention is closed
-by Planning.
+Starting Planning never retries, resets, cancels, or resolves Work or Attention. An open Attention
+therefore cannot disappear merely because Planner was invoked. Planner's empty proposal means only
+that Planning changed no canonical contract or DAG; it does not claim that Coordinator will retry a
+blocked responsibility. `Answer Attention: revise` already starts or refreshes that Planning guard,
+so Assistant never pairs it with `Start planning` for the same Goal in one turn.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
@@ -426,7 +448,7 @@ Asynchrony begins after the speaking turn settles, not between related tool call
 The first Goal effect installs a process-local barrier for that Goal; later calls in the same turn
 may extend the barrier to other Goals. Coordinator admits no responsibility Run for a touched Goal
 until the final reply is durable or the turn fails, then wakes normal reconciliation. This prevents
-a Planner from observing `request_planning` before a later Attention resolution in the same turn,
+a Planner from observing `start_planning` before a later related tool effect in the same turn,
 without blocking unrelated Goals or adding a canonical phase.
 
 The acceptance reply also identifies where the effect landed when that target is not the preferred
@@ -438,10 +460,11 @@ Goal's exact canonical design prefix, the tool strips it instead of creating a n
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
-The Assistant never implements source changes itself. When the operator asks to modify design and
-then implement it, Assistant first uses the design tool, then requests Planning. Planner reads the
-published design and creates or updates Engineering Work. This keeps the conversational model
-simple without bypassing Planner, Reviewer, worktree isolation, or C1 integration.
+The Assistant never implements source changes itself. When current authority already defines one
+cohesive and independently verifiable delivery, it may create one Engineering Work and leave
+Generator, Reviewer, worktree isolation, and C1 unchanged. When the operator asks to establish or
+revise durable design before implementation, Assistant writes design and requests Planning; Planner
+reads the published design and owns any multi-Work or existing-Work rewrite.
 
 Read tools return current bounded documents and projections rather than staging every linked Goal
 into every prompt. Their runtime section identifies the latest Run and Attempt and supplies paths to
@@ -518,12 +541,40 @@ Mutation tools follow these rules:
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 - create or reuse targeted Attention when safe automatic recovery is exhausted
 
-`Control Work: retry` is one atomic recovery intent, not a required pair of model calls. It resets
-the Work control facts, records the current Goal Input, and resolves every open Attention targeted
-exactly at that Work in one gated publication. `Control Work: cancel` settles Attention for the Work
-it makes terminal. Neither operation closes Goal, Project, or another Work's Attention; all other
-settlement remains an explicit model judgment through `Resolve Attention`, except the exact
-referenced Planning-Work settlement owned by `Request planning` above.
+`Retry Work` is one atomic recovery intent, not a required pair of model calls. It resets the Work
+control facts and resolves every open Attention targeted exactly at that Work in one gated
+publication. `Cancel Work` settles Attention for the Work it makes terminal. Neither operation
+closes Goal, Project, or another Work's Attention. `Defer Work` changes scheduling time only and
+does not resolve a blocker.
+
+`Answer Attention` is the interface for an explicit operator reply. It derives Project, Goal, Work,
+and continuation from one canonical Attention reference instead of asking the model to repeat those
+identities:
+
+- `continue` records the answer, resolves the condition, and resumes the same responsibility at its
+  current stage; it does not create Planning
+- `retry` applies the Work retry boundary and resumes the same Work
+- `cancel` makes the targeted Work terminal before resolving its Attention
+- `revise` adopts the answer as a Goal change and starts Planning in the selected same-contract or
+  new-contract-revision mode; the old Attention is transferred back to Assistant ownership and stays
+  open until the represented change actually supersedes or clears it. If that Attention targets the
+  exact Planning Work being revised, the accepted revision settles it so Planner is not blocked by
+  its own old request
+
+The default for an answer is exact continuation, not Planner mediation. Planner is used only when
+the answer changes canonical authority, Work decomposition, dependencies, or durable design. There
+is no stored continuation object: Work kind and stage already identify Planner, Generator, or
+Reviewer, and ordinary reconciliation dispatches that responsibility after the Attention gate is
+cleared.
+
+The decision boundary is invariant across simple and complex Work. If the current Work outcome,
+acceptance contract, dependency graph, and delivery boundary remain valid and another invocation is
+wanted, the answer is `retry`; that includes a previous invocation stopped by transient preparation,
+network, provider, or capacity failure. `revise` is used only when those represented facts must
+change. A Planner success with an empty proposal confirms that no such represented change was made.
+When the transferred Attention remains open, Reflection returns that compact outcome to the speaking
+Assistant, which applies a different real effect or requests genuinely missing authority; it does not
+repeat the already answered choice.
 
 An expected domain precondition failure, such as requesting Planning for a terminal Goal before
 reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response
@@ -557,8 +608,18 @@ Attention is reserved for a durable condition that blocks unattended progress or
 Assistant/tool failure that cannot be completed safely.
 
 Needs-you and completion Attention appear in the same Assistant thread as system updates. Replying
-to one sends another normal user turn with the Attention reference in context. Assistant may answer,
-read current state, and call the appropriate HOPI tool; no separate answer parser exists.
+with that message's explicit `Reply` action sends a normal user turn with `replyTo` and the exact
+Attention references in context. An ordinary composer submission carries only selected Project and
+Goal context and never guesses Attention references from currently open blockers. Assistant may read
+current state and call the appropriate HOPI tool; no prose answer parser exists.
+
+The canonical Attention reference, not `replyTo`, is the durable authority of an explicit reply.
+`replyTo` preserves conversational provenance and normally matches the latest `operatorRequest`, but
+it is not a lock: a newer notification may replace `operatorRequest` while an already received user
+reply waits in FIFO. At processing time Coordinator revalidates the same exact open Attention and
+returns it to Assistant ownership even when that notification pointer changed. The speaking
+Assistant still rereads current state before applying the answer, so accepting the queued reply does
+not apply stale prose mechanically or let it affect another Attention.
 
 An unresolved notified Attention decorates the exact Assistant message that asked the question with
 one quiet warning surface, a small `Needs you` label, and one text-only `Reply` action. The surface
@@ -569,21 +630,21 @@ shows reply context as lightweight text with one icon-only dismiss action, not a
 Assistant has no title header; a non-zero unresolved count follows the Reflection entry in the same
 compact, top-edge, center-aligned floating control row. Without a count, Reflection remains at the
 right edge. Kanban keeps its Work badge and focus projection but does not repeat Needs-you as a
-separate page banner.
+separate page banner. Selecting the count focuses the newest unresolved public request in the
+conversation; it does not implicitly enter reply context, which remains the exact message's `Reply`
+action.
 
 A **Needs you** projection must navigate to the exact public Assistant turn that acknowledged its
 canonical Attention reference. The conversation loads older pages when necessary and focuses that
 turn; Goal surfaces do not copy the reply, expose the internal Attention body, or persist another
 notification link.
 
-An Attention reference is an exact reply hint, not a gate on understanding. After a user turn changes
-a Project or Goal, speaking Assistant reconciles every materially related open targeted Attention it
-observed in that scope. If the instruction or a successful tool effect satisfies or supersedes the
-blocking condition, Assistant resolves that exact Attention before replying. If the condition remains,
-it stays open and Assistant states the one remaining decision when silence would mislead the operator.
-Goal mutation tools surface the still-open canonical references after their effect so this settlement
-is not buried in a large state read. Apart from the exact Work retry/cancel semantics above, HOPI adds
-no answer parser, intent labels, or automatic semantic closure rule.
+An Attention reference is exact reply authority, not ambient page context. For an explicit reply,
+Assistant must finish the turn with every referenced operator request either resolved, transferred
+back to Assistant ownership while a represented revision proceeds, or replaced by a new request.
+Unrelated open Attention remains untouched. For ordinary turns, Assistant may still resolve a blocker
+that a successful named effect demonstrably cleared, but no page-scoped bulk reconciliation is
+required and no open reference is attached automatically.
 
 Resolution is Assistant judgment, not a safety capability. Resolving Project Attention requests a
 fresh Coordinator reconciliation and does not itself declare the Project executable. Each backend
@@ -633,9 +694,12 @@ The Assistant drawer shows one chronological conversation:
   user bubble is shown for that update
 - operator-facing replies contain conclusions and required actions; internal process belongs in the
   existing collapsed activity and Attempt views
-- Assistant replies and their completion/system-update projection render plain text plus the same
-  safe inline Markdown links. Artifact links open the HOPI read-only projection in a new tab; HOPI
-  does not add a general Markdown renderer or make arbitrary machine-local paths clickable
+- Assistant replies and their action/completion projections render through one shared,
+  presentation-only GFM surface. Headings, lists, quotes, emphasis, tables, task lists, inline and
+  fenced code, and safe links may appear while the current streamed snapshot is incomplete. Raw
+  HTML and Markdown images are not rendered; attachments remain explicit durable feed items.
+  Artifact and `http(s)` links open in a new tab, while arbitrary machine-local paths remain
+  non-clickable. User-authored bubbles and runtime/tool diagnostics remain literal
 - targeted Attention is pinned as one direct request without displaying its internal identifier;
   replying preserves every open identifier associated with that exact message invisibly as context
 

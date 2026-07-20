@@ -3,6 +3,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
+import { workspaceAttentionReference } from '../../src/domain/attentionReference'
 import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { createServer } from '../../src/mvpServer'
 import { PublicationCoordinator } from '../../src/publication/publisher'
@@ -39,6 +40,7 @@ const recoveryBlocker = join(repoRoot, 'local-recovery-blocker.txt')
 const roleRuns: Array<{ runId: string; responsibility: string; status: string }> = []
 const assistantToolResults: Array<{ attentionId: string; changed: boolean }> = []
 let attentionToResolve = ''
+let assistantHomeId = ''
 let releasePlanner: (() => void) | undefined
 const plannerGate = new Promise<void>((resolveGate) => {
   releasePlanner = resolveGate
@@ -74,10 +76,9 @@ const assistantRunner: AssistantModelRunner = {
     const mode = input.toolMode ?? 'main'
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })
-      const response = await callAssistantTool(input, observer, 'hopi_resolve_attention', {
-        scope: 'workspace',
-        attentionId: attentionToResolve,
-        resolution: 'The Assistant judged the Project ready to resume.',
+      const response = await callAssistantTool(input, observer, 'hopi_answer_attention', {
+        attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
+        decision: 'continue',
       })
       assistantToolResults.push({
         attentionId: attentionToResolve,
@@ -112,6 +113,7 @@ try {
     objective: 'Resume Planning after an Agent resolves Project Attention.',
   })
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+  assistantHomeId = (await workspace.readWorkspace()).homeId
   const original = await createWorkspaceAttentionController(workspace).ensureProjectAttention(
     PROJECT_ID,
     'The Project environment needs Agent inspection before execution can continue.',
@@ -309,7 +311,7 @@ async function stageEngineeringWork(input: RoleRunInput) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_resolve_attention',
+  name: 'hopi_answer_attention',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

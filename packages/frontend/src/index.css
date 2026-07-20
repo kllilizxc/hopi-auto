@@ -2937,8 +2937,136 @@ button:disabled,
   color: var(--color-neutral-200);
   font-size: 12px;
   line-height: 1.7;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.assistant-message-markdown {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.assistant-message-markdown__fallback {
+  white-space: pre-wrap;
+}
+
+.assistant-message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.assistant-message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.assistant-message-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.9em 0 0.38em;
+  color: inherit;
+  font-weight: 740;
+  line-height: 1.35;
+}
+
+.assistant-message-markdown h1 {
+  font-size: 1.3em;
+}
+
+.assistant-message-markdown h2 {
+  font-size: 1.18em;
+}
+
+.assistant-message-markdown :is(h3, h4, h5, h6) {
+  font-size: 1.06em;
+}
+
+.assistant-message-markdown :is(p, ul, ol, blockquote, pre, table) {
+  margin: 0 0 0.72em;
+}
+
+.assistant-message-markdown p {
+  white-space: pre-wrap;
+}
+
+.assistant-message-markdown :is(ul, ol) {
+  padding-left: 1.45em;
+}
+
+.assistant-message-markdown li + li {
+  margin-top: 0.18em;
+}
+
+.assistant-message-markdown li > p {
+  margin: 0;
+}
+
+.assistant-message-markdown .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.assistant-message-markdown .task-list-item {
+  list-style: none;
+}
+
+.assistant-message-markdown input[type='checkbox'] {
+  width: 0.9em;
+  height: 0.9em;
+  margin: 0 0.42em 0 0;
+  accent-color: var(--color-info-400);
+  vertical-align: -0.08em;
+}
+
+.assistant-message-markdown blockquote {
+  padding-left: 0.85em;
+  color: var(--color-neutral-400);
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--color-info-400) 52%, transparent);
+}
+
+.assistant-message-markdown code {
+  padding: 0.12em 0.36em;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-neutral-800) 82%, transparent);
+  color: var(--color-neutral-100);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.assistant-message-markdown pre {
+  max-width: 100%;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 9px;
+  background: var(--color-neutral-925);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-white) 7%, transparent);
+}
+
+.assistant-message-markdown pre code {
+  padding: 0;
+  background: transparent;
+  color: var(--color-neutral-250);
+  white-space: pre;
+}
+
+.assistant-message-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.assistant-message-markdown :is(th, td) {
+  padding: 5px 8px;
+  text-align: left;
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--color-white) 8%, transparent);
+}
+
+.assistant-message-markdown th {
+  color: var(--color-neutral-100);
+  font-weight: 700;
+}
+
+.assistant-message-markdown hr {
+  height: 1px;
+  margin: 0.9em 0;
+  background: color-mix(in srgb, var(--color-white) 10%, transparent);
 }
 
 .assistant-message-link.app-link {
@@ -3347,11 +3475,10 @@ button:disabled,
   font-size: 10px;
 }
 
-.unified-feed-action-row p {
+.unified-feed-action-row__message {
   margin: 5px 0 0;
   font-size: 10px;
   line-height: 1.55;
-  white-space: pre-wrap;
 }
 
 .unified-feed-action-row button {
@@ -3424,12 +3551,11 @@ button:disabled,
   font-size: 10px;
 }
 
-.unified-feed-system-update p {
+.unified-feed-system-update__message {
   margin: 5px 0 0;
   color: var(--color-neutral-300);
   font-size: 10px;
   line-height: 1.58;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -3553,6 +3679,23 @@ button:disabled,
   font-weight: 720;
   line-height: 1;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning-400) 20%, transparent);
+}
+
+.assistant-needs-you-jump.app-button.button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 3px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.assistant-needs-you-jump.app-button.button:hover {
+  background: color-mix(in srgb, var(--color-warning-400) 8%, transparent);
+}
+
+.assistant-needs-you-jump:hover .assistant-needs-you-count.app-count-badge {
+  background: color-mix(in srgb, var(--color-warning-400) 22%, transparent);
+  color: var(--color-warning-200);
 }
 
 .assistant-body {

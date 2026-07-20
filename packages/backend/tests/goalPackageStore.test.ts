@@ -65,6 +65,90 @@ describe('createGoalPackageStore', () => {
     )
   })
 
+  test('creates a new Goal through one Assistant-dispatched Engineering gate', async () => {
+    const publisher = new PublicationCoordinator()
+    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+
+    const goalPackage = await store.createGoal({
+      goalId: 'G-direct',
+      title: 'Direct delivery',
+      objective: 'Deliver one bounded change.',
+      acceptedInput: {
+        attributes: {
+          sourceHomeId: 'H-1',
+          sourceEventId: 'EV-1',
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
+        },
+        body: 'Deliver one bounded change.\n',
+      },
+      initialEngineeringWork: {
+        id: 'W-direct',
+        title: 'Deliver the bounded change',
+        objective: 'Implement the accepted bounded change.',
+        acceptanceCriteria: ['The bounded change works as requested.'],
+        repos: ['repo'],
+        assistantDispatch: 'home:H-1/event:EV-1',
+      },
+    })
+
+    expect([...goalPackage.works.values()]).toHaveLength(1)
+    expect(goalPackage.works.get('W-direct')?.attributes).toMatchObject({
+      kind: 'engineering',
+      stage: 'generate',
+      repos: ['repo'],
+      assistantDispatch: 'home:H-1/event:EV-1',
+    })
+    expect(goalPackage.works.get('W-direct')?.body).toContain('/H-1/EV-1.md')
+    expect(goalPackage.works.has('plan-initial')).toBe(false)
+  })
+
+  test('keeps Assistant dispatch provenance immutable', async () => {
+    const publisher = new PublicationCoordinator()
+    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+    await store.createGoal({
+      goalId: 'G-direct',
+      title: 'Direct delivery',
+      objective: 'Deliver one bounded change.',
+      acceptedInput: {
+        attributes: {
+          sourceHomeId: 'H-1',
+          sourceEventId: 'EV-1',
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
+        },
+        body: 'Deliver one bounded change.\n',
+      },
+      initialEngineeringWork: {
+        id: 'W-direct',
+        title: 'Deliver the bounded change',
+        objective: 'Implement the accepted bounded change.',
+        acceptanceCriteria: ['The bounded change works as requested.'],
+        repos: ['repo'],
+        assistantDispatch: 'home:H-1/event:EV-1',
+      },
+    })
+    const path = store.paths.workDocument('G-direct', 'W-direct')
+    const source = await Bun.file(store.paths.absolute(path)).text()
+    const work = parseWorkDocument(source)
+    if (work.attributes.kind !== 'engineering') throw new Error('Expected Engineering Work')
+    work.attributes.assistantDispatch = undefined
+
+    await expect(
+      store.publishGoal('G-direct', {
+        supportingWrites: [],
+        gateWrite: {
+          path,
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderWorkDocument(work),
+        },
+      }),
+    ).rejects.toBeInstanceOf(GoalPackageValidationError)
+    expect(
+      parseWorkDocument(await Bun.file(store.paths.absolute(path)).text()).attributes,
+    ).toHaveProperty('assistantDispatch', 'home:H-1/event:EV-1')
+  })
+
   test('rejects a second nonterminal Planning Work without publishing it', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)

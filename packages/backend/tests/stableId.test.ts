@@ -2,10 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { deriveReadableId, stableIdSchema } from '../src/domain/stableId'
 
 describe('readable stable IDs', () => {
-  test('derives compact Project and Goal identities from human names', () => {
+  test('derives compact Project, Goal, and Work identities from human names', () => {
     expect(deriveReadableId('P', 'Customer Portal', [])).toBe('P-customer-portal')
     expect(deriveReadableId('G', 'Ship the MVP!', [])).toBe('G-ship-the-mvp')
     expect(deriveReadableId('G', '优化整体前端样式', [])).toBe('G-优化整体前端样式')
+    expect(deriveReadableId('W', 'Rename the reader entry', [])).toBe('W-rename-the-reader-entry')
   })
 
   test('does not duplicate a supplied prefix', () => {

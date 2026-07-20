@@ -63,9 +63,9 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Never create or edit evidence/** or append evidenceRefs')
     expect(prompt).toContain('Proposal is an initially empty sparse overlay')
     expect(prompt).toContain('Absence means unchanged')
-    expect(prompt).toContain(
-      'existing nonterminal Engineering DAG is already the complete valid plan',
-    )
+    expect(prompt).toContain('With a complete Engineering DAG, leave Proposal empty')
+    expect(prompt).toContain('This ends only Planning')
+    expect(prompt).toContain('never retries, resets, cancels, or resolves Engineering Work')
     expect(prompt).toContain('Resolved Assistant Attention is history')
     expect(prompt).toContain('propose target-null completion')
     expect(prompt).toContain('including an empty proposal')

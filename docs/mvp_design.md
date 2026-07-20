@@ -119,8 +119,13 @@ Evidence documents. Different facts remain searchable and do not accumulate in o
 
 ### 3. The Work DAG is sparse and incremental
 
-Planner creates Work only when it is independently schedulable, independently verifiable, or
-expected to outlive one responsibility-pass Run. The whole graph need not exist up front.
+Assistant may admit one complete Engineering Work directly from one accepted Input. It uses this
+bounded path only when current Goal authority already defines one cohesive, independently
+verifiable delivery and no existing Work or durable design contract must be revised. One Input can
+directly admit at most one Engineering Work across the Home. When more than one new Work, contract
+revision, design judgment, or graph rewrite is needed, Planner creates Work only when it is
+independently schedulable, independently verifiable, or expected to outlive one
+responsibility-pass Run. The whole graph need not exist up front.
 
 Before publishing runnable Work, Planner records every known causal or conflict-avoidance order
 in `dependsOn`. Independent Work remains as dependency-free roots when both can start from the
@@ -141,6 +146,11 @@ responsibility passes executed by one generic `RoleRunner`; they are not durable
 Coordinator integration is deterministic kernel behavior, not another responsibility pass or Work
 stage. Project overrides, arbitrary passes, capability matching, workflow expressions, and a
 workflow editor are deferred.
+
+Planning is a responsibility, not a mandatory admission stage. Goal creation atomically publishes
+either one initial Planning Work or one Assistant-dispatched Engineering Work. Direct admission
+does not imply Goal completion: after Engineering Work drains, the ordinary final Planning
+assessment still decides whether the Goal is complete, needs more Work, or needs authority.
 
 Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
 alone owns mechanical side effects outside those surfaces: Git index, branch checkpoints, canonical
@@ -403,11 +413,13 @@ The projection still derives one primary badge in priority order: **Needs you**,
 Assistant**, `working`, `scheduled`, `queued`, then `waiting`. The card footer shows the count of
 real runtime Attempts and, only when dispatch is currently prevented, one concise `Blocked by …`
 reason derived from readiness facts. A Done card also shows when its successful terminal Attempt
-made completion effective. This is a server-derived read projection over the durable Attempt log,
-not another model-maintained Work field; older Attempt records without application metadata may be
-used only when their successful terminal responsibility unambiguously matches the Work kind. This
-runtime count is not the canonical Work `attempts` repair counter. Lane placement and segmented
-progress already communicate ordinary running and queued state without repeating footer labels.
+made completion effective. The Done Lane orders cards by that derived time, newest first; records
+without a derivable completion time follow timestamped cards in stable projection order. This is a
+presentation rule over the server-derived read projection and durable Attempt log, not another
+model-maintained Work field; older Attempt records without application metadata may be used only
+when their successful terminal responsibility unambiguously matches the Work kind. This runtime
+count is not the canonical Work `attempts` repair counter. Lane placement and segmented progress
+already communicate ordinary running and queued state without repeating footer labels.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
 canonical Work, Evidence, dependency, timing, and error facts. Only the running title and current
 segment fill carry restrained status motion; the title uses the Lane color while the card surface

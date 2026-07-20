@@ -1,4 +1,5 @@
 import type { AssistantFeedEntry, AttentionView } from './apiTypes'
+import type { MessageFeedItem } from './messageFeed'
 import {
   goalAttentionReference,
   normalizeAttentionReferences,
@@ -64,10 +65,22 @@ export function groupNeedsYouAttentions(
   return groups
 }
 
+export function findLatestNeedsYouGroupId(
+  messages: readonly MessageFeedItem[],
+  needsYouByGroupId: ReadonlyMap<string, number>,
+) {
+  return (
+    messages.findLast(
+      (message) =>
+        Boolean(message.groupId) && (needsYouByGroupId.get(message.groupId ?? '') ?? 0) > 0,
+    )?.groupId ?? null
+  )
+}
+
 export function resolveAssistantInboxContext(
   pageScope: GoalScope | null,
   replyAttention: AttentionView | AttentionView[] | null,
-  openAttentions: readonly AttentionView[] = [],
+  _openAttentions: readonly AttentionView[] = [],
   homeId?: string,
 ): AssistantInboxContext | undefined {
   const replyAttentions = Array.isArray(replyAttention)
@@ -112,17 +125,5 @@ export function resolveAssistantInboxContext(
     return { attentionRefs: references, ...(replyTo ? { replyTo } : {}) }
   }
   if (!pageScope) return undefined
-  const attentionRefs = openAttentions
-    .filter(
-      (attention) =>
-        attention.scope === 'goal' &&
-        attention.resolvedAt === null &&
-        attention.projectId === pageScope.projectId &&
-        attention.goalId === pageScope.goalId,
-    )
-    .map((attention) => goalAttentionReference(pageScope.projectId, pageScope.goalId, attention.id))
-  return {
-    ...pageScope,
-    ...(attentionRefs.length ? { attentionRefs } : {}),
-  }
+  return { ...pageScope }
 }

@@ -1,3 +1,4 @@
+import { createAssistantEngineeringWork } from '../domain/assistantEngineeringWork'
 import {
   type GoalDocument,
   type InputDocument,
@@ -13,6 +14,7 @@ import {
   readAndValidateGoalPackage,
   validateGoalPackageTransition,
 } from '../domain/goalPackage'
+import type { InboxEventReference } from '../domain/inboxEventReference'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type {
@@ -35,6 +37,14 @@ export interface CreateCanonicalGoalInput {
   acceptedInput?: InputDocument
   supportingWrites?: PublicationWrite[]
   planningReferences?: readonly PlanningReference[]
+  initialEngineeringWork?: {
+    id: string
+    title: string
+    objective: string
+    acceptanceCriteria: readonly string[]
+    repos: readonly string[]
+    assistantDispatch: InboxEventReference
+  }
 }
 
 export interface PlanningReference {
@@ -99,7 +109,18 @@ export function createGoalPackageStore(
             input.acceptedInput.attributes.sourceEventId,
           )
         : null
-      const planning = initialPlanningWork(input, acceptedInputPath)
+      if (input.initialEngineeringWork && !acceptedInputPath) {
+        throw new Error('Initial Assistant Engineering Work requires accepted Goal Input')
+      }
+      const initialWork = input.initialEngineeringWork
+        ? createAssistantEngineeringWork({
+            ...input.initialEngineeringWork,
+            dependsOn: [],
+            contractRevision: 1,
+            acceptedInputPath: acceptedInputPath ?? '',
+            references: input.planningReferences,
+          })
+        : initialPlanningWork(input, acceptedInputPath)
 
       await publisher.publish({
         root: paths.publicationRoot,
@@ -126,9 +147,9 @@ export function createGoalPackageStore(
           ...(input.supportingWrites ?? []),
         ],
         gateWrite: {
-          path: paths.workDocument(goalId, planning.attributes.id),
+          path: paths.workDocument(goalId, initialWork.attributes.id),
           expectedHash: null,
-          content: renderWorkDocument(planning),
+          content: renderWorkDocument(initialWork),
         },
         validateCandidate: (candidate, current) =>
           validateGoalPackageTransition(current, candidate, paths, goalId).then(() => undefined),

@@ -260,7 +260,7 @@ three times. Two Server restarts reconstructed the failure episode from Attempt 
 attempts remained zero, and one ordinary Work Attention rendered `Needs you` in the browser.
 
 The scenario then repaired the external condition, submitted the answer through the ordinary Goal
-page Assistant composer, invoked the normal `hopi_resolve_attention` boundary, and completed the same
+page Assistant composer, invoked the normal `hopi_answer_attention: continue` boundary, and completed the same
 Planning Work in a fresh episode through Generator, Reviewer, C1, and final Planning. The original
 blocker remains as resolved history, no targeted blocker remains open, the user checkout is unchanged,
 and separate blocked/recovered screenshots plus all three raw process streams are retained.
@@ -268,7 +268,7 @@ and separate blocked/recovered screenshots plus all three raw process streams ar
 ## 2026-07-18: HOPI-E2E-014 Atomic Work Recovery
 
 The scenario now reproduces the production omission where Assistant requested Work retry but did not
-separately resolve its Attention. The Assistant fixture calls only `hopi_control_work: retry`; the
+separately resolve its Attention. The Assistant fixture calls only `hopi_answer_attention: retry`; the
 backend publishes Goal Input, Work reset, and exact Work Attention resolution as one gated recovery
 operation. The fresh episode then reaches Planner, Generator, Reviewer, C1, and completion.
 
@@ -497,7 +497,7 @@ Browser artifact:
 `HOPI_E2E_ALLOW_UNAUDITED_BROWSER=1 bun run e2e:browser:028` passed with the production Server,
 Coordinator, Assistant tool boundary, real Browser Harness, managed Git worktree, and task checkpoint.
 The Board first showed one `Project blocked` banner while Planning remained ordinary `waiting` with
-only `project_ineligible`. A successful `hopi_resolve_attention` removed the banner and woke Planner.
+only `project_ineligible`. A successful `hopi_answer_attention: continue` removed the banner and woke Planner.
 The deterministic Generator then damaged its disposable task checkout so the next real checkpoint
 failed closed; Coordinator created a new Project Attention with a different identity and current
 reason, while the Engineering card remained `waiting` instead of becoming `Needs you`. Visual
@@ -909,7 +909,7 @@ The final `bun run check` passed 346 Backend tests with 1,427 assertions and 61 
 
 ## 2026-07-16: Recoverable Assistant Tool Conflict Looked Like A Server Crash
 
-An Assistant called `hopi_request_planning` for a terminal Goal before reopening it. The canonical
+An Assistant called `hopi_start_planning` for a terminal Goal before reopening it. The canonical
 guard correctly rejected the mutation, and the MCP adapter correctly returned the error to the
 model; the same historical turn then reopened the Goal and retried Planning successfully. However,
 the internal HTTP boundary classified `GoalControllerError` as an unknown `500` and printed its full

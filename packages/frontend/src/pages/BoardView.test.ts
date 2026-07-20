@@ -6,6 +6,7 @@ import {
   attemptModelLabel,
   attemptStatus,
   compactLaneRenderWindow,
+  orderDoneWorks,
   shouldShowWorkProgress,
 } from './BoardView'
 
@@ -138,6 +139,27 @@ test('compact Kanban mounts only the selected Lane and immediate neighbors', () 
   expect([...compactLaneRenderWindow('Build')]).toEqual(['Plan', 'Build', 'Review'])
   expect([...compactLaneRenderWindow('Review')]).toEqual(['Build', 'Review', 'Done'])
   expect([...compactLaneRenderWindow('Done')]).toEqual(['Review', 'Done'])
+})
+
+test('Done Work is ordered by completion time with undated records last', () => {
+  const works = [
+    { id: 'undated-a', completedAt: null },
+    { id: 'older', completedAt: '2026-07-18T08:00:00.000Z' },
+    { id: 'invalid', completedAt: 'not-a-date' },
+    { id: 'newest', completedAt: '2026-07-19T09:00:00.000Z' },
+    { id: 'same-a', completedAt: '2026-07-19T08:00:00.000Z' },
+    { id: 'same-b', completedAt: '2026-07-19T08:00:00.000Z' },
+  ]
+
+  expect(orderDoneWorks(works).map((work) => work.id)).toEqual([
+    'newest',
+    'same-a',
+    'same-b',
+    'older',
+    'undated-a',
+    'invalid',
+  ])
+  expect(works[0]?.id).toBe('undated-a')
 })
 
 test('progress belongs only to started non-terminal Work', () => {

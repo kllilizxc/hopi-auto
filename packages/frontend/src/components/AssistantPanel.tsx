@@ -11,6 +11,7 @@ import {
   type AssistantInboxContext,
   assistantAttentionReference,
   findAttentionNotificationEventId,
+  findLatestNeedsYouGroupId,
   groupNeedsYouAttentions,
   isNeedsYouAttention,
   resolveAssistantInboxContext,
@@ -31,6 +32,7 @@ import { cn } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import {
   AppAlert,
+  AppButton,
   AppScrollShadow,
   AppSpinner,
   AppTextArea,
@@ -85,10 +87,15 @@ export function AssistantPanel({
   const [replyAttentions, setReplyAttentions] = useState<AttentionView[]>([])
   const [showReflectionDebug, setShowReflectionDebug] = useState(false)
   const [assistantScrolling, setAssistantScrolling] = useState(false)
+  const [messageFocus, setMessageFocus] = useState<{
+    source: 'external' | 'needs-you'
+    request: number
+  } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const draftImagesRef = useRef<DraftImage[]>([])
   const optimisticMessagesRef = useRef<OptimisticInboxSubmission[]>([])
+  const messageFocusSequenceRef = useRef(0)
   const attentionQuery = useQuery({
     queryKey: ['assistant-attentions'],
     queryFn: readAssistantAttentions,
@@ -120,6 +127,10 @@ export function AssistantPanel({
     if (focusRequest === 0) return
     setReplyAttentions(initialReply ? [initialReply] : [])
     setShowReflectionDebug(false)
+    setMessageFocus({
+      source: 'external',
+      request: ++messageFocusSequenceRef.current,
+    })
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [focusRequest, initialReply])
 
@@ -171,6 +182,10 @@ export function AssistantPanel({
         ]),
       ),
     [needsYouAttentionsByGroupId],
+  )
+  const latestNeedsYouGroupId = useMemo(
+    () => findLatestNeedsYouGroupId(messages, needsYouByGroupId),
+    [messages, needsYouByGroupId],
   )
   const mappedNeedsYouCount = [...needsYouAttentionsByGroupId.values()].reduce(
     (total, attentions) => total + attentions.length,
@@ -238,6 +253,13 @@ export function AssistantPanel({
     },
     [needsYouAttentionsByGroupId],
   )
+  const focusLatestNeedsYouMessage = useCallback(() => {
+    setShowReflectionDebug(false)
+    setMessageFocus({
+      source: 'needs-you',
+      request: ++messageFocusSequenceRef.current,
+    })
+  }, [])
 
   const sendMutation = useMutation({
     mutationFn: (submission: OptimisticInboxSubmission) =>
@@ -364,13 +386,18 @@ export function AssistantPanel({
           {showReflectionDebug ? <ArrowLeft /> : <Activity />}
         </IconButton>
         {!showReflectionDebug && needsYouAttentions.length > 0 ? (
-          <CountBadge
-            className="assistant-needs-you-count"
-            color="warning"
-            aria-label={`${needsYouAttentions.length} requests need your reply`}
+          <AppButton
+            className="assistant-needs-you-jump"
+            variant="ghost"
+            type="button"
+            onClick={focusLatestNeedsYouMessage}
+            aria-label={`Jump to newest of ${needsYouAttentions.length} requests needing your reply`}
+            title="Jump to newest request"
           >
-            {needsYouAttentions.length}
-          </CountBadge>
+            <CountBadge className="assistant-needs-you-count" color="warning">
+              {needsYouAttentions.length}
+            </CountBadge>
+          </AppButton>
         ) : null}
         {!docked && (
           <IconButton type="button" onClick={onClose} aria-label="Close assistant">
@@ -404,9 +431,13 @@ export function AssistantPanel({
               onLoadOlder={assistantStream.loadOlder}
               onScrollingChange={setAssistantScrolling}
               focusGroupId={
-                attentionNotificationEventId ? `inbox:${attentionNotificationEventId}` : null
+                messageFocus?.source === 'needs-you'
+                  ? latestNeedsYouGroupId
+                  : attentionNotificationEventId
+                    ? `inbox:${attentionNotificationEventId}`
+                    : null
               }
-              focusRequest={focusRequest}
+              focusRequest={messageFocus?.request ?? 0}
               needsYouByGroupId={needsYouByGroupId}
               onReplyNeedsYou={replyToNeedsYouMessage}
               emptyState={

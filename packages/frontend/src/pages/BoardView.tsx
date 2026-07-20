@@ -145,6 +145,22 @@ export function compactLaneRenderWindow(selectedLane: GoalViewLane | null) {
   )
 }
 
+export function orderDoneWorks<T extends { completedAt: string | null }>(works: readonly T[]) {
+  return works.toSorted((left, right) => {
+    const leftTime = completionTimestamp(left.completedAt)
+    const rightTime = completionTimestamp(right.completedAt)
+    if (leftTime === null) return rightTime === null ? 0 : 1
+    if (rightTime === null) return -1
+    return rightTime - leftTime
+  })
+}
+
+function completionTimestamp(value: string | null) {
+  if (!value) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
 export function shouldShowWorkProgress(input: {
   stage: WorkCardView['stage']
   runAttemptCount: number
@@ -320,6 +336,7 @@ export function BoardView() {
     for (const work of goalQuery.data?.works ?? []) {
       if (work.projection.column) groups.get(work.projection.column)?.push(work)
     }
+    groups.set('Done', orderDoneWorks(groups.get('Done') ?? []))
     return groups
   }, [goalQuery.data?.works])
   const cancelled = useMemo(

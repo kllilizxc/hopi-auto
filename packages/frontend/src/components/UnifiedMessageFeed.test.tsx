@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
+import { AssistantMarkdown } from './AssistantMarkdown'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
 test('uses conversation-shaped skeleton rows for an initially loading feed', () => {
@@ -233,19 +234,8 @@ test('does not surface transport metadata as conversation copy', () => {
 test('opens safe Assistant Markdown links without activating local filesystem paths', () => {
   const artifactUrl = '/api/projects/P-1/goals/G-1/evidence/E-1/artifacts/0'
   const markup = renderToStaticMarkup(
-    <UnifiedMessageFeed
-      feedKey="links"
-      items={[
-        {
-          id: 'assistant-links',
-          createdAt: '2026-07-18T00:00:00.000Z',
-          kind: 'assistant_message',
-          role: 'assistant',
-          text: `报告在 [打开报告](${artifactUrl})。旧路径 [plan](/home/user/plan.md) 不应打开。`,
-        },
-      ]}
-      mode="inline"
-      emptyState={<span>Empty</span>}
+    <AssistantMarkdown
+      text={`报告在 [打开报告](${artifactUrl})。旧路径 [plan](/home/user/plan.md) 不应打开。`}
     />,
   )
 
@@ -253,11 +243,85 @@ test('opens safe Assistant Markdown links without activating local filesystem pa
   expect(markup).toContain('assistant-message-link')
   expect(markup).toContain('target="_blank"')
   expect(markup).toContain('>打开报告</a>')
-  expect(markup).toContain('[plan](/home/user/plan.md)')
+  expect(markup).toContain('旧路径 plan 不应打开')
   expect(markup).not.toContain('href="/home/user/plan.md"')
 })
 
-test('opens the same safe Markdown links from completion updates', () => {
+test('renders safe GFM without executing embedded HTML or loading Markdown images', () => {
+  const markup = renderToStaticMarkup(
+    <AssistantMarkdown
+      text={[
+        '# Status',
+        '',
+        '**Implemented** with ~~obsolete~~ output and `bun test`.',
+        '',
+        '- First check',
+        '- [x] Verified',
+        '',
+        '> One decision remains.',
+        '',
+        '```ts',
+        'const ready = true',
+        '```',
+        '',
+        '| Check | Result |',
+        '| --- | --- |',
+        '| Build | pass |',
+        '',
+        '[unsafe](javascript:alert(1))',
+        '<script>alert("embedded")</script>',
+        '![remote](https://example.com/tracker.png)',
+      ].join('\n')}
+    />,
+  )
+
+  expect(markup).toContain('<h1>Status</h1>')
+  expect(markup).toContain('<strong>Implemented</strong>')
+  expect(markup).toContain('<del>obsolete</del>')
+  expect(markup).toContain('<code>bun test</code>')
+  expect(markup).toContain('contains-task-list')
+  expect(markup).toContain('<blockquote>')
+  expect(markup).toContain('<pre><code class="language-ts">')
+  expect(markup).toContain('<table>')
+  expect(markup).not.toContain('href="javascript:')
+  expect(markup).not.toContain('<script')
+  expect(markup).not.toContain('alert(&quot;embedded&quot;)')
+  expect(markup).not.toContain('<img')
+})
+
+test('keeps user copy literal while tolerating an incomplete Assistant stream', () => {
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="streaming-markdown"
+      items={[
+        {
+          id: 'literal-user',
+          createdAt: '2026-07-20T00:00:00.000Z',
+          kind: 'user_message',
+          role: 'user',
+          text: '**Keep my syntax**',
+        },
+        {
+          id: 'partial-assistant',
+          createdAt: '2026-07-20T00:00:01.000Z',
+          kind: 'assistant_message',
+          role: 'assistant',
+          text: '**Still streaming',
+          pending: true,
+        },
+      ]}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+
+  expect(markup).toContain('**Keep my syntax**')
+  expect(markup).not.toContain('<strong>Keep my syntax</strong>')
+  expect(markup).toContain('**Still streaming')
+  expect(markup).toContain('Streaming')
+})
+
+test('routes completion updates through the shared lazy Markdown surface', () => {
   const artifactUrl = '/api/projects/P-1/goals/G-1/evidence/E-1/artifacts/7'
   const markup = renderToStaticMarkup(
     <UnifiedMessageFeed
@@ -278,6 +342,7 @@ test('opens the same safe Markdown links from completion updates', () => {
   )
 
   expect(markup).toContain('unified-feed-system-update')
+  expect(markup).toContain('assistant-message-markdown')
   expect(markup).toContain(`href="${artifactUrl}"`)
   expect(markup).toContain('assistant-message-link')
   expect(markup).toContain('>查看循环动画</a>')

@@ -92,11 +92,9 @@ const assistantRunner: AssistantModelRunner = {
     }
     if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
       const attentionId = attentionToResolve
-      await callAssistantTool(input, observer, 'hopi_control_work', {
-        projectId: PROJECT_ID,
-        goalId: GOAL_ID,
-        workId: 'plan-initial',
-        operation: 'retry',
+      await callAssistantTool(input, observer, 'hopi_answer_attention', {
+        attentionRef: `project:${PROJECT_ID}/goal:${GOAL_ID}/attention:${attentionId}`,
+        decision: 'retry',
       })
       attentionToResolve = null
       assistantRuns.push({ eventId: input.eventId, mode, action: `retried:${attentionId}` })
@@ -362,7 +360,7 @@ async function readFailureEvidence(runs: RoleRunRecord[]) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_request_user' | 'hopi_control_work',
+  name: 'hopi_request_user' | 'hopi_answer_attention',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

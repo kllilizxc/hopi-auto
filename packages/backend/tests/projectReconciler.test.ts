@@ -85,6 +85,30 @@ describe('ProjectReconciler', () => {
     )
   })
 
+  test('runs direct initial Engineering through the unchanged delivery and final Planning profile', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+
+    const results = []
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      results.push(await fixture.reconciler.reconcileGoal('goal-1'))
+    }
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(results.map((result) => result.kind)).toEqual([
+      'pass_finished',
+      'pass_finished',
+      'planning_ensured',
+      'pass_finished',
+      'goal_completed',
+    ])
+    expect(fixture.runner.responsibilities).toEqual(['generator', 'reviewer', 'planner'])
+    expect(goalPackage.goal.attributes.lifecycle).toBe('done')
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'done',
+      assistantDispatch: 'home:H-1/event:EV-1',
+    })
+  })
+
   test('runs one Engineering Work across two Repos and publishes one primary C1', async () => {
     const releases: Array<{ projectId: string; commit: string }> = []
     const fixture = await createFixture({
@@ -936,6 +960,7 @@ async function createFixture(
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
     onReleaseUpdated?: Parameters<typeof createProjectReconciler>[0]['onReleaseUpdated']
+    directInitialWork?: boolean
   } = {},
 ) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
@@ -1005,6 +1030,27 @@ async function createFixture(
     goalId: 'goal-1',
     title: 'Ship feature',
     objective: 'Set feature to 2.',
+    ...(options.directInitialWork
+      ? {
+          acceptedInput: {
+            attributes: {
+              sourceHomeId: 'H-1',
+              sourceEventId: 'EV-1',
+              sourceDigest: 'a'.repeat(64),
+              attachments: [],
+            },
+            body: 'Set feature to 2.\n',
+          },
+          initialEngineeringWork: {
+            id: 'W-1',
+            title: 'Build feature 2',
+            objective: 'Set feature to 2.',
+            acceptanceCriteria: ['feature equals 2.'],
+            repos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
+            assistantDispatch: 'home:H-1/event:EV-1' as const,
+          },
+        }
+      : {}),
   })
   const runner = new DeliveryScriptRunner({
     generatorResult: options.generatorResult ?? 'success',

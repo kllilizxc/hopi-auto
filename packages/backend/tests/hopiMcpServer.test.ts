@@ -43,13 +43,20 @@ describe('HOPI MCP server', () => {
     const result = await client.callTool({ name: 'hopi_read_state', arguments: {} })
 
     const names = tools.tools.map((tool) => tool.name)
-    expect(names).toContain('hopi_request_planning')
+    expect(names).toContain('hopi_start_planning')
+    expect(names).toContain('hopi_create_engineering_work')
     expect(names).toContain('hopi_write_preferences')
     expect(names).toContain('hopi_manage_project')
     expect(names).toContain('hopi_configure_model')
+    expect(names).toContain('hopi_retry_work')
+    expect(names).toContain('hopi_cancel_work')
+    expect(names).toContain('hopi_defer_work')
+    expect(names).toContain('hopi_answer_attention')
+    expect(names).not.toContain('hopi_control_work')
+    expect(names).not.toContain('hopi_resolve_attention')
     expect(names).not.toContain('hopi_notify_user')
     expect(names).not.toContain('hopi_request_user')
-    expect(tools.tools).toHaveLength(11)
+    expect(tools.tools).toHaveLength(14)
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
     ).toContain('reusable defaults')
@@ -59,12 +66,12 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'Include the returned goalId',
     )
-    expect(
-      tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
-    ).toContain('Do not call after same-turn Goal creation')
-    expect(
-      tools.tools.find((tool) => tool.name === 'hopi_request_planning')?.description,
-    ).toContain('not for optional notes or future ideas')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
+      'Does not retry Work or resolve Attention',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
+      'new_contract_revision',
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
       'includeEvidence: true',
     )
@@ -75,11 +82,24 @@ describe('HOPI MCP server', () => {
       'relative to the Goal design root',
     )
     expect(
-      tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
-    ).toContain('Goal scope requires projectId and goalId')
+      tools.tools.find((tool) => tool.name === 'hopi_create_engineering_work')?.description,
+    ).toContain('at most one Engineering Work')
     expect(
-      tools.tools.reduce((total, tool) => total + (tool.description?.length ?? 0), 0),
-    ).toBeLessThan(2_500)
+      tools.tools.find((tool) => tool.name === 'hopi_answer_attention')?.description,
+    ).toContain('revise alone starts Planning')
+    const answerSchema = tools.tools.find(
+      (tool) => tool.name === 'hopi_answer_attention',
+    )?.inputSchema
+    expect(answerSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        attentionRef: { type: 'string' },
+        decision: { enum: ['continue', 'retry', 'cancel', 'revise'] },
+      },
+    })
+    expect(JSON.stringify(answerSchema)).not.toContain('anyOf')
+    expect(JSON.stringify(answerSchema)).not.toContain('oneOf')
+    expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })
@@ -107,13 +127,14 @@ describe('HOPI MCP server', () => {
 
     const tools = (await client.listTools()).tools
     const names = tools.map((tool) => tool.name)
-    expect(names).toContain('hopi_request_planning')
+    expect(names).toContain('hopi_start_planning')
+    expect(names).toContain('hopi_create_engineering_work')
     expect(names).toContain('hopi_notify_user')
     expect(names).toContain('hopi_request_user')
     expect(names).not.toContain('hopi_write_preferences')
     expect(names).not.toContain('hopi_manage_project')
     expect(names).not.toContain('hopi_configure_model')
-    expect(names).toHaveLength(10)
+    expect(names).toHaveLength(13)
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
       'complete public turn',
     )

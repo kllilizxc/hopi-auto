@@ -80,7 +80,7 @@ Alignment is complete only when:
   Preview a pre-C1 Engineering responsibility.
 - [x] Give Planner the compact canonical Work and Attention field shapes it may create, so it never
   searches other Goals or historical Runs merely to infer fixed frontmatter.
-- [x] Treat Goal creation as admission of the current instruction plus initial Planning; a repeated
+- [x] Treat Goal creation as admission of the current instruction plus one initial Planning or direct Engineering gate; a repeated
   idempotent request adds no canonical state and requires no tool-order state machine.
 - [x] End the speaking turn after an asynchronous effect is admitted; never sleep or poll for later
   workflow state that Reflection already owns reporting.

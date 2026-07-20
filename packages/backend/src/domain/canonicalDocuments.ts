@@ -73,6 +73,7 @@ export const engineeringWorkAttributesSchema = workBaseSchema
     kind: z.literal('engineering'),
     stage: z.enum(ENGINEERING_STAGES),
     repos: nonEmptyUniqueStableIdsSchema.optional(),
+    assistantDispatch: inboxEventReferenceSchema.optional(),
   })
   .strict()
 

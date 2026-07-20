@@ -4,14 +4,18 @@ import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
   parseAttentionReference,
+  workspaceAttentionReference,
 } from '../domain/attentionReference'
 import {
+  matchGoalAttentionTarget,
   parseProjectAttentionTarget,
   parseWorkAttentionTarget,
   projectAttentionTarget,
+  workAttentionTarget,
 } from '../domain/attentionTarget'
 import {
   type WorkDocument,
+  isEngineeringWork,
   isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
@@ -20,7 +24,7 @@ import {
   renderInputDocument,
 } from '../domain/canonicalDocuments'
 import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
-import { inboxEventReference } from '../domain/inboxEventReference'
+import { inboxEventReference, parseInboxEventReference } from '../domain/inboxEventReference'
 import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
 import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
@@ -82,6 +86,7 @@ export interface AssistantTools {
   notificationMessage(token: string): string | null
   notificationIntent(token: string): 'inform' | 'request' | null
   hasDurableEffect(token: string): boolean
+  answeredAttentionRefs(token: string): readonly string[]
   assistantOwnedAttentionRefs(eventId: string): Promise<string[]>
   acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   acceptUserAttentionReply(eventId: string): Promise<string[]>
@@ -120,6 +125,9 @@ export function createAssistantTools(options: {
         notificationMessage: string | null
         notificationIntent: 'inform' | 'request' | null
         durableEffect: boolean
+        answeredAttentionRefs: Set<string>
+        startedPlanningGoals: Set<string>
+        revisedAttentionGoals: Set<string>
       }
     | {
         mode: 'reflection'
@@ -129,7 +137,168 @@ export function createAssistantTools(options: {
         onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void
       }
   const capabilities = new Map<string, Capability>()
+  const assistantDispatchQueues = new Map<string, Promise<void>>()
   const now = options.now ?? (() => new Date())
+
+  async function serializeAssistantDispatch<T>(
+    dispatchReference: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const previous = assistantDispatchQueues.get(dispatchReference) ?? Promise.resolve()
+    let release: () => void = () => {}
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const queued = previous.then(() => current)
+    assistantDispatchQueues.set(dispatchReference, queued)
+    await previous
+    try {
+      return await action()
+    } finally {
+      release()
+      if (assistantDispatchQueues.get(dispatchReference) === queued) {
+        assistantDispatchQueues.delete(dispatchReference)
+      }
+    }
+  }
+
+  async function findAssistantDispatch(dispatchReference: string) {
+    for (const project of options.projects.values()) {
+      for (const goalId of await project.store.listGoalIds()) {
+        const goalPackage = await project.store.readPackage(goalId)
+        for (const work of goalPackage.works.values()) {
+          if (
+            isEngineeringWork(work.attributes) &&
+            work.attributes.assistantDispatch === dispatchReference
+          ) {
+            return { project, goalId, work }
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  async function cancelWorkAndSettle(
+    project: AssistantToolProject,
+    goalId: string,
+    workId: string,
+    event: NonNullable<Awaited<ReturnType<AssistantWorkspaceStore['readEvent']>>>,
+  ) {
+    const before = await project.store.readPackage(goalId)
+    const work = before.works.get(workId)
+    if (!work) throw new Error(`Work not found: ${workId}`)
+    const admission = await goalInputAdmission(options.workspace, project.store, goalId, event)
+    const affectedWorkIds = dependentWorkIds(before, workId)
+    if (work.attributes.stage !== 'cancelled') {
+      await project.controller.cancelWork(goalId, workId)
+    }
+    const cancelledPackage = await project.store.readPackage(goalId)
+    const settledRefs: string[] = []
+    let inputWrite = admission.write
+    for (const attention of cancelledPackage.attentions.values()) {
+      if (attention.attributes.resolvedAt !== null) continue
+      const target = attention.attributes.target
+        ? parseWorkAttentionTarget(attention.attributes.target)
+        : null
+      if (
+        !target ||
+        target.projectId !== project.projectId ||
+        target.goalId !== goalId ||
+        !affectedWorkIds.has(target.workId) ||
+        !isTerminalWork(cancelledPackage.works.get(target.workId))
+      ) {
+        continue
+      }
+      if (
+        await resolveGoalAttention(
+          project.store,
+          goalId,
+          attention.attributes.id,
+          `Work ${target.workId} was cancelled and will no longer run.`,
+          { ...admission, write: inputWrite },
+          now(),
+        )
+      ) {
+        settledRefs.push(goalAttentionReference(project.projectId, goalId, attention.attributes.id))
+      }
+      inputWrite = null
+    }
+    if (settledRefs.length === 0 && inputWrite) {
+      await project.store.publishGoal(goalId, { supportingWrites: [], gateWrite: inputWrite })
+    }
+    return {
+      inputChanged: Boolean(admission.write),
+      affectedWorkIds: [...affectedWorkIds].toSorted(),
+      settledRefs: settledRefs.toSorted(),
+    }
+  }
+
+  async function currentWorkResult(input: {
+    project: AssistantToolProject
+    goalId: string
+    workId: string
+    kind: 'work_retried' | 'work_cancelled' | 'work_deferred'
+    inputChanged?: boolean
+    affectedWorkIds?: readonly string[]
+    settledRefs?: readonly string[]
+    continuation?: ReturnType<typeof deriveWorkContinuation>
+  }): Promise<AssistantToolResult> {
+    const [currentPackage, workspace, profile] = await Promise.all([
+      input.project.store.readPackage(input.goalId),
+      options.workspace.readWorkspace(),
+      readSoftwareDeliveryProfile(),
+    ])
+    const currentWork = currentPackage.works.get(input.workId)
+    if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
+    const projectEligible = ![...workspace.attentions.values()].some(
+      (attention) =>
+        attention.attributes.target === projectAttentionTarget(input.project.projectId) &&
+        attention.attributes.resolvedAt === null,
+    )
+    const projection = deriveWorkProjection(
+      input.project.projectId,
+      input.goalId,
+      currentWork.attributes,
+      currentPackage,
+      {
+        projectEligible,
+        liveRunWorkIds: new Set(),
+        passCapacity: { planner: true, generator: true, reviewer: true },
+        now: now(),
+        maxAttempts: profile.retry.maxAttempts,
+      },
+    )
+    const unresolvedAttentionRefs = await remainingGoalAttentionRefs(
+      input.project.store,
+      input.goalId,
+    )
+    return {
+      summary: `${input.kind} applied to Work ${input.workId}.`,
+      changed: true,
+      value: {
+        status: 'accepted',
+        effect: {
+          kind: input.kind,
+          projectId: input.project.projectId,
+          goalId: input.goalId,
+          workId: input.workId,
+          affectedWorkIds: input.affectedWorkIds ?? [input.workId],
+          inputChanged: input.inputChanged ?? false,
+          stage: currentWork.attributes.stage,
+          notBefore: currentWork.attributes.notBefore,
+          terminal: isWorkTerminal(currentWork.attributes),
+          failedPredicates: projection.failedPredicates,
+        },
+        continuation: input.continuation ?? deriveWorkContinuation(currentWork.attributes),
+        attention: {
+          settledRefs: input.settledRefs ?? [],
+          transferredRefs: [],
+        },
+        unresolvedAttentionRefs,
+      },
+    }
+  }
 
   return {
     issue(eventId) {
@@ -141,6 +310,9 @@ export function createAssistantTools(options: {
         notificationMessage: null,
         notificationIntent: null,
         durableEffect: false,
+        answeredAttentionRefs: new Set(),
+        startedPlanningGoals: new Set(),
+        revisedAttentionGoals: new Set(),
       })
       return token
     },
@@ -174,6 +346,11 @@ export function createAssistantTools(options: {
     hasDurableEffect(token) {
       const capability = capabilities.get(token)
       return capability?.mode === 'main' && capability.durableEffect
+    },
+
+    answeredAttentionRefs(token) {
+      const capability = capabilities.get(token)
+      return capability?.mode === 'main' ? [...capability.answeredAttentionRefs].toSorted() : []
     },
 
     async assistantOwnedAttentionRefs(eventId) {
@@ -295,33 +472,73 @@ export function createAssistantTools(options: {
       }
       const workspace = await options.workspace.readWorkspace()
       const expectedRequest = event.attributes.context.replyTo
+      const parsedRequest = parseInboxEventReference(expectedRequest)
+      if (!parsedRequest || parsedRequest.homeId !== workspace.homeId) {
+        throw new Error(`Inbox replyTo belongs to another Home: ${expectedRequest}`)
+      }
+      const requestEvent = workspace.events.get(parsedRequest.eventId)
+      if (
+        !requestEvent ||
+        requestEvent.attributes.visibility !== 'public' ||
+        requestEvent.attributes.status !== 'handled' ||
+        requestEvent.attributes.disposition !== 'operator-requested'
+      ) {
+        throw new Error(`Inbox replyTo is not an active operator request: ${expectedRequest}`)
+      }
+      const references = normalizeInboxAttentionReferences(event.attributes.context)
+      if (
+        references.length === 0 ||
+        references.some((reference) => !parseAttentionReference(reference))
+      ) {
+        throw new Error('Explicit Attention reply requires complete canonical Attention references')
+      }
+      const requestReferences = new Set(
+        requestEvent.attributes.context
+          ? normalizeInboxAttentionReferences(requestEvent.attributes.context)
+          : [],
+      )
       const accepted: string[] = []
-      for (const reference of normalizeInboxAttentionReferences(event.attributes.context)) {
+      for (const reference of references) {
+        if (!requestReferences.has(reference)) {
+          throw new Error(`Attention was not requested by replyTo: ${reference}`)
+        }
         const parsed = parseAttentionReference(reference)
-        if (!parsed) continue
+        if (!parsed) throw new Error(`Invalid Attention reference: ${reference}`)
         if (parsed.scope === 'workspace') {
           if (parsed.homeId !== workspace.homeId) {
             throw new Error(`Workspace Attention reference belongs to another Home: ${reference}`)
           }
           const current = workspace.attentions.get(parsed.attentionId)
-          if (!current || current.attributes.resolvedAt !== null) continue
-          if ((current.attributes.operatorRequest ?? null) === null) continue
-          await options.workspace.clearAttentionOperatorRequest(parsed.attentionId, expectedRequest)
+          if (!current) throw new Error(`Workspace Attention not found: ${reference}`)
+          if (current.attributes.resolvedAt !== null) continue
+          const operatorRequest = current.attributes.operatorRequest ?? null
+          if (operatorRequest === null) {
+            accepted.push(reference)
+            continue
+          }
+          await options.workspace.clearAttentionOperatorRequest(parsed.attentionId, operatorRequest)
           accepted.push(reference)
           continue
         }
         const project = options.projects.get(parsed.projectId)
         if (!project) throw new Error(`Attention Project is unavailable: ${parsed.projectId}`)
-        if (
-          await clearGoalAttentionOperatorRequest(
-            project.store,
-            parsed.goalId,
-            parsed.attentionId,
-            expectedRequest,
-          )
-        ) {
+        const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
+          parsed.attentionId,
+        )
+        if (!attention) throw new Error(`Goal Attention not found: ${reference}`)
+        if (attention.attributes.resolvedAt !== null) continue
+        const operatorRequest = attention.attributes.operatorRequest ?? null
+        if (operatorRequest === null) {
           accepted.push(reference)
+          continue
         }
+        await clearGoalAttentionOperatorRequest(
+          project.store,
+          parsed.goalId,
+          parsed.attentionId,
+          operatorRequest,
+        )
+        accepted.push(reference)
       }
       return accepted
     },
@@ -362,12 +579,48 @@ export function createAssistantTools(options: {
       if (!mainAssistantToolNames.includes(name as never)) {
         throw new Error(`Speaking thread cannot call ${name}`)
       }
+      if (name === 'hopi_start_planning') {
+        const args = parseAssistantToolArguments(name, input)
+        const key = goalKey(args.projectId, args.goalId)
+        if (capability.revisedAttentionGoals.has(key)) {
+          throw new Error(
+            `Planning for ${args.goalId} was already started by hopi_answer_attention revise in this turn; do not call hopi_start_planning for the same Goal`,
+          )
+        }
+      }
+      if (name === 'hopi_answer_attention') {
+        const args = parseAssistantToolArguments(name, input)
+        const parsed = parseAttentionReference(args.attentionRef)
+        if (
+          args.decision === 'revise' &&
+          parsed?.scope === 'goal' &&
+          capability.startedPlanningGoals.has(goalKey(parsed.projectId, parsed.goalId))
+        ) {
+          throw new Error(
+            `Planning for ${parsed.goalId} was already started separately in this turn; do not duplicate it with hopi_answer_attention revise. Use retry only when another invocation of the unchanged Work is intended.`,
+          )
+        }
+      }
       const result = await this.executeForEvent(
         capability.eventId,
         name as MainAssistantToolName,
         input,
       )
       if (result.changed) capability.durableEffect = true
+      if (name === 'hopi_start_planning') {
+        const args = parseAssistantToolArguments(name, input)
+        capability.startedPlanningGoals.add(goalKey(args.projectId, args.goalId))
+      }
+      if (name === 'hopi_answer_attention') {
+        const args = parseAssistantToolArguments(name, input)
+        capability.answeredAttentionRefs.add(args.attentionRef)
+        if (args.decision === 'revise') {
+          const parsed = parseAttentionReference(args.attentionRef)
+          if (parsed?.scope === 'goal') {
+            capability.revisedAttentionGoals.add(goalKey(parsed.projectId, parsed.goalId))
+          }
+        }
+      }
       if (name === 'hopi_notify_user' || name === 'hopi_request_user') {
         capability.notificationMessage = parseAssistantToolArguments(name, input).message
         capability.notificationIntent = name === 'hopi_request_user' ? 'request' : 'inform'
@@ -536,6 +789,108 @@ export function createAssistantTools(options: {
           const project = requireProject(options.projects, args.projectId)
           const goalId =
             args.goalId ?? deriveReadableId('G', args.title, await project.store.listGoalIds())
+          if (args.initialWork) {
+            const initialWork = args.initialWork
+            assertPortableGoalText('Engineering Work title', initialWork.title)
+            assertPortableGoalText('Engineering Work objective', initialWork.objective)
+            for (const criterion of initialWork.acceptanceCriteria) {
+              assertPortableGoalText('Engineering Work acceptance criterion', criterion)
+            }
+            assertLinkedRepos(project, initialWork.repos)
+            const workspace = await options.workspace.readWorkspace()
+            const dispatchReference = inboxEventReference(workspace.homeId, eventId)
+            return serializeAssistantDispatch(dispatchReference, async () => {
+              const dispatched = await findAssistantDispatch(dispatchReference)
+              const targetGoalId = args.goalId ?? dispatched?.goalId ?? goalId
+              options.onGoalEffect?.(eventId, project.projectId, targetGoalId)
+              if (
+                dispatched &&
+                (dispatched.project.projectId !== project.projectId ||
+                  dispatched.goalId !== targetGoalId)
+              ) {
+                throw new Error(
+                  `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
+                )
+              }
+              const existing = await project.store.readGoal(targetGoalId)
+              if (
+                existing &&
+                (existing.attributes.title !== args.title ||
+                  !existing.body.includes(args.objective))
+              ) {
+                throw new Error(`Goal ${targetGoalId} already exists with different content`)
+              }
+              const admission = await goalInputAdmission(
+                options.workspace,
+                project.store,
+                targetGoalId,
+                event,
+                false,
+              )
+              const references = await prepareGoalReferences(
+                options.workspace,
+                project.store,
+                targetGoalId,
+                args.references,
+              )
+              let work: WorkDocument
+              if (existing) {
+                if (!dispatched) {
+                  throw new Error(
+                    `Goal ${targetGoalId} already exists; use create_engineering_work or request_planning for a new instruction`,
+                  )
+                }
+                work = await project.controller.admitAssistantEngineeringWork(targetGoalId, {
+                  ...initialWork,
+                  dependsOn: [],
+                  assistantDispatch: dispatchReference,
+                  acceptedInput: admission,
+                  context: {
+                    supportingWrites: references.writes,
+                    references: references.planning,
+                  },
+                })
+              } else {
+                await project.store.createGoal({
+                  goalId: targetGoalId,
+                  title: args.title,
+                  objective: args.objective,
+                  priority: args.priority,
+                  acceptedInput: admission.document,
+                  supportingWrites: references.writes,
+                  planningReferences: references.planning,
+                  initialEngineeringWork: {
+                    id: deriveReadableId('W', initialWork.title, []),
+                    ...initialWork,
+                    assistantDispatch: dispatchReference,
+                  },
+                })
+                const created = [
+                  ...(await project.store.readPackage(targetGoalId)).works.values(),
+                ].find(
+                  (candidate) =>
+                    isEngineeringWork(candidate.attributes) &&
+                    candidate.attributes.assistantDispatch === dispatchReference,
+                )
+                if (!created) throw new Error('Direct initial Engineering Work was not published')
+                work = created
+              }
+              return {
+                summary: `Created Goal ${targetGoalId} with Engineering Work ${work.attributes.id}.`,
+                changed: !dispatched,
+                value: {
+                  projectId: project.projectId,
+                  goalId: targetGoalId,
+                  workId: work.attributes.id,
+                  references: references.planning,
+                  remainingAttentionRefs: await remainingGoalAttentionRefs(
+                    project.store,
+                    targetGoalId,
+                  ),
+                },
+              }
+            })
+          }
           options.onGoalEffect?.(eventId, project.projectId, goalId)
           const existing = await project.store.readGoal(goalId)
           const admission = await goalInputAdmission(
@@ -603,6 +958,71 @@ export function createAssistantTools(options: {
             },
           }
         }
+        case 'hopi_create_engineering_work': {
+          const args = parseAssistantToolArguments(name, input)
+          assertPortableGoalText('Engineering Work title', args.title)
+          assertPortableGoalText('Engineering Work objective', args.objective)
+          for (const criterion of args.acceptanceCriteria) {
+            assertPortableGoalText('Engineering Work acceptance criterion', criterion)
+          }
+          const project = requireProject(options.projects, args.projectId)
+          assertLinkedRepos(project, args.repos)
+          const workspace = await options.workspace.readWorkspace()
+          const dispatchReference = inboxEventReference(workspace.homeId, eventId)
+          return serializeAssistantDispatch(dispatchReference, async () => {
+            options.onGoalEffect?.(eventId, project.projectId, args.goalId)
+            const dispatched = await findAssistantDispatch(dispatchReference)
+            if (
+              dispatched &&
+              (dispatched.project.projectId !== project.projectId ||
+                dispatched.goalId !== args.goalId)
+            ) {
+              throw new Error(
+                `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
+              )
+            }
+            await requireGoal(project.store, args.goalId)
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              args.goalId,
+              event,
+            )
+            const references = await prepareGoalReferences(
+              options.workspace,
+              project.store,
+              args.goalId,
+              args.references,
+            )
+            const work = await project.controller.admitAssistantEngineeringWork(args.goalId, {
+              title: args.title,
+              objective: args.objective,
+              acceptanceCriteria: args.acceptanceCriteria,
+              repos: args.repos,
+              dependsOn: args.dependsOn,
+              assistantDispatch: dispatchReference,
+              acceptedInput: admission,
+              context: {
+                supportingWrites: references.writes,
+                references: references.planning,
+              },
+            })
+            return {
+              summary: `Created Engineering Work ${work.attributes.id} for ${args.goalId}.`,
+              changed: !dispatched,
+              value: {
+                projectId: project.projectId,
+                goalId: args.goalId,
+                workId: work.attributes.id,
+                references: references.planning,
+                remainingAttentionRefs: await remainingGoalAttentionRefs(
+                  project.store,
+                  args.goalId,
+                ),
+              },
+            }
+          })
+        }
         case 'hopi_write_design': {
           const args = parseAssistantToolArguments(name, input)
           for (const write of args.writes)
@@ -658,7 +1078,8 @@ export function createAssistantTools(options: {
             },
           }
         }
-        case 'hopi_request_planning': {
+        case 'hopi_start_planning': {
+          assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
           options.onGoalEffect?.(eventId, project.projectId, args.goalId)
@@ -675,7 +1096,8 @@ export function createAssistantTools(options: {
             args.goalId,
             args.references,
           )
-          if (args.materialContractChange) {
+          let planning: WorkDocument
+          if (args.mode === 'new_contract_revision') {
             await project.controller.applyMaterialInstruction(args.goalId, {
               eventId,
               content: event.body,
@@ -686,25 +1108,46 @@ export function createAssistantTools(options: {
               },
             })
             project.reconciler?.interruptRuns(args.goalId)
+            const current = await project.store.readPackage(args.goalId)
+            const activePlanning = [...current.works.values()].find(
+              (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
+            )
+            if (!activePlanning) throw new Error(`Planning Work was not created for ${args.goalId}`)
+            planning = activePlanning
           } else {
-            await ensurePlanningWithRunInvalidation(
+            planning = await ensurePlanningWithRunInvalidation(
               project,
               args.goalId,
               `Interpret accepted Inbox turn ${eventId} against the current Goal and design.`,
               admission,
               { supportingWrites: references.writes, references: references.planning },
-              referencedPlanningAttentionSettlement(event, project.projectId, args.goalId),
             )
           }
+          const unresolvedAttentionRefs = await remainingGoalAttentionRefs(
+            project.store,
+            args.goalId,
+          )
           return {
-            summary: `Planning requested for ${args.goalId}.`,
+            summary: `Planning started for ${args.goalId} without settling Attention.`,
             changed: true,
             value: {
-              projectId: project.projectId,
-              goalId: args.goalId,
-              inputChanged: Boolean(admission.write),
-              references: references.planning,
-              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
+              status: 'accepted',
+              effect: {
+                kind: 'planning_started',
+                projectId: project.projectId,
+                goalId: args.goalId,
+                workId: planning.attributes.id,
+                mode: args.mode,
+                inputChanged: Boolean(admission.write),
+                references: references.planning,
+              },
+              continuation: {
+                responsibility: 'planner',
+                workId: planning.attributes.id,
+                stage: planning.attributes.stage,
+              },
+              attention: { settledRefs: [], transferredRefs: [] },
+              unresolvedAttentionRefs,
             },
           }
         }
@@ -775,121 +1218,83 @@ export function createAssistantTools(options: {
             },
           }
         }
-        case 'hopi_control_work': {
+        case 'hopi_retry_work': {
+          assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
           options.onGoalEffect?.(eventId, project.projectId, args.goalId)
           const goalPackage = await project.store.readPackage(args.goalId)
           const work = goalPackage.works.get(args.workId)
           if (!work) throw new Error(`Work not found: ${args.workId}`)
-          let inputChanged = false
-          if (args.operation === 'cancel') {
-            const admission = await goalInputAdmission(
-              options.workspace,
-              project.store,
-              args.goalId,
-              event,
-            )
-            const affectedWorkIds = dependentWorkIds(goalPackage, args.workId)
-            if (work.attributes.stage !== 'cancelled') {
-              await project.controller.cancelWork(args.goalId, args.workId)
-            }
-            const cancelledPackage = await project.store.readPackage(args.goalId)
-            let settledAttention = false
-            for (const attention of cancelledPackage.attentions.values()) {
-              if (attention.attributes.resolvedAt !== null) continue
-              const target = attention.attributes.target
-                ? parseWorkAttentionTarget(attention.attributes.target)
-                : null
-              if (
-                !target ||
-                target.projectId !== args.projectId ||
-                target.goalId !== args.goalId ||
-                !affectedWorkIds.has(target.workId) ||
-                !isTerminalWork(cancelledPackage.works.get(target.workId))
-              ) {
-                continue
-              }
-              await resolveGoalAttention(
-                project.store,
-                args.goalId,
-                attention.attributes.id,
-                `Work ${target.workId} was cancelled and will no longer run.`,
-                admission,
-                now(),
-              )
-              settledAttention = true
-            }
-            if (!settledAttention && admission.write) {
-              await project.store.publishGoal(args.goalId, {
-                supportingWrites: [],
-                gateWrite: admission.write,
-              })
-            }
-            inputChanged = Boolean(admission.write)
-          } else if (args.operation === 'retry') {
-            await project.controller.retryWork(
-              args.goalId,
-              args.workId,
-              args.notBefore === undefined ? work.attributes.notBefore : args.notBefore,
-              {
-                resolution: 'Assistant requested another run in the existing Work lineage.',
-              },
-            )
-          } else {
-            await project.controller.setWorkNotBefore(
-              args.goalId,
-              args.workId,
-              args.notBefore ?? null,
-            )
-          }
-          const [currentPackage, workspace, profile] = await Promise.all([
-            project.store.readPackage(args.goalId),
-            options.workspace.readWorkspace(),
-            readSoftwareDeliveryProfile(),
-          ])
-          const currentWork = currentPackage.works.get(args.workId)
-          if (!currentWork) throw new Error(`Work not found after control: ${args.workId}`)
-          const projectEligible = ![...workspace.attentions.values()].some(
-            (attention) =>
-              attention.attributes.target === projectAttentionTarget(project.projectId) &&
-              attention.attributes.resolvedAt === null,
-          )
-          const projection = deriveWorkProjection(
+          const settledRefs = openWorkAttentionRefs(
+            goalPackage,
             project.projectId,
             args.goalId,
-            currentWork.attributes,
-            currentPackage,
-            {
-              projectEligible,
-              liveRunWorkIds: new Set(),
-              passCapacity: { planner: true, generator: true, reviewer: true },
-              now: now(),
-              maxAttempts: profile.retry.maxAttempts,
-            },
+            args.workId,
           )
-          return {
-            summary: `${args.operation} applied to Work ${args.workId}.`,
-            changed: true,
-            value: {
-              projectId: project.projectId,
-              goalId: args.goalId,
-              workId: args.workId,
-              inputChanged,
-              stage: currentWork.attributes.stage,
-              notBefore: currentWork.attributes.notBefore,
-              terminal: isWorkTerminal(currentWork.attributes),
-              failedPredicates: projection.failedPredicates,
-              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, args.goalId),
-            },
-          }
+          await project.controller.retryWork(
+            args.goalId,
+            args.workId,
+            args.notBefore === undefined ? work.attributes.notBefore : args.notBefore,
+            { resolution: 'Assistant requested another run in the existing Work lineage.' },
+          )
+          return currentWorkResult({
+            project,
+            goalId: args.goalId,
+            workId: args.workId,
+            kind: 'work_retried',
+            settledRefs,
+          })
         }
-        case 'hopi_resolve_attention': {
+        case 'hopi_cancel_work': {
+          assertNotExplicitAttentionReply(event, name)
           const args = parseAssistantToolArguments(name, input)
-          if (args.scope === 'workspace') {
+          const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
+          const effect = await cancelWorkAndSettle(project, args.goalId, args.workId, event)
+          const planning = findActivePlanning(await project.store.readPackage(args.goalId))
+          return currentWorkResult({
+            project,
+            goalId: args.goalId,
+            workId: args.workId,
+            kind: 'work_cancelled',
+            ...effect,
+            continuation: planning ? deriveWorkContinuation(planning.attributes) : null,
+          })
+        }
+        case 'hopi_defer_work': {
+          assertNotExplicitAttentionReply(event, name)
+          const args = parseAssistantToolArguments(name, input)
+          const project = requireProject(options.projects, args.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, args.goalId)
+          await project.controller.setWorkNotBefore(args.goalId, args.workId, args.notBefore)
+          return currentWorkResult({
+            project,
+            goalId: args.goalId,
+            workId: args.workId,
+            kind: 'work_deferred',
+          })
+        }
+        case 'hopi_answer_attention': {
+          const args = parseAssistantToolArguments(name, input)
+          if (
+            args.decision !== 'revise' &&
+            (args.planningMode !== undefined || args.references.length > 0)
+          ) {
+            throw new Error('planningMode and references are valid only for the revise decision')
+          }
+          const parsed = parseAttentionReference(args.attentionRef)
+          if (!parsed) throw new Error(`Invalid Attention reference: ${args.attentionRef}`)
+          if (parsed.scope === 'workspace') {
+            if (args.decision !== 'continue') {
+              throw new Error('Workspace Attention supports only the continue decision')
+            }
             const state = await options.workspace.readWorkspace()
-            const attention = state.attentions.get(args.attentionId)
-            if (!attention) throw new Error(`Workspace Attention not found: ${args.attentionId}`)
+            if (parsed.homeId !== state.homeId) {
+              throw new Error(`Workspace Attention belongs to another Home: ${args.attentionRef}`)
+            }
+            const attention = state.attentions.get(parsed.attentionId)
+            if (!attention) throw new Error(`Workspace Attention not found: ${args.attentionRef}`)
             const projectTarget = parseProjectAttentionTarget(attention.attributes.target)
             if (projectTarget) requireProject(options.projects, projectTarget.projectId)
             const changed = attention.attributes.resolvedAt === null
@@ -897,49 +1302,226 @@ export function createAssistantTools(options: {
               if (projectTarget) {
                 options.onProjectDispatchEffect?.(eventId, projectTarget.projectId)
               }
-              await options.workspace.resolveAttention(args.attentionId, args.resolution, now())
+              await options.workspace.resolveAttention(
+                parsed.attentionId,
+                `Answered by Inbox turn ${eventId}; continue the represented responsibility.`,
+                now(),
+              )
               if (projectTarget) {
                 await options.onProjectAttentionResolved?.(projectTarget.projectId)
               }
             }
+            const unresolvedAttentionRefs = await remainingWorkspaceAttentionRefs(options.workspace)
             return {
-              summary: projectTarget
-                ? changed
-                  ? `Resolved Project Attention ${args.attentionId}; requested fresh reconciliation for Project ${projectTarget.projectId}.`
-                  : `Project Attention ${args.attentionId} was already resolved.`
-                : `Resolved Workspace Attention ${args.attentionId}.`,
+              summary: `Answered Workspace Attention ${parsed.attentionId}.`,
               changed,
               value: {
-                attentionId: args.attentionId,
-                ...(projectTarget ? { projectId: projectTarget.projectId } : {}),
+                status: changed ? 'accepted' : 'already_settled',
+                effect: {
+                  kind: 'attention_continued',
+                  attentionRef: args.attentionRef,
+                  ...(projectTarget ? { projectId: projectTarget.projectId } : {}),
+                },
+                continuation: projectTarget
+                  ? { responsibility: 'coordinator', projectId: projectTarget.projectId }
+                  : { responsibility: 'assistant', source: 'original_event' },
+                attention: {
+                  settledRefs: changed ? [args.attentionRef] : [],
+                  transferredRefs: [],
+                },
+                unresolvedAttentionRefs,
               },
             }
           }
-          const project = requireProject(options.projects, args.projectId ?? '')
-          const goalId = args.goalId ?? ''
-          options.onGoalEffect?.(eventId, project.projectId, goalId)
-          const admission = await goalInputAdmission(
-            options.workspace,
-            project.store,
-            goalId,
-            event,
+
+          const project = requireProject(options.projects, parsed.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, parsed.goalId)
+          const goalPackage = await project.store.readPackage(parsed.goalId)
+          const attention = goalPackage.attentions.get(parsed.attentionId)
+          if (!attention) throw new Error(`Goal Attention not found: ${args.attentionRef}`)
+          if (attention.attributes.target === null) {
+            throw new Error('Completion Attention is not an actionable blocker')
+          }
+          const target = matchGoalAttentionTarget(
+            parsed.projectId,
+            parsed.goalId,
+            attention.attributes.target,
           )
-          const changed = await resolveGoalAttention(
+          if (!target) throw new Error(`Goal Attention target is invalid: ${args.attentionRef}`)
+          const work = target.scope === 'work' ? goalPackage.works.get(target.workId) : undefined
+          if (target.scope === 'work' && !work) {
+            throw new Error(`Attention Work not found: ${target.workId}`)
+          }
+
+          let continuation = work ? deriveWorkContinuation(work.attributes) : null
+          let settledRefs: string[] = []
+          let transferredRefs: string[] = []
+          let effect: Record<string, unknown>
+          if (args.decision === 'continue') {
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              parsed.goalId,
+              event,
+            )
+            const changed = await resolveGoalAttention(
+              project.store,
+              parsed.goalId,
+              parsed.attentionId,
+              'The operator answer cleared the represented condition; resume the current responsibility.',
+              admission,
+              now(),
+            )
+            if (changed) settledRefs = [args.attentionRef]
+            effect = { kind: 'attention_continued', inputChanged: Boolean(admission.write) }
+          } else if (args.decision === 'retry') {
+            if (!work || target.scope !== 'work') {
+              throw new Error('Retry requires a Work-targeted Attention')
+            }
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              parsed.goalId,
+              event,
+            )
+            await project.controller.retryWork(
+              parsed.goalId,
+              target.workId,
+              work.attributes.notBefore,
+              {
+                resolution: 'The operator requested another run in the same Work lineage.',
+                acceptedInput: admission,
+              },
+            )
+            settledRefs = openWorkAttentionRefs(
+              goalPackage,
+              parsed.projectId,
+              parsed.goalId,
+              target.workId,
+            )
+            const current = (await project.store.readPackage(parsed.goalId)).works.get(
+              target.workId,
+            )
+            continuation = current ? deriveWorkContinuation(current.attributes) : null
+            effect = {
+              kind: 'attention_retried',
+              workId: target.workId,
+              inputChanged: Boolean(admission.write),
+            }
+          } else if (args.decision === 'cancel') {
+            if (!work || target.scope !== 'work') {
+              throw new Error('Cancel requires a Work-targeted Attention')
+            }
+            const cancellation = await cancelWorkAndSettle(
+              project,
+              parsed.goalId,
+              target.workId,
+              event,
+            )
+            settledRefs = cancellation.settledRefs
+            const planning = findActivePlanning(await project.store.readPackage(parsed.goalId))
+            continuation = planning ? deriveWorkContinuation(planning.attributes) : null
+            effect = {
+              kind: 'attention_cancelled',
+              workId: target.workId,
+              affectedWorkIds: cancellation.affectedWorkIds,
+              inputChanged: cancellation.inputChanged,
+            }
+          } else {
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              parsed.goalId,
+              event,
+            )
+            const references = await prepareGoalReferences(
+              options.workspace,
+              project.store,
+              parsed.goalId,
+              args.references,
+            )
+            const planningMode = args.planningMode ?? 'same_contract'
+            let planning: WorkDocument
+            if (planningMode === 'new_contract_revision') {
+              await project.controller.applyMaterialInstruction(parsed.goalId, {
+                eventId,
+                content: event.body,
+                acceptedInput: admission,
+                planningContext: {
+                  supportingWrites: references.writes,
+                  references: references.planning,
+                },
+              })
+              project.reconciler?.interruptRuns(parsed.goalId)
+              const activePlanning = findActivePlanning(
+                await project.store.readPackage(parsed.goalId),
+              )
+              if (!activePlanning) {
+                throw new Error(`Planning Work was not created for ${parsed.goalId}`)
+              }
+              planning = activePlanning
+            } else {
+              planning = await ensurePlanningWithRunInvalidation(
+                project,
+                parsed.goalId,
+                `Revise the represented blocker from answered Inbox turn ${eventId}.`,
+                admission,
+                { supportingWrites: references.writes, references: references.planning },
+              )
+            }
+            if (
+              target.scope === 'work' &&
+              work &&
+              isPlanningWork(work.attributes) &&
+              planning.attributes.id === target.workId
+            ) {
+              if (
+                await resolveGoalAttention(
+                  project.store,
+                  parsed.goalId,
+                  parsed.attentionId,
+                  'The accepted revision changed this Planning Work authority; resume Planner.',
+                  { ...admission, write: null },
+                  now(),
+                )
+              ) {
+                settledRefs = [args.attentionRef]
+              }
+            } else {
+              await clearGoalAttentionOperatorRequest(
+                project.store,
+                parsed.goalId,
+                parsed.attentionId,
+              )
+              transferredRefs = [args.attentionRef]
+            }
+            continuation = deriveWorkContinuation(planning.attributes)
+            effect = {
+              kind: 'attention_revision_started',
+              workId: planning.attributes.id,
+              planningMode,
+              inputChanged: Boolean(admission.write),
+              references: references.planning,
+            }
+          }
+          const unresolvedAttentionRefs = await remainingGoalAttentionRefs(
             project.store,
-            goalId,
-            args.attentionId,
-            args.resolution,
-            admission,
-            now(),
+            parsed.goalId,
           )
           return {
-            summary: `Resolved Goal Attention ${args.attentionId}.`,
-            changed,
+            summary: `${args.decision} applied to ${args.attentionRef}.`,
+            changed: settledRefs.length > 0 || transferredRefs.length > 0,
             value: {
-              projectId: project.projectId,
-              goalId,
-              attentionId: args.attentionId,
-              remainingAttentionRefs: await remainingGoalAttentionRefs(project.store, goalId),
+              status: 'accepted',
+              effect: {
+                ...effect,
+                projectId: parsed.projectId,
+                goalId: parsed.goalId,
+                attentionRef: args.attentionRef,
+              },
+              continuation,
+              attention: { settledRefs, transferredRefs },
+              unresolvedAttentionRefs,
             },
           }
         }
@@ -1083,12 +1665,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function goalKey(projectId: string, goalId: string) {
+  return `${projectId}/${goalId}`
+}
+
 function assertPublicUserTurn(
   event: { attributes: { source: string; visibility: string } },
   subject: string,
 ) {
   if (event.attributes.source !== 'user' || event.attributes.visibility !== 'public') {
     throw new Error(`${subject} can be changed only from a public user turn`)
+  }
+}
+
+function assertNotExplicitAttentionReply(
+  event: { attributes: { context?: InboxContext | null } },
+  toolName: string,
+) {
+  if (event.attributes.context?.replyTo) {
+    throw new Error(
+      `${toolName} cannot answer an explicit Attention reply; use hopi_answer_attention with its exact reference and decision`,
+    )
   }
 }
 
@@ -1133,6 +1730,52 @@ async function remainingGoalAttentionRefs(store: GoalPackageStore, goalId: strin
     .toSorted()
 }
 
+async function remainingWorkspaceAttentionRefs(workspace: AssistantWorkspaceStore) {
+  const state = await workspace.readWorkspace()
+  return [...state.attentions.values()]
+    .filter(
+      (attention) =>
+        attention.attributes.target !== null && attention.attributes.resolvedAt === null,
+    )
+    .map((attention) => workspaceAttentionReference(state.homeId, attention.attributes.id))
+    .toSorted()
+}
+
+function openWorkAttentionRefs(
+  goalPackage: Awaited<ReturnType<GoalPackageStore['readPackage']>>,
+  projectId: string,
+  goalId: string,
+  workId: string,
+) {
+  const target = workAttentionTarget(projectId, goalId, workId)
+  return [...goalPackage.attentions.values()]
+    .filter(
+      (attention) =>
+        attention.attributes.target === target && attention.attributes.resolvedAt === null,
+    )
+    .map((attention) => goalAttentionReference(projectId, goalId, attention.attributes.id))
+    .toSorted()
+}
+
+function findActivePlanning(goalPackage: Awaited<ReturnType<GoalPackageStore['readPackage']>>) {
+  return [...goalPackage.works.values()].find(
+    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
+  )
+}
+
+function deriveWorkContinuation(attributes: WorkDocument['attributes']) {
+  if (isPlanningWork(attributes) && attributes.stage === 'plan') {
+    return { responsibility: 'planner' as const, workId: attributes.id, stage: attributes.stage }
+  }
+  if (isEngineeringWork(attributes) && attributes.stage === 'generate') {
+    return { responsibility: 'generator' as const, workId: attributes.id, stage: attributes.stage }
+  }
+  if (isEngineeringWork(attributes) && attributes.stage === 'review') {
+    return { responsibility: 'reviewer' as const, workId: attributes.id, stage: attributes.stage }
+  }
+  return null
+}
+
 async function ensurePlanningWithRunInvalidation(
   project: AssistantToolProject,
   goalId: string,
@@ -1162,28 +1805,6 @@ async function ensurePlanningWithRunInvalidation(
     project.reconciler?.interruptRuns(goalId, planning.attributes.id)
   }
   return planning
-}
-
-function referencedPlanningAttentionSettlement(
-  event: NonNullable<Awaited<ReturnType<AssistantWorkspaceStore['readEvent']>>>,
-  projectId: string,
-  goalId: string,
-): PlanningAttentionSettlement | undefined {
-  const attentionIds = event.attributes.context
-    ? normalizeInboxAttentionReferences(event.attributes.context).flatMap((reference) => {
-        const parsed = parseAttentionReference(reference)
-        return parsed?.scope === 'goal' &&
-          parsed.projectId === projectId &&
-          parsed.goalId === goalId
-          ? [parsed.attentionId]
-          : []
-      })
-    : []
-  if (attentionIds.length === 0) return undefined
-  return {
-    attentionIds,
-    resolution: 'Planning accepted this Inbox turn and now owns the represented continuation.',
-  }
 }
 
 async function prepareGoalReferences(
@@ -1405,6 +2026,17 @@ function requireProject(projects: ReadonlyMap<string, AssistantToolProject>, pro
   const project = projects.get(projectId)
   if (!project) throw new Error(`Project not found: ${projectId}`)
   return project
+}
+
+function assertLinkedRepos(project: AssistantToolProject, repoIds: readonly string[]) {
+  const linked = new Set(
+    project.repos?.map((repo) => repo.repoId) ?? [project.primaryRepoId ?? 'primary'],
+  )
+  for (const repoId of repoIds) {
+    if (!linked.has(repoId)) {
+      throw new Error(`Engineering Work references unlinked Repo ${repoId}`)
+    }
+  }
 }
 
 function dependentWorkIds(

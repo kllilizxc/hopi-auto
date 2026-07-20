@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { createProcessGroupTerminator } from './processGroup'
 
 export const PROJECT_PREPARE_PATH = 'scripts/hopi/prepare'
 
@@ -39,6 +40,7 @@ export interface ProjectPreparer {
   prepare(input: {
     projectRoot: string
     runtimeDir: string
+    cacheDir: string
     timeoutMs?: number
     goalId?: string
     primaryRepoId?: string
@@ -50,9 +52,13 @@ export function createProjectPreparer(): ProjectPreparer {
   return {
     async prepare(input) {
       const runtimeDir = resolve(input.runtimeDir)
+      const cacheDir = resolve(input.cacheDir)
       const logPath = join(runtimeDir, 'prepare.log')
       const reposFile = join(runtimeDir, 'repos.json')
-      await mkdir(runtimeDir, { recursive: true })
+      await Promise.all([
+        mkdir(runtimeDir, { recursive: true }),
+        mkdir(cacheDir, { recursive: true }),
+      ])
       const repoRoots = normalizeRepoRoots(
         input.repoRoots ?? [
           { repoId: input.primaryRepoId ?? 'primary', path: resolve(input.projectRoot) },
@@ -97,6 +103,7 @@ export function createProjectPreparer(): ProjectPreparer {
           repoRoots,
           reposFile,
           runtimeDir: repoRuntimeDir(runtimeDir, repo.repoId, index),
+          cacheDir,
           timeoutMs: input.timeoutMs,
           goalId: input.goalId,
         })
@@ -112,6 +119,7 @@ async function prepareRepo(input: {
   repoRoots: readonly ProjectPreparationRepoRoot[]
   reposFile: string
   runtimeDir: string
+  cacheDir: string
   timeoutMs?: number
   goalId?: string
 }) {
@@ -158,8 +166,11 @@ async function prepareRepo(input: {
         HOPI_REPO_ROOT: input.repo.path,
         HOPI_REPOS_FILE: input.reposFile,
         HOPI_PREPARE_RUNTIME_DIR: input.runtimeDir,
+        HOPI_CACHE_DIR: input.cacheDir,
       },
+      detached: true,
     })
+    const terminate = createProcessGroupTerminator(child.pid)
     const streams = Promise.all([
       consume(child.stdout, (line) => lines.push(`stdout: ${line}`)),
       consume(child.stderr, (line) => lines.push(`stderr: ${line}`)),
@@ -173,11 +184,12 @@ async function prepareRepo(input: {
       }),
     ]).finally(() => clearTimeout(timeout))
     if (completion.kind === 'timeout') {
-      child.kill('SIGTERM')
+      await terminate()
       await child.exited
       lines.push(`stderr: ${PROJECT_PREPARE_PATH} timed out after ${timeoutMs}ms.`)
     } else {
       exitCode = completion.code
+      await terminate()
     }
     await streams
   } catch (error) {

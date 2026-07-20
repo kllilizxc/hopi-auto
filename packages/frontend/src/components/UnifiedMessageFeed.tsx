@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { AlertCircle, ArrowDown, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   Virtuoso,
@@ -414,40 +424,19 @@ function MessageRow({
   )
 }
 
-export function AssistantMessageText({ text }: { text: string }) {
-  const content: ReactNode[] = []
-  const linkPattern = /\[([^\]\n]+)\]\(([^\s)]+)\)/g
-  let cursor = 0
-  for (const match of text.matchAll(linkPattern)) {
-    const href = match[2]
-    if (!href || !isSafeAssistantLink(href) || match.index === undefined) continue
-    if (match.index > cursor) content.push(text.slice(cursor, match.index))
-    content.push(
-      <AppLink
-        className="assistant-message-link"
-        href={href}
-        key={`${match.index}:${href}`}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {match[1]}
-      </AppLink>,
-    )
-    cursor = match.index + match[0].length
-  }
-  if (cursor < text.length) content.push(text.slice(cursor))
-  return <>{content}</>
-}
+const AssistantMarkdown = lazy(() =>
+  import('./AssistantMarkdown').then((module) => ({ default: module.AssistantMarkdown })),
+)
 
-function isSafeAssistantLink(href: string) {
-  if (href.startsWith('/api/') || href.startsWith('/projects/')) return true
-  try {
-    const protocol = new URL(href).protocol
-    return protocol === 'http:' || protocol === 'https:'
-  } catch {
-    return false
-  }
-}
+export const AssistantMessageText = memo(function AssistantMessageText({ text }: { text: string }) {
+  return (
+    <div className="assistant-message-markdown">
+      <Suspense fallback={<span className="assistant-message-markdown__fallback">{text}</span>}>
+        <AssistantMarkdown text={text} />
+      </Suspense>
+    </div>
+  )
+})
 
 function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
   const [expanded, setExpanded] = useState(false)
@@ -460,9 +449,9 @@ function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
           <strong>{item.label ?? 'Action required'}</strong>
           <time>{formatFeedTimestamp(item.createdAt)}</time>
         </header>
-        <p>
+        <div className="unified-feed-action-row__message">
           <AssistantMessageText text={item.text} />
-        </p>
+        </div>
         {details.length > 0 ? (
           <>
             <AppButton variant="ghost" type="button" onClick={() => setExpanded((current) => !current)}>
@@ -492,9 +481,9 @@ function SystemUpdateRow({ item }: { item: MessageFeedItem }) {
           <strong>{item.label ?? 'System update'}</strong>
           <time>{formatFeedTimestamp(item.createdAt)}</time>
         </header>
-        <p>
+        <div className="unified-feed-system-update__message">
           <AssistantMessageText text={item.text} />
-        </p>
+        </div>
       </div>
     </article>
   )

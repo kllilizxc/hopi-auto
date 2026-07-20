@@ -72,6 +72,10 @@ running animations and a 0.01 ms tab-indicator transition.
 - Reflection diagnostics are a nested lazy surface. Opening the ordinary Assistant does not load
   Reflection list/detail code or start its queries; that boundary is crossed only when the operator
   explicitly opens the debug stream.
+- Full GFM rendering is a shared message-content enhancement rather than shell or route startup
+  work. A feed first paints the exact current text snapshot, then loads the Markdown engine once and
+  enhances Assistant, Attention, and completion copy in place. The literal fallback remains usable;
+  user copy, tool diagnostics, and durable attachment rendering never enter that feature chunk.
 - The Board reads a card projection, not the document reader projection. For the reference 36-card
   Goal it stays below 80 KiB and never includes design content, Goal Evidence bodies, artifact lists,
   canonical Work bodies, or Goal Attention bodies. Cards retain only open Attention status and the

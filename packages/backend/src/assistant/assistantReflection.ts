@@ -395,6 +395,7 @@ function reflectionPrompt(
     'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
     'Distinguish Assistant action from operator action. Say operator action is required only when human input or a human decision is actually needed.',
     'For unresolved Goal Attention, select exact projectId and goalId but do not copy Attention IDs; Coordinator adds canonical references. Keep one handoff Goal-scoped.',
+    'When the latest finished Planning outcome says the represented contract and DAG need no change, report that conclusion and recommend the concrete non-Planning effect already supported by the accepted Input. Do not ask the operator to repeat a decision already present in current state.',
     'Do not draft operator prose or assume this snapshot is current. The speaking Assistant revalidates and communicates only the useful outcome or required action.',
     '',
     `State digest: ${snapshot.stateDigest}`,
@@ -593,6 +594,9 @@ function reflectionFacts(snapshot: AssistantStateSnapshot) {
       if (!isRecord(goal)) continue
       const goalId = nestedId(goal.goal, 'unknown-goal')
       facts.set(`Goal ${projectId}/${goalId}`, compactGoal(goal.goal))
+      if (isRecord(goal.latestPlanningOutcome)) {
+        facts.set(`Latest Planning ${projectId}/${goalId}`, compactWork(goal.latestPlanningOutcome))
+      }
       if (Array.isArray(goal.works)) {
         for (const work of goal.works) {
           if (!isRecord(work)) continue

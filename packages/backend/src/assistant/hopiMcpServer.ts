@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current state: active Runs, Work, open Attention, latest diagnostics, and exact paths. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page scope; otherwise copy complete canonical IDs.',
+      'Read compact current state: active Runs, Work control facts, open Attention, the latest finished Planning outcome, latest diagnostics, and exact paths. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page scope; otherwise copy complete canonical IDs.',
     inputSchema: assistantToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
@@ -60,10 +60,20 @@ if (mode !== 'reflection') {
     'hopi_create_goal',
     {
       description:
-        'Create a Goal, record the current turn, and start initial Planning for a requested autonomous outcome. Adopt relevant Inbox images with exact attachmentRef and purpose. Do not also request Planning in the same turn; do not create Goals for questions or casual conversation. Include the returned goalId in the reply.',
+        'Create a Goal and record this turn. Set singular initialWork for one cohesive, verifiable delivery; omit it for Planning. Direct Work does not complete the Goal. Adopt images by attachmentRef and purpose. Include the returned goalId.',
       inputSchema: assistantToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
+  )
+
+  server.registerTool(
+    'hopi_create_engineering_work',
+    {
+      description:
+        'Adopt turn to create at most one Engineering Work in an active Goal; one turn gets one Home-wide direct Work. Include Repos and dependencies. Use Planning for multiple Work or Goal/design/Work/DAG changes. Adopt images by attachmentRef and purpose.',
+      inputSchema: assistantToolSchemas.hopi_create_engineering_work,
+    },
+    (args) => callTool('hopi_create_engineering_work', args),
   )
 
   server.registerTool(
@@ -77,13 +87,13 @@ if (mode !== 'reflection') {
   )
 
   server.registerTool(
-    'hopi_request_planning',
+    'hopi_start_planning',
     {
       description:
-        'Adopt the current turn as Goal Input and ensure Planning. This may invalidate an active Planner, so use it only when current delivery should change, not for optional notes or future ideas. Adopt relevant Inbox images by exact attachmentRef and purpose. Do not call after same-turn Goal creation. Set materialContractChange only for an objective, scope, constraint, non-goal, success criterion, or expected-behavior change.',
-      inputSchema: assistantToolSchemas.hopi_request_planning,
+        'Use when one accepted instruction requires Planner to revise authority, design, Work, dependencies, or a multi-Work plan. Does not retry Work or resolve Attention. Guarantees one current Planning guard; choose new_contract_revision only when Goal outcome, scope, constraints, success, or behavior changes. Never combine this with hopi_answer_attention revise for the same Goal: revise already starts or refreshes Planning.',
+      inputSchema: assistantToolSchemas.hopi_start_planning,
     },
-    (args) => callTool('hopi_request_planning', args),
+    (args) => callTool('hopi_start_planning', args),
   )
 
   server.registerTool(
@@ -97,23 +107,43 @@ if (mode !== 'reflection') {
   )
 
   server.registerTool(
-    'hopi_control_work',
+    'hopi_retry_work',
     {
       description:
-        'Retry, explicitly abandon, or defer one Work. retry and set_not_before never adopt the current turn as Goal Input. cancel is only an explicit abandonment decision. Retry/cancel settle exact affected Work Attention, never broader Attention. Trust the returned stage, notBefore, terminal, and failedPredicates.',
-      inputSchema: assistantToolSchemas.hopi_control_work,
+        'Use to authorize another invocation in one unchanged Work outcome, contract, DAG, and delivery boundary, including after transient setup, network, provider, or capacity failure. Does not revise authority or claim an environment repair. Guarantees the Work reset and settlement of Attention targeted exactly at that Work; trust the returned continuation and failed predicates.',
+      inputSchema: assistantToolSchemas.hopi_retry_work,
     },
-    (args) => callTool('hopi_control_work', args),
+    (args) => callTool('hopi_retry_work', args),
   )
 
   server.registerTool(
-    'hopi_resolve_attention',
+    'hopi_cancel_work',
     {
       description:
-        'Resolve an exact answered or repaired Attention. Goal scope requires projectId and goalId; workspace/Project scope does not. Copy canonical IDs from state or turn context. Resolve only after the blocker is false or superseded, and claim it cleared only when this call succeeds.',
-      inputSchema: assistantToolSchemas.hopi_resolve_attention,
+        'Use only when one Engineering Work is explicitly no longer wanted. Does not mean retry or repair. Guarantees terminal cancellation of it and dependent Work, settlement of their exact Attention, and a Planning guard for reassessment.',
+      inputSchema: assistantToolSchemas.hopi_cancel_work,
     },
-    (args) => callTool('hopi_resolve_attention', args),
+    (args) => callTool('hopi_cancel_work', args),
+  )
+
+  server.registerTool(
+    'hopi_defer_work',
+    {
+      description:
+        'Use only to set or clear one Work notBefore time. Does not retry, revise, cancel, or resolve Attention. Guarantees only the validated scheduling field changes.',
+      inputSchema: assistantToolSchemas.hopi_defer_work,
+    },
+    (args) => callTool('hopi_defer_work', args),
+  )
+
+  server.registerTool(
+    'hopi_answer_attention',
+    {
+      description:
+        'Use one exact canonical attentionRef after an operator answer or represented repair. retry means another invocation of the unchanged Work, including after transient setup/network/provider/capacity failure; revise alone starts Planning and means represented authority or delivery structure must change. Never call hopi_start_planning for the same revision. continue resumes the current responsibility and cancel abandons the Work. Does not affect unrelated Attention and guarantees the named effect precedes settlement, while revise returns the open blocker to Assistant ownership until the change clears it.',
+      inputSchema: assistantToolSchemas.hopi_answer_attention,
+    },
+    (args) => callTool('hopi_answer_attention', args),
   )
 
   server.registerTool(

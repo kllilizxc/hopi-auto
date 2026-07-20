@@ -405,6 +405,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           const preparation = await preparer.prepare({
             projectRoot: preparationProjectRoot,
             runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
+            cacheDir: context.runtimeCacheDir,
             timeoutMs: options.preparationTimeoutMs,
             goalId,
             primaryRepoId,

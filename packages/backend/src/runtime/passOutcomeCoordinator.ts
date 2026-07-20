@@ -700,6 +700,9 @@ function validatePlannerTransition(
       if (!isEngineeringWork(work.attributes) || work.attributes.stage !== 'generate') {
         throw new PassProposalError('Planner may create only Engineering Work at generate')
       }
+      if (work.attributes.assistantDispatch !== undefined) {
+        throw new PassProposalError('Planner may not create Assistant-dispatched Engineering Work')
+      }
       continue
     }
     if (workId === input.workId || isWorkTerminal(previous.attributes)) continue

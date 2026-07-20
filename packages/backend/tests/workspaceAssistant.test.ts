@@ -628,7 +628,7 @@ describe('WorkspaceAssistant conversation', () => {
       'Keep discussion, questions, optional suggestions, and future ideas in conversation',
     )
     expect(seen[0]?.prompt).toContain(
-      'Request Planning only when current plan or delivery should change',
+      'Start Planning only when current authority, design, Work, dependencies, or multi-Work delivery should change',
     )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
     expect(seen[0]?.prompt).toContain('MCP descriptions and schemas are the sole authority')
@@ -641,22 +641,22 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('Link at least one relevant returned operatorUrl in Markdown')
     expect(seen[0]?.prompt).toContain('if none resolves, say no linked artifact was produced')
     expect(seen[0]?.prompt).toContain('[Mandatory Attention check before every final reply]')
-    expect(seen[0]?.prompt).toContain('every remainingAttentionRefs value returned by tools')
-    expect(seen[0]?.prompt).toContain('Work retry/cancel settles only Attention targeted exactly')
-    expect(seen[0]?.prompt).toContain('Retry means another invocation in the same Work lineage')
-    expect(seen[0]?.prompt).toContain('set_not_before only defers dispatch')
-    expect(seen[0]?.prompt).toContain('trust the returned stage, notBefore, terminal')
-    expect(seen[0]?.prompt).toContain('request Planning instead')
+    expect(seen[0]?.prompt).toContain('Only an explicit Reply action attaches replyTo')
+    expect(seen[0]?.prompt).toContain('call hopi_answer_attention before ending the turn')
+    expect(seen[0]?.prompt).toContain('Choose continue to resume the responsibility')
+    expect(seen[0]?.prompt).toContain('Only revise starts Planner')
+    expect(seen[0]?.prompt).toContain('including transient setup, network, provider, or capacity')
     expect(seen[0]?.prompt).toContain(
-      'for every other blocker you MUST call hopi_resolve_attention',
+      'Never pair hopi_start_planning with hopi_answer_attention revise',
     )
+    expect(seen[0]?.prompt).toContain('Defer Work only changes notBefore')
+    expect(seen[0]?.prompt).toContain('trust each returned effect, continuation')
     expect(seen[0]?.prompt).toContain(
-      'Request Planning settles only a current-turn Attention reference',
+      'Starting Planning alone never retries Work or resolves Attention',
     )
-    expect(seen[0]?.prompt).toContain('Changing a Goal never closes Attention by itself')
-    expect(seen[0]?.prompt).toContain(
-      'Claim it cleared only after the applicable control or hopi_resolve_attention tool succeeds',
-    )
+    expect(seen[0]?.prompt).toContain('Create one Engineering Work directly only')
+    expect(seen[0]?.prompt).toContain('One Input gets one direct Work Home-wide')
+    expect(seen[0]?.prompt).toContain('Claim it cleared only after hopi_answer_attention succeeds')
     expect(seen[0]?.prompt).toContain(
       'Every hopi_request_user message must stand alone in the visible conversation',
     )
@@ -951,11 +951,9 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         calls += 1
-        await tools.execute(input.toolToken, 'hopi_control_work', {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          workId: 'plan-initial',
-          operation: 'retry',
+        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+          attentionRef: `project:P-1/goal:G-1/attention:${attention.attributes.id}`,
+          decision: 'retry',
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
@@ -1052,12 +1050,9 @@ describe('WorkspaceAssistant conversation', () => {
           })
           return { reply: '', session: codexSession('thread-revised-notification') }
         }
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          scope: 'goal',
-          projectId: 'P-1',
-          goalId: 'G-1',
-          attentionId: 'A-revised-notification',
-          resolution: 'The correction run established and applied the internal continuation.',
+        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+          attentionRef: 'project:P-1/goal:G-1/attention:A-revised-notification',
+          decision: 'continue',
         })
         await tools.execute(input.toolToken, 'hopi_notify_user', {
           message: 'The blocker was cleared and internal work has resumed.',
@@ -1223,17 +1218,10 @@ describe('WorkspaceAssistant conversation', () => {
             session: codexSession('thread-attention'),
           }
         }
-        await tools.execute(input.toolToken, 'hopi_request_planning', {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          materialContractChange: true,
-        })
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          scope: 'goal',
-          projectId: 'P-1',
-          goalId: 'G-1',
-          attentionId: 'A-choice',
-          resolution: 'The accepted revision supersedes the old direction.',
+        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+          attentionRef: 'project:P-1/goal:G-1/attention:A-choice',
+          decision: 'revise',
+          planningMode: 'new_contract_revision',
         })
         return {
           reply: 'I dropped the old direction and requested the revised plan.',
@@ -1272,10 +1260,18 @@ describe('WorkspaceAssistant conversation', () => {
         .resolvedAt,
     ).toBeNull()
 
+    const operatorRequest = (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')
+      ?.attributes.operatorRequest
+    if (!operatorRequest) throw new Error('Expected an operator request')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-answer',
       content: 'The result is poor. Drop that direction and revise the plan.',
-      context: { projectId: 'P-1', goalId: 'G-other' },
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+        replyTo: operatorRequest,
+      },
     })
     await fixture.assistant.process('EV-answer')
 
@@ -1287,18 +1283,88 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect((await fixture.workspace.readEvent('EV-answer'))?.attributes).toMatchObject({
       status: 'handled',
-      context: { projectId: 'P-1', goalId: 'G-other' },
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
+        replyTo: operatorRequest,
+      },
       reply: 'I dropped the old direction and requested the revised plan.',
     })
     expect(goalPackage.attentions.get('A-choice')?.attributes).toMatchObject({
       notifiedAt: expect.any(String),
-      resolvedAt: expect.any(String),
-      resolutionInput: expect.stringContaining('EV-answer'),
+      operatorRequest: null,
+      resolvedAt: null,
     })
     expect(goalPackage.inputs).toHaveLength(1)
     expect(goalPackage.inputs[0]?.body).toBe(
       'The result is poor. Drop that direction and revise the plan.\n',
     )
+  })
+
+  test('continues an explicit Reply until its exact Attention answer is applied', async () => {
+    let calls = 0
+    const prompts: string[] = []
+    const reference = 'project:P-1/goal:G-1/attention:A-explicit-reply'
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        calls += 1
+        prompts.push(input.prompt)
+        if (calls === 1) {
+          return {
+            reply: 'I will start Planning.',
+            session: codexSession('thread-explicit-reply'),
+          }
+        }
+        await tools.execute(input.toolToken, 'hopi_answer_attention', {
+          attentionRef: reference,
+          decision: 'continue',
+        })
+        return {
+          reply: 'The answer was applied and the original responsibility can continue.',
+          session: codexSession('thread-explicit-reply'),
+        }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-explicit-reply')
+    const request = await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-explicit-question',
+      content: 'Ask for the exact answer.',
+      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
+    })
+    await fixture.workspace.handleEvent(request.attributes.id, {
+      reply: 'Please answer this blocker.',
+      disposition: 'operator-requested',
+      expose: true,
+    })
+    await fixture.tools.acknowledgeEventAttentions(request.attributes.id)
+    const operatorRequest = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      'A-explicit-reply',
+    )?.attributes.operatorRequest
+    if (!operatorRequest) throw new Error('Expected the exact operator request')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-explicit-answer',
+      content: 'Continue.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [reference],
+        replyTo: operatorRequest,
+      },
+    })
+
+    await fixture.assistant.process('EV-explicit-answer')
+
+    expect(calls).toBe(2)
+    expect(prompts[1]).toContain('[Explicit Attention reply correction')
+    expect(prompts[1]).toContain('Starting Planning alone is not an answer')
+    expect((await fixture.workspace.readEvent('EV-explicit-answer'))?.attributes).toMatchObject({
+      status: 'handled',
+      reply: 'The answer was applied and the original responsibility can continue.',
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-explicit-reply')?.attributes,
+    ).toMatchObject({ operatorRequest: null, resolvedAt: expect.any(String) })
   })
 
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {

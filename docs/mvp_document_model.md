@@ -393,7 +393,10 @@ decision that changes expected behavior increment `contractRevision`. Explicit r
 increments it. Priority, lifecycle alone, Work decomposition, retry, findings, and `notBefore`
 do not.
 
-A new Goal is active and includes Planning Work. A non-active Goal cannot own a live Run lease:
+A new Goal is active and includes exactly one initial Work: either Planning Work, or one
+Assistant-dispatched Engineering Work at `generate`. Direct Engineering admission does not assert
+that the Work completes the Goal; it only removes an unnecessary initial Planning pass. A
+non-active Goal cannot own a live Run lease:
 Coordinator interrupts that Goal's admitted Runs without disturbing other Goals. Pause therefore
 prevents new dispatch, interrupts running passes, and rejects any racing result publication or
 integration. An interrupted pass may preserve isolated artifacts and Attempt diagnostics but
@@ -477,8 +480,14 @@ dependsOn: [W-11]
 contractRevision: 4
 evidenceRefs: []
 attempts: 0
+assistantDispatch: home:H-1/event:EV-42
 ---
 ```
+
+`assistantDispatch` is optional immutable provenance. It appears only when speaking Assistant
+directly admits the Work and identifies the accepted Inbox Input that consumed that Input's one
+direct-Work allowance. Planner-created Work omits it; Planner may not add, remove, or change it on
+an existing Work. This is not a workflow mode, authorship role, or completion marker.
 
 The body owns the current execution objective, context, acceptance criteria, and relevant
 references. Findings, observed results, and completion proof live in immutable Evidence and are
@@ -512,6 +521,8 @@ Planning Work omits engineering Git fields. For engineering Work:
 
 - `repos` is the non-empty, unique set of stable Repo IDs included in this Work workspace; omission
   is accepted only as the legacy shorthand for the primary Repo
+- `assistantDispatch`, when present, is the canonical Inbox event reference for the one direct Work
+  admitted from that Input; uniqueness is enforced across every Goal linked to the Home
 - branch paths derive from Project, Goal, and Work identity; worktree paths derive from the Repo
   binding plus Goal and Work identity
 - each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
@@ -537,13 +548,14 @@ replaces its concise Objective with the latest trigger, and preserves plus appen
 reference paths; otherwise it creates a stable ID from the triggering event or planning cause. The
 Objective describes the current reason to plan, not an append-only trigger history.
 
-The initial Planning Work is a concise control envelope. Its body points Planner at the current Goal
-and its accepted Input paths; it does not copy the Goal objective. Goal creation omits empty optional
+When selected, the initial Planning Work is a concise control envelope. Its body points Planner at
+the current Goal and its accepted Input paths; it does not copy the Goal objective. Goal creation omits empty optional
 constraints, non-goals, and success-criteria sections instead of storing placeholder text. The Goal
 contract and verbatim Input remain separate first-class documents because normalization and source
 provenance are different facts.
 
-Triggers include Goal creation, material contract change, resume, reopen, stale output, an explicit
+Triggers include Goal creation without a directly admitted Engineering Work, material contract
+change, resume, reopen, stale output, an explicit
 speaking-Assistant planning request after Attention, and an active Goal with neither nonterminal
 Work nor a current completion proposal.
 
@@ -723,17 +735,27 @@ different operator message resolves the old Attention as superseded and creates 
 Resolving targeted Attention and applying its effects uses one publication when `resolvedAt` is its
 only gate; it installs supporting effects first and the resolution last. Any additional gate is a
 separate publication. A cross-root answer uses the receipt sequence defined under Canonical
-Publication. In its project
-phase, effects precede Goal Input, and Goal-local Attention resolution is the final unblocking gate
-after that receipt. A behavior-changing answer increments `contractRevision` and ensures Planning
-Work. Condition-based Attention resolves only when its condition is cleared.
+Publication. In its project phase, effects precede Goal Input, and Goal-local Attention resolution
+is the final unblocking gate after that receipt. An answer has four model-visible decisions:
+`continue` resumes the responsibility derived from current Work kind and stage, `retry` resets that
+Work lineage, `cancel` makes the targeted Work terminal, and `revise` starts Planning under an
+explicit same-contract or new-contract-revision mode. Only `revise` selects Planning because the
+answer changes authority. It clears `operatorRequest` but leaves the old Attention open under
+Assistant ownership until the represented change clears or supersedes the blocker. No continuation
+field or answer-state document is stored. One dependency exception prevents self-blocking: when the
+Attention targets the exact Planning Work being revised, the accepted authority update settles it
+before Planner resumes. Condition-based Attention resolves only when its condition is cleared.
 
 `notifiedAt` is null until an Attention-linked Reflection turn is durably exposed with its complete
 handled reply in the speaking Assistant conversation. Informational delivery leaves
 `operatorRequest` null. An actionable request records that exact handled event in `operatorRequest`;
 only a user Inbox event whose immutable `context.replyTo` equals that pointer clears it after receipt
-is durable and before Assistant continues. Neither transition resolves the Attention. Completion is marked notified and resolved in
-the same project publication. The Assistant-home reply gate is always first, so a crash cannot
+is durable and before Assistant continues. Only the explicit Reply action writes that `replyTo` and
+the exact canonical Attention references; ordinary page context never infers them from open
+Attention. By the end of that reply turn the old operator request must be resolved, cleared while a
+represented revision proceeds, or replaced. None of these ownership transitions alone resolves the
+Attention. Completion is marked notified and resolved in the same project publication. The
+Assistant-home reply gate is always first, so a crash cannot
 acknowledge delivery or transfer ownership without leaving a durable public turn whose recovery can
 finish the exact linked Attention publications. Resolution facts do not change the immutable
 notification payload or request delivery again.
