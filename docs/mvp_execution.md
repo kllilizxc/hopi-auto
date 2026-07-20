@@ -420,9 +420,11 @@ This classification changes presentation, not truth: the original line remains a
 debugging, while terminal vendor errors and all unclassified `stderr` retain their existing error
 semantics. The same adapter classification applies to responsibility Runs and Assistant turns.
 The same boundary applies to structured stdout telemetry that carries no operator-meaningful
-content: provider heartbeats such as Claude `task_progress` remain raw transcript diagnostics and do
-not become normalized status rows. Model-authored summaries, plan snapshots, tool events, retries,
-and terminal errors keep their normal semantics.
+content. Normalization never manufactures a status row merely by humanizing an event type. Codex
+thread/turn lifecycle envelopes, Claude initialization and successful terminal envelopes, OpenCode
+step boundaries, and provider heartbeats such as Claude `task_progress` remain raw transcript
+diagnostics. Model-authored summaries, plan snapshots, tool events, retries, and terminal errors keep
+their normal semantics.
 
 One provider-neutral responsibility session belongs to each
 `Project + Goal + Work + responsibility + Work contractRevision` tuple. It contains both the saved
@@ -454,10 +456,14 @@ stdout event cannot invalidate the Session merely because they contain words suc
 `missing`, or `invalid`. This keeps one completed responsibility result authoritative and prevents a
 second model pass from clearing or replacing its proposal.
 
-Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, sandbox, network, and
-writable-root configuration without loading the operator's global Codex configuration. The adapter
-also explicitly selects a ChatGPT-authenticated provider with WebSocket support disabled, so Codex
-uses HTTPS streaming directly instead of attempting WebSocket and falling back. Authentication
+Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, approval, and provider
+configuration without loading the operator's global Codex configuration. Provider access is selected
+when each process starts. The default bounded mode uses the adapter's workspace and declared-root
+policy. A Project-local UI switch may opt newly started responsibility Runs and speaking Assistant
+turns with that Project context into the ordinary HOPI OS user's filesystem, subprocess, and network
+capabilities.
+The adapter also explicitly selects a ChatGPT-authenticated provider with WebSocket support disabled,
+so Codex uses HTTPS streaming directly instead of attempting WebSocket and falling back. Authentication
 remains available, but unrelated personal MCP servers, plugins, defaults, and transport preferences
 cannot delay or fail delivery. The speaking Assistant may load provider skills, while HOPI injects
 semantic ownership and durable-delivery rules as developer instructions before it chooses any skill
@@ -494,19 +500,21 @@ applies a current price table or current Home role model to historical Runs. Thi
 from Attempt manifests, normalized events, and raw transcripts; it creates no budget, lifecycle,
 retry, or scheduling authority.
 
-Generator and Reviewer may start short-lived local services when implementation or material
-verification requires them. Their workspace-write Codex transport includes network execution so
-loopback services and dependency-backed checks work in either Engineering responsibility; Planner
-does not receive that capability. These processes are Run-scoped diagnostics, not Project Preview
+Planner, Generator, and Reviewer may install tools, use system compilers and caches, and start
+short-lived local services when their responsibility requires them. In unrestricted mode, built-in
+transports run with the ordinary HOPI OS user's capabilities and HOPI does not maintain a tool,
+command, cache-directory, or writable-root allowlist. In the default bounded mode, adapters retain
+their prior workspace and declared-root restrictions. These processes are Run-scoped
+diagnostics, not Project Preview
 and not canonical state. RoleRunner owns the child process group and terminates surviving descendants
 when the Run completes, fails, is interrupted, or the Coordinator stops. Termination is one idempotent
 bounded operation per Run: an OS denial falls back to the process-group leader, remains a visible
 operational cleanup failure when descendant cleanup cannot be guaranteed, and never escapes as an
 unobserved rejection that can terminate Coordinator. Each Run receives the
 current revision-scoped responsibility workspace through the compatible `$HOPI_RUN_SCRATCH` name.
-Reusable package and tool caches are redirected to the Assistant-home cache, so verification neither
-expands the task worktree's source surface nor downloads the same immutable dependencies into every
-Run. Coordinator promotes only explicitly declared proof files into the Run artifact store. It does
+Reusable package and tool caches are redirected to the Assistant-home cache as an optimization, not
+as a permission boundary. Coordinator promotes only explicitly declared proof files into the Run
+artifact store. It does
 not delete responsibility workspace files at an Attempt boundary.
 
 ### Planner

@@ -161,6 +161,12 @@ projections, another responsibility's immutable surface, and external side effec
 the current Input, Work, or operator. Natural-language authority remains sufficient; HOPI adds no
 permission DSL, capability field, or command taxonomy.
 
+Provider-native unrestricted host access is a Project-local operator preference, not durable Project
+authority. It defaults off and is stored by the local UI. When enabled, newly started speaking
+Assistant turns in that Project and its Planner, Generator, and Reviewer Runs use the ordinary HOPI
+OS user's permissions. When disabled or unavailable, adapters retain their bounded workspace and
+declared-root policy. Background Reflection remains read-only in either mode.
+
 Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
 alone owns canonical publication, managed task-worktree Git metadata and checkpoints, integration
 refs, Run-scoped process cleanup, and retry scheduling. It does not own Git operations in a

@@ -415,6 +415,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '--variant',
       'high',
     ])
+    expect(command.env?.OPENCODE_CONFIG).toBeUndefined()
   })
 
   test('passes OpenCode image inputs as file attachments', async () => {
@@ -463,6 +464,71 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
     expect(command.sessionTransport).toBe('opencode')
     expect(command.stdin).toContain('# current planner assignment')
+  })
+
+  test('uses unrestricted provider permissions only when full access is enabled', async () => {
+    await Bun.write(bundle.promptFile, '# unrestricted responsibility\n')
+
+    const boundedCodex = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'danger-full-access',
+        approvalPolicy: 'never',
+      },
+      bundle,
+      input,
+    })
+    expect(boundedCodex.cmd).toContain('workspace-write')
+    expect(boundedCodex.cmd).not.toContain('danger-full-access')
+
+    const boundedClaude = await resolveConfiguredTransportCommand({
+      config: { transport: 'claude', cwdMode: 'worktree', permissionMode: 'bypassPermissions' },
+      bundle,
+      input,
+    })
+    expect(boundedClaude.cmd).toContain('acceptEdits')
+    expect(boundedClaude.cmd).not.toContain('--dangerously-skip-permissions')
+
+    const codex = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'on-request',
+      },
+      bundle: { ...bundle, extraWritableRoots: ['/tmp/run'] },
+      input,
+      fullAccess: true,
+    })
+    expect(codex.cmd).toContain('danger-full-access')
+    expect(codex.cmd).not.toContain('--add-dir')
+    expect(codex.cmd).not.toContain('sandbox_workspace_write.network_access=true')
+
+    const claude = await resolveConfiguredTransportCommand({
+      config: { transport: 'claude', cwdMode: 'worktree', permissionMode: 'dontAsk' },
+      bundle: { ...bundle, extraWritableRoots: ['/tmp/run'] },
+      input,
+      fullAccess: true,
+    })
+    expect(claude.cmd).toContain('--dangerously-skip-permissions')
+    expect(claude.cmd).not.toContain('--add-dir')
+    expect(await Bun.file('/tmp/run/scratch/claude-settings.json').json()).toEqual({
+      sandbox: { enabled: false },
+    })
+
+    const opencode = await resolveConfiguredTransportCommand({
+      config: { transport: 'opencode', cwdMode: 'worktree' },
+      bundle,
+      input,
+      fullAccess: true,
+    })
+    expect(opencode.cmd).toContain('--pure')
+    expect(opencode.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
+    expect(await Bun.file('/tmp/run/scratch/opencode.json').json()).toEqual({
+      $schema: 'https://opencode.ai/config.json',
+      permission: { '*': 'allow' },
+    })
   })
 
   test('keeps the raw process transport path unchanged', async () => {

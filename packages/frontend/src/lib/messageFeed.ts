@@ -619,7 +619,11 @@ function isAssistantProtocolNoise(item: MessageFeedItem) {
 
   if (item.kind !== 'status') return false
   const eventType = normalizedVendorEventType(item)
-  if (eventType && /^(thread|turn|item)\.(started|completed)$/.test(eventType)) {
+  if (
+    eventType &&
+    (/^(thread|turn|item)\.(started|completed)$/.test(eventType) ||
+      /^step\.(start|finish)$/.test(eventType))
+  ) {
     return true
   }
 

@@ -9,8 +9,8 @@ export interface AssistantEnvironmentProjection {
   networkAccess: boolean
   privilegeEscalation: boolean
   hostEnvironmentMutation: boolean
-  linkedSourceAccess: 'read-only'
-  canonicalStateAccess: 'tools-only'
+  linkedSourceAccess: 'read-write'
+  canonicalStateAccess: 'filesystem-and-tools'
   hopiMutationToolsAvailable: true
 }
 
@@ -32,12 +32,12 @@ export function assistantEnvironmentProjection(
     runtimeWorkspace,
     runtimeWorkspaceRole: 'provider scratch space',
     runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
-    writableRoots: [runtimeWorkspace],
+    writableRoots: ['*'],
     networkAccess: true,
     privilegeEscalation: false,
-    hostEnvironmentMutation: false,
-    linkedSourceAccess: 'read-only',
-    canonicalStateAccess: 'tools-only',
+    hostEnvironmentMutation: true,
+    linkedSourceAccess: 'read-write',
+    canonicalStateAccess: 'filesystem-and-tools',
     hopiMutationToolsAvailable: true,
   }
 }

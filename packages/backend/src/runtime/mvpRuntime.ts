@@ -93,6 +93,7 @@ export interface CreateMvpRuntimeOptions {
   assistantToolUrl?: () => string
   attentionTransport?: AttentionTransport
   onProjectTopologyChanged?: () => void
+  projectFullAccess?: (projectId: string) => boolean
   start?: boolean
 }
 
@@ -119,6 +120,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       resolveConfig: async (input) => {
         return resolveRoleTransportConfig(await readAdapterConfig(), input.responsibility)
       },
+      fullAccess: (input) => options.projectFullAccess?.(input.projectId) ?? false,
     })
   const linkedProjects = await home.listProjects()
   const projects = new Map<string, MvpProjectRuntime>()
@@ -208,6 +210,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     options.assistantRunner ??
     createConfiguredAssistantModelRunner({
       resolveConfig: async () => resolveAssistantTransportConfig(await readAdapterConfig()),
+      fullAccess: (projectId) => options.projectFullAccess?.(projectId) ?? false,
       resolveToolUrl:
         options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
     })

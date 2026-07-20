@@ -14,7 +14,7 @@ import {
   Star,
   X,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AppAlert,
   AppButton,
@@ -46,8 +46,13 @@ import {
   rebindProjectRepo,
   selectProjectDirectory,
   updateAgentRoleSettings,
+  updateProjectAgentAccess,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
+import {
+  readProjectAgentFullAccess,
+  writeProjectAgentFullAccess,
+} from '../lib/projectAgentAccess'
 import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
 import { preloadBoardView, preloadGoalCreatePage } from '../routeModules'
 import { excerpt, projectDisplayName } from '../lib/utils'
@@ -542,6 +547,11 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   const [nextRepoPath, setNextRepoPath] = useState('')
   const [newRepoId, setNewRepoId] = useState('')
   const [newRepoPath, setNewRepoPath] = useState('')
+  const [fullAgentAccess, setFullAgentAccess] = useState(() =>
+    readProjectAgentFullAccess(project.projectId),
+  )
+  const [agentAccessError, setAgentAccessError] = useState<string | null>(null)
+  const [agentAccessPending, setAgentAccessPending] = useState(false)
   const firstGoal = project.goals[0]
   const linkRepoMutation = useMutation({
     mutationFn: () =>
@@ -564,6 +574,33 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
+
+  useEffect(() => {
+    let active = true
+    void updateProjectAgentAccess(
+      project.projectId,
+      readProjectAgentFullAccess(project.projectId),
+    ).catch((error: unknown) => {
+      if (active) setAgentAccessError(error instanceof Error ? error.message : String(error))
+    })
+    return () => {
+      active = false
+    }
+  }, [project.projectId])
+
+  const changeAgentAccess = async (next: boolean) => {
+    writeProjectAgentFullAccess(project.projectId, next)
+    setFullAgentAccess(next)
+    setAgentAccessError(null)
+    setAgentAccessPending(true)
+    try {
+      await updateProjectAgentAccess(project.projectId, next)
+    } catch (error) {
+      setAgentAccessError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAgentAccessPending(false)
+    }
+  }
 
   return (
     <AppCard className="project-card">
@@ -601,6 +638,21 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           170,
         )}
       </p>
+
+      <label className="project-agent-access">
+        <span>
+          <strong>Full agent access</strong>
+          <small>
+            Let this Project's agents use your full local filesystem, commands, and network.
+          </small>
+        </span>
+        <input
+          type="checkbox"
+          checked={fullAgentAccess}
+          disabled={agentAccessPending}
+          onChange={(event) => void changeAgentAccess(event.target.checked)}
+        />
+      </label>
 
       <div className="project-repos">
         <div className="project-repos-heading">
@@ -714,9 +766,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </div>
 
-      {(linkRepoMutation.error || rebindRepoMutation.error) && (
+      {(linkRepoMutation.error || rebindRepoMutation.error || agentAccessError) && (
         <AppAlert className="inline-error">
-          {linkRepoMutation.error?.message ?? rebindRepoMutation.error?.message}
+          {linkRepoMutation.error?.message ?? rebindRepoMutation.error?.message ?? agentAccessError}
         </AppAlert>
       )}
 

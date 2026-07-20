@@ -73,15 +73,18 @@ export interface RoleRunner {
 
 export interface ConfiguredRoleRunnerOptions {
   resolveConfig(input: RoleRunInput): RoleTransportConfig | Promise<RoleTransportConfig>
+  fullAccess?(input: RoleRunInput): boolean
   heartbeatMs?: number
 }
 
 export class ConfiguredRoleRunner implements RoleRunner {
   private readonly resolveConfig: ConfiguredRoleRunnerOptions['resolveConfig']
+  private readonly fullAccess: NonNullable<ConfiguredRoleRunnerOptions['fullAccess']>
   private readonly heartbeatMs: number
 
   constructor(options: ConfiguredRoleRunnerOptions) {
     this.resolveConfig = options.resolveConfig
+    this.fullAccess = options.fullAccess ?? (() => false)
     this.heartbeatMs = options.heartbeatMs ?? 10_000
   }
 
@@ -122,6 +125,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
           role: input.responsibility,
         },
         session,
+        fullAccess: this.fullAccess(input),
       })
       return executeProcess(command, input, observer, this.heartbeatMs, transcriptFile, session)
     }

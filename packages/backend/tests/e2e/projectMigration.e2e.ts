@@ -248,7 +248,7 @@ try {
       : null,
     imageBytes,
   )
-  assert.deepEqual(migratedSession, { transport: 'codex', sessionId: 'migration-session' })
+  assert.deepEqual(migratedSession, { transport: 'codex', sessionId: 'migration-silent' })
   assert.ok(
     durable.attentions.some(
       (candidate) => candidate.id === attention.attributes.id && candidate.resolvedAt,

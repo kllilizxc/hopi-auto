@@ -125,6 +125,7 @@ const rebindProjectSchema = z.union([
 const agentRoleSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
+const projectAgentAccessSchema = z.object({ fullAccess: z.boolean() }).strict()
 const CONFIGURABLE_AGENT_ROLES = ['assistant', ...WORKFLOW_ROLE_KEYS] as const
 const configurableAgentRoleSchema = z.enum(CONFIGURABLE_AGENT_ROLES)
 const goalSchema = z.object({
@@ -188,6 +189,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     current: null,
   }
   let topologyReloadScheduled = false
+  const fullAccessProjects = new Set<string>()
   const runtimeOptions: CreateMvpRuntimeOptions = {
     homeRoot,
     roleRunner: options.roleRunner,
@@ -203,6 +205,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       return `http://127.0.0.1:${serverRef.current.port}/api/internal/assistant-tool`
     },
     onProjectTopologyChanged: scheduleTopologyReload,
+    projectFullAccess: (projectId) => fullAccessProjects.has(projectId),
     start: false,
   }
   let runtimePromise = createMvpRuntime(runtimeOptions)
@@ -379,6 +382,20 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             await current.home.linkProject(body)
           })
           return json(await presentState(await nextRuntime), 201)
+        }
+        if (
+          request.method === 'PUT' &&
+          parts.length === 4 &&
+          parts[0] === 'api' &&
+          parts[1] === 'projects' &&
+          parts[3] === 'agent-access'
+        ) {
+          const projectId = requirePart(parts, 2)
+          requireProject(runtime.projects, projectId)
+          const body = await parseBody(request, projectAgentAccessSchema)
+          if (body.fullAccess) fullAccessProjects.add(projectId)
+          else fullAccessProjects.delete(projectId)
+          return json({ projectId, fullAccess: body.fullAccess })
         }
         if (
           request.method === 'POST' &&

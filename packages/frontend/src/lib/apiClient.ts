@@ -22,7 +22,7 @@ import type {
 } from './apiTypes'
 
 interface ApiOptions {
-  method?: 'GET' | 'POST' | 'PATCH'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH'
   body?: unknown
 }
 
@@ -217,6 +217,13 @@ export function updateAgentRoleSettings(
     method: 'PATCH',
     body: { codingDefaults },
   })
+}
+
+export function updateProjectAgentAccess(projectId: string, fullAccess: boolean) {
+  return apiRequest<{ projectId: string; fullAccess: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/agent-access`,
+    { method: 'PUT', body: { fullAccess } },
+  )
 }
 
 export function createGoal(

@@ -263,13 +263,20 @@ hidden unless the speaking thread explicitly requests operator notification befo
 These fields do not grant mutation authority.
 
 The vendor-qualified session cache and normalized live events are runtime data under
-`.hopi/runtime/assistant/`. `session.json` stores `version`, `transport`, `sessionId`, and the digest
-of the durable initial Assistant contract. HOPI resumes that session only while both the configured
-transport and contract digest match. A legacy bare Codex thread cache migrates to
+`.hopi/runtime/assistant/`. `session.json` stores `version`, `transport`, `sessionId`, the digest of
+the durable initial Assistant contract, and the runtime-affinity digest. HOPI resumes that session
+only while the configured transport and both digests match. A legacy bare Codex thread cache migrates to
 `transport: codex`, but a cache without the current contract digest is rebuilt before another turn;
 changing transport or the initial contract likewise invalidates the old cache instead of pretending
 that vendor sessions or stale instructions are compatible. A model change within one transport may
 reuse its session because the next invocation still receives the current configured model.
+
+A vendor session must also remain attached to the stable HOPI Assistant workspace and adapter
+runtime contract under which HOPI created it. The session manifest therefore stores a runtime digest
+derived from that normalized workspace path and a HOPI-owned adapter revision. A missing or changed
+digest is an incompatible cache and follows the same single rebuild path. This invalidates sessions
+created before workspace affinity became part of the contract without querying or rewriting vendor
+session storage on every turn.
 
 Losing or invalidating vendor session state does not lose product truth: HOPI starts a new session
 from the durable Home instructions, a fixed character budget of the newest public user-visible
@@ -298,11 +305,13 @@ shows a bounded, safe error summary and at most the latest retry status.
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. Each turn receives an exact execution-environment projection derived from the
-provider sandbox. The current adapters expose network access, no privilege escalation or host
-environment mutation, and one writable runtime root. Linked Project source and canonical documents
-remain read-only; HOPI mutations pass through tools, and source delivery passes through Engineering
-Work. The runtime root is provider scratch space: its paths are neither canonical nor
+managed project root. Each turn receives an exact execution-environment projection. Speaking turns
+are default-open at the provider boundary and receive the filesystem, subprocess, and network
+capabilities of the ordinary HOPI OS user. HOPI does not predict an allowlist of tools, commands,
+linked roots, caches, or writable directories. This is execution capability, not product authority:
+canonical mutations are accepted only through HOPI tools and source delivery is accepted only
+through Engineering Work publication. The runtime root remains provider scratch space: its paths
+are neither canonical nor
 operator-addressable. Canonical Evidence with an available `operatorUrl` is operator-addressable. The
 projection explicitly reports whether HOPI mutation tools are available in the current turn, so the
 model does not infer capability from filesystem permissions.
@@ -312,10 +321,15 @@ vendor adapter injects that same server using the vendor's native non-interactiv
 runs inside the Coordinator process and sends every mutation through the same validators,
 controllers, publisher, and global publication queue used by the rest of HOPI. MCP is a transport
 for model tool calls, not a second durable workflow or an Assistant-specific Action document.
+OpenCode receives the stable workspace through both the process working directory and `PWD`, plus
+the generated configuration through an explicit `OPENCODE_CONFIG` path. Before every OpenCode model
+invocation, its native MCP inspection must report the injected
+`hopi` server connected. Failure is a startup error, not model input: the turn stays pending and no
+unverified model reply can substitute for the missing capability.
 
 The non-interactive vendor invocation permits the injected `hopi` MCP server plus ordinary local
-inspection and scratch work. Provider adapters expose the same owned-runtime write, linked-root
-read, and network boundary; they do not inherit unrelated personal MCP servers or configuration.
+execution. Provider adapters expose the ordinary HOPI OS user's host and network capabilities while
+continuing to exclude unrelated personal MCP servers and provider configuration.
 The speaking Assistant may use provider skills and ordinary execution tools. Its prompt contains
 the environment projection, current scoped state observation, resource ownership, and HOPI effect
 semantics rather than a prescribed tool-selection procedure. Provider apps, plugins, memories, and
@@ -324,8 +338,10 @@ execution capability. Reflection has only HOPI read/handoff authority and receiv
 skill catalog. Responsibility Agents remain free to use execution capabilities within accepted
 Work. The MCP process has only a single-turn capability token, and the backend revokes that token
 when the turn ends. Tool approval therefore removes an impossible unattended UI prompt without
-becoming the authorization boundary: server-side capability validation, canonical target
-validation, controllers, and the publisher remain authoritative.
+becoming the authorization boundary. Server-side capability validation, canonical target validation,
+responsibility result validation, controllers, and the publisher form a blacklist of effects HOPI
+will reject. They do not attempt to sandbox every possible host-side effect. Reflection remains the
+sole provider-restricted mode because it has read and handoff authority but no execution responsibility.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Their digest is derived from those exact
@@ -710,8 +726,9 @@ The Assistant drawer shows one chronological conversation:
   is absorbed into its public reply
 - normalized model messages and useful tool activity appear while a turn runs
 - native provider thinking summaries appear only as internal collapsed activity. Count-only or
-  content-free progress telemetry such as Claude `thinking_tokens` and `task_progress` is hidden;
-  it remains available in the raw transcript but never creates a conversation row. A provider
+  content-free lifecycle telemetry such as Codex thread/turn boundaries, Claude initialization and
+  successful result envelopes, OpenCode step boundaries, `thinking_tokens`, and `task_progress` is
+  hidden; it remains available in the raw transcript but never creates a conversation row. A provider
   thought envelope can never become the final operator-facing reply
 - raw provider errors remain in runtime diagnostics, but a recovered intermediate error does not
   compete with a successful final reply; the drawer presents a turn error only when the speaking

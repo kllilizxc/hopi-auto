@@ -93,7 +93,18 @@ export function parseVendorAssistantOutput(
   }
 
   const sessionId = stringValue(parsed.sessionID) ?? stringValue(parsed.sessionId)
-  if (stringValue(parsed.type) !== 'text') return { sessionId }
+  const eventType = stringValue(parsed.type)
+  if (eventType?.includes('error')) {
+    const failure = errorText(parsed.error) ?? errorText(parsed) ?? 'OpenCode invocation failed.'
+    return {
+      sessionId,
+      terminalError: {
+        message: failure,
+        sessionInvalid: isExplicitSessionFailure(failure),
+      },
+    }
+  }
+  if (eventType !== 'text') return { sessionId }
   const part = objectValue(parsed.part)
   return {
     sessionId,
@@ -144,9 +155,11 @@ function objectValue(value: unknown) {
     : undefined
 }
 
-function errorText(value: unknown) {
+function errorText(value: unknown): string | undefined {
   if (typeof value === 'string') return stringValue(value)
-  return stringValue(objectValue(value)?.message)
+  const record = objectValue(value)
+  if (!record) return undefined
+  return stringValue(record?.message) ?? errorText(record?.error) ?? errorText(record?.data)
 }
 
 function errorListText(value: unknown) {

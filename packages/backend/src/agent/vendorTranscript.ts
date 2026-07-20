@@ -125,15 +125,16 @@ function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
     return []
   }
 
-  if (eventType) {
+  const eventText = extractText(parsed)
+  if (eventText) {
     return [
-      transcriptEvent('codex', 'status', humanizeEventType(eventType), {
+      transcriptEvent('codex', eventType?.includes('error') ? 'error' : 'status', eventText, {
         vendorEventType: eventType,
       }),
     ]
   }
 
-  return [transcriptEvent('codex', 'status', compactSummary(JSON.stringify(parsed)))]
+  return []
 }
 
 function normalizeCodexPlanEvent(
@@ -269,31 +270,44 @@ function normalizeClaudeEvent(parsed: unknown): AgentRuntimeEvent[] {
     const summary = isError
       ? (extractText(value) ?? claudeResultSummary(value))
       : (eventSubtype ?? stringValue(value?.stop_reason) ?? extractText(value) ?? 'result received')
-    return [
-      transcriptEvent('claude', isError ? 'error' : 'status', summary, {
-        vendorEventType: `result.${terminalReason ?? eventSubtype ?? 'completed'}`,
-      }),
-    ]
+    return isError
+      ? [
+          transcriptEvent('claude', 'error', summary, {
+            vendorEventType: `result.${terminalReason ?? eventSubtype ?? 'completed'}`,
+          }),
+        ]
+      : []
   }
 
   if (eventType === 'system') {
     if (eventSubtype === 'thinking_tokens' || eventSubtype === 'task_progress') return []
-    return [
-      transcriptEvent('claude', 'status', claudeSystemSummary(value, eventSubtype), {
-        vendorEventType: `system.${eventSubtype ?? 'status'}`,
-      }),
-    ]
+    if (eventSubtype === 'api_retry') {
+      return [
+        transcriptEvent('claude', 'status', claudeSystemSummary(value, eventSubtype), {
+          vendorEventType: 'system.api_retry',
+        }),
+      ]
+    }
+    const text = extractText(value)
+    return text
+      ? [
+          transcriptEvent('claude', 'status', text, {
+            vendorEventType: `system.${eventSubtype ?? 'status'}`,
+          }),
+        ]
+      : []
   }
 
-  if (eventType) {
+  const eventText = extractText(value)
+  if (eventText) {
     return [
-      transcriptEvent('claude', 'status', extractText(value) ?? humanizeEventType(eventType), {
+      transcriptEvent('claude', eventType?.includes('error') ? 'error' : 'status', eventText, {
         vendorEventType: eventType,
       }),
     ]
   }
 
-  return [transcriptEvent('claude', 'status', compactSummary(JSON.stringify(parsed)))]
+  return []
 }
 
 function claudeSystemSummary(
@@ -434,15 +448,16 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
     }
   }
 
-  if (eventType) {
+  const eventText = extractText(value)
+  if (eventText) {
     return [
-      transcriptEvent('opencode', 'status', extractText(value) ?? humanizeEventType(eventType), {
+      transcriptEvent('opencode', 'status', eventText, {
         vendorEventType: eventType,
       }),
     ]
   }
 
-  return [transcriptEvent('opencode', 'status', compactSummary(JSON.stringify(parsed)))]
+  return []
 }
 
 function normalizeContentBlocks(
@@ -741,7 +756,9 @@ function extractText(value: unknown): string | undefined {
     stringValue(record.aggregated_output) ??
     extractText(record.content) ??
     extractText(record.message) ??
-    extractText(record.result)
+    extractText(record.result) ??
+    extractText(record.error) ??
+    extractText(record.data)
   )
 }
 
@@ -755,7 +772,13 @@ function normalizeEventType(eventType: string | undefined) {
 
 function shouldIgnoreCodexLifecycleStatus(eventType: string | undefined) {
   const normalized = normalizeEventType(eventType)
-  return normalized === 'item.completed' || normalized === 'item.started'
+  return (
+    normalized === 'item.completed' ||
+    normalized === 'item.started' ||
+    normalized === 'thread.started' ||
+    normalized === 'turn.started' ||
+    normalized === 'turn.completed'
+  )
 }
 
 function extractCodexCommandExecutionResult(

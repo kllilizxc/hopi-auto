@@ -34,17 +34,22 @@ describe('AssistantConversationStore session cache', () => {
       sessionId: 'legacy-thread',
     })
     expect(await Bun.file(sessionPath).json()).toEqual({
-      version: 2,
+      version: 3,
       transport: 'codex',
       sessionId: 'legacy-thread',
       contractDigest: null,
+      runtimeDigest: null,
     })
   })
 
   test('stores one disposable vendor-qualified session and discards invalid cache data', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
-    await store.writeSession({ transport: 'opencode', sessionId: 'ses-1' }, 'contract-a')
-    expect(await store.readSession('contract-a')).toEqual({
+    await store.writeSession(
+      { transport: 'opencode', sessionId: 'ses-1' },
+      'contract-a',
+      'runtime-a',
+    )
+    expect(await store.readSession('contract-a', 'runtime-a')).toEqual({
       transport: 'opencode',
       sessionId: 'ses-1',
     })
@@ -59,6 +64,22 @@ describe('AssistantConversationStore session cache', () => {
     await store.writeSession({ transport: 'codex', sessionId: 'thread-old' }, 'contract-old')
 
     expect(await store.readSession('contract-current')).toBeNull()
+    expect(await Bun.file(sessionPath).exists()).toBe(false)
+  })
+
+  test('invalidates a legacy session without the current runtime affinity', async () => {
+    await Bun.write(
+      sessionPath,
+      JSON.stringify({
+        version: 2,
+        transport: 'opencode',
+        sessionId: 'wrong-workspace-session',
+        contractDigest: 'contract-current',
+      }),
+    )
+    const store = createAssistantConversationStore(temporaryRoot)
+
+    expect(await store.readSession('contract-current', 'runtime-current')).toBeNull()
     expect(await Bun.file(sessionPath).exists()).toBe(false)
   })
 

@@ -85,21 +85,28 @@ describe('normalizeProcessOutputLine', () => {
   })
 
   test('drops empty Codex lifecycle status events that carry no meaningful payload', () => {
-    const entries = normalizeProcessOutputLine({
-      format: 'codex_jsonl',
-      stream: 'stdout',
-      role: 'generator',
-      line: JSON.stringify({
+    for (const line of [
+      { type: 'thread.started', thread_id: 'thread-1' },
+      { type: 'turn.started' },
+      { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 2 } },
+      {
         method: 'item/completed',
         params: {
           item: {
             type: 'reasoning',
           },
         },
-      }),
-    })
-
-    expect(entries).toEqual([])
+      },
+    ]) {
+      expect(
+        normalizeProcessOutputLine({
+          format: 'codex_jsonl',
+          stream: 'stdout',
+          role: 'generator',
+          line: JSON.stringify(line),
+        }),
+      ).toEqual([])
+    }
   })
 
   test('normalizes Codex todo snapshots without flattening them into transcript status', () => {
@@ -395,6 +402,18 @@ describe('normalizeProcessOutputLine', () => {
   })
 
   test('uses Claude thinking content and ignores content-free progress telemetry', () => {
+    const initialization = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-1' }),
+    })
+    const successfulResult = normalizeProcessOutputLine({
+      format: 'claude_stream_json',
+      stream: 'stdout',
+      role: 'assistant',
+      line: JSON.stringify({ type: 'result', subtype: 'success', session_id: 'session-1' }),
+    })
     const thinkingProgress = normalizeProcessOutputLine({
       format: 'claude_stream_json',
       stream: 'stdout',
@@ -434,6 +453,8 @@ describe('normalizeProcessOutputLine', () => {
       }),
     })
 
+    expect(initialization).toEqual([])
+    expect(successfulResult).toEqual([])
     expect(thinkingProgress).toEqual([])
     expect(taskProgress).toEqual([])
     expect(thinking).toEqual([
@@ -627,6 +648,40 @@ describe('normalizeProcessOutputLine', () => {
         toolInvocationKey: 'tool-1',
         summary: '3 tests passed',
         vendorEventType: 'tool_use',
+      },
+    ])
+  })
+
+  test('drops OpenCode step boundaries while preserving nested structured errors', () => {
+    for (const type of ['step_start', 'step_finish']) {
+      expect(
+        normalizeProcessOutputLine({
+          format: 'opencode_json',
+          stream: 'stdout',
+          role: 'assistant',
+          line: JSON.stringify({ type, sessionID: 'ses_1', part: { type } }),
+        }),
+      ).toEqual([])
+    }
+
+    expect(
+      normalizeProcessOutputLine({
+        format: 'opencode_json',
+        stream: 'stdout',
+        role: 'assistant',
+        line: JSON.stringify({
+          type: 'error',
+          sessionID: 'ses_1',
+          error: { name: 'UnknownError', data: { message: '[502] streaming connection failed' } },
+        }),
+      }),
+    ).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'opencode',
+        entryKind: 'error',
+        summary: '[502] streaming connection failed',
+        vendorEventType: 'error',
       },
     ])
   })

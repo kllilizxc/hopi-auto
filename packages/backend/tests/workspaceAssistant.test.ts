@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
@@ -16,6 +16,7 @@ import {
   WorkspaceAssistantError,
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
+  workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
 import {
   parseWorkDocument,
@@ -75,12 +76,14 @@ describe('WorkspaceAssistant conversation', () => {
         model: 'sonnet',
       }),
       resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      fullAccess: (projectId) => projectId === 'P-1',
     })
 
     const events: AgentRuntimeEvent[] = []
     const result = await runner.run(
       {
         eventId: 'EV-claude',
+        projectId: 'P-1',
         prompt: 'Inspect the image.',
         session: vendorSession('claude', 'claude-session'),
         cwd,
@@ -114,12 +117,10 @@ describe('WorkspaceAssistant conversation', () => {
     ]) {
       expect(args).toContain(expected)
     }
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('Bash')
-    expect(settings).toMatchObject({
-      sandbox: { filesystem: { allowWrite: [cwd] } },
-    })
-    expect(args).toContain(dirname(imagePath))
-    expect(args).toContain(readableRoot)
+    expect(args).toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--allowedTools')
+    expect(settings).toEqual({ sandbox: { enabled: false } })
+    expect(args).not.toContain('--add-dir')
     expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
     expect(await Bun.file(promptFile).text()).toContain(imagePath)
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
@@ -330,13 +331,22 @@ describe('WorkspaceAssistant conversation', () => {
     const binary = join(temporaryRoot, 'fake-opencode')
     const argsFile = join(temporaryRoot, 'opencode-args.json')
     const promptFile = join(temporaryRoot, 'opencode-prompt.txt')
+    const configPathFile = join(temporaryRoot, 'opencode-config-path.txt')
+    const pwdFile = join(temporaryRoot, 'opencode-pwd.txt')
     await Bun.write(
       binary,
       [
         '#!/usr/bin/env bun',
-        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
-        `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
-        'console.log(JSON.stringify({type:"text",sessionID:"ses_1",part:{id:"part-1",messageID:"msg-1",type:"text",text:"OpenCode reply."}}))',
+        'const args = process.argv.slice(2)',
+        'if (args.includes("mcp") && args.includes("list")) {',
+        '  console.log("\\u001b[0m✓ hopi \\u001b[90mconnected")',
+        '} else {',
+        `  await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(args))`,
+        `  await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        `  await Bun.write(${JSON.stringify(configPathFile)}, process.env.OPENCODE_CONFIG ?? "")`,
+        `  await Bun.write(${JSON.stringify(pwdFile)}, process.env.PWD ?? "")`,
+        '  console.log(JSON.stringify({type:"text",sessionID:"ses_1",part:{id:"part-1",messageID:"msg-1",type:"text",text:"OpenCode reply."}}))',
+        '}',
         '',
       ].join('\n'),
     )
@@ -353,10 +363,12 @@ describe('WorkspaceAssistant conversation', () => {
         model: 'anthropic/claude-sonnet-4-5',
       }),
       resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      fullAccess: (projectId) => projectId === 'P-1',
     })
 
     const result = await runner.run({
       eventId: 'EV-opencode',
+      projectId: 'P-1',
       prompt: 'Continue.',
       session: vendorSession('opencode', 'ses_1'),
       cwd,
@@ -378,25 +390,49 @@ describe('WorkspaceAssistant conversation', () => {
       expect(args).toContain(expected)
     }
     expect(config.mcp.hopi.environment.HOPI_TOOL_TOKEN).toBe('opencode-token')
-    expect(config.permission).toMatchObject({
-      '*': 'deny',
-      'hopi_*': 'allow',
-      read: 'allow',
-      bash: 'allow',
-      webfetch: 'allow',
-      websearch: 'allow',
-      edit: {
-        '*': 'allow',
-        [`${readableRoot}/**`]: 'deny',
-        [`${cwd}/**`]: 'allow',
-      },
-    })
-    expect(config.permission.external_directory).toEqual({
-      '*': 'deny',
-      [`${readableRoot}/**`]: 'allow',
-    })
+    expect(config.permission).toEqual({ '*': 'allow' })
+    expect(await Bun.file(configPathFile).text()).toBe(join(cwd, 'opencode.json'))
+    expect(await Bun.file(pwdFile).text()).toBe(cwd)
     expect(await Bun.file(promptFile).text()).toBe('Continue.')
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"text"')
+  })
+
+  test('does not invoke an OpenCode model without the injected HOPI MCP server', async () => {
+    const binary = join(temporaryRoot, 'fake-opencode-without-mcp')
+    const invokedFile = join(temporaryRoot, 'opencode-model-invoked')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'const args = process.argv.slice(2)',
+        'if (args.includes("mcp") && args.includes("list")) {',
+        '  console.log("✗ hopi failed")',
+        '} else {',
+        `  await Bun.write(${JSON.stringify(invokedFile)}, "yes")`,
+        '}',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-opencode-without-mcp')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({ transport: 'opencode', cwdMode: 'root', binary }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await expect(
+      runner.run({
+        eventId: 'EV-opencode-without-mcp',
+        prompt: 'Continue.',
+        session: null,
+        cwd,
+        lastMessageFile: join(cwd, 'last-message.txt'),
+        transcriptFile: join(cwd, 'transcript.log'),
+        toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+        toolToken: 'opencode-token',
+      }),
+    ).rejects.toThrow('did not connect the injected hopi MCP server')
+    expect(await Bun.file(invokedFile).exists()).toBe(false)
   })
 
   test('terminates a configured Codex subprocess when its signal is aborted', async () => {
@@ -737,9 +773,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).toContain('[Current execution environment observation]')
-    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": false')
+    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": true')
     expect(seen[0]?.prompt).toContain('"privilegeEscalation": false')
-    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "read-only"')
+    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "read-write"')
     expect(seen[0]?.prompt).toContain('"hopiMutationToolsAvailable": true')
     expect(seen[0]?.prompt).toContain(
       '"runtimeWorkspaceProductEffect": "non-canonical and not operator-addressable"',
@@ -1003,6 +1039,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.conversation.writeSession(
       codexSession('missing-thread'),
       WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
@@ -1027,6 +1064,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.conversation.writeSession(
       codexSession('thread-existing'),
       WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 

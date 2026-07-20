@@ -131,4 +131,26 @@ describe('parseVendorAssistantOutput', () => {
       ),
     ).toEqual({ sessionId: 'ses_1', messageId: 'msg-1', assistantText: 'Done.' })
   })
+
+  test('treats a nested OpenCode error event as the terminal provider failure', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'opencode',
+        JSON.stringify({
+          type: 'error',
+          sessionID: 'ses_1',
+          error: {
+            name: 'UnknownError',
+            data: { message: '[502] Failed to establish streaming connection' },
+          },
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'ses_1',
+      terminalError: {
+        message: '[502] Failed to establish streaming connection',
+        sessionInvalid: false,
+      },
+    })
+  })
 })

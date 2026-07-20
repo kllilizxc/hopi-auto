@@ -127,6 +127,7 @@ export async function resolveConfiguredTransportCommand(options: {
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
   session?: VendorSession | null
+  fullAccess?: boolean
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -161,16 +162,23 @@ export async function resolveConfiguredTransportCommand(options: {
   if (options.config.transport === 'codex') {
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
-    cmd.push('-a', options.config.approvalPolicy)
+    const sandbox = options.fullAccess
+      ? 'danger-full-access'
+      : options.config.sandbox === 'danger-full-access'
+        ? 'workspace-write'
+        : options.config.sandbox
+    cmd.push('-a', options.fullAccess ? 'never' : options.config.approvalPolicy)
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
     }
-    if (options.config.sandbox === 'workspace-write') {
+    if (!options.fullAccess && sandbox === 'workspace-write') {
       cmd.push('-c', 'sandbox_workspace_write.network_access=true')
     }
     if (savedSession) {
-      cmd.push('-s', options.config.sandbox)
-      for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      cmd.push('-s', sandbox)
+      if (!options.fullAccess) {
+        for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      }
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       cmd.push('exec', 'resume', '--ignore-user-config', '--skip-git-repo-check')
@@ -178,8 +186,10 @@ export async function resolveConfiguredTransportCommand(options: {
       cmd.push('--json', savedSession.sessionId, '-')
     } else {
       cmd.push('exec', '--ignore-user-config', '--skip-git-repo-check')
-      cmd.push('-s', options.config.sandbox)
-      for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      cmd.push('-s', sandbox)
+      if (!options.fullAccess) {
+        for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+      }
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
@@ -207,15 +217,15 @@ export async function resolveConfiguredTransportCommand(options: {
       settingsPath,
       `${JSON.stringify(
         {
-          sandbox: {
-            enabled: true,
-            failIfUnavailable: true,
-            autoAllowBashIfSandboxed: true,
-            allowUnsandboxedCommands: false,
-            filesystem: {
-              allowWrite: options.bundle.extraWritableRoots ?? [],
-            },
-          },
+          sandbox: options.fullAccess
+            ? { enabled: false }
+            : {
+                enabled: true,
+                failIfUnavailable: true,
+                autoAllowBashIfSandboxed: true,
+                allowUnsandboxedCommands: false,
+                filesystem: { allowWrite: options.bundle.extraWritableRoots ?? [] },
+              },
         },
         null,
         2,
@@ -232,17 +242,27 @@ export async function resolveConfiguredTransportCommand(options: {
       '--setting-sources',
       '',
     ]
-    if (options.config.permissionMode === 'bypassPermissions') {
+    if (options.fullAccess) {
       cmd.push('--dangerously-skip-permissions')
     } else {
-      cmd.push('--permission-mode', options.config.permissionMode)
+      cmd.push(
+        '--permission-mode',
+        options.config.permissionMode === 'bypassPermissions'
+          ? options.config.cwdMode === 'root'
+            ? 'dontAsk'
+            : 'acceptEdits'
+          : options.config.permissionMode,
+      )
     }
-    const accessibleDirs = new Set([
-      ...(options.bundle.extraReadableRoots ?? []),
-      ...(options.bundle.extraWritableRoots ?? []),
-    ])
-    for (const imageFile of options.bundle.imageFiles ?? []) accessibleDirs.add(dirname(imageFile))
-    for (const dir of accessibleDirs) cmd.push('--add-dir', dir)
+    if (!options.fullAccess) {
+      const accessibleDirs = new Set([
+        ...(options.bundle.extraReadableRoots ?? []),
+        ...(options.bundle.extraWritableRoots ?? []),
+      ])
+      for (const imageFile of options.bundle.imageFiles ?? [])
+        accessibleDirs.add(dirname(imageFile))
+      for (const dir of accessibleDirs) cmd.push('--add-dir', dir)
+    }
     if (options.config.model) {
       cmd.push('--model', options.config.model)
     }
@@ -262,7 +282,27 @@ export async function resolveConfiguredTransportCommand(options: {
     }
   }
 
-  const cmd = [options.config.binary ?? 'opencode', 'run', '--format', 'json']
+  const opencodeConfigPath = options.fullAccess
+    ? join(options.bundle.runtimeScratchDir, 'opencode.json')
+    : null
+  if (opencodeConfigPath) {
+    await mkdir(dirname(opencodeConfigPath), { recursive: true })
+    await Bun.write(
+      opencodeConfigPath,
+      `${JSON.stringify(
+        { $schema: 'https://opencode.ai/config.json', permission: { '*': 'allow' } },
+        null,
+        2,
+      )}\n`,
+    )
+  }
+  const cmd = [
+    options.config.binary ?? 'opencode',
+    ...(options.fullAccess ? ['--pure'] : []),
+    'run',
+    '--format',
+    'json',
+  ]
   if (options.config.model) {
     cmd.push('--model', options.config.model)
   }
@@ -282,7 +322,7 @@ export async function resolveConfiguredTransportCommand(options: {
     canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
     browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
     canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
-    env,
+    env: { ...env, ...(opencodeConfigPath ? { OPENCODE_CONFIG: opencodeConfigPath } : {}) },
     stdin: prompt,
     transcriptFormat: 'opencode_json',
     sessionTransport: 'opencode',

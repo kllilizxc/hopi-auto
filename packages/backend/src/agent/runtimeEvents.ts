@@ -42,13 +42,24 @@ export type AgentRuntimeEvent =
     }
   | AgentPlanEvent
 
-const NON_PRESENTABLE_VENDOR_TELEMETRY = new Set(['system.thinking_tokens', 'system.task_progress'])
+const NON_PRESENTABLE_STATUS_TELEMETRY = new Set([
+  'thread.started',
+  'turn.started',
+  'turn.completed',
+  'system.init',
+  'system.thinking_tokens',
+  'system.task_progress',
+  'result',
+  'result.success',
+  'step_start',
+  'step_finish',
+])
 
 export function isPresentableAgentRuntimeEvent(event: AgentRuntimeEvent): boolean {
   return !(
     event.kind === 'transcript' &&
-    event.transport === 'claude' &&
+    event.entryKind === 'status' &&
     event.vendorEventType !== undefined &&
-    NON_PRESENTABLE_VENDOR_TELEMETRY.has(event.vendorEventType)
+    NON_PRESENTABLE_STATUS_TELEMETRY.has(event.vendorEventType)
   )
 }

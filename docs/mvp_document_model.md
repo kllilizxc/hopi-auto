@@ -159,12 +159,19 @@ it as provenance, but new turns never write it and no forward control rule depen
 `runtime/assistant/session.json` is a rebuildable vendor-session cache, not conversation authority:
 
 ```json
-{ "version": 1, "transport": "codex", "sessionId": "vendor-session-id" }
+{
+  "version": 3,
+  "transport": "opencode",
+  "sessionId": "vendor-session-id",
+  "contractDigest": "sha256",
+  "runtimeDigest": "sha256"
+}
 ```
 
 Only `codex | claude | opencode` is accepted. HOPI resumes the cache only when `transport` matches
-the current Home Assistant configuration. A missing, invalid, or incompatible cache starts a new
-vendor session from ordered durable Inbox history; it does not alter or synthesize canonical turns.
+the current Home Assistant configuration and both the initial-contract and stable-workspace runtime
+digests match. A missing, invalid, or incompatible cache starts a new vendor session from ordered
+durable Inbox history; it does not alter or synthesize canonical turns.
 An adapter may discard an already selected cache during a turn only when the vendor explicitly
 reports that session missing or incompatible. Provider, quota, authentication, model, and process
 failures do not imply session incompatibility and therefore do not rebuild conversation history.

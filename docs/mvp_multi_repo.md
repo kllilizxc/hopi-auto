@@ -152,8 +152,9 @@ one runtime manifest:
 }
 ```
 
-The process cwd is the primary root when selected, otherwise the first Work Repo; all other roots
-are explicit writable roots. Prompts name every Repo ID and path. A Generator checkpoint covers
+The process cwd is the primary root when selected, otherwise the first Work Repo; the runtime
+manifest names every other Work root explicitly. This list defines responsibility and checkpoint
+scope, not a provider filesystem allowlist. Prompts name every Repo ID and path. A Generator checkpoint covers
 every Work root, and Reviewer starts only when every root is checkpoint-clean. Reviewer fingerprints
 all roots and one source mutation rejects the Run.
 

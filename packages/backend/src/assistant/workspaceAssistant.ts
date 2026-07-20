@@ -24,6 +24,7 @@ import { observeAssistantTurn, renderAssistantTurnObservation } from './assistan
 
 export interface AssistantModelInput {
   eventId: string
+  projectId?: string
   prompt: string
   rebuildPrompt?: string
   session: AssistantSession | null
@@ -35,6 +36,7 @@ export interface AssistantModelInput {
   imageFiles?: string[]
   readableRoots?: string[]
   toolMode?: 'main' | 'internal' | 'reflection'
+  fullAccess?: boolean
   signal?: AbortSignal
 }
 
@@ -66,6 +68,7 @@ export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
 export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
   resolveToolUrl(): string
+  fullAccess?(projectId: string): boolean
 }): AssistantModelRunner {
   return {
     async run(input, observer) {
@@ -83,6 +86,10 @@ export function createConfiguredAssistantModelRunner(options: {
       const session = input.session?.transport === transport ? input.session : null
       const invocation = {
         ...input,
+        fullAccess:
+          input.toolMode !== 'reflection' && input.projectId
+            ? (options.fullAccess?.(input.projectId) ?? false)
+            : false,
         prompt: session ? input.prompt : (input.rebuildPrompt ?? input.prompt),
         session,
         toolUrl: options.resolveToolUrl(),
@@ -90,6 +97,7 @@ export function createConfiguredAssistantModelRunner(options: {
       await mkdir(input.cwd, { recursive: true })
       await rm(input.lastMessageFile, { force: true })
       await prepareAssistantWorkspace(config, invocation)
+      if (transport === 'opencode') await validateOpencodeMcp(config, invocation)
 
       if (input.signal?.aborted)
         throw new WorkspaceAssistantError('Assistant model run interrupted')
@@ -101,7 +109,16 @@ export function createConfiguredAssistantModelRunner(options: {
         stdout: 'pipe',
         stderr: 'pipe',
         stdin: 'pipe',
-        env: { ...process.env, ...providerEnvironment },
+        env: {
+          ...process.env,
+          ...providerEnvironment,
+          ...(transport === 'opencode'
+            ? {
+                OPENCODE_CONFIG: assistantOpencodeConfigPath(input.cwd),
+                PWD: input.cwd,
+              }
+            : {}),
+        },
         detached: true,
       })
       const terminate = createProcessGroupTerminator(child.pid)
@@ -228,6 +245,7 @@ export function createWorkspaceAssistant(input: {
 }): WorkspaceAssistant {
   const now = input.now ?? (() => new Date())
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
+  const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
   let notificationRecoveryComplete = false
 
   return {
@@ -263,13 +281,22 @@ export function createWorkspaceAssistant(input: {
           await input.conversation.record(eventId, runtimeEvent)
         },
         onSession: (session) =>
-          input.conversation.writeSession(session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST),
+          input.conversation.writeSession(
+            session,
+            WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+            runtimeDigest,
+          ),
       }
 
       try {
         const imageFiles = await resolveEventImages(input.workspace, event)
+        const projectId =
+          event.attributes.context?.projectId ?? event.attributes.routeClaim?.projectId
         const observation = await observeAssistantTurn(input.state, event, workspaceRoot)
-        let session = await input.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
+        let session = await input.conversation.readSession(
+          WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+          runtimeDigest,
+        )
         const rebuildPrompt = renderNewConversation(
           workspaceState.events,
           event,
@@ -281,6 +308,7 @@ export function createWorkspaceAssistant(input: {
           result = await input.runner.run(
             {
               eventId,
+              ...(projectId ? { projectId } : {}),
               prompt: session
                 ? renderTurn(event, workspaceState.preference, observation)
                 : rebuildPrompt,
@@ -312,6 +340,7 @@ export function createWorkspaceAssistant(input: {
           result = await input.runner.run(
             {
               eventId,
+              ...(projectId ? { projectId } : {}),
               prompt: rebuildPrompt,
               rebuildPrompt,
               session,
@@ -329,7 +358,11 @@ export function createWorkspaceAssistant(input: {
           )
         }
 
-        await input.conversation.writeSession(result.session, WORKSPACE_ASSISTANT_CONTRACT_DIGEST)
+        await input.conversation.writeSession(
+          result.session,
+          WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+          runtimeDigest,
+        )
         const notificationMessage = input.tools.notificationMessage(toolToken)
         const notificationIntent = input.tools.notificationIntent(toolToken)
         const reply = notificationMessage ?? result.reply.trim()
@@ -417,15 +450,18 @@ async function prepareAssistantWorkspace(
       assistantClaudeSettingsPath(input.cwd),
       `${JSON.stringify(
         {
-          sandbox: {
-            enabled: true,
-            failIfUnavailable: true,
-            autoAllowBashIfSandboxed: true,
-            allowUnsandboxedCommands: false,
-            filesystem: {
-              allowWrite: input.toolMode === 'reflection' ? [] : [input.cwd],
-            },
-          },
+          sandbox:
+            input.toolMode === 'reflection' || !input.fullAccess
+              ? {
+                  enabled: true,
+                  failIfUnavailable: true,
+                  autoAllowBashIfSandboxed: true,
+                  allowUnsandboxedCommands: false,
+                  filesystem: {
+                    allowWrite: input.toolMode === 'reflection' ? [] : [input.cwd],
+                  },
+                }
+              : { enabled: false },
         },
         null,
         2,
@@ -435,7 +471,7 @@ async function prepareAssistantWorkspace(
   }
 
   await Bun.write(
-    join(input.cwd, 'opencode.json'),
+    assistantOpencodeConfigPath(input.cwd),
     `${JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
@@ -447,27 +483,82 @@ async function prepareAssistantWorkspace(
             environment: server.env,
           },
         },
-        permission: {
-          '*': 'deny',
-          'hopi_*': 'allow',
-          read: 'allow',
-          grep: 'allow',
-          glob: 'allow',
-          list: 'allow',
-          edit:
-            input.toolMode === 'reflection'
-              ? 'deny'
-              : assistantEditPermissions(input.cwd, input.readableRoots ?? []),
-          bash: input.toolMode === 'reflection' ? 'deny' : 'allow',
-          webfetch: input.toolMode === 'reflection' ? 'deny' : 'allow',
-          websearch: input.toolMode === 'reflection' ? 'deny' : 'allow',
-          external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
-        },
+        permission:
+          input.toolMode === 'reflection' || !input.fullAccess
+            ? {
+                '*': 'deny',
+                'hopi_*': 'allow',
+                read: 'allow',
+                grep: 'allow',
+                glob: 'allow',
+                list: 'allow',
+                external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
+              }
+            : { '*': 'allow' },
       },
       null,
       2,
     )}\n`,
   )
+}
+
+async function validateOpencodeMcp(
+  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  input: AssistantModelInput,
+) {
+  const mcp = await inspectOpencode(config, input, ['mcp', 'list'])
+  const output = stripAnsi(mcp.stdout)
+  const hopiLine = output.split(/\r?\n/).find((line) => /\bhopi\b/i.test(line))
+  if (!hopiLine || !/\bconnected\b/i.test(hopiLine)) {
+    throw new WorkspaceAssistantError(
+      `OpenCode did not connect the injected hopi MCP server${hopiLine ? `: ${hopiLine.trim()}` : ''}`,
+    )
+  }
+}
+
+async function inspectOpencode(
+  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  input: AssistantModelInput,
+  args: string[],
+) {
+  const command = [config.binary ?? 'opencode', '--pure', ...args]
+  const child = Bun.spawn(command, {
+    cwd: input.cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG: assistantOpencodeConfigPath(input.cwd),
+      PWD: input.cwd,
+    },
+  })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      child.kill()
+      reject(
+        new WorkspaceAssistantError(`OpenCode startup inspection timed out: ${args.join(' ')}`),
+      )
+    }, 10_000)
+  })
+  try {
+    const [stdout, stderr, exitCode] = await Promise.race([
+      Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]),
+      timeout,
+    ])
+    if (exitCode !== 0) {
+      throw new WorkspaceAssistantError(
+        `OpenCode startup inspection failed (${args.join(' ')}): ${stderr.trim() || `exit ${exitCode}`}`,
+      )
+    }
+    return { stdout, stderr }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function buildAssistantCommand(
@@ -485,10 +576,13 @@ function assistantClaudeCommand(
   input: AssistantModelInput,
 ) {
   const command = [config.binary ?? 'claude']
-  if (config.permissionMode === 'bypassPermissions') {
+  if (input.fullAccess) {
     command.push('--dangerously-skip-permissions')
   } else {
-    command.push('--permission-mode', config.permissionMode)
+    command.push(
+      '--permission-mode',
+      config.permissionMode === 'bypassPermissions' ? 'dontAsk' : config.permissionMode,
+    )
   }
   if (config.model) command.push('--model', config.model)
   command.push(
@@ -499,19 +593,22 @@ function assistantClaudeCommand(
     assistantClaudeSettingsPath(input.cwd),
     '--setting-sources',
     '',
-    '--allowedTools',
-    input.toolMode === 'reflection'
-      ? 'mcp__hopi__*,Read,Glob,Grep'
-      : 'mcp__hopi__*,Read,Glob,Grep,Bash,WebFetch,WebSearch',
     '--print',
     '--output-format',
     'stream-json',
     '--verbose',
   )
   if (input.session) command.push('--resume', input.session.sessionId)
-  const readableDirectories = new Set(input.readableRoots ?? [])
-  for (const imageFile of input.imageFiles ?? []) readableDirectories.add(dirname(imageFile))
-  for (const directory of readableDirectories) command.push('--add-dir', directory)
+  if (!input.fullAccess) {
+    const readableDirectories = new Set(input.readableRoots ?? [])
+    for (const imageFile of input.imageFiles ?? []) readableDirectories.add(dirname(imageFile))
+    for (const directory of readableDirectories) command.push('--add-dir', directory)
+  }
+  if (input.toolMode === 'reflection') {
+    command.push('--allowedTools', 'mcp__hopi__*,Read,Glob,Grep')
+  } else if (!input.fullAccess) {
+    command.push('--allowedTools', 'mcp__hopi__*,Read,Glob,Grep,Bash,WebFetch,WebSearch')
+  }
   return command
 }
 
@@ -537,18 +634,19 @@ function assistantClaudeSettingsPath(cwd: string) {
   return join(cwd, 'claude-settings.json')
 }
 
+function assistantOpencodeConfigPath(cwd: string) {
+  return join(cwd, 'opencode.json')
+}
+
+function stripAnsi(value: string) {
+  const escapeCharacter = String.fromCharCode(27)
+  return value.replace(new RegExp(`${escapeCharacter}\\[[0-?]*[ -/]*[@-~]`, 'g'), '')
+}
+
 function externalDirectoryPermissions(roots: readonly string[]) {
   return {
     '*': 'deny',
     ...Object.fromEntries(roots.map((root) => [`${root.replace(/\/$/, '')}/**`, 'allow'])),
-  }
-}
-
-function assistantEditPermissions(cwd: string, readableRoots: readonly string[]) {
-  return {
-    '*': 'allow',
-    ...Object.fromEntries(readableRoots.map((root) => [`${root.replace(/\/$/, '')}/**`, 'deny'])),
-    [`${cwd.replace(/\/$/, '')}/**`]: 'allow',
   }
 }
 
@@ -575,8 +673,13 @@ function assistantCodexCommand(
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
   appendCodexAssistantProviderConfig(command, input.toolMode ?? 'main')
-  const sandbox = input.toolMode === 'reflection' ? 'read-only' : 'workspace-write'
-  command.push('-a', config.approvalPolicy)
+  const sandbox =
+    input.toolMode === 'reflection'
+      ? 'read-only'
+      : input.fullAccess
+        ? 'danger-full-access'
+        : 'workspace-write'
+  command.push('-a', input.fullAccess ? 'never' : config.approvalPolicy)
   if (sandbox === 'workspace-write') {
     command.push('-c', 'sandbox_workspace_write.network_access=true')
   }
@@ -667,6 +770,20 @@ function workspaceAssistantDeveloperInstructions() {
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
   .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
   .digest('hex')
+
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 2
+
+export function workspaceAssistantRuntimeDigest(homeRoot: string) {
+  const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        revision: WORKSPACE_ASSISTANT_RUNTIME_REVISION,
+        workspaceRoot: resolve(workspaceRoot),
+      }),
+    )
+    .digest('hex')
+}
 
 function renderNewConversation(
   events: ReadonlyMap<string, InboxEventDocument>,

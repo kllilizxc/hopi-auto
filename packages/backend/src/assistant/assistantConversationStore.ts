@@ -22,6 +22,16 @@ const turnManifestSchema = z
 
 const sessionManifestSchema = z
   .object({
+    version: z.literal(3),
+    transport: z.enum(['codex', 'claude', 'opencode']),
+    sessionId: z.string().min(1),
+    contractDigest: z.string().min(1).nullable(),
+    runtimeDigest: z.string().min(1).nullable(),
+  })
+  .strict()
+
+const versionTwoSessionManifestSchema = z
+  .object({
     version: z.literal(2),
     transport: z.enum(['codex', 'claude', 'opencode']),
     sessionId: z.string().min(1),
@@ -70,8 +80,12 @@ export interface AssistantConversationStore {
   complete(eventId: string): Promise<void>
   fail(eventId: string, error: string): Promise<void>
   readTurn(eventId: string): Promise<AssistantTurnRuntime | null>
-  readSession(contractDigest?: string): Promise<AssistantSession | null>
-  writeSession(session: AssistantSession, contractDigest?: string): Promise<void>
+  readSession(contractDigest?: string, runtimeDigest?: string): Promise<AssistantSession | null>
+  writeSession(
+    session: AssistantSession,
+    contractDigest?: string,
+    runtimeDigest?: string,
+  ): Promise<void>
   clearSession(): Promise<void>
 }
 
@@ -164,7 +178,7 @@ export function createAssistantConversationStore(
       return { manifest, events: await readEvents(eventsPath(eventId)) }
     },
 
-    async readSession(contractDigest) {
+    async readSession(contractDigest, runtimeDigest) {
       const file = Bun.file(sessionPath)
       if (!(await file.exists())) return null
       let source: unknown
@@ -180,14 +194,36 @@ export function createAssistantConversationStore(
           await rm(sessionPath, { force: true })
           return null
         }
+        if (runtimeDigest && current.data.runtimeDigest !== runtimeDigest) {
+          await rm(sessionPath, { force: true })
+          return null
+        }
         return {
           transport: current.data.transport,
           sessionId: current.data.sessionId,
         }
       }
+      const versionTwo = versionTwoSessionManifestSchema.safeParse(source)
+      if (versionTwo.success) {
+        if (contractDigest || runtimeDigest) {
+          await rm(sessionPath, { force: true })
+          return null
+        }
+        const migrated: AssistantSession = {
+          transport: versionTwo.data.transport,
+          sessionId: versionTwo.data.sessionId,
+        }
+        await writeJson(sessionPath, {
+          version: 3,
+          ...migrated,
+          contractDigest: versionTwo.data.contractDigest,
+          runtimeDigest: null,
+        })
+        return migrated
+      }
       const previous = previousSessionManifestSchema.safeParse(source)
       if (previous.success) {
-        if (contractDigest) {
+        if (contractDigest || runtimeDigest) {
           await rm(sessionPath, { force: true })
           return null
         }
@@ -195,7 +231,12 @@ export function createAssistantConversationStore(
           transport: previous.data.transport,
           sessionId: previous.data.sessionId,
         }
-        await writeJson(sessionPath, { version: 2, ...migrated, contractDigest: null })
+        await writeJson(sessionPath, {
+          version: 3,
+          ...migrated,
+          contractDigest: null,
+          runtimeDigest: null,
+        })
         return migrated
       }
 
@@ -204,7 +245,7 @@ export function createAssistantConversationStore(
         await rm(sessionPath, { force: true })
         return null
       }
-      if (contractDigest) {
+      if (contractDigest || runtimeDigest) {
         await rm(sessionPath, { force: true })
         return null
       }
@@ -212,17 +253,23 @@ export function createAssistantConversationStore(
         transport: 'codex',
         sessionId: legacy.data.threadId,
       }
-      await writeJson(sessionPath, { version: 2, ...migrated, contractDigest: null })
+      await writeJson(sessionPath, {
+        version: 3,
+        ...migrated,
+        contractDigest: null,
+        runtimeDigest: null,
+      })
       return migrated
     },
 
-    async writeSession(session, contractDigest) {
+    async writeSession(session, contractDigest, runtimeDigest) {
       await mkdir(root, { recursive: true })
       const manifest = sessionManifestSchema.parse({
-        version: 2,
+        version: 3,
         transport: session.transport,
         sessionId: session.sessionId.trim(),
         contractDigest: contractDigest?.trim() || null,
+        runtimeDigest: runtimeDigest?.trim() || null,
       })
       await writeJson(sessionPath, manifest)
     },

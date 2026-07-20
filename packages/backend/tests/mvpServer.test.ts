@@ -269,6 +269,27 @@ describe('MVP server', () => {
     expect(await cancelled.json()).toEqual({ selection: null })
   })
 
+  test('accepts a non-durable Project agent access preference', async () => {
+    const homeRoot = join(temporaryRoot, 'agent-access-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'agent-access-repo'))
+    const home = createAssistantHomeStore(homeRoot, new PublicationCoordinator())
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/projects/P-1/agent-access`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fullAccess: true }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ projectId: 'P-1', fullAccess: true })
+    expect(
+      await Bun.file(join(linked.integrationRoot, '.hopi', 'project.yml')).text(),
+    ).not.toContain('fullAccess')
+  })
+
   test('keeps an Assistant lifecycle conflict request-local and the server available', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
