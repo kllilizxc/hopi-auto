@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
+import { type ExecutionEnvelope, injectExecutionEnvelope } from './executionEnvelope'
 import { codingReasoningEffortSchema, providerQualifiedModelSchema } from './projectCodingDefaults'
 import type { AssistantTransport, VendorSession } from './vendorAssistantOutput'
 import type { ProcessTranscriptFormat } from './vendorTranscript'
@@ -128,6 +129,7 @@ export async function resolveConfiguredTransportCommand(options: {
   input: ConfiguredTransportInvocation
   session?: VendorSession | null
   fullAccess?: boolean
+  runtimeWorkspace?: string
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -136,6 +138,12 @@ export async function resolveConfiguredTransportCommand(options: {
     ...buildTransportEnv(options.bundle, options.input),
     ...(options.config.transport === 'claude' ? await readClaudeProviderEnvironment() : {}),
   }
+  const executionEnvelope = responsibilityExecutionEnvelope(options)
+  const assignment = injectExecutionEnvelope(
+    await Bun.file(options.bundle.promptFile).text(),
+    executionEnvelope,
+  )
+  await Bun.write(options.bundle.promptFile, assignment)
 
   if ('cmd' in options.config) {
     return {
@@ -154,7 +162,6 @@ export async function resolveConfiguredTransportCommand(options: {
 
   const savedSession =
     options.session?.transport === options.config.transport ? options.session : null
-  const assignment = await Bun.file(options.bundle.promptFile).text()
   const prompt = savedSession
     ? responsibilityContinuationPrompt(assignment, options.input)
     : assignment
@@ -282,27 +289,30 @@ export async function resolveConfiguredTransportCommand(options: {
     }
   }
 
-  const opencodeConfigPath = options.fullAccess
-    ? join(options.bundle.runtimeScratchDir, 'opencode.json')
-    : null
-  if (opencodeConfigPath) {
-    await mkdir(dirname(opencodeConfigPath), { recursive: true })
-    await Bun.write(
-      opencodeConfigPath,
-      `${JSON.stringify(
-        { $schema: 'https://opencode.ai/config.json', permission: { '*': 'allow' } },
-        null,
-        2,
-      )}\n`,
-    )
-  }
-  const cmd = [
-    options.config.binary ?? 'opencode',
-    ...(options.fullAccess ? ['--pure'] : []),
-    'run',
-    '--format',
-    'json',
-  ]
+  const opencodeConfigPath = join(options.bundle.runtimeScratchDir, 'opencode.json')
+  const opencodeRoots = [
+    options.runtimeWorkspace,
+    ...(options.bundle.extraReadableRoots ?? []),
+    ...(options.bundle.extraWritableRoots ?? []),
+  ].filter((root): root is string => Boolean(root))
+  await mkdir(dirname(opencodeConfigPath), { recursive: true })
+  await Bun.write(
+    opencodeConfigPath,
+    `${JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        permission: options.fullAccess
+          ? { '*': 'allow' }
+          : {
+              '*': 'allow',
+              external_directory: externalDirectoryPermissions(opencodeRoots),
+            },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  const cmd = [options.config.binary ?? 'opencode', '--pure', 'run', '--format', 'json']
   if (options.config.model) {
     cmd.push('--model', options.config.model)
   }
@@ -322,10 +332,94 @@ export async function resolveConfiguredTransportCommand(options: {
     canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
     browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
     canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
-    env: { ...env, ...(opencodeConfigPath ? { OPENCODE_CONFIG: opencodeConfigPath } : {}) },
+    env: { ...env, OPENCODE_CONFIG: opencodeConfigPath },
     stdin: prompt,
     transcriptFormat: 'opencode_json',
     sessionTransport: 'opencode',
+  }
+}
+
+function responsibilityExecutionEnvelope(options: {
+  config: RoleTransportConfig
+  bundle: TransportContextBundle
+  input: ConfiguredTransportInvocation
+  fullAccess?: boolean
+  runtimeWorkspace?: string
+}): ExecutionEnvelope {
+  const transport = options.config.transport ?? 'process'
+  const runtimeWorkspace =
+    options.runtimeWorkspace ??
+    options.bundle.extraWritableRoots?.[0] ??
+    options.bundle.runtimeScratchDir
+  if (options.fullAccess) {
+    return {
+      transport,
+      mode: 'unrestricted',
+      runtimeWorkspace,
+      runtimeWorkspaceRole: 'responsibility workspace',
+      runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
+      readableRoots: ['*'],
+      writableRoots: ['*'],
+      networkAccess: true,
+      subprocessAccess: true,
+      privilegeEscalation: false,
+      hostEnvironmentMutation: true,
+      linkedSourceAccess: 'read-write',
+      canonicalMutation: 'coordinator-publication-only',
+      runScratch: options.bundle.runtimeScratchDir,
+      cacheDirectory: options.bundle.runtimeCacheDir,
+    }
+  }
+  if (transport === 'process') {
+    return {
+      transport,
+      mode: 'provider-managed',
+      runtimeWorkspace,
+      runtimeWorkspaceRole: 'responsibility workspace',
+      runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
+      readableRoots: null,
+      writableRoots: null,
+      networkAccess: null,
+      subprocessAccess: null,
+      privilegeEscalation: false,
+      hostEnvironmentMutation: null,
+      linkedSourceAccess: 'provider-managed',
+      canonicalMutation: 'coordinator-publication-only',
+      runScratch: options.bundle.runtimeScratchDir,
+      cacheDirectory: options.bundle.runtimeCacheDir,
+    }
+  }
+  const writableRoots = [runtimeWorkspace, ...(options.bundle.extraWritableRoots ?? [])]
+  const readableRoots = [...writableRoots, ...(options.bundle.extraReadableRoots ?? [])]
+  const codexReadOnly = 'sandbox' in options.config && options.config.sandbox === 'read-only'
+  const linkedSourceWritable = (options.bundle.extraReadableRoots ?? []).some((root) =>
+    writableRoots.includes(root),
+  )
+  return {
+    transport,
+    mode: codexReadOnly ? 'read-only' : 'bounded',
+    runtimeWorkspace,
+    runtimeWorkspaceRole: 'responsibility workspace',
+    runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
+    readableRoots: [...new Set(readableRoots)],
+    writableRoots: codexReadOnly ? [] : [...new Set(writableRoots)],
+    networkAccess: !codexReadOnly,
+    subprocessAccess: !codexReadOnly,
+    privilegeEscalation: false,
+    hostEnvironmentMutation: false,
+    linkedSourceAccess: codexReadOnly || !linkedSourceWritable ? 'read-only' : 'read-write',
+    canonicalMutation: 'coordinator-publication-only',
+    runScratch: options.bundle.runtimeScratchDir,
+    cacheDirectory: options.bundle.runtimeCacheDir,
+  }
+}
+
+function externalDirectoryPermissions(roots: readonly string[]) {
+  return {
+    '*': 'deny',
+    ...Object.fromEntries(
+      [...new Set(roots)].map((root) => [`${root.replace(/\/$/, '')}/**`, 'allow']),
+    ),
   }
 }
 

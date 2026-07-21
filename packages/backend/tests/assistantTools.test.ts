@@ -1289,7 +1289,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
   })
 
-  test('starting Planning settles attached Attention targeting that Planning Work by default', async () => {
+  test('starting Planning preserves attached Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await fixture.controller.ensureResponsibilityFailureAttention(
@@ -1320,21 +1320,18 @@ describe('Assistant HOPI tools', () => {
 
     const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
     expect(planned.value).toMatchObject({
-      attention: { settledRefs: [reference], transferredRefs: [] },
-      unresolvedAttentionRefs: [],
+      attention: { settledRefs: [], transferredRefs: [] },
+      unresolvedAttentionRefs: [reference],
     })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-replan-attention.md')
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
+      resolvedAt: null,
       operatorRequest: null,
     })
-    expect(goalPackage.attentions.get(attention.attributes.id)?.body).toContain(
-      'Accepted Inbox turn EV-replan-attention superseded the prior Planning question.',
-    )
   })
 
-  test('starting Planning preserves attached Planning Attention when explicitly requested', async () => {
+  test('rejects the removed implicit Planning Attention settlement option', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await fixture.controller.ensureResponsibilityFailureAttention(
@@ -1350,21 +1347,14 @@ describe('Assistant HOPI tools', () => {
       context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
     })
 
-    const planned = await fixture.tools.executeForEvent(
-      'EV-preserve-attention',
-      'hopi_start_planning',
-      {
+    await expect(
+      fixture.tools.executeForEvent('EV-preserve-attention', 'hopi_start_planning', {
         projectId: 'P-1',
         goalId: 'G-1',
         mode: 'same_contract',
         resolveAttention: false,
-      },
-    )
-
-    expect(planned.value).toMatchObject({
-      attention: { settledRefs: [], transferredRefs: [] },
-      unresolvedAttentionRefs: [reference],
-    })
+      }),
+    ).rejects.toThrow('resolveAttention')
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
         ?.attributes.resolvedAt,
@@ -1679,9 +1669,19 @@ describe('Assistant HOPI tools', () => {
         operation: 'pause',
       }),
     ).rejects.toThrow('Reflection cannot call')
+    await expect(
+      fixture.tools.execute(reflectionToken, 'hopi_handoff_to_main', {
+        brief: 'The latest Attempt needs a speaking-thread decision.',
+        context: { attentionRefs: [goalAttentionReference('P-1', 'G-1', attentionId)] },
+      }),
+    ).rejects.toThrow('exact projectId and goalId')
     const handoff = await fixture.tools.execute(reflectionToken, 'hopi_handoff_to_main', {
       brief: 'The latest Attempt needs a speaking-thread decision.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [goalAttentionReference('P-1', 'G-1', attentionId)],
+      },
     })
     expect(handoff.changed).toBe(false)
     expect(prepared.current).not.toBeNull()
@@ -1707,21 +1707,29 @@ describe('Assistant HOPI tools', () => {
     ).rejects.toThrow('already handed off')
 
     const mainToken = fixture.tools.issue(event.attributes.id)
+    await expect(
+      fixture.tools.execute(mainToken, 'hopi_transfer_attention', {
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-other'],
+        message: 'Choose a release window.',
+      }),
+    ).rejects.toThrow('exactly the Attention references selected')
     expect(
-      await fixture.tools.execute(mainToken, 'hopi_request_user', {
+      await fixture.tools.execute(mainToken, 'hopi_transfer_attention', {
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
         message: 'Choose a release window.',
       }),
     ).toMatchObject({
       changed: false,
       value: {
-        requested: true,
+        staged: true,
         message: 'Choose a release window.',
         attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
       },
     })
     expect(fixture.tools.notificationMessage(mainToken)).toBe('Choose a release window.')
     expect(fixture.tools.notificationIntent(mainToken)).toBe('request')
-    await fixture.tools.execute(mainToken, 'hopi_request_user', {
+    await fixture.tools.execute(mainToken, 'hopi_transfer_attention', {
+      attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
       message: 'Choose a release window after reviewing the deployment risk.',
     })
     expect(fixture.tools.notificationMessage(mainToken)).toBe(
@@ -1804,7 +1812,10 @@ describe('Assistant HOPI tools', () => {
       fixture.tools.executeForEvent('EV-1', 'hopi_notify_user', { message: 'Hello.' }),
     ).rejects.toThrow('only for an internal Reflection turn')
     await expect(
-      fixture.tools.executeForEvent('EV-1', 'hopi_request_user', { message: 'Choose.' }),
+      fixture.tools.executeForEvent('EV-1', 'hopi_transfer_attention', {
+        attentionRefs: ['home:H-1/attention:A-1'],
+        message: 'Choose.',
+      }),
     ).rejects.toThrow('only for an internal Reflection turn')
   })
 

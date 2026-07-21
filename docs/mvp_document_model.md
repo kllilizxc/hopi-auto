@@ -121,7 +121,7 @@ was observed. Neither value is proof of a side effect; canonical documents and t
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
 finishes, Coordinator may publish `internal -> public` atomically with its handled reply when that
-Run called `notify_user` or `request_user`. It never moves back and a user-sourced turn can never
+Run called `notify_user` or `transfer_attention`. It never moves back and a user-sourced turn can never
 become internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also

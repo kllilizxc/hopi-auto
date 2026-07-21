@@ -64,6 +64,7 @@ import type { RunAttemptSummary } from './runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from './runtime/runCostProjection'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
+import { createProjectAgentAccessStore } from './storage/projectAgentAccessStore'
 
 export interface ServerOptions {
   rootDir?: string
@@ -189,7 +190,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     current: null,
   }
   let topologyReloadScheduled = false
-  const fullAccessProjects = new Set<string>()
+  const projectAgentAccess = createProjectAgentAccessStore(homeRoot)
   const runtimeOptions: CreateMvpRuntimeOptions = {
     homeRoot,
     roleRunner: options.roleRunner,
@@ -205,7 +206,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       return `http://127.0.0.1:${serverRef.current.port}/api/internal/assistant-tool`
     },
     onProjectTopologyChanged: scheduleTopologyReload,
-    projectFullAccess: (projectId) => fullAccessProjects.has(projectId),
+    projectFullAccess: async (projectId) => (await projectAgentAccess.read(projectId)).fullAccess,
     start: false,
   }
   let runtimePromise = createMvpRuntime(runtimeOptions)
@@ -384,7 +385,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(await presentState(await nextRuntime), 201)
         }
         if (
-          request.method === 'PUT' &&
+          (request.method === 'GET' || request.method === 'PUT') &&
           parts.length === 4 &&
           parts[0] === 'api' &&
           parts[1] === 'projects' &&
@@ -392,10 +393,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const projectId = requirePart(parts, 2)
           requireProject(runtime.projects, projectId)
+          if (request.method === 'GET') {
+            return json({ projectId, ...(await projectAgentAccess.read(projectId)) })
+          }
           const body = await parseBody(request, projectAgentAccessSchema)
-          if (body.fullAccess) fullAccessProjects.add(projectId)
-          else fullAccessProjects.delete(projectId)
-          return json({ projectId, fullAccess: body.fullAccess })
+          return json(await projectAgentAccess.write(projectId, body.fullAccess))
         }
         if (
           request.method === 'POST' &&

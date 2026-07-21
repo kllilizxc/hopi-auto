@@ -700,6 +700,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(developerInstructions).toContain(
       'capabilities expose their own preconditions and effects',
     )
+    expect(developerInstructions).toContain(
+      'Resolving it removes that gate immediately and may make the target runnable',
+    )
+    expect(developerInstructions).toContain(
+      'Requesting the operator records Needs you ownership on a still-open Attention',
+    )
     expect(developerInstructions).not.toContain('Choose Engineering')
     for (const feature of ['apps', 'goals', 'memories', 'multi_agent', 'plugins']) {
       expect(args).toContain(feature)
@@ -786,10 +792,11 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).toContain('[Current execution environment observation]')
-    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": true')
+    expect(seen[0]?.prompt).toContain('"mode": "provider-managed"')
+    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": null')
     expect(seen[0]?.prompt).toContain('"privilegeEscalation": false')
-    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "read-write"')
-    expect(seen[0]?.prompt).toContain('"hopiMutationToolsAvailable": true')
+    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "provider-managed"')
+    expect(seen[0]?.prompt).toContain('"canonicalMutation": "hopi-tools-only"')
     expect(seen[0]?.prompt).toContain(
       '"runtimeWorkspaceProductEffect": "non-canonical and not operator-addressable"',
     )
@@ -1239,7 +1246,8 @@ describe('WorkspaceAssistant conversation', () => {
       async run(input) {
         prompts.push(input.prompt)
         sessions.push(input.session?.sessionId ?? null)
-        await tools.execute(input.toolToken, 'hopi_request_user', {
+        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-settlement'],
           message: 'Choose the release window: today or tomorrow?',
         })
         return {
@@ -1259,8 +1267,8 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-settlement')
 
     expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('A hopi_request_user message is the complete public turn')
-    expect(prompts[0]).toContain('material cause, blocking consequence, exact need')
+    expect(prompts[0]).toContain('Either message becomes the complete public turn')
+    expect(prompts[0]).toContain('transfers exactly the selected open Attention references')
     expect(sessions).toEqual([null])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
       status: 'handled',
@@ -1324,7 +1332,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         prompts.push(input.prompt)
-        await tools.execute(input.toolToken, 'hopi_request_user', {
+        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-informational-owner'],
           message: 'Choose the release window: today or tomorrow?',
         })
         return { reply: '', session: codexSession('thread-informational-owner') }
@@ -1389,7 +1398,8 @@ describe('WorkspaceAssistant conversation', () => {
   test('publishes only the explicit operator request before transferring linked Attention', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
+        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
           message: 'Choose the release window: today or tomorrow?',
         })
         return {
@@ -1431,7 +1441,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         if (input.eventId === 'EV-notify') {
-          await tools.execute(input.toolToken, 'hopi_request_user', {
+          await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+            attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
             message: 'Which release window should I use: today or tomorrow?',
           })
           return {
@@ -1598,7 +1609,8 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
+        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-failed'],
           message: 'Choose the release window.',
         })
         throw new Error('reply generation failed')
@@ -1631,7 +1643,8 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
+        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-retry-ack'],
           message: 'Choose the release window.',
         })
         return {

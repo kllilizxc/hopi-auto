@@ -66,7 +66,7 @@ describe('Reflection to operator Attention E2E', () => {
     expect(reflectionModes).toEqual(['reflection'])
   })
 
-  test('recovers an omitted handoff and projects Needs you only after the reply is durable', async () => {
+  test('projects Needs you only after an explicit handoff reply is durable', async () => {
     const repoRoot = join(temporaryRoot, 'repo')
     await initializeGitRepo(repoRoot)
     const homeRoot = join(temporaryRoot, 'home')
@@ -97,12 +97,26 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
+          if (!runtimeRef.current) throw new Error('Runtime is not ready')
+          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: 'The release-window Attention requires a speaking turn.',
+            context: {
+              projectId: 'P-1',
+              goalId: 'G-1',
+              attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
+            },
+          })
           return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
-          message: 'Choose the release window: today or tomorrow?',
-        })
+        await runtimeRef.current.assistantTools.execute(
+          input.toolToken,
+          'hopi_transfer_attention',
+          {
+            attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
+            message: 'Choose the release window: today or tomorrow?',
+          },
+        )
         return {
           reply: 'Choose the release window: today or tomorrow?',
           session: codexSession('assistant-e2e'),
@@ -148,7 +162,7 @@ describe('Reflection to operator Attention E2E', () => {
     expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
   })
 
-  test('uses the same fallback and acknowledgement path for Workspace Attention', async () => {
+  test('uses the same explicit handoff and acknowledgement path for Workspace Attention', async () => {
     const repoRoot = join(temporaryRoot, 'workspace-repo')
     await initializeGitRepo(repoRoot)
     const homeRoot = join(temporaryRoot, 'workspace-home')
@@ -162,12 +176,23 @@ describe('Reflection to operator Attention E2E', () => {
     const runner: AssistantModelRunner = {
       async run(input) {
         if (input.toolMode === 'reflection') {
+          if (!runtimeRef.current) throw new Error('Runtime is not ready')
+          const workspace = await runtimeRef.current.workspace.readWorkspace()
+          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: 'The Project binding Attention requires a speaking turn.',
+            context: { attentionRefs: [`home:${workspace.homeId}/attention:A-project`] },
+          })
           return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
-          message: 'The Project checkout needs to be rebound before work can continue.',
-        })
+        await runtimeRef.current.assistantTools.execute(
+          input.toolToken,
+          'hopi_transfer_attention',
+          {
+            attentionRefs: attentionReferences(input.prompt),
+            message: 'The Project checkout needs to be rebound before work can continue.',
+          },
+        )
         return {
           reply: 'The Project checkout needs to be rebound before work can continue.',
           session: codexSession('workspace-assistant-e2e'),
@@ -325,8 +350,21 @@ async function verifyPoisonedHistoryIsolation(scenario: {
     async run(input) {
       if (input.toolMode === 'reflection') {
         reflectionRuns += 1
+        if (!runtimeRef.current) throw new Error('Runtime is not ready')
+        if (input.prompt.includes(targetAttentionId)) {
+          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: 'The current Goal Attention requires a speaking turn.',
+            context: {
+              projectId: scenario.targetProjectId,
+              goalId: scenario.targetGoalId,
+              attentionRefs: [
+                `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}/attention:${targetAttentionId}`,
+              ],
+            },
+          })
+        }
         return {
-          reply: 'No handoff; Coordinator may apply the unnotified-Attention fallback.',
+          reply: 'Reflection assessed the current state.',
           session: codexSession(`reflection-${scenario.slug}-${reflectionRuns}`),
         }
       }
@@ -337,7 +375,8 @@ async function verifyPoisonedHistoryIsolation(scenario: {
       if (!runtime) throw new Error('Runtime is not ready')
       internalTurns += 1
       if (internalTurns === 1) {
-        await runtime.assistantTools.execute(input.toolToken, 'hopi_request_user', {
+        await runtime.assistantTools.execute(input.toolToken, 'hopi_transfer_attention', {
+          attentionRefs: attentionReferences(input.prompt),
           message: publicMessage,
         })
       }
@@ -461,6 +500,16 @@ async function verifyPoisonedHistoryIsolation(scenario: {
   expect(internalTurns).toBeGreaterThanOrEqual(2)
   expect(reflectionRuns).toBeGreaterThanOrEqual(1)
   await runtime.coordinator.stop()
+}
+
+function attentionReferences(prompt: string) {
+  return [
+    ...new Set(
+      prompt.match(
+        /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
+      ) ?? [],
+    ),
+  ]
 }
 
 async function initializeGitRepo(repoRoot: string) {

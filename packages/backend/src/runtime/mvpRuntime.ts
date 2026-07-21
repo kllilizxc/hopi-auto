@@ -93,7 +93,7 @@ export interface CreateMvpRuntimeOptions {
   assistantToolUrl?: () => string
   attentionTransport?: AttentionTransport
   onProjectTopologyChanged?: () => void
-  projectFullAccess?: (projectId: string) => boolean
+  projectFullAccess?: (projectId: string) => boolean | Promise<boolean>
   start?: boolean
 }
 

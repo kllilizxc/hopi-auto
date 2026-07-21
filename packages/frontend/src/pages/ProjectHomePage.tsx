@@ -44,16 +44,14 @@ import {
   initializeProjectDirectory,
   linkProjectRepo,
   readShellState,
+  readProjectAgentAccess,
   rebindProjectRepo,
   selectProjectDirectory,
   updateAgentRoleSettings,
   updateProjectAgentAccess,
 } from '../lib/api'
 import { buildGoalRoute } from '../lib/goalScope'
-import {
-  readProjectAgentFullAccess,
-  writeProjectAgentFullAccess,
-} from '../lib/projectAgentAccess'
+import { readProjectAgentFullAccess, writeProjectAgentFullAccess } from '../lib/projectAgentAccess'
 import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
 import { preloadBoardView, preloadGoalCreatePage } from '../routeModules'
 import { excerpt, projectDisplayName } from '../lib/utils'
@@ -449,7 +447,9 @@ function AgentSettingsPanel({
         Configure the Home-wide model used by each role. Projects share these settings.
       </p>
       <div className="assistant-settings-current">
-        <small>{selected.inherited && role !== 'assistant' ? 'Home fallback' : 'Current model'}</small>
+        <small>
+          {selected.inherited && role !== 'assistant' ? 'Home fallback' : 'Current model'}
+        </small>
         <strong>{formatCodingDefaults(selected.codingDefaults)}</strong>
       </div>
       <AppForm
@@ -578,12 +578,20 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 
   useEffect(() => {
     let active = true
-    void updateProjectAgentAccess(
-      project.projectId,
-      readProjectAgentFullAccess(project.projectId),
-    ).catch((error: unknown) => {
-      if (active) setAgentAccessError(error instanceof Error ? error.message : String(error))
-    })
+    void readProjectAgentAccess(project.projectId)
+      .then(async (access) => {
+        if (!active) return
+        if (access.configured) {
+          writeProjectAgentFullAccess(project.projectId, access.fullAccess)
+          setFullAgentAccess(access.fullAccess)
+          return
+        }
+        const localPreference = readProjectAgentFullAccess(project.projectId)
+        await updateProjectAgentAccess(project.projectId, localPreference)
+      })
+      .catch((error: unknown) => {
+        if (active) setAgentAccessError(error instanceof Error ? error.message : String(error))
+      })
     return () => {
       active = false
     }

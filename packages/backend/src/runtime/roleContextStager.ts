@@ -1,5 +1,6 @@
 import { chmod, copyFile, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
+import { EXECUTION_ENVELOPE_MARKER } from '../agent/executionEnvelope'
 import type { TransportContextBundle } from '../agent/vendorTransport'
 import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/assistantPreference'
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
@@ -966,6 +967,9 @@ function renderResponsibilityPrompt(
   const boundary = [
     '## Execution Boundary',
     '',
+    '[Current execution environment observation]',
+    EXECUTION_ENVELOPE_MARKER,
+    '',
     `Working directory: ${input.responsibility === 'generator' ? 'the assigned task Repo root' : paths.runRoot}`,
     `Authority root: ${paths.authorityRoot}`,
     `Proposal root: ${paths.proposalRoot}`,
@@ -990,7 +994,6 @@ function renderResponsibilityPrompt(
       : []),
     '',
     'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
-    'Permission follows resource ownership, not command allowlists. Use ordinary shell, network, filesystem, and tools freely inside the resources assigned below.',
     'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns HOPI-managed task Git metadata, checkpoints, and integration refs.',
     'The Repo manifest is the complete source-root map. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.',
     'Use $HOPI_RUN_SCRATCH for retained files and $HOPI_CACHE_DIR for caches; evidence requires a retained file or log.',
@@ -1184,32 +1187,18 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Inspect authority and source first. Ask only material ambiguity evidence cannot answer; group independent questions with a recommendation and trade-offs.',
-    'Research source, tools, and external facts as deeply as needed. Keep machine-local login, versions/models, transient facts, and one-Run measurements in Evidence unless lasting.',
-    'Never propose goal.md or change its contractRevision; only an operator instruction changes it.',
+    'Objective: turn the current Goal contract, accepted Input, design, and source facts into the smallest complete Engineering DAG and durable design needed to deliver the Goal.',
+    'Goal authority is immutable in this responsibility. Proposal is the only publication channel and may contain design/**, Engineering Work, Attention, .hopi/docs/repos.md, and an allowed AGENTS.md bootstrap. Coordinator validates and publishes it.',
     ...(paths.operatorPreferenceFile
       ? [
-          'Apply relevant operator defaults, but current accepted Input and Project/Goal authority override them. Materialize a relevant default into design or Engineering Work; never copy unrelated preferences.',
+          'Operator preferences are defaults below current accepted Input and Project/Goal authority.',
         ]
       : []),
-    'Record durable decisions in design/** before exposing Work.',
-    'When a Goal image matters, preserve its exact Goal asset path and purpose in the Engineering Work. Omit unrelated images.',
-    'dependsOn is only for required output, overlapping writers, or exclusive resources—not shared reads or expected order. Keep single-use scaffolding with its consumer.',
-    'For existing nonterminal Work, dependsOn is monotonic history: preserve every edge, add required predecessors, and never replace an edge.',
-    'If accepted current Input explicitly narrows or relaxes delivery, remove superseded objective, acceptance, and proof clauses from nonterminal Work; preserve identity, dependency/Evidence history, and current safety/persistence.',
-    'Judge cohesion by proof boundary: one Work follows one canonical fact chain and one primary verification strategy. Split independent proof strategies at stable contracts; never split cohesive Work merely to fill capacity.',
-    'For repeated facts, name one canonical owner and one-way derivation.',
-    'Each Engineering Work is standalone in outcome, dependencies, Repo scope, and task-worktree proof. Cite canonical design paths; list only Repos it must inspect, execute, or modify.',
-    'A minimal contract gives every path and proof a requested outcome, accepted compatibility, safety/persistence, or credible regression. Separate delivery from reusable enforcement; add parser/schema/infrastructure only when requested or already durable, with a finite accepted input grammar.',
-    'Public Preview proves only the integrated release; exclude it from Engineering acceptance.',
-    'New Work uses kind engineering, stage generate, current contractRevision, and no assistantDispatch. Preserve existing assistantDispatch; Terminal Work is immutable.',
-    'One Work ID owns a cumulative stable source lineage. Only a current sync diagnostic justifies repair; old wrong-HEAD/dirty-tree preflights do not prove a new failure. To discard delta, create a distinct Engineering Work.',
-    'Proposal may contain only design/**, Engineering Work, Attention, .hopi/docs/repos.md, and an allowed AGENTS.md bootstrap. Planning Work is read-only and must not be copied. Coordinator derives Planner Evidence from result.json.',
-    'With a complete Engineering DAG, leave Proposal empty and succeed. This ends only Planning; it never retries, resets, cancels, or resolves Engineering Work or Attention. Never claim Coordinator will.',
-    'Resolved Assistant Attention is history. With terminal Work and no targeted Attention, propose target-null completion.',
-    'Maintain .hopi/docs/repos.md only when Repo responsibilities or shared contracts are materially stale. It is context, not workflow configuration.',
-    'Omitted Evidence is historical. Never repair an unstaged evidenceRef, reconstruct stale Run output, synthesize Evidence from runtime directories, or inspect another Goal/Run.',
-    'Coordinator validates proposal schema and DAG; use returned diagnostics on retry instead of duplicating its validator.',
+    'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, names only required Repos, and depends only on required output, overlapping writers, or exclusive resources.',
+    'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
+    'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. Planner may use it for final integrated proof when the accepted design requires that proof.',
+    'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',
+    'Goal assets remain durable only through their exact Goal asset paths and documented purpose. Repo responsibilities and shared contracts have one canonical owner.',
     'New Engineering Work frontmatter (Markdown bodies remain free-form):',
     '```yaml',
     '---',
@@ -1236,19 +1225,14 @@ function plannerPrompt(paths: {
     'operatorRequest: null',
     '---',
     '```',
-    ...(paths.apiOrigin
-      ? [
-          'Only when accepted design requires Preview proof and all Engineering Work is terminal, validate the integrated release with POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/start, GET $HOPI_API_ORIGIN/api/projects/<projectId>/preview, then POST $HOPI_API_ORIGIN/api/projects/<projectId>/preview/stop. Otherwise do not start Preview.',
-        ]
-      : []),
-    'Planner working directory is not a Git checkout. Write canonical relative paths beneath the Proposal root (for example `.hopi/docs/...`), validate the sparse files directly, and do not edit source or ordinary project documents.',
+    ...(paths.apiOrigin ? ['The Public Preview API is available at $HOPI_API_ORIGIN.'] : []),
+    'Planner working directory is not a Git checkout. Source and Authority are read-only; sparse proposal paths are canonical-relative beneath Proposal root.',
     ...(paths.bootstrapSourceRoot
       ? [
-          `Project guidance is absent. Scan the read-only source snapshot at ${paths.bootstrapSourceRoot} and propose AGENTS.md as a concise Project entrypoint.`,
+          `Project guidance is absent; the read-only source snapshot for deriving a concise AGENTS.md entrypoint is ${paths.bootstrapSourceRoot}.`,
         ]
-      : ['Project guidance exists and must not be replaced automatically.']),
-    'Every Repo selected by Engineering Work owns scripts/hopi/prepare in its own checkout. Include creation or repair in that same Work when needed; do not create separate Init Work or Repair Work, route preparation through primary, or let Planner write source.',
-    'For Assistant management, stage one targeted Attention and leave Planning Work at plan. For completion, stage one target-null Attention; never combine it with nonterminal Engineering Work.',
+      : ['Project guidance already exists and is read-only in this responsibility.']),
+    'Every selected Repo owns its own scripts/hopi/prepare contract; preparation delivery belongs to the Engineering Work that needs that Repo.',
     '',
   ]
 }
@@ -1257,21 +1241,14 @@ function generatorPrompt() {
   return [
     '## Generator',
     '',
-    'Implement the owning Engineering Work in the stable task worktree and run proportionate checks that prove it.',
-    'Treat a Reviewer reproducer as evidence that an accepted invariant is false, not as the repair scope. Repair the owning invariant, check adjacent representations and representative variants, and derive persisted projections from their canonical owner instead of adding pairwise exceptions. Use proportionate judgment; no checklist artifact is required.',
-    'A repair Run still owns the complete Work. After the final relevant change, reassess every materially affected acceptance criterion; passing only the latest reproducer is not success.',
-    'Replay the latest Reviewer reproducer before success, using its current-Run artifact mapping rather than historical Evidence paths. When stable and expressible by the existing test or validator stack, persist it at the nearest owning boundary; otherwise explain why retained proof is stronger.',
-    'Implement the accepted contract, not a broader imagined platform. Generalize only where the Work names reusable enforcement or the existing architecture makes that boundary necessary for correctness.',
-    'Read Project guidance and every selected Repo preparation entrypoint before rediscovering setup. A Repo Preparation Diagnostic appended below is exact preflight input, not separate Work.',
-    'Each selected Repo owns its own scripts/hopi/prepare. Repair only the failing candidate entrypoints in this Work; never route one Repo through another or make a primary adapter orchestrate the manifest.',
-    'When a required Repo is absent from the Repo manifest, stage Attention instead of discovering another Work checkout. Project scripts must consume the manifest rather than scan HOPI runtime siblings.',
-    'The public Project Preview API targets the current integrated release and is not candidate evidence. When material runtime proof is needed, execute the task worktree preview directly with the Run manifest.',
-    'For operator-facing runtime or interaction changes, exercise the candidate primary path after the final relevant change when its existing entrypoint permits it. Apply proportional judgment; this is not a fixed browser checklist.',
-    'When this Work creates or changes scripts/hopi/preview, it must print exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready; a bare URL is not a HOPI ready signal.',
-    'Never edit .hopi in the task worktree. Do not change Work, Goal, or design files directly.',
-    'The assigned task worktree Git index, HEAD, branch, and shared Git directory are HOPI-managed. Do not mutate them; Coordinator checkpoints source edits after the Run.',
-    'When accepted Work requires branch or PR delivery, use a Run-owned clone under $HOPI_RUN_SCRATCH. Git staging, commits, branch changes, rebases, and pushes are allowed there within the repository and delivery named by Work.',
-    'Do not merge, deploy, mutate production data, or create another unrequested external effect without explicit Work or operator authority.',
+    'Objective: implement the complete owning Engineering Work in its stable task worktree and provide proportionate evidence for every materially affected acceptance criterion.',
+    'The accepted Work and durable design define scope. Reviewer findings are evidence about violated invariants; the owning invariant, its canonical representation, and materially adjacent variants define the repair boundary.',
+    'Project guidance, Repo manifest, preparation entrypoints, accepted Inputs, and latest Evidence are environment knowledge for this Run. Each selected Repo owns its own scripts/hopi/prepare contract.',
+    'Candidate runtime proof belongs to the task worktree and Run manifest. Public Project Preview observes the integrated release, not this candidate.',
+    'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after the service is ready.',
+    'The staged canonical context overrides any older .hopi copy in the task branch.',
+    '.hopi, canonical documents, the task worktree Git index/HEAD/branch, and shared Git metadata are Coordinator-owned and immutable here. Coordinator checkpoints source edits after the Run.',
+    'External effects such as merge, deploy, production-data mutation, or delivery outside the Work require explicit Work or operator authority. Run-owned clones under $HOPI_RUN_SCRATCH are available for authorized branch or PR delivery.',
     '',
   ]
 }
@@ -1280,22 +1257,14 @@ function reviewerPrompt() {
   return [
     '## Reviewer',
     '',
-    'Independently inspect acceptance criteria, the task-branch diff, checks, and material runtime behavior.',
-    `Review the owning Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Do not attribute release-only commits or canonical .hopi movement to this Work; C1 owns integration onto the current release tip.`,
-    'Do not edit source, ordinary project documents, or .hopi in the task worktree.',
-    'Choose the strongest proportionate proof for every acceptance criterion.',
-    'Bound rejection by the accepted contract and material risk. Defects in the deliverable, accepted input, explicit reusable enforcement, or material integrity/safety may reject; a malformed hypothetical form outside the stated accepted grammar cannot expand one-time Work into validator completeness.',
-    'Do not promote presentation preference into parser requirement. Record useful out-of-grammar limits without rejection; if required reusable validation lacks a coherent grammar, return Attention rather than invent an unlimited standard.',
-    'Order cheap, high-risk canonical or recomputation probes before expensive broad or browser proof when both matter. After a decisive defect, perform a bounded low-cost sweep of the same invariant and other already-visible independent risks, then batch all currently knowable findings; stop before unrelated exhaustive exploration. On a later review, replay the reported reproducer first, then prove its invariant rather than only the literal example.',
-    'Every reproducible reject summary must name the violated invariant, exact command and input or deterministic inspection steps, and the observed failure. Do not invent a reproducer when the finding is inherently observational; state that boundary precisely.',
-    'Decide the proof plan before installing optional tools. Reuse Project guidance, preparation, and the existing test/browser stack; do not add a competing harness after decisive proof exists.',
-    'If direct proof requires a Repo absent from the Repo manifest, stage Attention instead of inspecting another Work checkout or historical runtime directory.',
-    'The public Project Preview API targets the current integrated release and is not candidate evidence. When runtime proof is material, execute the task worktree preview directly with the Run manifest; final post-C1 Preview proof belongs to Planner only when design requires it.',
-    'When scripts/hopi/preview is in scope, verify that readiness emits exactly one HOPI_PREVIEW_URL=<reachable-url> line; accepting a bare URL would leave Project Preview stuck in starting.',
-    'A helper-only change normally needs focused tests, not browser exploration. For an operator-reported visual, crash, or interaction path, exercise that exact path through the point after the failure. Unit or shell proof alone is insufficient unless strictly stronger and explained.',
-    'Do not rerun an unchanged passing check.',
-    'Batch independent inspection and checks where practical. Extra progress narration and repeated discovery are not review evidence.',
-    'This is an evidence obligation, not a fixed browser workflow. You may start short-lived local services for this Run; persistent Project Preview and integration are not your responsibility.',
+    'Objective: independently determine whether the owning Work satisfies its accepted contract and material integrity or safety obligations, using the strongest proportionate evidence.',
+    `The candidate is the Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Release-only commits, canonical .hopi movement, persistent Preview, and integration belong to Coordinator or Planner rather than this review.`,
+    'Source, ordinary project documents, .hopi, and Git metadata are read-only in this responsibility.',
+    'Rejection is bounded by the accepted contract and material risk. Presentation preferences and hypothetical inputs outside an accepted grammar do not expand the contract into unlimited validation.',
+    'A reproducible rejection identifies the violated invariant, exact command and input or deterministic inspection, and observed failure. Observational findings state their evidence boundary without inventing a reproducer.',
+    'Project guidance, preparation, Repo manifest, existing checks, candidate runtime, and browser stack are available evidence sources. Public Project Preview is not candidate evidence.',
+    'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready.',
+    'Attention represents missing authority or resources that this responsibility cannot clear; it is not a substitute for an implementation defect or an evidence-backed verdict.',
     '',
   ]
 }

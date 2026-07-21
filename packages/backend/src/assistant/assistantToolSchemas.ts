@@ -16,6 +16,12 @@ const goalReferences = z
   .max(4)
   .default([])
 
+const canonicalAttentionReferenceSchema = z
+  .string()
+  .refine((value) => parseAttentionReference(value) !== null, {
+    message: 'value must be one complete canonical Attention reference',
+  })
+
 const directEngineeringWorkSchema = z
   .object({
     title: z.string().trim().min(1),
@@ -60,7 +66,7 @@ export const mainAssistantToolNames = [
   'hopi_resolve_attention',
   'hopi_control_preview',
   'hopi_notify_user',
-  'hopi_request_user',
+  'hopi_transfer_attention',
 ] as const
 
 const projectRepoSchema = z
@@ -214,12 +220,6 @@ export const assistantToolSchemas = {
           'Use same_contract when Goal outcome and success remain unchanged; use new_contract_revision only when outcome, scope, constraints, success, or behavior changes.',
         )
         .default('same_contract'),
-      resolveAttention: z
-        .boolean()
-        .describe(
-          'Defaults to true: atomically resolve current-turn Attention only when it targets the exact Planning Work being started. Pass false to preserve it.',
-        )
-        .default(true),
       references: goalReferences,
     })
     .strict(),
@@ -280,18 +280,72 @@ export const assistantToolSchemas = {
     })
     .strict(),
   hopi_notify_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
-  hopi_request_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
+  hopi_transfer_attention: z
+    .object({
+      attentionRefs: z
+        .array(canonicalAttentionReferenceSchema)
+        .min(1)
+        .refine((values) => new Set(values).size === values.length, 'attentionRefs must be unique'),
+      message: z.string().trim().min(1).max(12_000),
+    })
+    .strict(),
   hopi_handoff_to_main: z
     .object({
       brief: z.string().trim().min(1).max(12_000),
       context: z
         .object({
-          projectId: stableIdSchema.describe(
-            'Exact Project ID from current Project state; never a Home ID.',
-          ),
-          goalId: stableIdSchema.describe('Exact Goal ID from current Project state.'),
+          projectId: stableIdSchema
+            .describe('Exact Project ID from current Project state; never a Home ID.')
+            .optional(),
+          goalId: stableIdSchema.describe('Exact Goal ID from current Project state.').optional(),
+          attentionRefs: z
+            .array(canonicalAttentionReferenceSchema)
+            .min(1)
+            .refine(
+              (values) => new Set(values).size === values.length,
+              'attentionRefs must be unique',
+            )
+            .optional(),
         })
         .strict()
+        .superRefine((value, refinement) => {
+          if (Boolean(value.projectId) !== Boolean(value.goalId)) {
+            refinement.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'projectId and goalId must appear together',
+            })
+          }
+          if (!value.projectId && !value.attentionRefs?.length) {
+            refinement.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'context requires a Goal location or Attention references',
+            })
+          }
+          const parsedReferences = (value.attentionRefs ?? [])
+            .map(parseAttentionReference)
+            .filter((reference) => reference !== null)
+          const goalReferences = parsedReferences.filter((reference) => reference.scope === 'goal')
+          const workspaceReferences = parsedReferences.filter(
+            (reference) => reference.scope === 'workspace',
+          )
+          if (
+            goalReferences.some(
+              (reference) =>
+                reference.projectId !== value.projectId || reference.goalId !== value.goalId,
+            )
+          ) {
+            refinement.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Goal Attention references require their exact projectId and goalId',
+            })
+          }
+          if (workspaceReferences.length > 0 && (value.projectId || goalReferences.length > 0)) {
+            refinement.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Workspace Attention references require workspace context',
+            })
+          }
+        })
         .optional(),
     })
     .strict(),

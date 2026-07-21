@@ -1,18 +1,6 @@
+import { EXECUTION_ENVELOPE_MARKER, type ExecutionEnvelope } from '../agent/executionEnvelope'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
-
-export interface AssistantEnvironmentProjection {
-  runtimeWorkspace: string
-  runtimeWorkspaceRole: 'provider scratch space'
-  runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable'
-  writableRoots: string[]
-  networkAccess: boolean
-  privilegeEscalation: boolean
-  hostEnvironmentMutation: boolean
-  linkedSourceAccess: 'read-write'
-  canonicalStateAccess: 'filesystem-and-tools'
-  hopiMutationToolsAvailable: true
-}
 
 interface ScopedStateObservation {
   status: 'observed' | 'unavailable'
@@ -25,40 +13,22 @@ interface ScopedStateObservation {
   reason?: string
 }
 
-export function assistantEnvironmentProjection(
-  runtimeWorkspace: string,
-): AssistantEnvironmentProjection {
-  return {
-    runtimeWorkspace,
-    runtimeWorkspaceRole: 'provider scratch space',
-    runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
-    writableRoots: ['*'],
-    networkAccess: true,
-    privilegeEscalation: false,
-    hostEnvironmentMutation: true,
-    linkedSourceAccess: 'read-write',
-    canonicalStateAccess: 'filesystem-and-tools',
-    hopiMutationToolsAvailable: true,
-  }
-}
-
 export async function observeAssistantTurn(
   state: AssistantStateReader | undefined,
   event: InboxEventDocument,
-  runtimeWorkspace: string,
 ) {
   return {
-    environment: assistantEnvironmentProjection(runtimeWorkspace),
     scopedState: await readScopedStateObservation(state, event),
   }
 }
 
 export function renderAssistantTurnObservation(
   observation: Awaited<ReturnType<typeof observeAssistantTurn>>,
+  environment?: ExecutionEnvelope,
 ) {
   return [
     '[Current execution environment observation]',
-    JSON.stringify(observation.environment, null, 2),
+    environment ? JSON.stringify(environment, null, 2) : EXECUTION_ENVELOPE_MARKER,
     ...(observation.scopedState
       ? [
           '[Current scoped HOPI state observation]',

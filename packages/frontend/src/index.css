@@ -1043,10 +1043,9 @@ button:disabled,
   border: 1px solid var(--color-neutral-800);
   border-radius: 10px;
   background: var(--surface-soft);
-  cursor: pointer;
 }
 
-.project-agent-access span {
+.project-agent-access > span {
   display: grid;
   gap: 3px;
 }

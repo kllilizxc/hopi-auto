@@ -269,13 +269,20 @@ describe('MVP server', () => {
     expect(await cancelled.json()).toEqual({ selection: null })
   })
 
-  test('accepts a non-durable Project agent access preference', async () => {
+  test('persists Project agent access across backend restart outside canonical authority', async () => {
     const homeRoot = join(temporaryRoot, 'agent-access-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'agent-access-repo'))
     const home = createAssistantHomeStore(homeRoot, new PublicationCoordinator())
     const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
     activeServers.add(server)
+
+    const initial = await fetch(`http://127.0.0.1:${server.port}/api/projects/P-1/agent-access`)
+    expect(await initial.json()).toEqual({
+      projectId: 'P-1',
+      fullAccess: false,
+      configured: false,
+    })
 
     const response = await fetch(`http://127.0.0.1:${server.port}/api/projects/P-1/agent-access`, {
       method: 'PUT',
@@ -284,10 +291,23 @@ describe('MVP server', () => {
     })
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ projectId: 'P-1', fullAccess: true })
+    expect(await response.json()).toEqual({ projectId: 'P-1', fullAccess: true, configured: true })
     expect(
       await Bun.file(join(linked.integrationRoot, '.hopi', 'project.yml')).text(),
     ).not.toContain('fullAccess')
+
+    await server.shutdown()
+    activeServers.delete(server)
+    const restarted = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(restarted)
+    const persisted = await fetch(
+      `http://127.0.0.1:${restarted.port}/api/projects/P-1/agent-access`,
+    )
+    expect(await persisted.json()).toEqual({
+      projectId: 'P-1',
+      fullAccess: true,
+      configured: true,
+    })
   })
 
   test('keeps an Assistant lifecycle conflict request-local and the server available', async () => {

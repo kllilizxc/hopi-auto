@@ -179,7 +179,7 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|public final reply, notify_user, or request_user| HR[Publish complete reply and mark turn handled]
+    CE -->|public final reply, notify_user, or transfer_attention| HR[Publish complete reply and mark turn handled]
     HR --> AL{Linked Attention?}
     AL -->|inform| NA[Publish Attention notifiedAt after reply]
     AL -->|request| OR[Publish notifiedAt plus operatorRequest]
@@ -223,9 +223,7 @@ flowchart LR
     SD -->|no| RA[Already assessed]
     SD -->|yes; one at a time| RF[Run disposable read-only Reflection]
     RF --> HB{Useful handoff?}
-    HB -->|no| UA{Unnotified Attention remains?}
-    UA -->|no| RA
-    UA -->|yes; deterministic fallback| II
+    HB -->|no| RA
     HB -->|yes| II[Durably write internal pending Inbox turn]
     II --> D
 ```
@@ -260,7 +258,7 @@ each class. Reflection never enters the publication path directly. Its one optio
 pending Inbox input to the speaking thread, which rereads current truth before choosing any HOPI tool.
 A hidden internal turn remains absent from the conversation projection unless the speaking thread
 supplies an explicit informational message through `notify_user` or an actionable question through
-`request_user`; internal narration is never promoted. Only `request_user` transfers current
+`transfer_attention`; internal narration is never promoted. Only `transfer_attention` transfers current
 Attention ownership to the operator.
 
 ## Reflection Runtime Lifecycle
@@ -273,9 +271,8 @@ stateDiagram-v2
     Baseline --> Running : urgent signal or settled changed snapshot
     Deferred --> Deferred : newer automatic progress coalesces
     Deferred --> Running : urgent signal or quiescent idle tick
-    Running --> Assessed : no handoff and no Assistant-owned Attention
+    Running --> Assessed : no explicit handoff
     Running --> HandedOff : one internal brief
-    Running --> HandedOff : fallback for Assistant-owned Attention
     Running --> Backoff : model transport failure
     Assessed --> Deferred : later digest; automatic progress remains
     Assessed --> Running : later eligible digest

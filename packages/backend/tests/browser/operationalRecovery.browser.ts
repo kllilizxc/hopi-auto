@@ -87,7 +87,16 @@ const assistantRunner: AssistantModelRunner = {
       const message = (await Bun.file(repairFlag).exists())
         ? COMPLETION_REPLY
         : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。'
-      await callAssistantTool(input, observer, 'hopi_request_user', { message })
+      await callAssistantTool(input, observer, 'hopi_transfer_attention', {
+        attentionRefs: [
+          ...new Set(
+            input.prompt.match(
+              /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
+            ) ?? [],
+          ),
+        ],
+        message,
+      })
       return assistantResult(message, mode)
     }
     if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
@@ -360,7 +369,7 @@ async function readFailureEvidence(runs: RoleRunRecord[]) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_request_user' | 'hopi_answer_attention',
+  name: 'hopi_transfer_attention' | 'hopi_answer_attention',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

@@ -162,18 +162,21 @@ assignment. Direct admission does not imply Goal completion: after Engineering W
 ordinary final Planning
 assessment still decides whether the Goal is complete, needs more Work, or needs authority.
 
-Agent permission follows resource ownership rather than command allowlists. Within the resources
-named by the current Input or Work, an Agent may use ordinary shell, network, filesystem, and tool
-capabilities freely. Deterministic boundaries protect only HOPI authority and managed Git
+Agent permission follows resource ownership rather than semantic command allowlists. One resolved
+execution envelope is used both to launch the provider and to describe its actual shell, network,
+filesystem, tool, and root capabilities to the Agent. Deterministic boundaries protect only HOPI authority and managed Git
 projections, another responsibility's immutable surface, and external side effects not authorized by
 the current Input, Work, or operator. Natural-language authority remains sufficient; HOPI adds no
 permission DSL, capability field, or command taxonomy.
 
 Provider-native unrestricted host access is a Project-local operator preference, not durable Project
-authority. It defaults off and is stored by the local UI. When enabled, newly started speaking
+authority. It defaults off and is stored in HOPI's local runtime settings, with localStorage as a UI
+mirror rather than an execution-time source of truth. When enabled, newly started speaking
 Assistant turns in that Project and its Planner, Generator, and Reviewer Runs use the ordinary HOPI
 OS user's permissions. When disabled or unavailable, adapters retain their bounded workspace and
-declared-root policy. Background Reflection remains read-only in either mode.
+declared-root policy. The runtime reads this setting when each invocation starts, so backend restart,
+route changes, and an absent browser cannot silently change the effective mode. Background Reflection
+remains read-only in either mode.
 
 Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
 alone owns canonical publication, managed task-worktree Git metadata and checkpoints, integration

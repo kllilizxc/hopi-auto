@@ -92,6 +92,48 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
+  test('uses one resolved execution envelope in the responsibility prompt', async () => {
+    await Bun.write(bundle.promptFile, '# assignment\n\n__HOPI_EXECUTION_ENVELOPE__\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      },
+      bundle: {
+        ...bundle,
+        extraReadableRoots: ['/tmp/project/read-only'],
+        extraWritableRoots: ['/tmp/project/worktree'],
+      },
+      input,
+    })
+
+    expect(command.stdin).toContain('"transport": "codex"')
+    expect(command.stdin).toContain('"mode": "bounded"')
+    expect(command.stdin).toContain('"networkAccess": true')
+    expect(command.stdin).toContain('"writableRoots": [')
+    expect(command.stdin).toContain('/tmp/project/worktree')
+    expect(command.stdin).not.toContain('__HOPI_EXECUTION_ENVELOPE__')
+    expect(await Bun.file(bundle.promptFile).text()).toBe(command.stdin ?? '')
+
+    const unrestricted = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      },
+      bundle,
+      input,
+      fullAccess: true,
+      runtimeWorkspace: '/tmp/project/worktree',
+    })
+    expect(unrestricted.stdin).toContain('"mode": "unrestricted"')
+    expect(unrestricted.stdin).not.toContain('"mode": "bounded"')
+  })
+
   test('passes uploaded image files through codex -i arguments', async () => {
     await Bun.write(bundle.promptFile, '# prompt for codex with images\n')
 
@@ -405,6 +447,7 @@ describe('resolveConfiguredTransportCommand', () => {
     })
     expect(command.cmd).toEqual([
       '/usr/local/bin/opencode',
+      '--pure',
       'run',
       '--format',
       'json',
@@ -415,7 +458,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '--variant',
       'high',
     ])
-    expect(command.env?.OPENCODE_CONFIG).toBeUndefined()
+    expect(command.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
   })
 
   test('passes OpenCode image inputs as file attachments', async () => {
@@ -432,6 +475,7 @@ describe('resolveConfiguredTransportCommand', () => {
 
     expect(command.cmd).toEqual([
       'opencode',
+      '--pure',
       'run',
       '--format',
       'json',
@@ -456,6 +500,7 @@ describe('resolveConfiguredTransportCommand', () => {
 
     expect(command.cmd).toEqual([
       'opencode',
+      '--pure',
       'run',
       '--format',
       'json',
@@ -467,7 +512,7 @@ describe('resolveConfiguredTransportCommand', () => {
   })
 
   test('uses unrestricted provider permissions only when full access is enabled', async () => {
-    await Bun.write(bundle.promptFile, '# unrestricted responsibility\n')
+    await Bun.write(bundle.promptFile, '# responsibility\n\n__HOPI_EXECUTION_ENVELOPE__\n')
 
     const boundedCodex = await resolveConfiguredTransportCommand({
       config: {
@@ -489,6 +534,31 @@ describe('resolveConfiguredTransportCommand', () => {
     })
     expect(boundedClaude.cmd).toContain('acceptEdits')
     expect(boundedClaude.cmd).not.toContain('--dangerously-skip-permissions')
+
+    const boundedOpencode = await resolveConfiguredTransportCommand({
+      config: { transport: 'opencode', cwdMode: 'worktree' },
+      bundle: {
+        ...bundle,
+        extraReadableRoots: ['/tmp/project/authority'],
+        extraWritableRoots: ['/tmp/project/worktree'],
+      },
+      input,
+      runtimeWorkspace: '/tmp/project/worktree',
+    })
+    expect(boundedOpencode.cmd).toContain('--pure')
+    expect(boundedOpencode.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
+    expect(await Bun.file('/tmp/run/scratch/opencode.json').json()).toEqual({
+      $schema: 'https://opencode.ai/config.json',
+      permission: {
+        '*': 'allow',
+        external_directory: {
+          '*': 'deny',
+          '/tmp/project/worktree/**': 'allow',
+          '/tmp/project/authority/**': 'allow',
+        },
+      },
+    })
+    expect(boundedOpencode.stdin).toContain('"mode": "bounded"')
 
     const codex = await resolveConfiguredTransportCommand({
       config: {

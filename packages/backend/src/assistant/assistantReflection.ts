@@ -1,9 +1,9 @@
 import { appendFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
+import { type ExecutionEnvelope, unreportedExecutionEnvelope } from '../agent/executionEnvelope'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { readDurableJsonLines } from '../storage/jsonLines'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
@@ -228,7 +228,27 @@ export function createAssistantReflection(options: {
     }
 
     try {
-      const prompt = reflectionPrompt(snapshot, previousSnapshot, trigger)
+      const preparation = {
+        cwd: root,
+        toolMode: 'reflection' as const,
+        readableRoots: [resolve(options.homeRoot)],
+      }
+      const executionPlan = options.runner.prepare
+        ? await options.runner.prepare(preparation)
+        : {
+            environment: unreportedExecutionEnvelope({
+              runtimeWorkspace: root,
+              runtimeWorkspaceRole: 'provider scratch space',
+              canonicalMutation: 'hopi-tools-only',
+              toolMode: 'reflection',
+            }),
+          }
+      const prompt = reflectionPrompt(
+        snapshot,
+        previousSnapshot,
+        trigger,
+        executionPlan.environment,
+      )
       await Bun.write(promptPath, prompt)
       await options.runner.run(
         {
@@ -242,6 +262,7 @@ export function createAssistantReflection(options: {
           toolToken: token,
           toolMode: 'reflection',
           readableRoots: [resolve(options.homeRoot)],
+          executionPlan,
           signal,
         },
         observer,
@@ -258,8 +279,7 @@ export function createAssistantReflection(options: {
         return { handoffEventId: null }
       }
       const latest = await options.state.read()
-      const workspace = await options.workspace.readWorkspace()
-      const handoff = prepareReflectionHandoff(snapshot, workspace.homeId, preparedHandoff.current)
+      const handoff = preparedHandoff.current
       if (latest.stateDigest === snapshot.stateDigest && handoff) {
         const event = await options.workspace.receiveReflectionEvent({
           content: handoff.brief,
@@ -299,104 +319,26 @@ export function createAssistantReflection(options: {
   return reflection
 }
 
-interface PreparedReflectionHandoff {
-  brief: string
-  context?: InboxContext
-}
-
-function prepareReflectionHandoff(
-  snapshot: AssistantStateSnapshot,
-  homeId: string,
-  prepared: PreparedReflectionHandoff | null,
-): PreparedReflectionHandoff | null {
-  const scopes = assistantOwnedGoalAttentionScopes(snapshot)
-  const preferred = prepared?.context
-    ? scopes.find(
-        (scope) =>
-          scope.projectId === prepared.context?.projectId &&
-          scope.goalId === prepared.context?.goalId,
-      )
-    : undefined
-  const scope = preferred ?? scopes[0]
-  if (scope) {
-    const fallbackBrief = [
-      `Assistant-owned Attention remains open for ${scope.projectId}/${scope.goalId}.`,
-      'Re-read current state, resolve it with ordinary HOPI tools when safe, and notify the operator only when a decision or concise result is required.',
-      `Canonical Attention references: ${scope.attentionRefs.join(', ')}.`,
-    ].join(' ')
-    return {
-      brief: preferred ? (prepared?.brief ?? fallbackBrief) : fallbackBrief,
-      context: {
-        projectId: scope.projectId,
-        goalId: scope.goalId,
-        attentionRefs: scope.attentionRefs,
-      },
-    }
-  }
-
-  const workspaceAttentionRefs = snapshot.workspaceAttentions
-    .filter(isAssistantOwnedAttention)
-    .map(recordId)
-    .filter((id) => id !== 'unknown-attention')
-    .map((attentionId) => workspaceAttentionReference(homeId, attentionId))
-  if (workspaceAttentionRefs.length === 0) return prepared
-  return {
-    brief:
-      prepared?.brief ??
-      [
-        'Assistant-owned Workspace Attention remains open.',
-        'Re-read current state, diagnose the exact blocker, and tell the operator only the outcome or decision needed.',
-        `Canonical Attention references: ${workspaceAttentionRefs.join(', ')}.`,
-      ].join(' '),
-    context: {
-      attentionRefs: workspaceAttentionRefs,
-    },
-  }
-}
-
-function assistantOwnedGoalAttentionScopes(snapshot: AssistantStateSnapshot) {
-  const scopes: Array<{ projectId: string; goalId: string; attentionRefs: string[] }> = []
-  for (const project of snapshot.projects) {
-    if (!isRecord(project) || typeof project.projectId !== 'string') continue
-    const projectId = project.projectId
-    if (!Array.isArray(project.goals)) continue
-    for (const goal of project.goals) {
-      if (!isRecord(goal)) continue
-      const goalId = nestedId(goal.goal, '')
-      if (!goalId || !Array.isArray(goal.attentions)) continue
-      const attentionRefs = goal.attentions
-        .filter(isAssistantOwnedAttention)
-        .map(recordId)
-        .filter((id) => id !== 'unknown-attention')
-        .map((attentionId) => goalAttentionReference(projectId, goalId, attentionId))
-      if (attentionRefs.length === 0) continue
-      scopes.push({ projectId, goalId, attentionRefs })
-    }
-  }
-  return scopes
-}
-
 function reflectionPrompt(
   snapshot: AssistantStateSnapshot,
   previousSnapshot: AssistantStateSnapshot | null,
   trigger: readonly string[],
+  environment: ExecutionEnvelope,
 ) {
   const delta = reflectionDelta(previousSnapshot, snapshot)
   return [
     '# HOPI Background Reflection',
     '',
-    'You are a disposable read-only thinking run for the workspace Assistant.',
-    'Assess only this trigger and compact semantic delta, not workspace history.',
-    'Do not mutate canonical files or source. You only have hopi_read_state and hopi_handoff_to_main.',
-    'Use hopi_read_state only after the delta identifies a concrete candidate. Omit IDs for a home:<homeId> target; otherwise copy the exact Project and optional Goal IDs from Project state.',
-    'Use local read-only shell access only for an exact diagnostic path already present in state. Never scan .hopi or search historical Runs speculatively.',
-    'When several urgent candidates exist, normally restore an event-target Workspace Attention first because it blocks a speaking turn; choose another only when its consequence is materially more urgent.',
-    'Call hopi_handoff_to_main at most once only when the speaking Assistant should revalidate a useful action or user decision; otherwise finish silently.',
-    'A useful internal brief states the changed fact, consequence, whether operator action is required, the recommended next action, and exact IDs. It remains free-form and must not contain an actions array.',
-    'Distinguish Assistant action from operator action. Say operator action is required only when human input or a human decision is actually needed.',
-    'For unresolved Goal Attention, select exact projectId and goalId but do not copy Attention IDs; Coordinator adds canonical references. Keep one handoff Goal-scoped.',
-    'When the latest finished Planning outcome says the represented contract and DAG need no change, report that conclusion and recommend the concrete non-Planning effect already supported by the accepted Input. Do not ask the operator to repeat a decision already present in current state.',
-    'Do not draft operator prose or assume this snapshot is current. The speaking Assistant revalidates and communicates only the useful outcome or required action.',
+    '## Current execution environment',
+    '',
+    JSON.stringify(environment, null, 2),
+    '',
+    'Objective: decide whether this state change warrants a speaking Assistant turn, and hand off the material facts and consequence when it does.',
+    'This is a disposable read-only run. Canonical state and source are immutable here; the available HOPI tools are hopi_read_state and hopi_handoff_to_main.',
+    'The supplied snapshot is an observation and may become stale. A handoff creates an internal Inbox event; it does not itself notify the operator or mutate Goal state.',
+    'Attention ownership is exact: a handoff concerning Attention names the selected canonical attentionRefs. Coordinator validates those references but does not infer or expand them.',
+    'Operator action means a human decision, credential, permission, or external act that Assistant authority cannot provide. Assistant-owned technical work remains Assistant action.',
+    'At most one handoff is accepted. No handoff produces no speaking turn.',
     '',
     `State digest: ${snapshot.stateDigest}`,
     '',

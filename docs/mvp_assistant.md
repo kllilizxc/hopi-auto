@@ -111,13 +111,11 @@ snapshot. Reflection follows one small protocol:
 5. If no response or action is useful, it ends silently. A successful Reflection transport may
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
-   turn may remain silent, supply one informational `notify_user` message, or use `request_user`
-   for one exact decision or external action. Assistant-owned open Attention is the one exception:
-   it already declares that Assistant management is required, so Coordinator
-   creates one internal fallback brief when the model omitted handoff and attaches exact canonical
-   Attention references from the current snapshot. Otherwise Reflection may prepare one concise
-   internal brief. Coordinator publishes a brief only after confirming the observed digest is still
-   current; it does not accept an `actions[]` plan.
+   turn may remain silent, supply one informational `notify_user` message, or use `transfer_attention`
+   for one exact decision or external action. Only an explicit `handoff_to_main` call creates an
+   internal brief. Reflection selects any Attention references it means to hand off; Coordinator
+   validates but never infers or expands that selection. Coordinator publishes a brief only after
+   confirming the observed digest is still current; it does not accept an `actions[]` plan.
 6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
    persistent speaking thread used for user turns rereads current state and
    decides whether to call normal HOPI tools, remain silent, or publish one explicit notification
@@ -305,10 +303,11 @@ shows a bounded, safe error summary and at most the latest retry status.
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. Each turn receives an exact execution-environment projection. Speaking turns
-are default-open at the provider boundary and receive the filesystem, subprocess, and network
-capabilities of the ordinary HOPI OS user. HOPI does not predict an allowlist of tools, commands,
-linked roots, caches, or writable directories. This is execution capability, not product authority:
+managed project root. Each turn receives one exact execution envelope derived from the same resolved
+transport, Project access preference, mode, roots, and network policy used to launch the provider.
+The envelope is the single source for both process configuration and model-visible capability facts;
+it never claims broader access than the launched process has. Project-local unrestricted access
+defaults off, and Reflection remains read-only. This is execution capability, not product authority:
 canonical mutations are accepted only through HOPI tools and source delivery is accepted only
 through Engineering Work publication. The runtime root remains provider scratch space: its paths
 are neither canonical nor
@@ -327,10 +326,13 @@ invocation, its native MCP inspection must report the injected
 `hopi` server connected. Failure is a startup error, not model input: the turn stays pending and no
 unverified model reply can substitute for the missing capability.
 
-The non-interactive vendor invocation permits the injected `hopi` MCP server plus ordinary local
-execution. Provider adapters expose the ordinary HOPI OS user's host and network capabilities while
-continuing to exclude unrelated personal MCP servers and provider configuration.
-The speaking Assistant may use provider skills and ordinary execution tools. Its prompt contains
+The non-interactive vendor invocation permits the injected `hopi` MCP server plus the local
+execution described by its resolved execution envelope. The default Project setting keeps provider
+access bounded; the Project-local full-access switch makes future non-Reflection invocations
+unrestricted. The backend persists and resolves that setting at invocation start; browser
+localStorage mirrors it for the Project UI but does not authorize execution by itself. Unrelated
+personal MCP servers and provider configuration remain excluded.
+The speaking Assistant may use the capabilities present in that envelope. Its prompt contains
 the environment projection, current scoped state observation, resource ownership, and HOPI effect
 semantics rather than a prescribed tool-selection procedure. Provider apps, plugins, memories, and
 workflow tools remain excluded because they introduce competing product authority rather than
@@ -340,8 +342,9 @@ Work. The MCP process has only a single-turn capability token, and the backend r
 when the turn ends. Tool approval therefore removes an impossible unattended UI prompt without
 becoming the authorization boundary. Server-side capability validation, canonical target validation,
 responsibility result validation, controllers, and the publisher form a blacklist of effects HOPI
-will reject. They do not attempt to sandbox every possible host-side effect. Reflection remains the
-sole provider-restricted mode because it has read and handoff authority but no execution responsibility.
+will reject. Provider sandboxing enforces the resolved envelope; these product boundaries do not
+pretend to infer semantic intent from shell commands. Reflection is always read-only because it has
+read and handoff authority but no execution responsibility.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Their digest is derived from those exact
@@ -477,12 +480,11 @@ a non-blocking suggestion conversation-only unless the operator intends it to ch
 or delivery. `Write design` is the corresponding explicit adoption when the requested durable effect
 is documentation rather than implementation; it does not mechanically request Planning.
 
-Starting Planning never retries, resets, or cancels Engineering Work. By default it atomically
-settles open Attention attached to the current Inbox turn only when that Attention targets the exact
-Planning Work being started; `resolveAttention: false` preserves it. It never settles Goal, Project,
-Engineering Work, or unrelated Planning Attention. Planner's empty proposal means only that Planning
-changed no canonical contract or DAG; it does not claim that Coordinator will retry a blocked
-responsibility.
+Starting Planning never retries, resets, cancels Engineering Work, or settles Attention. Open
+Attention therefore remains the scheduling gate until Assistant explicitly resolves its exact
+reference after judging the represented condition clear. Planner's empty proposal means only that
+Planning changed no canonical contract or DAG; it does not claim that Coordinator will retry a
+blocked responsibility.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
@@ -552,11 +554,11 @@ rather than consuming delivery payloads.
 Reflection receives a narrower MCP capability containing only state read and `handoff_to_main`.
 `handoff_to_main` may create one internal Inbox turn and has no Project or Goal effect. The speaking
 thread receives the ordinary tool surface plus `notify_user` for a concise informational update and
-`request_user` for one exact decision or external action. Capability mode is server-owned and cannot
+`transfer_attention` for one exact decision or external action. Capability mode is server-owned and cannot
 be selected by the model. Tool choice, rather than parsing message prose, owns the operator-wait
 transition.
 
-Every `request_user` message is a self-contained decision request, not merely a list of choices. It
+Every `transfer_attention` message is a self-contained decision request, not merely a list of choices. It
 preserves enough material cause and consequence from the internal brief for the operator to
 understand what changed, why HOPI cannot safely continue, what answer or action is needed, and the
 non-obvious effect of viable alternatives. It includes a recommendation when HOPI has one. This is
@@ -564,12 +566,15 @@ expressed proportionally in ordinary language: concise means omitting irrelevant
 IDs, and process narration, not omitting the causal context needed to decide. HOPI does not add a
 request schema, prose parser, or frontend reconstruction rule.
 
-When a Reflection brief exists specifically to deliver Attention, Coordinator augments its ordinary
-Inbox context with every exact Assistant-owned canonical reference selected from the immutable snapshot.
-Goal-local and workspace Attention use the same mechanism; the model does not own identity copying.
-`notify_user` and `request_user` record only their Run-local message and intent. After the speaking
+When a Reflection brief exists specifically to deliver Attention, Reflection supplies exact
+Assistant-owned canonical references as Inbox context. The speaking Assistant explicitly confirms
+that same selection in `transfer_attention`; Coordinator never widens or substitutes it.
+`transfer_attention` rejects an empty, mismatched, stale, resolved, operator-owned, targetless, or
+out-of-context selection.
+Goal-local and workspace Attention use the same mechanism. `notify_user` and `transfer_attention`
+record only their Run-local message, intent, and selected references. After the speaking
 model returns, Coordinator publishes that message as the handled reply before publishing
-`notifiedAt` for each still-current reference. Only `request_user` additionally records the exact
+`notifiedAt` for each selected still-current reference. Only `transfer_attention` additionally records the exact
 handled event in `operatorRequest`. Recovery of an already handled public Reflection turn finishes
 any missing acknowledgement. Targeted Attention remains open; completion Attention is notified and
 resolved. The optional webhook
@@ -614,6 +619,15 @@ uses Control for lifecycle changes; and resolves Attention only after the owning
 actually cleared. An explicit user reply is evidence for that judgment, never a forced
 `continue`/`retry`/`revise`/`cancel` classification. There is no stored continuation object:
 ordinary reconciliation derives the next responsibility from canonical Work facts.
+
+An open targeted Attention is the scheduling gate for its target. Resolving it publishes
+`resolvedAt` immediately, removes that gate, and may make the target eligible for dispatch; a later
+operator request neither reopens it nor retracts a Run already admitted from the resolved state.
+`transfer_attention` instead stages the public request and, after that turn is durable, records
+`operatorRequest` on each still-open reference without resolving it. The same open Attention then
+projects **Needs you** and continues to block scheduling while the answer is absent. These causal
+effects are part of the Assistant environment and tool descriptions; HOPI does not infer intent from
+call order or impose a tool-sequence policy.
 
 The decision boundary is invariant across simple and complex Work. If the current Work outcome,
 acceptance contract, dependency graph, and delivery boundary remain valid and another invocation is

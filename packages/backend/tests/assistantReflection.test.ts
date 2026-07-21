@@ -161,10 +161,11 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('Assistant-owned workspace Attention A-1')
     expect(prompt).toContain('targeting home:H-1/event:EV-blocked')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
-    expect(prompt).toContain('whether operator action is required')
-    expect(prompt).toContain('restore an event-target Workspace Attention first')
-    expect(prompt).toContain('operator action is required only when human input')
-    expect(prompt).toContain('useful outcome or required action')
+    expect(prompt).toContain('Operator action means a human decision')
+    expect(prompt).toContain(
+      'Coordinator validates those references but does not infer or expand them',
+    )
+    expect(prompt).toContain('No handoff produces no speaking turn')
     expect(prompt).not.toContain('User: Keep public context.')
     expect(prompt).not.toContain('## Recent Public Conversation')
     expect(prompt).not.toContain('## Relevant Current State')
@@ -399,7 +400,7 @@ describe('Assistant Reflection', () => {
     expect(exhausted).toEqual([])
   })
 
-  test('creates a Goal-scoped fallback with exact Attention references when the model omits handoff', async () => {
+  test('does not synthesize a handoff when the model omits it', async () => {
     const fixture = await setup(
       () => ({
         digest: 'a'.repeat(64),
@@ -432,14 +433,7 @@ describe('Assistant Reflection', () => {
     await fixture.reflection.waitForIdle()
 
     const events = [...(await fixture.workspace.readWorkspace()).events.values()]
-    expect(events).toHaveLength(1)
-    expect(events[0]?.attributes.context).toMatchObject({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      attentionRefs: ['project:P-1/goal:G-1/attention:A-1', 'project:P-1/goal:G-1/attention:A-2'],
-      observedDigest: 'a'.repeat(64),
-    })
-    expect(events[0]?.body).toContain('Assistant-owned Attention remains open')
+    expect(events).toHaveLength(0)
   })
 
   test('starts unsettled snapshots only for immediate signals, including after startup', async () => {

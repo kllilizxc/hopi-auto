@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
+import { type ExecutionEnvelope, unreportedExecutionEnvelope } from '../agent/executionEnvelope'
 import { createPersistentProcessTranscriptNormalizer } from '../agent/persistentTranscriptNormalizer'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import {
@@ -39,6 +40,20 @@ export interface AssistantModelInput {
   toolMode?: 'main' | 'internal' | 'reflection'
   fullAccess?: boolean
   signal?: AbortSignal
+  executionPlan?: AssistantModelExecutionPlan
+}
+
+export interface AssistantModelPreparationInput {
+  projectId?: string
+  cwd: string
+  readableRoots?: string[]
+  toolMode?: 'main' | 'internal' | 'reflection'
+}
+
+export interface AssistantModelExecutionPlan {
+  environment: ExecutionEnvelope
+  config?: RoleTransportConfig
+  fullAccess?: boolean
 }
 
 export interface AssistantModelResult {
@@ -52,6 +67,7 @@ export interface AssistantModelObserver {
 }
 
 export interface AssistantModelRunner {
+  prepare?(input: AssistantModelPreparationInput): Promise<AssistantModelExecutionPlan>
   run(input: AssistantModelInput, observer?: AssistantModelObserver): Promise<AssistantModelResult>
 }
 
@@ -69,11 +85,36 @@ export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
 export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
   resolveToolUrl(): string
-  fullAccess?(projectId: string): boolean
+  fullAccess?(projectId: string): boolean | Promise<boolean>
 }): AssistantModelRunner {
+  async function prepare(
+    input: AssistantModelPreparationInput,
+  ): Promise<AssistantModelExecutionPlan> {
+    const config = await options.resolveConfig()
+    if (
+      config.transport !== 'codex' &&
+      config.transport !== 'claude' &&
+      config.transport !== 'opencode'
+    ) {
+      throw new WorkspaceAssistantError('Workspace Assistant requires a built-in vendor transport')
+    }
+    const fullAccess =
+      input.toolMode !== 'reflection' && input.projectId
+        ? ((await options.fullAccess?.(input.projectId)) ?? false)
+        : false
+    return {
+      config,
+      fullAccess,
+      environment: assistantExecutionEnvelope(config, input, fullAccess),
+    }
+  }
+
   return {
+    prepare,
     async run(input, observer) {
-      const config = await options.resolveConfig()
+      const plan = input.executionPlan ?? (await prepare(input))
+      const config = plan.config
+      if (!config) throw new WorkspaceAssistantError('Configured Assistant plan has no transport')
       if (
         config.transport !== 'codex' &&
         config.transport !== 'claude' &&
@@ -87,10 +128,7 @@ export function createConfiguredAssistantModelRunner(options: {
       const session = input.session?.transport === transport ? input.session : null
       const invocation = {
         ...input,
-        fullAccess:
-          input.toolMode !== 'reflection' && input.projectId
-            ? (options.fullAccess?.(input.projectId) ?? false)
-            : false,
+        fullAccess: plan.fullAccess ?? false,
         prompt: session ? input.prompt : (input.rebuildPrompt ?? input.prompt),
         session,
         toolUrl: options.resolveToolUrl(),
@@ -237,6 +275,32 @@ export function createConfiguredAssistantModelRunner(options: {
   }
 }
 
+function assistantExecutionEnvelope(
+  config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
+  input: AssistantModelPreparationInput,
+  fullAccess: boolean,
+): ExecutionEnvelope {
+  const reflection = input.toolMode === 'reflection'
+  const opencodeBounded = config.transport === 'opencode' && !fullAccess
+  const mode = reflection ? 'read-only' : fullAccess ? 'unrestricted' : 'bounded'
+  return {
+    transport: config.transport,
+    mode,
+    runtimeWorkspace: input.cwd,
+    runtimeWorkspaceRole: 'provider scratch space',
+    runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
+    readableRoots: fullAccess ? ['*'] : [...new Set([input.cwd, ...(input.readableRoots ?? [])])],
+    writableRoots: fullAccess ? ['*'] : reflection || opencodeBounded ? [] : [input.cwd],
+    networkAccess: fullAccess || (!reflection && !opencodeBounded),
+    subprocessAccess: fullAccess || (!reflection && !opencodeBounded),
+    privilegeEscalation: false,
+    hostEnvironmentMutation: fullAccess,
+    linkedSourceAccess: fullAccess ? 'read-write' : 'read-only',
+    canonicalMutation: 'hopi-tools-only',
+    ...(input.toolMode ? { hopiToolMode: input.toolMode } : {}),
+  }
+}
+
 export function createWorkspaceAssistant(input: {
   homeRoot: string
   workspace: AssistantWorkspaceStore
@@ -297,7 +361,24 @@ export function createWorkspaceAssistant(input: {
         const imageFiles = await resolveEventImages(input.workspace, event)
         const projectId =
           event.attributes.context?.projectId ?? event.attributes.routeClaim?.projectId
-        const observation = await observeAssistantTurn(input.state, event, workspaceRoot)
+        const toolMode = event.attributes.source === 'reflection' ? 'internal' : 'main'
+        const preparation = {
+          ...(projectId ? { projectId } : {}),
+          cwd: workspaceRoot,
+          readableRoots: [resolve(input.homeRoot)],
+          toolMode,
+        } satisfies AssistantModelPreparationInput
+        const executionPlan = input.runner.prepare
+          ? await input.runner.prepare(preparation)
+          : {
+              environment: unreportedExecutionEnvelope({
+                runtimeWorkspace: workspaceRoot,
+                runtimeWorkspaceRole: 'provider scratch space',
+                canonicalMutation: 'hopi-tools-only',
+                toolMode,
+              }),
+            }
+        const observation = await observeAssistantTurn(input.state, event)
         let session = await input.conversation.readSession(
           WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
           runtimeDigest,
@@ -307,6 +388,7 @@ export function createWorkspaceAssistant(input: {
           event,
           workspaceState.preference,
           observation,
+          executionPlan.environment,
         )
         let result: AssistantModelResult
         try {
@@ -315,7 +397,12 @@ export function createWorkspaceAssistant(input: {
               eventId,
               ...(projectId ? { projectId } : {}),
               prompt: session
-                ? renderTurn(event, workspaceState.preference, observation)
+                ? renderTurn(
+                    event,
+                    workspaceState.preference,
+                    observation,
+                    executionPlan.environment,
+                  )
                 : rebuildPrompt,
               rebuildPrompt,
               session,
@@ -326,7 +413,8 @@ export function createWorkspaceAssistant(input: {
               toolToken,
               imageFiles,
               readableRoots: [resolve(input.homeRoot)],
-              toolMode: event.attributes.source === 'reflection' ? 'internal' : 'main',
+              toolMode,
+              executionPlan,
               signal,
             },
             observer,
@@ -356,7 +444,8 @@ export function createWorkspaceAssistant(input: {
               toolToken,
               imageFiles,
               readableRoots: [resolve(input.homeRoot)],
-              toolMode: event.attributes.source === 'reflection' ? 'internal' : 'main',
+              toolMode,
+              executionPlan,
               signal,
             },
             observer,
@@ -763,6 +852,7 @@ const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'HOPI tool results are canonical product effects. Linked source delivery becomes canonical through Engineering Work, Reviewer, and C1; canonical state changes only through HOPI tools.',
   'Goal, Work, Planning, Attention, Evidence, and Preview capabilities expose their own preconditions and effects. A named model, tool, workflow, or delivery path remains part of accepted authority.',
   'Attention and Reflection contain reported conditions, consequences, clear conditions, and evidence. Planner observes Goal authority, design, and accepted Input rather than conversational prose.',
+  'An open targeted Attention is the scheduling gate for its target. Resolving it removes that gate immediately and may make the target runnable; a later operator request does not restore the gate. Requesting the operator records Needs you ownership on a still-open Attention after the public turn is durable, so scheduling remains blocked while the answer is absent.',
 ] as const
 
 function workspaceAssistantDeveloperInstructions() {
@@ -776,7 +866,7 @@ export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
   .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
   .digest('hex')
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 2
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 4
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -795,6 +885,7 @@ function renderNewConversation(
   current: InboxEventDocument,
   preference: AssistantPreferenceDocument,
   observation: Awaited<ReturnType<typeof observeAssistantTurn>>,
+  environment?: ExecutionEnvelope,
 ) {
   const historyEvents = [...events.values()]
     .filter(
@@ -819,7 +910,7 @@ function renderNewConversation(
       : []),
     '## Current turn',
     '',
-    renderTurn(current, preference, observation),
+    renderTurn(current, preference, observation, environment),
   ].join('\n')
 }
 
@@ -827,18 +918,18 @@ function renderTurn(
   event: InboxEventDocument,
   preference: AssistantPreferenceDocument,
   observation: Awaited<ReturnType<typeof observeAssistantTurn>>,
+  environment?: ExecutionEnvelope,
 ) {
   const context = event.attributes.context
-  const observations = renderAssistantTurnObservation(observation)
+  const observations = renderAssistantTurnObservation(observation, environment)
   if (event.attributes.source === 'reflection') {
     return [
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
       '[Internal Reflection handoff. This is not operator input.]',
       observations,
-      'Re-read current state and referenced Attention. Resolve what code and authority can answer; change design or request Planning when needed. Ask the operator only for a decision or external action Assistant cannot supply.',
-      'If stale or already resolved, finish silently. Use hopi_notify_user only for a concise informational update alongside real internal progress. Use hopi_request_user only for one exact decision, authorization, or external action Assistant cannot supply; all other output stays hidden.',
-      'A hopi_request_user message is the complete public turn. Translate the brief into a self-contained decision request with the material cause, blocking consequence, exact need, alternative effects when non-obvious, and a recommendation when one exists. Do not expose irrelevant internal IDs or process narration.',
-      'If the brief reports Goal completion, read the exact Goal with includeEvidence: true before notifying. Include a relevant available operatorUrl in Markdown; when none resolves, explicitly say no linked artifact was produced.',
+      'Objective: revalidate the handoff against current state, apply any HOPI effect within Assistant authority, and publish only a useful outcome or a genuinely required operator action.',
+      'hopi_notify_user publishes information without operator ownership. hopi_transfer_attention transfers exactly the selected open Attention references and keeps their targets blocked pending the operator reply. Either message becomes the complete public turn; without either tool this turn remains internal.',
+      'Resolving Attention removes its scheduling gate immediately. Starting Planning does not resolve Attention.',
       renderPreference(preference, false),
       renderOperatorReplyContract(),
       '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',

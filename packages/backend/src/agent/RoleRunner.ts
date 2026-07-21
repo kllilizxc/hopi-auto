@@ -73,7 +73,7 @@ export interface RoleRunner {
 
 export interface ConfiguredRoleRunnerOptions {
   resolveConfig(input: RoleRunInput): RoleTransportConfig | Promise<RoleTransportConfig>
-  fullAccess?(input: RoleRunInput): boolean
+  fullAccess?(input: RoleRunInput): boolean | Promise<boolean>
   heartbeatMs?: number
 }
 
@@ -90,6 +90,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     const config = await this.resolveConfig(input)
+    const fullAccess = await this.fullAccess(input)
     await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
     const compatibilityKey = roleSessionCompatibilityKey(config)
@@ -132,7 +133,8 @@ export class ConfiguredRoleRunner implements RoleRunner {
           role: input.responsibility,
         },
         session,
-        fullAccess: this.fullAccess(input),
+        fullAccess,
+        runtimeWorkspace: input.cwd,
       })
       return executeProcess(
         command,

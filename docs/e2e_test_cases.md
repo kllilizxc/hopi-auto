@@ -879,7 +879,7 @@ Actions:
 6. Run one focused configured-provider turn that calls `hopi_notify_user({ message })`; confirm the
    informational message records delivery but remains **Waiting for Assistant** and receives a
    correction turn rather than becoming **Needs you**.
-7. Run the actionable variant with `hopi_request_user({ message })`; confirm its public message is
+7. Run the actionable variant with `hopi_transfer_attention({ attentionRefs, message })`; confirm its public message is
    independently understandable from the visible conversation, including the material cause,
    blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
    one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
@@ -899,7 +899,7 @@ Pass conditions:
 - The final direct operator message corresponds to current unresolved Attention and appears once.
 - A direct operator request contains enough causal context to decide without exposing the internal
   Reflection brief; it is not only a choice list or bare question.
-- Informational delivery never projects **Needs you**; only `request_user` installs
+- Informational delivery never projects **Needs you**; only `transfer_attention` installs
   `operatorRequest`.
 - Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
   do not.

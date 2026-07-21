@@ -184,6 +184,13 @@ Assistant uses the answer as evidence, then resolves the exact Attention only af
 verified clear. Clearing that guard makes the original pending turn eligible again with the answer
 visible in durable conversation history; no answer parser or hidden continuation object is required.
 
+An internal Reflection event is a wake-up, not fresh evidence. Open targeted Attention blocks its
+target; publishing its resolution removes that scheduling gate immediately and may admit another
+Run. A later request cannot reconstruct the removed gate. Publishing an operator request instead
+records ownership on each still-open reference without resolving it, so the same Attention remains
+the scheduling blocker until the reported condition clears. Assistant receives these consequences
+as environment and tool semantics rather than a prescribed call sequence.
+
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
 blocker. A reply may leave an Attention open when its evidence does not clear the condition.
@@ -527,11 +534,11 @@ applies a current price table or current Home role model to historical Runs. Thi
 from Attempt manifests, normalized events, and raw transcripts; it creates no budget, lifecycle,
 retry, or scheduling authority.
 
-Planner, Generator, and Reviewer may install tools, use system compilers and caches, and start
-short-lived local services when their responsibility requires them. In unrestricted mode, built-in
-transports run with the ordinary HOPI OS user's capabilities and HOPI does not maintain a tool,
-command, cache-directory, or writable-root allowlist. In the default bounded mode, adapters retain
-their prior workspace and declared-root restrictions. These processes are Run-scoped
+Planner, Generator, and Reviewer receive the same resolved execution envelope that configures their
+provider process. It reports the actual bounded or unrestricted mode, readable and writable roots,
+network access, and scratch/cache locations. Agents may install tools, use system compilers and
+caches, and start short-lived local services only to the extent that envelope permits. These
+processes are Run-scoped
 diagnostics, not Project Preview
 and not canonical state. RoleRunner owns the child process group and terminates surviving descendants
 when the Run completes, fails, is interrupted, or the Coordinator stops. Termination is one idempotent
@@ -543,6 +550,13 @@ Reusable package and tool caches are redirected to the Assistant-home cache as a
 as a permission boundary. Coordinator promotes only explicitly declared proof files into the Run
 artifact store. It does
 not delete responsibility workspace files at an Attempt boundary.
+
+The Project full-access preference is local runtime state, persisted outside canonical Project
+documents and resolved anew for every invocation. The UI keeps a localStorage mirror, but autonomous
+scheduling never depends on a mounted browser route. Codex, Claude, and OpenCode receive the same
+resolved boolean. OpenCode always runs with an isolated generated configuration: bounded mode allows
+ordinary tools while limiting external-directory access to the declared execution roots, and
+unrestricted mode allows provider-native host access.
 
 ### Planner
 
@@ -1227,14 +1241,11 @@ single configured invocation; Coordinator does not repeat that invocation. Only 
 session or initial Assistant-contract incompatibility may rebuild once from durable conversation
 history.
 
-An internal Reflection-sourced turn carrying Assistant-owned Attention references has a
-deterministic completion postcondition: each still-current reference is resolved, receives a durable
-internal continuation effect, or is transferred through an explicit `request_user` event. An
-informational `notify_user` message does not satisfy that ownership boundary. If the first model return satisfies neither branch, Coordinator
-continues the same speaking session once with the exact unresolved references. A second omission is
-a normal Assistant failure and leaves the Inbox turn pending under existing failure recovery; it is
-never published as a silent handled turn. Already resolved or operator-owned references require no
-action. This adds no Attention disposition field or workflow state.
+An internal Reflection-sourced turn owns its semantic judgment. It may act, transfer selected open
+Attention, notify, or finish silently. Coordinator validates every requested effect but does not
+infer an omitted action, append a correction pass, or require a fixed Attention disposition. Open
+Attention remains canonical and continues blocking its target independently of that conversational
+turn.
 
 Messages remain writable while passes run. A material instruction first ensures Planning Work as
 the Goal-wide guard, then increments `contractRevision` and publishes its effects. Once that
@@ -1297,13 +1308,11 @@ speaking thread. Work deltas contain control fields and one bounded latest-Run o
 paths, full Evidence lists, or unrelated Goal state. Reflection may call scoped `hopi_read_state` and
 follow an exact diagnostic path only after identifying a concrete candidate.
 
-Reflection has only read plus one `handoff_to_main` capability. A no-op result is silent unless the
-same current snapshot still contains Assistant-owned Attention. Attention already means Assistant
-management is required, so Coordinator deterministically prepares one scoped internal fallback brief
-and attaches the exact canonical Goal-local or workspace Attention references rather than allowing a
-model omission to strand the target. A handoff durably creates one
-internal Inbox turn, after which the speaking thread revalidates current state and owns every action
-and optional operator notification.
+Reflection has only read plus one `handoff_to_main` capability. A no-op result is silent, including
+when Assistant-owned Attention remains open. Only an explicit handoff durably creates one internal
+Inbox turn. Coordinator validates the selected scope and may attach canonical references from that
+scope, but it does not select another scope or synthesize a brief. The speaking thread then
+revalidates current state and owns every action and optional operator notification.
 
 One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
 that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it

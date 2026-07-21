@@ -90,7 +90,7 @@ if (mode !== 'reflection') {
     'hopi_start_planning',
     {
       description:
-        'Records the current Inbox Input and materializes Planning for an active Goal. mode controls whether the contract revision changes. resolveAttention defaults to true and settles only current-turn Attention targeting that exact Planning Work; false preserves it.',
+        'Records the current Inbox Input and materializes Planning for an active Goal. mode controls whether the contract revision changes. This does not resolve any Attention; use hopi_resolve_attention separately only when its reported condition is already clear.',
       inputSchema: assistantMcpToolSchemas.hopi_start_planning,
     },
     (args) => callTool('hopi_start_planning', args),
@@ -109,7 +109,8 @@ if (mode !== 'reflection') {
   server.registerTool(
     'hopi_resolve_attention',
     {
-      description: 'Resolve one exact Attention after its reported condition is verified clear.',
+      description:
+        'Publish resolution of one exact Attention. This immediately removes its scheduling gate and Coordinator may dispatch the affected target; a later operator request does not reopen it or undo dispatch. The resolution is durable audit evidence that the reported condition is already clear.',
       inputSchema: assistantMcpToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),
@@ -129,20 +130,20 @@ if (mode !== 'reflection') {
       'hopi_notify_user',
       {
         description:
-          'Set or revise the one concise informational update published after this internal Reflection turn completes. A later successful notify_user or request_user call replaces this turn-local final-message slot; only the final slot is shown. This never asks the operator to act and never creates Needs you. For a completed Goal, first read that exact Goal with includeEvidence: true and include a relevant available operatorUrl in Markdown; if no artifact resolves, say that no linked artifact was produced. A linkless completion is rejected while an available Evidence artifact exists. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
+          'Set or revise the one concise informational update published after this internal Reflection turn completes. A later successful notify_user or transfer_attention call replaces this turn-local final-message slot; only the final slot is shown. This never asks the operator to act and never creates Needs you. For a completed Goal, first read that exact Goal with includeEvidence: true and include a relevant available operatorUrl in Markdown; if no artifact resolves, say that no linked artifact was produced. A linkless completion is rejected while an available Evidence artifact exists. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
         inputSchema: assistantMcpToolSchemas.hopi_notify_user,
       },
       (args) => callTool('hopi_notify_user', args),
     )
 
     server.registerTool(
-      'hopi_request_user',
+      'hopi_transfer_attention',
       {
         description:
-          'Set or revise the one request for an exact operator decision, authorization, or external action that HOPI cannot supply. A later successful notify_user or request_user call replaces this turn-local final-message slot; only the final slot is shown. The message is the complete public turn: make it independently understandable by preserving the material cause, why progress is blocked, the exact need, non-obvious alternative effects, and a recommendation when one exists. This transfers referenced open Attention to Needs you after the message is durable. Never use for status, diagnostics, or an issue Assistant can repair internally.',
-        inputSchema: assistantMcpToolSchemas.hopi_request_user,
+          'Transfer exactly the selected Reflection Attention references to operator ownership after the public turn is durable. The references must exactly match this handoff context and still be open, Assistant-owned, targeted, and unresolved. They remain unresolved and keep their targets blocked as Needs you. The supplied message is the complete public request.',
+        inputSchema: assistantMcpToolSchemas.hopi_transfer_attention,
       },
-      (args) => callTool('hopi_request_user', args),
+      (args) => callTool('hopi_transfer_attention', args),
     )
   }
 } else {
@@ -150,7 +151,7 @@ if (mode !== 'reflection') {
     'hopi_handoff_to_main',
     {
       description:
-        'Submit one concise internal brief to the speaking Assistant only when current state warrants a reply or HOPI action. End silently when no action is useful.',
+        'Submit one internal brief to the speaking Assistant. To hand off Attention, select its exact canonical references in context; no scope or references are inferred. With no handoff call, Reflection produces no speaking turn.',
       inputSchema: assistantMcpToolSchemas.hopi_handoff_to_main,
     },
     (args) => callTool('hopi_handoff_to_main', args),

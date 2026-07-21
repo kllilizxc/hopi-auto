@@ -220,9 +220,15 @@ export function updateAgentRoleSettings(
 }
 
 export function updateProjectAgentAccess(projectId: string, fullAccess: boolean) {
-  return apiRequest<{ projectId: string; fullAccess: boolean }>(
+  return apiRequest<{ projectId: string; fullAccess: boolean; configured: true }>(
     `/api/projects/${encodeURIComponent(projectId)}/agent-access`,
     { method: 'PUT', body: { fullAccess } },
+  )
+}
+
+export function readProjectAgentAccess(projectId: string) {
+  return apiRequest<{ projectId: string; fullAccess: boolean; configured: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/agent-access`,
   )
 }
 

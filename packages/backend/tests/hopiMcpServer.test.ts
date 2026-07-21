@@ -53,7 +53,7 @@ describe('HOPI MCP server', () => {
     expect(names).not.toContain('hopi_retry_work')
     expect(names).not.toContain('hopi_answer_attention')
     expect(names).not.toContain('hopi_notify_user')
-    expect(names).not.toContain('hopi_request_user')
+    expect(names).not.toContain('hopi_transfer_attention')
     expect(tools.tools).toHaveLength(11)
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
       'link_project links or rebinds',
@@ -88,13 +88,11 @@ describe('HOPI MCP server', () => {
       'materializes Planning',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.description).toContain(
-      'false preserves it',
+      'does not resolve any Attention',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_start_planning')?.inputSchema,
-    ).toMatchObject({
-      properties: { resolveAttention: { type: 'boolean', default: true } },
-    })
+    ).not.toMatchObject({ properties: { resolveAttention: expect.anything() } })
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
       'includeEvidence: true',
     )
@@ -112,7 +110,10 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
-    ).toContain('verified clear')
+    ).toContain('immediately removes its scheduling gate')
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
+    ).toContain('later operator request does not reopen it')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
     ).toMatchObject({
@@ -156,16 +157,22 @@ describe('HOPI MCP server', () => {
     expect(names).toContain('hopi_start_planning')
     expect(names).toContain('hopi_create_engineering_work')
     expect(names).toContain('hopi_notify_user')
-    expect(names).toContain('hopi_request_user')
+    expect(names).toContain('hopi_transfer_attention')
     expect(names).not.toContain('hopi_write_preferences')
     expect(names).not.toContain('hopi_manage_project')
     expect(names).not.toContain('hopi_configure_model')
     expect(names).toHaveLength(10)
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'complete public turn',
+    expect(tools.find((tool) => tool.name === 'hopi_transfer_attention')?.description).toContain(
+      'complete public request',
     )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'material cause',
+    expect(tools.find((tool) => tool.name === 'hopi_transfer_attention')?.description).toContain(
+      'exactly match this handoff context',
+    )
+    expect(tools.find((tool) => tool.name === 'hopi_transfer_attention')?.description).toContain(
+      'remain unresolved',
+    )
+    expect(tools.find((tool) => tool.name === 'hopi_transfer_attention')?.description).toContain(
+      'open, Assistant-owned, targeted, and unresolved',
     )
   })
 
