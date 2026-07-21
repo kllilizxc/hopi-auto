@@ -337,6 +337,7 @@ export interface RunCostSummary {
   outcomes: {
     success: number
     rejected: number
+    preparationFailed: number
     failed: number
     interrupted: number
     stale: number

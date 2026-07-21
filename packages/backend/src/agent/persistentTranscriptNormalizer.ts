@@ -9,6 +9,7 @@ import {
 export interface PersistentProcessTranscriptNormalizer {
   normalize(options: NormalizeProcessOutputLineOptions): Promise<AgentRuntimeEvent[]>
   unresolvedInfrastructureFailure(): string | null
+  completedExecution(): boolean
 }
 
 export async function createPersistentProcessTranscriptNormalizer(options: {
@@ -31,6 +32,9 @@ export async function createPersistentProcessTranscriptNormalizer(options: {
     },
     unresolvedInfrastructureFailure() {
       return normalizer.unresolvedInfrastructureFailure()
+    },
+    completedExecution() {
+      return normalizer.completedExecution()
     },
   }
 }

@@ -100,6 +100,7 @@ export interface GoalController {
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
   setPriority(goalId: string, priority: number): Promise<GoalDocument>
+  returnEngineeringWorkToGenerate(goalId: string, workId: string): Promise<WorkDocument>
   setWorkNotBefore(goalId: string, workId: string, notBefore: string | null): Promise<WorkDocument>
   retryWork(
     goalId: string,
@@ -714,6 +715,36 @@ export function createGoalController(
         attributes: { ...goal.attributes, priority },
       }
       await replaceGoal(store, goalId, next)
+      return next
+    },
+    async returnEngineeringWorkToGenerate(goalId, workId) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || !isEngineeringWork(work.attributes) || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot return missing or terminal Engineering Work to Generator: ${workId}`,
+        )
+      }
+      if (work.attributes.stage === 'generate') return work
+      if (work.attributes.stage !== 'review') {
+        throw new GoalControllerError(
+          `Cannot return Engineering Work from ${work.attributes.stage} to Generator: ${workId}`,
+        )
+      }
+      const path = store.paths.workDocument(goalId, workId)
+      const source = await Bun.file(store.paths.absolute(path)).text()
+      const next: WorkDocument = {
+        ...work,
+        attributes: { ...work.attributes, stage: 'generate' },
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path,
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderWorkDocument(next),
+        },
+      })
       return next
     },
     async setWorkNotBefore(goalId, workId, notBefore) {

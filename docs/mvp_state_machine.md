@@ -621,10 +621,11 @@ outcome. Other state and document changes do not participate in this runtime tra
   read them, but only Coordinator-owned Git operations may write them. Planner and Reviewer write
   only Run-local state; Generator writes only its assigned task worktrees.
 - Every Repo owns one reviewed `scripts/hopi/prepare`. Coordinator invokes each Work Repo's candidate
-  entrypoint before Reviewer and each managed integration Repo's entrypoint before Preview; it never
-  routes preparation through primary or another Repo. Missing or failed preparation returns the same
-  Work to Generator, with no preparation state or Attention. Reviewer always starts from clean
-  task-branch checkpoints, never from uncheckpointed Run residue.
+  entrypoint once immediately before Reviewer, plus each managed integration Repo's entrypoint before
+  Preview; it never routes preparation through primary or another Repo. Missing or failed candidate
+  preparation returns the same Work to Generator as `candidate_preparation_failed`, with no Reviewer
+  Evidence, semantic rejection attempt, preparation state, or Attention. Reviewer always starts from
+  clean prepared task-branch checkpoints, never from uncheckpointed Run residue.
 - User-checkout code enters only from an explicitly named committed ref through ordinary Input,
   Planning, Engineering Work, Review, and C1. Uncommitted content is never imported.
 - One Coordinator publishes canonical changes under one global mutex. An ordinary publication has

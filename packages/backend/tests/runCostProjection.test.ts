@@ -32,7 +32,14 @@ test('aggregates only vendor-reported usage while preserving extra-run outcomes'
     outputTokens: 20,
     runsWithVendorReportedCost: 1,
     vendorReportedCostUsd: 0.2,
-    outcomes: { success: 1, rejected: 1, failed: 0, interrupted: 0, stale: 0 },
+    outcomes: {
+      success: 1,
+      rejected: 1,
+      preparationFailed: 0,
+      failed: 0,
+      interrupted: 0,
+      stale: 0,
+    },
   })
 })
 

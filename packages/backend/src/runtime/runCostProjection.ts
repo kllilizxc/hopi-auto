@@ -33,6 +33,7 @@ export interface RunCostSummary {
   outcomes: {
     success: number
     rejected: number
+    preparationFailed: number
     failed: number
     interrupted: number
     stale: number
@@ -59,7 +60,14 @@ export function summarizeRunCosts(entries: readonly RunCostEntry[]): RunCostSumm
     reasoningOutputTokens: 0,
     runsWithVendorReportedCost: 0,
     vendorReportedCostUsd: 0,
-    outcomes: { success: 0, rejected: 0, failed: 0, interrupted: 0, stale: 0 },
+    outcomes: {
+      success: 0,
+      rejected: 0,
+      preparationFailed: 0,
+      failed: 0,
+      interrupted: 0,
+      stale: 0,
+    },
   }
   for (const entry of entries) {
     const diagnostics = entry.diagnostics
@@ -88,7 +96,9 @@ export function summarizeRunCosts(entries: readonly RunCostEntry[]): RunCostSumm
     }
     if (entry.status === 'interrupted') summary.outcomes.interrupted += 1
     else if (entry.application === 'stale') summary.outcomes.stale += 1
-    else if (entry.result === 'reject') summary.outcomes.rejected += 1
+    else if (entry.application === 'candidate_preparation_failed') {
+      summary.outcomes.preparationFailed += 1
+    } else if (entry.result === 'reject') summary.outcomes.rejected += 1
     else if (entry.result === 'fail') summary.outcomes.failed += 1
     else if (entry.result === 'success') summary.outcomes.success += 1
   }

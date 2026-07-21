@@ -819,6 +819,14 @@ primary path directly from the task worktree when the existing entrypoint permit
 alone are enough only when they are stronger for the accepted behavior. This remains proportionate
 model judgment rather than a mandatory browser checklist.
 
+An interactive vendor Generator cannot publish `success` without completing at least one execution
+capability invocation in that Run. HOPI does not prescribe a command, test framework, or checklist;
+the Work and Project still determine proportionate proof. This is only the minimum execution
+boundary that distinguishes an exercised candidate from a read/edit-only claim. If no execution
+completes, or the required execution capability remains unavailable, the Run is operationally
+failed and its vendor Session is discarded rather than carrying verification avoidance into the
+next repair. Process adapters remain responsible for their own opaque execution contract.
+
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every
 visual detail is a requirement.
@@ -1026,9 +1034,10 @@ preparable and Reviewer validates the result.
 
 Preparation is best-effort before Generator: Coordinator attempts every selected Repo, captures all
 per-Repo diagnostics, and still starts Generator so the same Work can repair failures. Preparation is
-strict before Reviewer: Coordinator runs every selected candidate script, skips the model call when
-any result is missing, non-executable, failing, or source-mutating, and returns the same Work to
-Generator with Repo-specific logs. There is no Attention, preparation Work, or primary-Repo fallback.
+strict once immediately before Reviewer: any missing, non-executable, failing, timing-out, or
+source-mutating result returns the Work to `generate` with Repo-specific logs but does not call
+Reviewer, publish Reviewer Evidence, or increment semantic rejection attempts. There is no second
+successful-path preparation, Attention, preparation Work, or primary-Repo fallback.
 Preview requires every managed integration Repo to prepare successfully before the primary Repo's
 `scripts/hopi/preview` starts, leaving Preview responsible only for service startup and its ready URL.
 The fixed responsibility prompt exposes the adapter's exact ready signal,
@@ -1094,6 +1103,14 @@ duplicated Work front matter. It carries no success, retry, or stage semantics: 
 `fail` or `attention` remain isolated and recoverable, while only a validated
 Work gate can advance the workflow. Planning has no task worktree and a read-only Reviewer does not
 create an empty commit.
+
+After checkpointing and publishing a Generator `success`, Coordinator runs the selected Repos'
+candidate preparation contract exactly once before it invokes Reviewer. A missing, failing,
+timing-out, or source-mutating preparation returns the Work to `generate`, records
+`candidate_preparation_failed` on the preflight Attempt, and publishes no Reviewer Evidence.
+Reviewer is never dispatched for that candidate, and the preparation result is not synthesized into
+a semantic rejection. Keeping this gate immediately before Reviewer also avoids repeating expensive
+environment preparation on the successful path.
 
 Checkpointing must not require a linked Repo to track or unignore `.hopi`. HOPI first rejects any
 diff to canonical files that are already tracked in the task branch, then stages the repository as

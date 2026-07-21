@@ -15,6 +15,7 @@ import {
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
+import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import {
   type StableWorktreeManager,
@@ -597,7 +598,7 @@ describe('ProjectReconciler', () => {
     )
   })
 
-  test('skips Reviewer and returns to Generator when Repo preparation is missing', async () => {
+  test('keeps Generator ownership when candidate Repo preparation is missing', async () => {
     const fixture = await createFixture({ includePrepare: false })
 
     await fixture.reconciler.reconcileGoal('goal-1')
@@ -605,9 +606,72 @@ describe('ProjectReconciler', () => {
     const result = await fixture.reconciler.reconcileGoal('goal-1')
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
 
-    expect(result).toMatchObject({ kind: 'pass_finished', result: 'reject' })
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'candidate_preparation_failed',
+    })
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
-    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 1 })
+    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
+  })
+
+  test('treats pre-Reviewer preparation fallback as candidate preflight, not rejection', async () => {
+    let preparations = 0
+    const preparer: ProjectPreparer = {
+      async prepare(input) {
+        preparations += 1
+        const kind = preparations === 2 ? 'failed' : 'ready'
+        const logPath = join(input.runtimeDir, 'prepare.log')
+        await mkdir(input.runtimeDir, { recursive: true })
+        await Bun.write(logPath, `${kind}\n`)
+        const repoRoot = input.repoRoots?.[0]?.path ?? input.projectRoot
+        const adapterPath = join(repoRoot, 'scripts', 'hopi', 'prepare')
+        return {
+          kind,
+          adapterPath,
+          exitCode: kind === 'ready' ? 0 : 1,
+          logs: kind,
+          logPath,
+          repos: [
+            {
+              repoId: input.repoRoots?.[0]?.repoId ?? 'primary',
+              repoRoot,
+              kind,
+              adapterPath,
+              exitCode: kind === 'ready' ? 0 : 1,
+              logs: kind,
+              logPath,
+            },
+          ],
+        }
+      },
+    }
+    const fixture = await createFixture({ preparer })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'candidate_preparation_failed',
+    })
+    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 0,
+    })
+    expect(attempts.at(0)).toMatchObject({
+      responsibility: 'reviewer',
+      result: 'fail',
+      application: 'candidate_preparation_failed',
+    })
+    expect(
+      [...goalPackage.evidence.values()].some((evidence) => evidence.body.includes('reject')),
+    ).toBe(false)
   })
 
   test('contains a task branch synchronization conflict in Work Attention before dispatch', async () => {
@@ -986,6 +1050,7 @@ async function createFixture(
     includeSecondaryPrepare?: boolean
     projectPath?: string
     operationalRetryBaseMs?: number
+    preparer?: ProjectPreparer
     worktrees?: StableWorktreeManager
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
@@ -1109,6 +1174,7 @@ async function createFixture(
       attempts,
       worktrees: options.worktrees,
       checkpointTask: options.checkpointTask,
+      preparer: options.preparer,
       operationalRetryBaseMs: options.operationalRetryBaseMs,
       onProjectBlocked: options.onProjectBlocked,
       onReleaseUpdated: options.onReleaseUpdated,

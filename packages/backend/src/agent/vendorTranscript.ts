@@ -4,6 +4,7 @@ import type {
   AgentTranscriptEntryKind,
   AgentTranscriptTransport,
 } from './runtimeEvents'
+import { isExecutionToolName } from './runtimeEvents'
 
 export type ProcessTranscriptFormat =
   | 'plain'
@@ -27,6 +28,7 @@ export interface ProcessTranscriptNormalizer {
   state(): ProcessTranscriptNormalizerState | null
   stateRevision(): number
   unresolvedInfrastructureFailure(): string | null
+  completedExecution(): boolean
 }
 
 export interface NormalizeProcessOutputLineOptions {
@@ -65,6 +67,7 @@ export function createProcessTranscriptNormalizer(
     state: () => claudeTasks.state(),
     stateRevision: () => claudeTasks.stateRevision(),
     unresolvedInfrastructureFailure: () => toolHealth.unresolvedFailure(),
+    completedExecution: () => toolHealth.completedExecution(),
   }
 }
 
@@ -871,6 +874,7 @@ function normalizeContentBlocks(
 class ToolExecutionHealthTracker {
   private readonly toolsByInvocation = new Map<string, string>()
   private readonly unresolvedByTool = new Map<string, string>()
+  private executionCompleted = false
 
   observe(events: readonly AgentRuntimeEvent[]) {
     for (const event of events) {
@@ -887,6 +891,9 @@ class ToolExecutionHealthTracker {
         (event.toolInvocationKey ? this.toolsByInvocation.get(event.toolInvocationKey) : undefined)
       if (!toolName) continue
       if (event.toolInvocationKey) this.toolsByInvocation.delete(event.toolInvocationKey)
+      if (event.entryKind === 'tool_result' && isExecutionToolName(toolName)) {
+        this.executionCompleted = true
+      }
       if (event.entryKind === 'error' && isExecutionInfrastructureFailure(event.summary)) {
         this.unresolvedByTool.set(toolName, `${toolName}: ${compactSummary(event.summary)}`)
       } else {
@@ -897,6 +904,10 @@ class ToolExecutionHealthTracker {
 
   unresolvedFailure() {
     return this.unresolvedByTool.values().next().value ?? null
+  }
+
+  completedExecution() {
+    return this.executionCompleted
   }
 }
 

@@ -214,6 +214,18 @@ export class ConfiguredRoleRunner implements RoleRunner {
         exitCode,
       )
     }
+    if (
+      parsed.value.result === 'success' &&
+      input.responsibility === 'generator' &&
+      transport !== null &&
+      !execution.completedExecution
+    ) {
+      await observer?.onSessionInvalid?.()
+      return failedResult(
+        'generator reported success without completing an execution verification in this Run',
+        exitCode,
+      )
+    }
     return { ...parsed.value, exitCode }
   }
 }
@@ -526,6 +538,7 @@ async function executeProcess(
       terminalError,
       sessionInvalid,
       infrastructureFailure: transcriptNormalizer.unresolvedInfrastructureFailure(),
+      completedExecution: transcriptNormalizer.completedExecution(),
     }
   } finally {
     clearInterval(heartbeat)

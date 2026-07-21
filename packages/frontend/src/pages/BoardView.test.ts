@@ -51,6 +51,12 @@ describe('Board Attempt status', () => {
   test('separates rejection, failure, and interruption in the diagnostic projection', () => {
     const attempts = [
       { ...attempt, runId: 'R-reject', result: 'reject', application: 'published' },
+      {
+        ...attempt,
+        runId: 'R-prepare',
+        result: 'fail',
+        application: 'candidate_preparation_failed',
+      },
       { ...attempt, runId: 'R-fail', result: 'fail', application: 'operational_failure' },
       {
         ...attempt,
@@ -64,10 +70,13 @@ describe('Board Attempt status', () => {
 
     expect(attemptOutcomeBreakdown(attempts)).toEqual({
       rejected: 1,
+      preparationFailed: 1,
       failed: 1,
       interrupted: 1,
     })
-    expect(attemptOutcomeSummary(attempts)).toBe('1 rejected · 1 failed · 1 interrupted')
+    expect(attemptOutcomeSummary(attempts)).toBe(
+      '1 rejected · 1 candidate preflight failed · 1 failed · 1 interrupted',
+    )
     expect(attemptOutcomeSummary([{ ...attempt, application: 'integrated' }])).toBe(
       'Messages and tool activity',
     )

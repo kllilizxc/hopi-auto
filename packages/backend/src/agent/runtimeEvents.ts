@@ -10,6 +10,10 @@ export const AGENT_TRANSCRIPT_ENTRY_KINDS = [
 export type AgentTranscriptTransport = (typeof AGENT_TRANSCRIPT_TRANSPORTS)[number]
 export type AgentTranscriptEntryKind = (typeof AGENT_TRANSCRIPT_ENTRY_KINDS)[number]
 
+export function isExecutionToolName(toolName: string | undefined) {
+  return ['bash', 'command', 'shell', 'terminal'].includes(toolName?.toLowerCase() ?? '')
+}
+
 export interface AgentPlanItem {
   text: string
   completed: boolean

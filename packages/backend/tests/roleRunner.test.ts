@@ -467,6 +467,35 @@ describe('ConfiguredRoleRunner', () => {
     expect(invalidations).toBe(1)
   })
 
+  test('rejects interactive Generator success without a completed execution verification', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-unverified"}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-unverified",result:"done"}))
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"implemented by inspection",artifacts:[]}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+    let invalidations = 0
+
+    const result = await runner.run(fixture.input('generator', fixture.repoRoot), {
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    expect(result.summary).toContain('without completing an execution verification')
+    expect(invalidations).toBe(1)
+  })
+
   test('keeps success when the same execution capability recovers in the invocation', async () => {
     const fixture = await createFixture()
     const binary = await fakeClaude(

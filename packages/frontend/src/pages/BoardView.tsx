@@ -1633,22 +1633,27 @@ export function attemptModelLabel(attempt: RunAttemptSummary | null) {
 
 export function attemptOutcomeBreakdown(attempts: RunAttemptSummary[]) {
   let rejected = 0
+  let preparationFailed = 0
   let failed = 0
   let interrupted = 0
 
   for (const attempt of attempts) {
     if (attempt.status === 'interrupted') interrupted += 1
+    else if (attempt.application === 'candidate_preparation_failed') preparationFailed += 1
     else if (attempt.result === 'reject') rejected += 1
     else if (attempt.result === 'fail') failed += 1
   }
 
-  return { rejected, failed, interrupted }
+  return { rejected, preparationFailed, failed, interrupted }
 }
 
 export function attemptOutcomeSummary(attempts: RunAttemptSummary[]) {
   const counts = attemptOutcomeBreakdown(attempts)
   const parts = [
     counts.rejected > 0 ? `${counts.rejected} rejected` : null,
+    counts.preparationFailed > 0
+      ? `${counts.preparationFailed} candidate preflight failed`
+      : null,
     counts.failed > 0 ? `${counts.failed} failed` : null,
     counts.interrupted > 0 ? `${counts.interrupted} interrupted` : null,
   ].filter((part): part is string => part !== null)
@@ -1672,6 +1677,9 @@ function formatTokenCoverage(summary: RunCostSummary) {
 function formatRunOutcomes(summary: RunCostSummary) {
   const parts = [
     summary.outcomes.rejected ? `${summary.outcomes.rejected} rejected` : null,
+    summary.outcomes.preparationFailed
+      ? `${summary.outcomes.preparationFailed} candidate preflight failed`
+      : null,
     summary.outcomes.failed ? `${summary.outcomes.failed} failed` : null,
     summary.outcomes.interrupted ? `${summary.outcomes.interrupted} interrupted` : null,
     summary.outcomes.stale ? `${summary.outcomes.stale} stale` : null,

@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
+import { isExecutionToolName } from '../agent/runtimeEvents'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   engineeringWorkRepoIds,
@@ -439,38 +440,20 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               )
             }
             if (responsibility === 'reviewer') {
-              let outcome: RoleRunResult = {
-                result: 'reject',
-                summary: preparationFailureSummary(preparation),
-                artifacts: [preparation.logPath],
-                exitCode: preparation.exitCode,
-              }
-              try {
-                outcome = await preserveOutcomeArtifacts(
-                  outcome,
-                  runId,
-                  context.runRoot,
-                  context.resultFile,
-                  [context.runtimeScratchDir, ...roleRepoRoots.map((repo) => repo.path)],
-                )
-              } catch (error) {
-                outcome = artifactFailureOutcome(error, outcome.exitCode)
-              }
-              const application = await outcomes.apply({
-                goalId,
-                workId,
+              await goalController.returnEngineeringWorkToGenerate(goalId, workId)
+              const outcome = await candidatePreparationFailureOutcome({
+                preparation,
                 runId,
-                responsibility,
                 context,
-                outcome,
+                roleRepoRoots,
               })
-              await finishAttempt(attempt, options.store, goalId, outcome, application)
+              await attempt?.finish({ outcome, application: 'candidate_preparation_failed' })
               return {
                 kind: 'pass_finished',
                 workId,
                 runId,
                 result: outcome.result,
-                application: application.kind,
+                application: 'candidate_preparation_failed',
               }
             }
             await appendPreparationDiagnostic(context.promptFile, preparation)
@@ -864,7 +847,40 @@ function preparationEvent(responsibility: string, preparation: ProjectPreparatio
 }
 
 function preparationFailureSummary(preparation: ProjectPreparationResult) {
-  return `Repo preparation is not ready, so Reviewer was skipped. ${boundedPreparationLogs(preparation.logs)}`
+  return `Candidate Repo preparation is not ready; Generator retains the Work. ${boundedPreparationLogs(preparation.logs)}`
+}
+
+async function candidatePreparationFailureOutcome(input: {
+  preparation: ProjectPreparationResult
+  runId: string
+  context: {
+    runRoot: string
+    resultFile: string
+    runtimeScratchDir: string
+  }
+  roleRepoRoots: readonly { path: string }[]
+}): Promise<RoleRunResult> {
+  const outcome: RoleRunResult = {
+    result: 'fail',
+    summary: preparationFailureSummary(input.preparation),
+    artifacts: [input.preparation.logPath],
+    exitCode: input.preparation.exitCode,
+  }
+  try {
+    return await preserveOutcomeArtifacts(
+      outcome,
+      input.runId,
+      input.context.runRoot,
+      input.context.resultFile,
+      [input.context.runtimeScratchDir, ...input.roleRepoRoots.map((repo) => repo.path)],
+    )
+  } catch (error) {
+    return {
+      ...outcome,
+      summary: `${outcome.summary} Preparation log preservation failed: ${errorMessage(error)}`,
+      artifacts: [],
+    }
+  }
 }
 
 async function appendPreparationDiagnostic(
@@ -911,7 +927,7 @@ async function readPreviousGeneratorObservation(
   let anonymousSequence = 0
   for (const event of events ?? []) {
     if (event.kind !== 'transcript') continue
-    if (event.entryKind === 'tool_call' && isExecutionTool(event.toolName)) {
+    if (event.entryKind === 'tool_call' && isExecutionToolName(event.toolName)) {
       anonymousSequence += 1
       const key = event.toolInvocationKey ?? `anonymous-${anonymousSequence}`
       const command = {
@@ -938,10 +954,6 @@ async function readPreviousGeneratorObservation(
     summary: previous.summary ? boundedPromptDiagnostic(previous.summary, 800) : null,
     commands: commands.slice(-8).map(({ command, outcome }) => ({ command, outcome })),
   }
-}
-
-function isExecutionTool(toolName: string | undefined) {
-  return ['bash', 'command', 'shell', 'terminal'].includes(toolName?.toLowerCase() ?? '')
 }
 
 function boundedPromptDiagnostic(value: string, limit = 320) {
