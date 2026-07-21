@@ -441,7 +441,9 @@ describe('RoleContextStager', () => {
       expect(prompt).toContain('notifiedAt: null')
       expect(prompt).toContain('evidence that retry cannot help')
       expect(prompt).toContain('create only added or replaced control documents')
-      expect(prompt).toContain('Replace the zero-byte Result file')
+      expect(prompt).toContain('Finish with exactly one JSON object matching this schema')
+      expect(prompt).toContain('adapter validates and persists this terminal object')
+      expect(prompt).toContain('Do not enter a vendor plan-approval mode')
       expect(prompt.length).toBeLessThan(7_500)
     }
     expect(generatorPrompt).toContain('Reviewer findings are evidence about violated invariants')

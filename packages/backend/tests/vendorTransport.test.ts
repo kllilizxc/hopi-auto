@@ -87,9 +87,14 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '-m',
       'gpt-5-codex',
+      ...codexStructuredOutcomeArgs(),
       '--json',
       '-',
     ])
+    expect(command.structuredOutcomeFile).toBe('/tmp/run/scratch/vendor-outcome.json')
+    expect(await Bun.file('/tmp/run/scratch/role-outcome.schema.json').json()).toMatchObject({
+      properties: { result: { enum: ['success', 'attention', 'fail'] } },
+    })
   })
 
   test('uses one resolved execution envelope in the responsibility prompt', async () => {
@@ -168,6 +173,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '/tmp/screen-1.png',
       '-i',
       '/tmp/screen-2.webp',
+      ...codexStructuredOutcomeArgs(),
       '--json',
       '-',
     ])
@@ -205,6 +211,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'resume',
       '--ignore-user-config',
       '--skip-git-repo-check',
+      ...codexStructuredOutcomeArgs(),
       '--json',
       'thread-generator',
       '-',
@@ -312,6 +319,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '--add-dir',
       '/tmp/project/.hopi/docs/goals/goal-1',
+      ...codexStructuredOutcomeArgs(),
       '--json',
       '-',
     ])
@@ -345,6 +353,7 @@ describe('resolveConfiguredTransportCommand', () => {
         '--skip-git-repo-check',
         '-s',
         'workspace-write',
+        ...codexStructuredOutcomeArgs(),
         '--json',
         '-',
       ])
@@ -384,6 +393,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '/tmp/run/scratch/claude-settings.json',
       '--setting-sources',
       '',
+      ...claudeStructuredOutcomeArgs('generator'),
       '--permission-mode',
       'dontAsk',
       '--model',
@@ -398,6 +408,7 @@ describe('resolveConfiguredTransportCommand', () => {
         filesystem: { allowWrite: [] },
       },
     })
+    expect(command.structuredOutcomeFile).toBeUndefined()
   })
 
   test('resumes a Claude responsibility session', async () => {
@@ -648,4 +659,35 @@ function codexHttpsOnlyArgs() {
   const command: string[] = []
   appendCodexHttpsOnlyConfig(command)
   return command
+}
+
+function codexStructuredOutcomeArgs() {
+  return [
+    '--output-schema',
+    '/tmp/run/scratch/role-outcome.schema.json',
+    '--output-last-message',
+    '/tmp/run/scratch/vendor-outcome.json',
+  ]
+}
+
+function claudeStructuredOutcomeArgs(role: 'planner' | 'generator' | 'reviewer') {
+  const results =
+    role === 'reviewer'
+      ? ['success', 'reject', 'attention', 'fail']
+      : ['success', 'attention', 'fail']
+  return [
+    '--disallowed-tools',
+    'EnterPlanMode,ExitPlanMode,AskUserQuestion',
+    '--json-schema',
+    JSON.stringify({
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        result: { type: 'string', enum: results },
+        summary: { type: 'string', minLength: 1 },
+        artifacts: { type: 'array', items: { type: 'string', minLength: 1 } },
+      },
+      required: ['result', 'summary', 'artifacts'],
+    }),
+  ]
 }

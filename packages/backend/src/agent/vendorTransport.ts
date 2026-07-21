@@ -13,6 +13,7 @@ export interface TransportCommand {
   stdin?: string
   transcriptFormat?: ProcessTranscriptFormat
   sessionTransport?: AssistantTransport
+  structuredOutcomeFile?: string
   env?: Record<string, string>
   baseRef?: string
   outcomeFile?: string
@@ -96,6 +97,7 @@ export const roleTransportConfigSchema = z.union([
 export type RoleTransportConfig = z.infer<typeof roleTransportConfigSchema>
 
 const HOPI_CODEX_HTTPS_PROVIDER = 'hopi_chatgpt_https'
+const NON_INTERACTIVE_CLAUDE_TOOLS = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion']
 
 export function appendCodexHttpsOnlyConfig(command: string[]) {
   command.push(
@@ -130,6 +132,7 @@ export async function resolveConfiguredTransportCommand(options: {
   session?: VendorSession | null
   fullAccess?: boolean
   runtimeWorkspace?: string
+  continuationPrompt?: string
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -162,11 +165,20 @@ export async function resolveConfiguredTransportCommand(options: {
 
   const savedSession =
     options.session?.transport === options.config.transport ? options.session : null
-  const prompt = savedSession
-    ? responsibilityContinuationPrompt(assignment, options.input)
-    : assignment
+  const prompt =
+    options.continuationPrompt ??
+    (savedSession ? responsibilityContinuationPrompt(assignment, options.input) : assignment)
 
   if (options.config.transport === 'codex') {
+    const outcomeSchemaFile = join(options.bundle.runtimeScratchDir, 'role-outcome.schema.json')
+    const structuredOutcomeFile = join(options.bundle.runtimeScratchDir, 'vendor-outcome.json')
+    await Promise.all([
+      Bun.write(
+        outcomeSchemaFile,
+        `${JSON.stringify(roleOutcomeJsonSchema(options.input.role))}\n`,
+      ),
+      Bun.write(structuredOutcomeFile, ''),
+    ])
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
     const sandbox = options.fullAccess
@@ -190,7 +202,15 @@ export async function resolveConfiguredTransportCommand(options: {
       if (options.config.profile) cmd.push('-p', options.config.profile)
       cmd.push('exec', 'resume', '--ignore-user-config', '--skip-git-repo-check')
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
-      cmd.push('--json', savedSession.sessionId, '-')
+      cmd.push(
+        '--output-schema',
+        outcomeSchemaFile,
+        '--output-last-message',
+        structuredOutcomeFile,
+        '--json',
+        savedSession.sessionId,
+        '-',
+      )
     } else {
       cmd.push('exec', '--ignore-user-config', '--skip-git-repo-check')
       cmd.push('-s', sandbox)
@@ -200,7 +220,14 @@ export async function resolveConfiguredTransportCommand(options: {
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
-      cmd.push('--json', '-')
+      cmd.push(
+        '--output-schema',
+        outcomeSchemaFile,
+        '--output-last-message',
+        structuredOutcomeFile,
+        '--json',
+        '-',
+      )
     }
     return {
       cmd,
@@ -214,6 +241,7 @@ export async function resolveConfiguredTransportCommand(options: {
       stdin: prompt,
       transcriptFormat: 'codex_jsonl',
       sessionTransport: 'codex',
+      structuredOutcomeFile,
     }
   }
 
@@ -248,6 +276,10 @@ export async function resolveConfiguredTransportCommand(options: {
       settingsPath,
       '--setting-sources',
       '',
+      '--disallowed-tools',
+      NON_INTERACTIVE_CLAUDE_TOOLS.join(','),
+      '--json-schema',
+      JSON.stringify(roleOutcomeJsonSchema(options.input.role)),
     ]
     if (options.fullAccess) {
       cmd.push('--dangerously-skip-permissions')
@@ -436,6 +468,26 @@ function responsibilityContinuationPrompt(
     '',
     assignment,
   ].join('\n')
+}
+
+function roleOutcomeJsonSchema(role: string | undefined) {
+  const results =
+    role === 'planner' || role === 'generator'
+      ? ['success', 'attention', 'fail']
+      : ['success', 'reject', 'attention', 'fail']
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      result: { type: 'string', enum: results },
+      summary: { type: 'string', minLength: 1 },
+      artifacts: {
+        type: 'array',
+        items: { type: 'string', minLength: 1 },
+      },
+    },
+    required: ['result', 'summary', 'artifacts'],
+  }
 }
 
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {

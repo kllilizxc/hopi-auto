@@ -21,8 +21,16 @@ export interface VendorAssistantOutput {
   messageId?: string
   assistantText?: string
   finalText?: string
+  structuredOutput?: unknown
+  interactiveTool?: string
   terminalError?: VendorAssistantTerminalError
 }
+
+const INTERACTIVE_RESPONSIBILITY_TOOLS = new Set([
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'AskUserQuestion',
+])
 
 export function parseVendorAssistantOutput(
   transport: AssistantTransport,
@@ -79,17 +87,24 @@ export function parseVendorAssistantOutput(
           },
         }
       }
+      const interactiveTool = deniedInteractiveTool(parsed.permission_denials)
       return {
         sessionId,
         finalText: text.visibleText,
+        ...(parsed.structured_output !== undefined
+          ? { structuredOutput: parsed.structured_output }
+          : {}),
+        ...(interactiveTool ? { interactiveTool } : {}),
       }
     }
     if (eventType !== 'assistant') return { sessionId }
 
+    const interactiveTool = contentInteractiveTool(message?.content)
     return {
       sessionId,
       messageId: stringValue(message?.id),
       assistantText: contentText(message?.content),
+      ...(interactiveTool ? { interactiveTool } : {}),
     }
   }
 
@@ -112,6 +127,27 @@ export function parseVendorAssistantOutput(
     messageId: stringValue(part?.messageID) ?? stringValue(part?.messageId),
     assistantText: stringValue(part?.text),
   }
+}
+
+function contentInteractiveTool(value: unknown) {
+  if (!Array.isArray(value)) return undefined
+  for (const entry of value) {
+    const block = objectValue(entry)
+    const name = stringValue(block?.name)
+    if (block?.type === 'tool_use' && name && INTERACTIVE_RESPONSIBILITY_TOOLS.has(name)) {
+      return name
+    }
+  }
+  return undefined
+}
+
+function deniedInteractiveTool(value: unknown) {
+  if (!Array.isArray(value)) return undefined
+  for (const entry of value) {
+    const name = stringValue(objectValue(entry)?.tool_name)
+    if (name && INTERACTIVE_RESPONSIBILITY_TOOLS.has(name)) return name
+  }
+  return undefined
 }
 
 export function isExplicitSessionFailure(...details: Array<string | undefined>) {

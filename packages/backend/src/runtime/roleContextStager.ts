@@ -1002,7 +1002,7 @@ function renderResponsibilityPrompt(
           'Attached images correspond only to Goal assets cited by the owning Work. Apply their documented purpose and limits.',
         ]
       : []),
-    'Never create or edit evidence/** or append evidenceRefs. Write the Run-local result.json only; Coordinator derives immutable Evidence and owns its reference.',
+    'Never create or edit evidence/** or append evidenceRefs. Return only the Run-local terminal outcome; the adapter persists result.json and Coordinator derives immutable Evidence from it.',
     'Targeted Attention is for a blocker this role and retry cannot clear. Name Assistant for HOPI repair; name the operator only for an external decision, credential, permission, or action. Technical diagnostics such as local ports are not operator authority.',
     ...targetedAttentionContract(input),
     '',
@@ -1279,7 +1279,7 @@ function resultInstruction(responsibility: Responsibility) {
   return [
     '## Required Result',
     '',
-    'Replace the zero-byte Result file with exactly one JSON object:',
+    'Finish with exactly one JSON object matching this schema:',
     '',
     '```json',
     '{"result":"<choose one allowed result>","summary":"Concise evidence-backed result","artifacts":[]}',
@@ -1298,6 +1298,8 @@ function resultInstruction(responsibility: Responsibility) {
             'success = criteria pass; reject = implementation defect; fail = review failed without a durable blocker.',
           ]),
     'attention = exactly one staged blocker for Assistant follow-up.',
+    'The interactive adapter validates and persists this terminal object as the Run-local result.json; do not end with prose, a plan-approval request, or a promised later file write.',
+    'This responsibility is already authorized to execute its assignment. Do not enter a vendor plan-approval mode or ask an interactive user question; use targeted Attention only for authority that cannot be inferred or executed.',
     'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
     '',
   ].join('\n')

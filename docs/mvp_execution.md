@@ -734,10 +734,11 @@ and consumes no failed attempt.
 
 Planner proposes only `design/**`, Engineering Work, targeted or completion Attention, project
 repository context, and a missing root `AGENTS.md`. It never creates or rewrites Planning Work or
-`evidence/**`, and never appends `evidenceRefs`. Every responsibility writes only its Run-local
-`result.json`; Coordinator alone derives immutable Evidence from that result, preserves the current
-Planning Work, appends the Evidence reference, and publishes the owning gate. Evidence from an
-earlier failed Planner Run is retry input, not a template for new Planner output.
+`evidence/**`, and never appends `evidenceRefs`. Every responsibility returns only its Run-local
+outcome; the interactive adapter persists it as `result.json`, while an opaque process adapter may
+write that file directly. Coordinator alone derives immutable Evidence from the validated result,
+preserves the current Planning Work, appends the Evidence reference, and publishes the owning gate.
+Evidence from an earlier failed Planner Run is retry input, not a template for new Planner output.
 
 Planner reads existing documents only from the immutable authority root and copies into the sparse
 proposal only a document it intends to replace. It does not mirror unchanged Goal-package files;
@@ -754,9 +755,18 @@ certification responsibility when its historical identity must remain in the gra
 
 Both writable outputs have explicit empty-file semantics. `proposal/` starts with no descendant
 files, so a responsibility creates every proposed path and its parents rather than trying to update
-an authority file in place. Run-local `result.json` starts as a zero-byte missing-result marker and
-must be replaced wholesale with the one required JSON object; the example in the prompt is not
-prewritten content. Leaving it empty remains a visible failed Run rather than a fabricated default.
+an authority file in place. Run-local `result.json` starts as a zero-byte missing-result marker.
+Interactive vendor responsibilities return one schema-constrained terminal outcome; Coordinator
+validates that outcome and persists it as `result.json`, so persistence does not depend on the model
+remembering a file write. Opaque process adapters retain the direct file contract. Coordinator
+never fabricates success from ordinary final prose.
+
+If an interactive vendor exits cleanly without a valid outcome, the runner resumes the same Session
+once inside the same Run with a narrow completion instruction. That recovery retains workspace and
+conversation knowledge, does not repeat Repo preparation, and does not create another Attempt. A
+second missing or invalid outcome is an operational failure and invalidates the stuck Session before
+any later recovery. The Run log records an observed interactive-mode or permission cause instead of
+reducing it to an empty-file symptom.
 New Attention proposals use the fixed parseable `createdAt` placeholder from the Run contract;
 Coordinator replaces it with publication time. A responsibility-proposed Attention ID is a readable
 identity suggestion, not persistence authority. If that ID is already occupied by canonical
@@ -840,6 +850,13 @@ boundary that distinguishes an exercised candidate from a read/edit-only claim. 
 completes, or the required execution capability remains unavailable, the Run is operationally
 failed and its vendor Session is discarded rather than carrying verification avoidance into the
 next repair. Process adapters remain responsible for their own opaque execution contract.
+
+Responsibility invocations are non-interactive even when their vendor also offers an interactive
+product. Vendor plan-entry, plan-exit approval, and direct user-question tools are unavailable in
+these invocations: HOPI Planner owns planning, and a responsibility that genuinely needs authority
+returns targeted Attention. Internal reasoning, task lists, source discovery, and proportionate
+execution remain available. This prevents a Generator or Reviewer from ending a clean process while
+waiting for an operator who cannot answer on that channel.
 
 When the Work body explicitly cites a Goal image asset, Generator receives both its staged local
 path and the actual image input. It must apply the documented purpose rather than infer that every

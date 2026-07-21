@@ -455,6 +455,12 @@ or deterministic pre-C1 rejection. `fail` instead appends its Evidence without c
 If a Work gate is absent after a process stop, the result was not consumed. Evidence alone remains
 provenance and does not prevent a new Run.
 
+An interactive responsibility's schema-constrained terminal outcome is persisted to Run-local
+`result.json` by Coordinator. One same-Session outcome recovery may occur inside that Run when the
+vendor exits cleanly without a valid outcome. It has no state-machine effect, creates no Attempt,
+does not repeat Repo preparation, and cannot publish a default success. A second invalid outcome is
+an operational failure and discards the stuck vendor Session.
+
 An `attention` result publishes its validated targeted Attention as the result gate. A `fail` result
 cannot carry model-authored Attention; Coordinator derives the Assistant-recovery Attention from the
 normalized failure summary. Technical failures in Git, sandbox, ports, or optional tools remain

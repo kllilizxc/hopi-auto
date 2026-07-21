@@ -244,6 +244,158 @@ describe('ConfiguredRoleRunner', () => {
     expect(sessions).toEqual(['codex:thread-generator'])
   })
 
+  test('persists a schema-constrained Claude outcome without a model-authored file write', async () => {
+    const fixture = await createFixture()
+    const outcome = { result: 'success', summary: 'structured completion', artifacts: [] }
+    const binary = await fakeClaude(
+      fixture.root,
+      `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-structured"}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-structured",result:JSON.stringify(${JSON.stringify(outcome)}),structured_output:${JSON.stringify(outcome)}}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+
+    expect(result).toMatchObject({ result: 'success', summary: 'structured completion' })
+    expect(await Bun.file(fixture.context.resultFile).json()).toEqual(outcome)
+  })
+
+  test('persists a schema-constrained Codex outcome from its adapter-owned output file', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeCodex(
+      fixture.root,
+      `console.log(JSON.stringify({type:"thread.started",thread_id:"codex-structured"}))
+      const outputIndex = Bun.argv.indexOf("--output-last-message")
+      if (outputIndex < 0) throw new Error("missing structured output path")
+      await Bun.write(Bun.argv[outputIndex + 1], JSON.stringify({result:"success",summary:"codex completion",artifacts:[]}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+
+    expect(result).toMatchObject({ result: 'success', summary: 'codex completion' })
+    expect(await Bun.file(fixture.context.resultFile).json()).toEqual({
+      result: 'success',
+      summary: 'codex completion',
+      artifacts: [],
+    })
+  })
+
+  test('persists an exact OpenCode terminal outcome without a model-authored file write', async () => {
+    const fixture = await createFixture()
+    const outcome = { result: 'success', summary: 'opencode completion', artifacts: [] }
+    const binary = await fakeOpenCode(
+      fixture.root,
+      `console.log(JSON.stringify({type:"text",sessionID:"opencode-structured",part:{messageID:"message-1",type:"text",text:JSON.stringify(${JSON.stringify(outcome)})}}))`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'opencode',
+        binary,
+        cwdMode: 'root',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+
+    expect(result).toMatchObject({ result: 'success', summary: 'opencode completion' })
+    expect(await Bun.file(fixture.context.resultFile).json()).toEqual(outcome)
+  })
+
+  test('recovers a missing Plan Mode outcome once in the same Run and Session', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `const resumed = Bun.argv.includes("--resume")
+      const prompt = await Bun.stdin.text()
+      console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-plan"}))
+      if (resumed) {
+        await Bun.write(process.env.HOPI_RUN_SCRATCH + "/recovery-prompt.txt", prompt)
+        const outcome = {result:"success",summary:"completed without a new Attempt",artifacts:[]}
+        console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-plan",result:JSON.stringify(outcome),structured_output:outcome}))
+      } else {
+        console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"plan-1",name:"EnterPlanMode",input:{}}]}}))
+        console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-plan",result:"Please approve the plan."}))
+      }`,
+    )
+    const messages: string[] = []
+    let invalidations = 0
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
+      onEvent: (event) => {
+        if (event.kind === 'message') messages.push(event.content)
+      },
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+    })
+
+    expect(result).toMatchObject({
+      result: 'success',
+      summary: 'completed without a new Attempt',
+    })
+    expect(invalidations).toBe(0)
+    expect(messages).toContain(
+      'The non-interactive responsibility entered vendor Plan Mode and could not obtain operator approval. Continuing the same Session once inside this Run to complete the responsibility outcome.',
+    )
+    expect(await Bun.file(join(fixture.runtimeScratchDir, 'recovery-prompt.txt')).text()).toContain(
+      'do not repeat Repo preparation',
+    )
+  })
+
+  test('invalidates a Session that omits its outcome again during same-Run recovery', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-stuck"}))
+      console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"plan-1",name:"EnterPlanMode",input:{}}]}}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-stuck",result:"Still waiting for approval."}))`,
+    )
+    let invalidations = 0
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    expect(result.summary).toContain('entered vendor Plan Mode')
+    expect(result.summary).toContain('Same-Run outcome recovery also failed')
+    expect(invalidations).toBe(1)
+  })
+
   test('keeps Claude task identity across resumed responsibility Attempts', async () => {
     const fixture = await createFixture()
     const binary = await fakeClaude(
@@ -591,6 +743,7 @@ async function createFixture() {
     runRoot,
     runtimeScratchDir,
     proposalRoot,
+    context,
     input(responsibility: 'planner' | 'generator' | 'reviewer', cwd: string) {
       return {
         projectId: 'project-1',
@@ -614,6 +767,13 @@ async function fakeCodex(root: string, code: string) {
 
 async function fakeClaude(root: string, code: string) {
   const path = join(root, `fake-claude-${crypto.randomUUID()}`)
+  await Bun.write(path, `#!/usr/bin/env bun\n${code}\n`)
+  await chmod(path, 0o755)
+  return path
+}
+
+async function fakeOpenCode(root: string, code: string) {
+  const path = join(root, `fake-opencode-${crypto.randomUUID()}`)
   await Bun.write(path, `#!/usr/bin/env bun\n${code}\n`)
   await chmod(path, 0o755)
   return path

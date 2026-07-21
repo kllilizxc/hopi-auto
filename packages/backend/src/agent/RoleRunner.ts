@@ -119,7 +119,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const transcriptFile = join(input.context.runRoot, 'transcript.log')
     await Bun.write(transcriptFile, '')
 
-    const execute = async () => {
+    const execute = async (continuationPrompt?: string) => {
       await Bun.write(input.context.resultFile, '')
       const command = await resolveConfiguredTransportCommand({
         config,
@@ -135,6 +135,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         session,
         fullAccess,
         runtimeWorkspace: input.cwd,
+        continuationPrompt,
       })
       return executeProcess(
         command,
@@ -174,46 +175,72 @@ export class ConfiguredRoleRunner implements RoleRunner {
     } catch (error) {
       return failedResult(`Unable to run ${input.responsibility}: ${errorMessage(error)}`)
     }
-    const { exitCode, stderr, terminalError } = execution
+    let processFailure = executionFailure(input, execution)
+    if (processFailure) return processFailure
 
-    if (input.signal?.aborted) {
-      return failedResult(`${input.responsibility} Run was interrupted`, exitCode)
+    let parsed = await readResult(input.context.resultFile, execution)
+    if (
+      !parsed.success &&
+      transport !== null &&
+      execution.session !== null &&
+      !input.signal?.aborted
+    ) {
+      const recoveryCause = outcomeRecoveryCause(parsed.error, execution.interactiveTool)
+      await observer?.onEvent?.({
+        kind: 'message',
+        level: 'info',
+        role: 'coordinator',
+        content: `${recoveryCause} Continuing the same Session once inside this Run to complete the responsibility outcome.`,
+      })
+      session = execution.session
+      let recovery: ProcessExecution
+      try {
+        recovery = await execute(outcomeRecoveryPrompt(input.responsibility))
+      } catch (error) {
+        return failedResult(
+          `${recoveryCause} Same-Run outcome recovery could not start: ${errorMessage(error)}`,
+          execution.exitCode,
+        )
+      }
+      if (recovery.sessionInvalid) await observer?.onSessionInvalid?.()
+      execution = combineExecutions(execution, recovery)
+      processFailure = executionFailure(input, execution)
+      if (processFailure) return processFailure
+      parsed = await readResult(input.context.resultFile, execution)
+      if (!parsed.success) {
+        await observer?.onSessionInvalid?.()
+        return failedResult(
+          `${recoveryCause} Same-Run outcome recovery also failed: ${parsed.error}`,
+          execution.exitCode,
+        )
+      }
     }
 
     const workflowAfter = await workflowDocumentStatus(input)
     if (workflowBefore !== workflowAfter || workflowAfter !== '') {
       return failedResult(
         `${input.responsibility} modified canonical .hopi content in its task worktree`,
-        exitCode,
+        execution.exitCode,
       )
     }
     if (reviewerBefore !== null && reviewerBefore !== (await sourceRootsFingerprint(sourceRoots))) {
-      return failedResult('reviewer modified a task worktree', exitCode)
-    }
-    if (terminalError) {
-      return failedResult(terminalError, exitCode)
-    }
-    if (exitCode !== 0) {
-      return failedResult(
-        stderr.at(-1)
-          ? `process exited with code ${exitCode}: ${stderr.at(-1)}`
-          : `process exited with code ${exitCode}`,
-        exitCode,
-      )
+      return failedResult('reviewer modified a task worktree', execution.exitCode)
     }
 
-    const parsed = await readResult(input.context.resultFile)
     if (!parsed.success) {
-      return failedResult(parsed.error, exitCode)
+      return failedResult(parsed.error, execution.exitCode)
     }
     if (!resultAllowed(input.responsibility, parsed.value.result)) {
-      return failedResult(`${input.responsibility} cannot return ${parsed.value.result}`, exitCode)
+      return failedResult(
+        `${input.responsibility} cannot return ${parsed.value.result}`,
+        execution.exitCode,
+      )
     }
     if (parsed.value.result === 'success' && execution.infrastructureFailure) {
       await observer?.onSessionInvalid?.()
       return failedResult(
         `${input.responsibility} reported success while a required execution capability remained unavailable: ${execution.infrastructureFailure}`,
-        exitCode,
+        execution.exitCode,
       )
     }
     if (
@@ -225,10 +252,10 @@ export class ConfiguredRoleRunner implements RoleRunner {
       await observer?.onSessionInvalid?.()
       return failedResult(
         'generator reported success without completing an execution verification in this Run',
-        exitCode,
+        execution.exitCode,
       )
     }
-    return { ...parsed.value, exitCode }
+    return { ...parsed.value, exitCode: execution.exitCode }
   }
 }
 
@@ -312,27 +339,118 @@ function resultAllowed(responsibility: Responsibility, result: PassResultKind) {
   return true
 }
 
-async function readResult(path: string) {
+type ProcessExecution = Awaited<ReturnType<typeof executeProcess>>
+
+function executionFailure(input: RoleRunInput, execution: ProcessExecution): RoleRunResult | null {
+  if (input.signal?.aborted) {
+    return failedResult(`${input.responsibility} Run was interrupted`, execution.exitCode)
+  }
+  if (execution.terminalError) {
+    return failedResult(execution.terminalError, execution.exitCode)
+  }
+  if (execution.exitCode !== 0) {
+    return failedResult(
+      execution.stderr.at(-1)
+        ? `process exited with code ${execution.exitCode}: ${execution.stderr.at(-1)}`
+        : `process exited with code ${execution.exitCode}`,
+      execution.exitCode,
+    )
+  }
+  return null
+}
+
+function combineExecutions(first: ProcessExecution, second: ProcessExecution): ProcessExecution {
+  return {
+    ...second,
+    session: second.session ?? first.session,
+    sessionInvalid: first.sessionInvalid || second.sessionInvalid,
+    completedExecution: first.completedExecution || second.completedExecution,
+    infrastructureFailure: second.completedExecution
+      ? second.infrastructureFailure
+      : (second.infrastructureFailure ?? first.infrastructureFailure),
+    interactiveTool: second.interactiveTool ?? first.interactiveTool,
+  }
+}
+
+function outcomeRecoveryCause(error: string, interactiveTool: string | null) {
+  if (interactiveTool === 'EnterPlanMode' || interactiveTool === 'ExitPlanMode') {
+    return 'The non-interactive responsibility entered vendor Plan Mode and could not obtain operator approval.'
+  }
+  if (interactiveTool === 'AskUserQuestion') {
+    return 'The non-interactive responsibility requested a direct user answer on a channel without an operator.'
+  }
+  return `The vendor exited without a valid responsibility outcome: ${error}.`
+}
+
+function outcomeRecoveryPrompt(responsibility: Responsibility) {
+  return [
+    '# Complete Current Responsibility',
+    '',
+    `The previous non-interactive ${responsibility} invocation ended without a valid terminal outcome.`,
+    'Continue from the current Session and workspace. Retain completed discovery and edits; do not repeat Repo preparation or already-completed work.',
+    "If the assignment is incomplete, continue it now through proportionate verification. Do not stop for vendor plan approval or a direct user question; use the assignment's Attention path only for authority that cannot be resolved here.",
+    'Finish with only the schema-constrained responsibility outcome. Do not return explanatory prose before or after it.',
+  ].join('\n')
+}
+
+async function readResult(path: string, execution: ProcessExecution) {
+  const candidateFailures: string[] = []
+  if (execution.structuredOutcome !== undefined) {
+    const parsed = parseResultCandidate(execution.structuredOutcome, 'structured vendor outcome')
+    if (parsed.success) {
+      await persistResult(path, parsed.value)
+      return parsed
+    }
+    candidateFailures.push(parsed.error)
+  }
+
   const file = Bun.file(path)
-  if (!(await file.exists())) {
-    return { success: false as const, error: 'responsibility did not write result.json' }
+  if (await file.exists()) {
+    const source = await file.text()
+    if (source.trim()) {
+      const parsed = parseResultCandidate(source, 'result.json')
+      if (parsed.success) return parsed
+      candidateFailures.push(parsed.error)
+    }
   }
-  const source = await file.text()
-  if (!source.trim()) {
-    return { success: false as const, error: 'responsibility wrote an empty result.json' }
+
+  if (execution.finalText?.trim()) {
+    const parsed = parseResultCandidate(execution.finalText, 'vendor final response')
+    if (parsed.success) {
+      await persistResult(path, parsed.value)
+      return parsed
+    }
+    candidateFailures.push(parsed.error)
   }
+
+  return {
+    success: false as const,
+    error:
+      candidateFailures[0] ??
+      ((await file.exists())
+        ? 'responsibility produced no terminal outcome'
+        : 'responsibility result storage is missing'),
+  }
+}
+
+function parseResultCandidate(candidate: unknown, source: string) {
   try {
-    const parsed = roleResultSchema.safeParse(JSON.parse(source))
+    const value = typeof candidate === 'string' ? JSON.parse(candidate) : candidate
+    const parsed = roleResultSchema.safeParse(value)
     if (!parsed.success) {
       return {
         success: false as const,
-        error: `invalid result.json: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ')}`,
+        error: `invalid ${source}: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ')}`,
       }
     }
     return { success: true as const, value: parsed.data }
   } catch (error) {
-    return { success: false as const, error: `invalid result.json: ${errorMessage(error)}` }
+    return { success: false as const, error: `invalid ${source}: ${errorMessage(error)}` }
   }
+}
+
+async function persistResult(path: string, result: z.infer<typeof roleResultSchema>) {
+  await Bun.write(path, `${JSON.stringify(result, null, 2)}\n`)
 }
 
 async function workflowDocumentStatus(input: RoleRunInput) {
@@ -486,6 +604,9 @@ async function executeProcess(
   let observedSessionId = session?.sessionId ?? null
   let sessionInvalid = false
   let terminalError: string | null = null
+  let structuredOutcome: unknown
+  let finalText: string | null = null
+  let interactiveTool: string | null = null
   let transcriptTail: Promise<void> = Promise.resolve()
   const recordLine = (stream: 'stdout' | 'stderr', line: string) => {
     transcriptTail = transcriptTail.then(() => appendFile(transcriptFile, `${stream}: ${line}\n`))
@@ -523,6 +644,12 @@ async function executeProcess(
             terminalError = output.terminalError.message
             sessionInvalid ||= output.terminalError.sessionInvalid
           }
+          if (output.structuredOutput !== undefined) {
+            structuredOutcome = output.structuredOutput
+          }
+          if (output.finalText) finalText = output.finalText
+          if (output.assistantText) finalText = output.assistantText
+          if (output.interactiveTool) interactiveTool = output.interactiveTool
         }
         await emitLine(observer, transcriptNormalizer, format, 'stdout', input, line)
       }),
@@ -534,11 +661,32 @@ async function executeProcess(
       }),
     ])
     await transcriptTail
+    if (structuredOutcome === undefined && command.structuredOutcomeFile) {
+      const candidate = await Bun.file(command.structuredOutcomeFile).text()
+      if (candidate.trim()) {
+        try {
+          structuredOutcome = JSON.parse(candidate)
+        } catch {
+          finalText = candidate
+        }
+      }
+    }
     return {
       exitCode,
       stderr: stderr.values(),
       terminalError,
       sessionInvalid,
+      session:
+        command.sessionTransport && observedSessionId
+          ? {
+              transport: command.sessionTransport,
+              sessionId: observedSessionId,
+              ...(compatibilityKey ? { compatibilityKey } : {}),
+            }
+          : null,
+      structuredOutcome,
+      finalText,
+      interactiveTool,
       infrastructureFailure: transcriptNormalizer.unresolvedInfrastructureFailure(),
       completedExecution: transcriptNormalizer.completedExecution(),
     }

@@ -40,6 +40,46 @@ describe('parseVendorAssistantOutput', () => {
     ).toEqual({ sessionId: 'session-1', finalText: text })
   })
 
+  test('extracts Claude structured responsibility outcomes', () => {
+    const outcome = { result: 'success', summary: 'verified', artifacts: [] }
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          session_id: 'session-1',
+          result: JSON.stringify(outcome),
+          structured_output: outcome,
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'session-1',
+      finalText: JSON.stringify(outcome),
+      structuredOutput: outcome,
+    })
+  })
+
+  test('identifies interactive Claude tools that cannot complete in a responsibility Run', () => {
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'assistant',
+          session_id: 'session-1',
+          message: {
+            id: 'message-1',
+            content: [{ type: 'tool_use', name: 'EnterPlanMode', input: {} }],
+          },
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      assistantText: undefined,
+      interactiveTool: 'EnterPlanMode',
+    })
+  })
+
   test('removes a complete Claude thought envelope from the final reply', () => {
     expect(
       parseVendorAssistantOutput(
