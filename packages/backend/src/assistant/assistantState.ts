@@ -266,9 +266,9 @@ export function createAssistantStateReader(options: {
                       path: project.store.paths.absolute(
                         project.store.paths.workDocument(goalId, work.attributes.id),
                       ),
+                      ...(candidateIntegration ? { candidateIntegration } : {}),
                       projection: projectionByWork.get(work.attributes.id) ?? null,
                       runtime,
-                      ...(candidateIntegration ? { candidateIntegration } : {}),
                       ...(evidence ? { evidence } : {}),
                     }
                   }),

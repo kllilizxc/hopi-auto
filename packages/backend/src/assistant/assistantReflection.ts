@@ -624,7 +624,7 @@ function compactWork(value: Record<string, unknown>) {
     latestEvidenceRef: evidenceRefs.at(-1) ?? null,
     runtime: compactRuntime(value.runtime),
     projection: compactProjection(value.projection),
-    candidateIntegration: value.candidateIntegration,
+    currentCandidateIntegration: value.candidateIntegration,
     dependsOn: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.slice(0, 8) : [],
     dependencyCount: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.length : 0,
     repos: Array.isArray(attributes.repos) ? attributes.repos.slice(0, 8) : attributes.repos,

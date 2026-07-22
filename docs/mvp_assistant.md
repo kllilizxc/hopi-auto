@@ -195,7 +195,10 @@ state. Current diagnostic projections are observations computed at the response'
 An Attention body is the immutable rationale recorded when that Attention was created; keeping the
 Attention open means it has not yet been resolved, not that every diagnostic claim in that rationale
 is still current. The Assistant compares the current observations with that historical rationale and
-may resolve an Attention whose premise no longer holds.
+may resolve an Attention whose premise no longer holds. The Assistant tool projection makes this
+temporal boundary structural: live candidate integration appears as `currentCandidateIntegration`,
+while the immutable Attention body appears as `creationRationale`. These names affect only the model
+view; canonical documents and product APIs retain their domain fields.
 An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
 artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
 other Evidence remain first-class Project documents and are read from exact paths only when needed.

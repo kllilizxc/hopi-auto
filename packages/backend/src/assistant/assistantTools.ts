@@ -1388,13 +1388,54 @@ function assistantToolStateProjection(
           (attention) => isRecord(attention) && attention.target === `project:${scope.projectId}`,
         )
       : snapshot.workspaceAttentions.map(compactWorkspaceAttentionIndex),
-    projects: scope.goalId ? snapshot.projects : snapshot.projects.map(compactProjectStateIndex),
+    projects: scope.goalId
+      ? snapshot.projects.map(currentDiagnosticProjectState)
+      : snapshot.projects.map(compactProjectStateIndex),
+  }
+}
+
+function currentDiagnosticProjectState(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.goals)) return value
+  return { ...value, goals: value.goals.map(currentDiagnosticGoalState) }
+}
+
+function currentDiagnosticGoalState(value: unknown) {
+  if (!isRecord(value)) return value
+  return {
+    ...value,
+    works: Array.isArray(value.works) ? value.works.map(currentDiagnosticWorkState) : value.works,
+    attentions: Array.isArray(value.attentions)
+      ? value.attentions.map(currentDiagnosticAttentionState)
+      : value.attentions,
+  }
+}
+
+function currentDiagnosticWorkState(value: unknown) {
+  if (!isRecord(value)) return value
+  const { candidateIntegration, projection, runtime, ...rest } = value
+  return {
+    ...rest,
+    ...(Array.isArray(candidateIntegration)
+      ? { currentCandidateIntegration: candidateIntegration }
+      : {}),
+    ...(projection !== undefined ? { projection } : {}),
+    ...(runtime !== undefined ? { runtime } : {}),
+  }
+}
+
+function currentDiagnosticAttentionState(value: unknown) {
+  if (!isRecord(value)) return value
+  const { body, ...rest } = value
+  return {
+    ...rest,
+    ...(typeof body === 'string' ? { creationRationale: body } : {}),
   }
 }
 
 function compactWorkspaceAttentionIndex(value: unknown) {
   if (!isRecord(value) || typeof value.body !== 'string') return value
-  return { ...value, body: boundedStateText(value.body, 320) }
+  const { body, ...rest } = value
+  return { ...rest, creationRationale: boundedStateText(body, 320) }
 }
 
 function compactProjectStateIndex(value: unknown) {
@@ -1448,7 +1489,9 @@ function compactGoalAttentionStateIndex(value: unknown) {
   return {
     ...(typeof value.reference === 'string' ? { reference: value.reference } : {}),
     attributes: value.attributes,
-    ...(typeof value.body === 'string' ? { body: boundedStateText(value.body, 600) } : {}),
+    ...(typeof value.body === 'string'
+      ? { creationRationale: boundedStateText(value.body, 600) }
+      : {}),
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
   }
 }
@@ -1460,7 +1503,7 @@ function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
     ...(isRecord(value.projection) ? { projection: value.projection } : {}),
     ...(Array.isArray(value.candidateIntegration)
-      ? { candidateIntegration: value.candidateIntegration }
+      ? { currentCandidateIntegration: value.candidateIntegration }
       : {}),
     ...(isRecord(value.runtime)
       ? { runtime: compactRuntimeStateIndex(value.runtime, includeSummary) }

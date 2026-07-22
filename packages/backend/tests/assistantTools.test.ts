@@ -1617,7 +1617,7 @@ describe('Assistant HOPI tools', () => {
               works: [
                 {
                   attributes: { id: 'W-1' },
-                  candidateIntegration: [
+                  currentCandidateIntegration: [
                     {
                       repoId: fixture.primaryRepoId,
                       kind: 'observed',
@@ -2070,11 +2070,15 @@ describe('Assistant HOPI tools', () => {
 
     const homeState = (await fixture.tools.executeForEvent('EV-read-refs', 'hopi_read_state', {}))
       .value as {
-      workspaceAttentions: Array<{ id: string; reference: string; body: string }>
+      workspaceAttentions: Array<{ id: string; reference: string; creationRationale: string }>
       projects: Array<{
         goals: Array<{
           goal: { attributes: { id: string }; body?: string }
-          attentions: Array<{ reference: string; attributes: { id: string } }>
+          attentions: Array<{
+            reference: string
+            attributes: { id: string }
+            creationRationale: string
+          }>
         }>
       }>
     }
@@ -2088,7 +2092,11 @@ describe('Assistant HOPI tools', () => {
       projects: Array<{
         goals: Array<{
           goal: { attributes: { id: string }; body: string }
-          attentions: Array<{ reference: string; attributes: { id: string } }>
+          attentions: Array<{
+            reference: string
+            attributes: { id: string }
+            creationRationale: string
+          }>
         }>
       }>
     }
@@ -2100,12 +2108,13 @@ describe('Assistant HOPI tools', () => {
         reference: workspaceAttentionReference(homeId, workspaceAttention.attributes.id),
       }),
     )
-    expect(homeState.workspaceAttentions[0]?.body.length).toBeLessThanOrEqual(323)
+    expect(homeState.workspaceAttentions[0]?.creationRationale.length).toBeLessThanOrEqual(323)
     expect(homeState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
     expect(homeState.projects[0]?.goals[0]?.attentions).toContainEqual(
       expect.objectContaining({
         reference: goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id),
         attributes: expect.objectContaining({ id: goalAttention.attributes.id }),
+        creationRationale: expect.stringContaining('Choose recovery.'),
       }),
     )
     expect(goalState.workspaceAttentions).toEqual([])
@@ -2114,6 +2123,7 @@ describe('Assistant HOPI tools', () => {
       expect.objectContaining({
         reference: goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id),
         attributes: expect.objectContaining({ id: goalAttention.attributes.id }),
+        creationRationale: expect.stringContaining('Choose recovery.'),
       }),
     )
   })

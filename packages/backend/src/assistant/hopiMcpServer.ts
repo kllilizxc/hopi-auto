@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read current state at observedAt. Home and Project reads are compact indexes; name one Goal for current diagnostics. Attention body is immutable creation-time rationale, not a refreshed diagnosis; open means unresolved, so compare current diagnostics. Attention includes a canonical reference: copy it verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page or Reflection scope, or Home when none exists. Otherwise use exact Project and Goal IDs; never use a Home ID as projectId.',
+      'Read state at observedAt. Home and Project reads are compact indexes; name one Goal for diagnostics. currentCandidateIntegration is live preflight. creationRationale is immutable Attention text from creation; open means unresolved, not still true. Attention includes a canonical reference: copy it verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page or Reflection scope, or Home when none exists. Otherwise use exact Project and Goal IDs; never use a Home ID as projectId.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },

@@ -178,7 +178,7 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('"evidenceCount":2')
     expect(prompt).toContain('"latestEvidenceRef":"E-2"')
     expect(prompt).toContain('Candidate implementation completed.')
-    expect(prompt).toContain('"candidateIntegration"')
+    expect(prompt).toContain('"currentCandidateIntegration"')
     expect(prompt).toContain('"kind":"ready"')
     expect(prompt).not.toContain('"evidenceRefs"')
     expect(prompt).not.toContain('SECRET-RUNTIME-PATH')
