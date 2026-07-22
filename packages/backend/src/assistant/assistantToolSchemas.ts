@@ -140,12 +140,12 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema
         .describe(
-          'Exact Project ID copied from current Project state. Never use the Home ID from a home: reference. Omit to use current page context.',
+          'Exact Project ID copied from current Project state. Never use the Home ID from a home: reference. Omit to use current page or Reflection context.',
         )
         .optional(),
       goalId: stableIdSchema
         .describe(
-          'Exact Goal ID copied from current Project state. Omit to use current page context.',
+          'Exact Goal ID copied from current Project state. Omit to use current page or Reflection context.',
         )
         .optional(),
       includeEvidence: z

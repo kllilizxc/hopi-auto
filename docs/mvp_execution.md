@@ -1399,7 +1399,10 @@ speaking thread. Work deltas contain control fields and one bounded latest-Run o
 paths, full Evidence lists, or unrelated Goal state. Reflection may call scoped `hopi_read_state` and
 follow an exact diagnostic path only after identifying a concrete candidate.
 
-Reflection has only read plus one `handoff_to_main` capability. A no-op result is silent, including
+Reflection has only read plus one `handoff_to_main` capability. When all immediate signals belong to
+one Project or Goal, that exact scope becomes the Reflection read context, so omitted IDs and a
+Goal-only read resolve against the candidate named by the environment instead of expanding Home
+state. The context locates evidence; it grants no mutation authority. A no-op result is silent, including
 when Assistant-owned Attention remains open. Only an explicit handoff durably creates one internal
 Inbox turn. Coordinator validates the selected scope and may attach canonical references from that
 scope, but it does not select another scope or synthesize a brief. The speaking thread then

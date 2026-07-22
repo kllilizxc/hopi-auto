@@ -191,7 +191,11 @@ exact bodies remain readable from returned paths when the current question requi
 progression keeps one tool result directly consumable without adding pagination or a query language.
 Every open Attention projection includes its complete canonical `reference`. Tools copy that value
 verbatim; models never reconstruct a reference from an Attention ID, target, or surrounding Project
-state.
+state. Current diagnostic projections are observations computed at the response's `observedAt`.
+An Attention body is the immutable rationale recorded when that Attention was created; keeping the
+Attention open means it has not yet been resolved, not that every diagnostic claim in that rationale
+is still current. The Assistant compares the current observations with that historical rationale and
+may resolve an Attention whose premise no longer holds.
 An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
 artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
 other Evidence remain first-class Project documents and are read from exact paths only when needed.

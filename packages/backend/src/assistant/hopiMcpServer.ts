@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current state. Home and Project scope return a directly consumable control index; name one Goal to expand its current diagnostics. Open Attention includes complete canonical reference values: copy reference verbatim into mutation tools and never construct it from id or target. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page or Home scope. Otherwise copy exact Project and optional Goal IDs from Project state; never copy the Home ID from a home: reference into projectId.',
+      'Read current state at observedAt. Home and Project reads are compact indexes; name one Goal for current diagnostics. Attention body is immutable creation-time rationale, not a refreshed diagnosis; open means unresolved, so compare current diagnostics. Attention includes a canonical reference: copy it verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page or Reflection scope, or Home when none exists. Otherwise use exact Project and Goal IDs; never use a Home ID as projectId.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },

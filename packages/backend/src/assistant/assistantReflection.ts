@@ -117,8 +117,8 @@ export function createAssistantReflection(options: {
         promise: Promise.resolve(),
       }
       const previousSnapshot = lastAssessedSnapshot
-      const trigger = reflectionTrigger(snapshot, input.settled)
-      entry.promise = runReflection(snapshot, previousSnapshot, trigger, controller.signal)
+      const assessment = reflectionAssessment(snapshot, input.settled)
+      entry.promise = runReflection(snapshot, previousSnapshot, assessment, controller.signal)
         .then(async ({ handoffEventId }) => {
           if (controller.signal.aborted) return
           failureState = undefined
@@ -191,7 +191,7 @@ export function createAssistantReflection(options: {
   async function runReflection(
     snapshot: AssistantStateSnapshot,
     previousSnapshot: AssistantStateSnapshot | null,
-    trigger: readonly string[],
+    assessment: ReflectionAssessment,
     signal: AbortSignal,
   ) {
     const reflectionId = `RF-${crypto.randomUUID()}`
@@ -220,9 +220,13 @@ export function createAssistantReflection(options: {
     await Bun.write(eventsPath, '')
     await Bun.write(transcriptPath, '')
     await writeManifest(manifestPath, manifest)
-    const token = options.tools.issueReflection(reflectionId, (handoff) => {
-      preparedHandoff.current = handoff
-    })
+    const token = options.tools.issueReflection(
+      reflectionId,
+      (handoff) => {
+        preparedHandoff.current = handoff
+      },
+      assessment.context,
+    )
     const observer = {
       onEvent: (event: AgentRuntimeEvent) => appendReflectionEvent(eventsPath, event, now()),
     }
@@ -246,7 +250,7 @@ export function createAssistantReflection(options: {
       const prompt = reflectionPrompt(
         snapshot,
         previousSnapshot,
-        trigger,
+        assessment.reasons,
         executionPlan.environment,
       )
       await Bun.write(promptPath, prompt)
@@ -336,6 +340,7 @@ function reflectionPrompt(
     'Objective: decide whether this state change warrants a speaking Assistant turn, and hand off the material facts and consequence when it does.',
     'This is a disposable read-only run. Canonical state and source are immutable here; the available HOPI tools are hopi_read_state and hopi_handoff_to_main.',
     'The supplied snapshot is an observation and may become stale. A handoff creates an internal Inbox event; it does not itself notify the operator or mutate Goal state.',
+    'Current diagnostics are observations at observedAt. Attention text is immutable creation-time rationale: an open Attention is unresolved, but its original diagnosis may already be obsolete.',
     'Use the trigger to choose the narrowest useful read: Home and Project reads are compact indexes, while a Goal read provides current diagnostic detail.',
     'Attention ownership is exact: copy each selected reference verbatim from hopi_read_state; never construct it from id or target. One handoff may select workspace Attention or Attention from exactly one Goal, never mixed scopes.',
     'Operator action means a human decision, credential, permission, or external act that Assistant authority cannot provide. Assistant-owned technical work remains Assistant action.',
@@ -433,10 +438,21 @@ async function writeManifest(path: string, manifest: ReflectionManifest) {
   await Bun.write(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
+interface ReflectionAssessment {
+  reasons: string[]
+  context?: InboxContext
+}
+
+function reflectionAssessment(
+  snapshot: AssistantStateSnapshot,
+  settled: boolean,
+): ReflectionAssessment {
   const reasons: string[] = []
+  const contexts: InboxContext[] = []
+  let hasWorkspaceSignal = false
   for (const attention of snapshot.workspaceAttentions) {
     if (!isAssistantOwnedAttention(attention)) continue
+    hasWorkspaceSignal = true
     const target = recordTarget(attention)
     reasons.push(
       `Assistant-owned workspace Attention ${recordId(attention)}${target ? ` targeting ${target}` : ''} is open.`,
@@ -445,7 +461,10 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
   for (const project of snapshot.projects) {
     if (!isRecord(project)) continue
     const projectId = stringValue(project.projectId, 'unknown-project')
-    if (project.available === false) reasons.push(`Project ${projectId} is unavailable.`)
+    if (project.available === false) {
+      reasons.push(`Project ${projectId} is unavailable.`)
+      contexts.push({ projectId })
+    }
     if (!Array.isArray(project.goals)) continue
     for (const goal of project.goals) {
       if (!isRecord(goal)) continue
@@ -456,6 +475,7 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
           reasons.push(
             `Goal ${goalId} has Assistant-owned Attention ${recordId(attention)} in Project ${projectId}.`,
           )
+          contexts.push({ projectId, goalId })
         }
       }
       if (!Array.isArray(goal.works)) continue
@@ -464,6 +484,7 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
         reasons.push(
           `Work ${nestedId(work.attributes, 'unknown-work')} in ${projectId}/${goalId} has a stale running Attempt.`,
         )
+        contexts.push({ projectId, goalId })
       }
     }
   }
@@ -474,7 +495,19 @@ function reflectionTrigger(snapshot: AssistantStateSnapshot, settled: boolean) {
         : 'An immediate control signal requires assessment while automatic work is still active.',
     )
   }
-  return reasons
+  const projectIds = new Set(contexts.map((context) => context.projectId).filter(Boolean))
+  const projectId = projectIds.size === 1 ? [...projectIds][0] : undefined
+  const firstGoalId = contexts[0]?.goalId
+  const goalId =
+    projectId && firstGoalId && contexts.every((context) => context.goalId === firstGoalId)
+      ? firstGoalId
+      : undefined
+  return {
+    reasons,
+    ...(!hasWorkspaceSignal && projectId
+      ? { context: { projectId, ...(goalId ? { goalId } : {}) } }
+      : {}),
+  }
 }
 
 function reflectionDelta(previous: AssistantStateSnapshot | null, current: AssistantStateSnapshot) {
@@ -591,6 +624,7 @@ function compactWork(value: Record<string, unknown>) {
     latestEvidenceRef: evidenceRefs.at(-1) ?? null,
     runtime: compactRuntime(value.runtime),
     projection: compactProjection(value.projection),
+    candidateIntegration: value.candidateIntegration,
     dependsOn: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.slice(0, 8) : [],
     dependencyCount: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.length : 0,
     repos: Array.isArray(attributes.repos) ? attributes.repos.slice(0, 8) : attributes.repos,

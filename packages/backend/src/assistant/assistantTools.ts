@@ -78,6 +78,7 @@ export interface AssistantTools {
   issueReflection(
     reflectionId: string,
     onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void,
+    context?: InboxContext,
   ): string
   revoke(token: string): void
   finalizeInternalResponse(
@@ -121,6 +122,7 @@ export function createAssistantTools(options: {
         expiresAt: number
         handedOff: boolean
         onHandoff?: (handoff: { brief: string; context?: InboxContext }) => void
+        context?: InboxContext
       }
   const capabilities = new Map<string, Capability>()
   const assistantDispatchQueues = new Map<string, Promise<void>>()
@@ -260,7 +262,7 @@ export function createAssistantTools(options: {
       return token
     },
 
-    issueReflection(reflectionId, onHandoff) {
+    issueReflection(reflectionId, onHandoff, context) {
       const token = crypto.randomUUID()
       capabilities.set(token, {
         mode: 'reflection',
@@ -268,6 +270,7 @@ export function createAssistantTools(options: {
         expiresAt: Date.now() + 60 * 60 * 1_000,
         handedOff: false,
         onHandoff,
+        context,
       })
       return token
     },
@@ -507,11 +510,21 @@ export function createAssistantTools(options: {
         }
         if (name === 'hopi_read_state') {
           const args = parseAssistantToolArguments(name, input)
-          const state = await options.state.read({ ...args, includeEvidence: false })
+          const projectId = args.projectId ?? capability.context?.projectId
+          const goalId =
+            args.goalId ??
+            (projectId && projectId === capability.context?.projectId
+              ? capability.context.goalId
+              : undefined)
+          const state = await options.state.read({
+            ...(projectId ? { projectId } : {}),
+            ...(goalId ? { goalId } : {}),
+            includeEvidence: false,
+          })
           return {
             summary: 'Read current HOPI state.',
             changed: false,
-            value: assistantToolStateProjection(state, args),
+            value: assistantToolStateProjection(state, { projectId, goalId }),
           }
         }
         if (name !== 'hopi_handoff_to_main')

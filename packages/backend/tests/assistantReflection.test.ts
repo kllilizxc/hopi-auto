@@ -133,6 +133,9 @@ describe('Assistant Reflection', () => {
                     evidenceRefs: ['E-1', 'E-2'],
                   },
                   projection: { column: 'Review', ready: true, responsibility: 'reviewer' },
+                  candidateIntegration: [
+                    { repoId: 'primary', kind: 'observed', result: { kind: 'ready' } },
+                  ],
                   runtime: {
                     activeResponsibility: null,
                     latestAttempt: {
@@ -162,6 +165,7 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('targeting home:H-1/event:EV-blocked')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
     expect(prompt).toContain('Operator action means a human decision')
+    expect(prompt).toContain('Attention text is immutable creation-time rationale')
     expect(prompt).toContain('Home and Project reads are compact indexes')
     expect(prompt).toContain('copy each selected reference verbatim from hopi_read_state')
     expect(prompt).toContain('never mixed scopes')
@@ -174,6 +178,8 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('"evidenceCount":2')
     expect(prompt).toContain('"latestEvidenceRef":"E-2"')
     expect(prompt).toContain('Candidate implementation completed.')
+    expect(prompt).toContain('"candidateIntegration"')
+    expect(prompt).toContain('"kind":"ready"')
     expect(prompt).not.toContain('"evidenceRefs"')
     expect(prompt).not.toContain('SECRET-RUNTIME-PATH')
     expect(prompt.length).toBeLessThan(5_000)
@@ -307,6 +313,41 @@ describe('Assistant Reflection', () => {
             includeEvidence: true,
           })
           return { reply: 'No handoff.', session: codexSession('reflection-compact-state') }
+        },
+      }),
+    )
+
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(fixture.stateReads).toContainEqual({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      includeEvidence: false,
+    })
+  })
+
+  test('uses one immediate Goal signal as the default Reflection read context', async () => {
+    const fixture = await setup(
+      () => ({
+        digest: 'f'.repeat(64),
+        projects: [
+          {
+            projectId: 'P-1',
+            available: true,
+            goals: [
+              {
+                goal: { attributes: { id: 'G-1' } },
+                attentions: [{ attributes: { id: 'A-1', resolvedAt: null, notifiedAt: null } }],
+                works: [],
+              },
+            ],
+          },
+        ],
+      }),
+      (tools) => ({
+        async run(input) {
+          await tools.execute(input.toolToken, 'hopi_read_state', { goalId: 'G-1' })
+          return { reply: 'No handoff.', session: codexSession('reflection-goal-context') }
         },
       }),
     )
