@@ -3,6 +3,38 @@ export type SourceMergePreflightResult =
   | { kind: 'conflict'; paths: string[] }
   | { kind: 'failed'; detail: string }
 
+export interface SourceMergeInspection {
+  releaseHead: string
+  taskHead: string
+  mergeBase: string
+  result: SourceMergePreflightResult
+}
+
+export async function inspectSourceMerge(input: {
+  repoRoot: string
+  taskRoot: string
+  releaseRef: string
+  indexPath: string
+}): Promise<SourceMergeInspection> {
+  const [releaseHead, taskHead] = await Promise.all([
+    gitOutput(input.repoRoot, ['rev-parse', input.releaseRef]),
+    gitOutput(input.taskRoot, ['rev-parse', 'HEAD']),
+  ])
+  const mergeBase = await gitOutput(input.repoRoot, ['merge-base', releaseHead, taskHead])
+  return {
+    releaseHead,
+    taskHead,
+    mergeBase,
+    result: await stageSourceMerge({
+      repoRoot: input.repoRoot,
+      mergeBase,
+      releaseHead,
+      taskHead,
+      indexPath: input.indexPath,
+    }),
+  }
+}
+
 export async function stageSourceMerge(input: {
   repoRoot: string
   mergeBase: string
@@ -49,4 +81,12 @@ async function gitResult(cwd: string, args: string[], env: Record<string, string
     child.exited,
   ])
   return { stdout, stderr, exitCode }
+}
+
+async function gitOutput(cwd: string, args: string[]) {
+  const result = await gitResult(cwd, args, process.env as Record<string, string>)
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')} failed in ${cwd}: ${result.stderr.trim()}`)
+  }
+  return result.stdout.trimEnd()
 }

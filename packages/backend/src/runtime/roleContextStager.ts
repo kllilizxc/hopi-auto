@@ -21,7 +21,7 @@ import type { PublicationSnapshot, PublicationSnapshotFile } from '../publicatio
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
-import { type SourceMergePreflightResult, stageSourceMerge } from './sourceMergePreflight'
+import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
 
 export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
 export type Responsibility = (typeof RESPONSIBILITIES)[number]
@@ -552,9 +552,7 @@ async function inspectCurrentCandidate(
   const integrations: CandidateInspection['integrations'] = []
   for (const [index, repo] of repoRoots.entries()) {
     try {
-      const [releaseHead, taskHead, working] = await Promise.all([
-        gitOutput(repo.path, ['rev-parse', releaseRef]),
-        gitOutput(repo.path, ['rev-parse', 'HEAD']),
+      const [working, integration] = await Promise.all([
         gitOutput(repo.path, [
           'status',
           '--porcelain=v1',
@@ -563,30 +561,25 @@ async function inspectCurrentCandidate(
           '.',
           ':(exclude).hopi/**',
         ]),
+        inspectSourceMerge({
+          repoRoot: repo.path,
+          taskRoot: repo.path,
+          releaseRef,
+          indexPath: join(scratchRoot, `integration-preflight-${index}.index`),
+        }),
       ])
-      const [committed, mergeBase] = await Promise.all([
-        gitOutput(repo.path, [
-          'diff',
-          '--name-only',
-          releaseHead,
-          taskHead,
-          '--',
-          '.',
-          ':(exclude).hopi/**',
-        ]),
-        gitOutput(repo.path, ['merge-base', releaseHead, taskHead]),
+      const committed = await gitOutput(repo.path, [
+        'diff',
+        '--name-only',
+        integration.releaseHead,
+        integration.taskHead,
+        '--',
+        '.',
+        ':(exclude).hopi/**',
       ])
       const indexPath = join(scratchRoot, `integration-preflight-${index}.index`)
       await rm(indexPath, { force: true })
-      const result = await stageSourceMerge({
-        repoRoot: repo.path,
-        mergeBase,
-        releaseHead,
-        taskHead,
-        indexPath,
-      })
-      await rm(indexPath, { force: true })
-      integrations.push({ repoId: repo.repoId, releaseHead, taskHead, mergeBase, result })
+      integrations.push({ repoId: repo.repoId, ...integration })
       for (const path of committed.split('\n').filter(Boolean)) files.add(`${repo.repoId}:${path}`)
       for (const line of working.split('\n').filter(Boolean)) {
         const path = line.slice(3).trim().split(' -> ').at(-1)

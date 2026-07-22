@@ -401,7 +401,8 @@ Attention, and other selected authority. An unrelated C1 may advance the Project
 or Reviewer runs without making that semantic context stale; task isolation and deterministic C1
 rebuild or conflict handling own the later source reconciliation.
 
-Generator repair context reports the current candidate integration preflight for every selected Repo.
+Generator repair context and Assistant state report the current candidate integration preflight for
+every selected Repo of a nonterminal Engineering Work.
 That observation is produced by the same isolated-index three-way source merge used by C1 and includes
 the Repo-local release head, task head, merge base, and whether the candidate is currently ready or
 conflicted. It is current environment state, not a second gate or a model instruction. Owning Work

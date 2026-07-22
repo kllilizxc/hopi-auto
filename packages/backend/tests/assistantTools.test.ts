@@ -28,6 +28,7 @@ import { createPreviewManager } from '../src/runtime/previewManager'
 import type { Responsibility } from '../src/runtime/roleContextStager'
 import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { runStoragePath } from '../src/runtime/runPaths'
+import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
@@ -1582,6 +1583,53 @@ describe('Assistant HOPI tools', () => {
       projects: [{ available: true, repos: [{ repoId: 'primary' }] }],
     })
     expect(JSON.stringify(pending.value)).not.toContain('delivery')
+  })
+
+  test('exposes the current C1 source preflight for a nonterminal Engineering Work', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-1')
+    const task = await createStableWorktreeManager(fixture.homeRoot).prepare({
+      projectRoot: fixture.goalStore.paths.projectRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      repoId: fixture.primaryRepoId,
+      primaryRepoId: fixture.primaryRepoId,
+    })
+    await rm(join(task.path, 'README.md'))
+    await git(task.path, ['add', '.'])
+    await git(task.path, ['commit', '-m', 'delete source file'])
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-candidate',
+      content: 'Inspect the current candidate.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    const state = await fixture.tools.executeForEvent('EV-candidate', 'hopi_read_state', {})
+    expect(state.value).toMatchObject({
+      projects: [
+        {
+          goals: [
+            {
+              works: [
+                {
+                  attributes: { id: 'W-1' },
+                  candidateIntegration: [
+                    {
+                      repoId: fixture.primaryRepoId,
+                      kind: 'observed',
+                      result: { kind: 'ready' },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
   })
 
   test('limits Reflection to one internal handoff and lets only main expose it', async () => {

@@ -1,8 +1,15 @@
-import { stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
-import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/canonicalDocuments'
+import {
+  type WorkDocument,
+  engineeringWorkRepoIds,
+  isEngineeringWork,
+  isPlanningWork,
+  isWorkTerminal,
+} from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { projectReleaseRef } from '../domain/project'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
@@ -19,6 +26,8 @@ import type {
   RunAttemptSummary,
 } from '../runtime/runAttemptStore'
 import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
+import { inspectSourceMerge } from '../runtime/sourceMergePreflight'
+import { createStableWorktreeManager } from '../runtime/stableWorktreeManager'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { AssistantToolRequestError } from './assistantToolRequestError'
@@ -90,6 +99,7 @@ interface DigestProject {
     } | null
     works: Array<{
       attributes: unknown
+      candidateIntegration?: unknown
       runtime: {
         latestAttempt: { status: string } | null
         stale: boolean
@@ -112,6 +122,7 @@ export function createAssistantStateReader(options: {
   const homeRoot = resolve(options.homeRoot)
   const now = options.now ?? (() => new Date())
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_ATTEMPT_STALE_AFTER_MS
+  const worktrees = createStableWorktreeManager(homeRoot)
 
   return {
     async read(input = {}) {
@@ -239,6 +250,15 @@ export function createAssistantStateReader(options: {
                           })
                         : readWorkEvidenceSummary({ project, goalId, work, goalPackage })
                       : null
+                    const candidateIntegration =
+                      isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes)
+                        ? await readCandidateIntegration({
+                            project,
+                            goalId,
+                            work,
+                            worktrees,
+                          })
+                        : null
                     return {
                       attributes: input.includeEvidence
                         ? work.attributes
@@ -248,6 +268,7 @@ export function createAssistantStateReader(options: {
                       ),
                       projection: projectionByWork.get(work.attributes.id) ?? null,
                       runtime,
+                      ...(candidateIntegration ? { candidateIntegration } : {}),
                       ...(evidence ? { evidence } : {}),
                     }
                   }),
@@ -573,6 +594,63 @@ async function existingRunRoot(
   return (await pathExists(legacy)) ? legacy : null
 }
 
+async function readCandidateIntegration(input: {
+  project: AssistantStateProject
+  goalId: string
+  work: WorkDocument
+  worktrees: ReturnType<typeof createStableWorktreeManager>
+}) {
+  if (!isEngineeringWork(input.work.attributes)) return []
+  const primaryRepoId = input.project.primaryRepoId ?? 'primary'
+  const repoIds = engineeringWorkRepoIds(input.work.attributes, primaryRepoId)
+  const scratchRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-candidate-'))
+  try {
+    return await Promise.all(
+      repoIds.map(async (repoId, index) => {
+        const repo = input.project.repos?.find(
+          (candidate) => (candidate.repoId ?? primaryRepoId) === repoId,
+        )
+        if (!repo) return { repoId, kind: 'unavailable' as const, detail: 'Repo is not linked.' }
+        try {
+          const task = await input.worktrees.inspect({
+            projectRoot: repo.integrationRoot,
+            projectId: input.project.projectId,
+            goalId: input.goalId,
+            workId: input.work.attributes.id,
+            repoId,
+            primaryRepoId,
+          })
+          if (!task) {
+            return {
+              repoId,
+              kind: 'unavailable' as const,
+              detail: 'Task worktree is not materialized.',
+            }
+          }
+          return {
+            repoId,
+            kind: 'observed' as const,
+            ...(await inspectSourceMerge({
+              repoRoot: repo.integrationRoot,
+              taskRoot: task.path,
+              releaseRef: projectReleaseRef(input.project.projectId),
+              indexPath: join(scratchRoot, `${index}.index`),
+            })),
+          }
+        } catch (error) {
+          return {
+            repoId,
+            kind: 'unavailable' as const,
+            detail: error instanceof Error ? error.message : String(error),
+          }
+        }
+      }),
+    )
+  } finally {
+    await rm(scratchRoot, { recursive: true, force: true })
+  }
+}
+
 async function latestActivity(
   attempt: RunAttemptSummary,
   events: readonly { createdAt: string }[],
@@ -624,6 +702,7 @@ async function semanticDigest(
           : null,
         works: goal.works.map((work) => ({
           attributes: work.attributes,
+          ...(work.candidateIntegration ? { candidateIntegration: work.candidateIntegration } : {}),
           terminalAttempt:
             work.runtime.latestAttempt?.status === 'running'
               ? null
