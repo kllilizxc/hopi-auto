@@ -455,7 +455,11 @@ describe('RoleContextStager', () => {
       expect(prompt).toContain('notifiedAt: null')
       expect(prompt).toContain('evidence that retry cannot help')
       expect(prompt).toContain('create only added or replaced control documents')
-      expect(prompt).toContain('Finish with exactly one JSON object matching this schema')
+      expect(prompt).toContain(
+        'Progress messages and the terminal outcome are different protocol surfaces',
+      )
+      expect(prompt).toContain('Progress, when emitted, is non-authoritative ordinary prose')
+      expect(prompt).toContain('exactly one JSON object matching this schema as the final response')
       expect(prompt).toContain('adapter validates and persists this terminal object')
       expect(prompt).toContain('Do not enter a vendor plan-approval mode')
       expect(prompt.length).toBeLessThan(7_500)

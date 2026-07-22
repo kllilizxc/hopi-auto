@@ -799,6 +799,12 @@ validates that outcome and persists it as `result.json`, so persistence does not
 remembering a file write. Opaque process adapters retain the direct file contract. Coordinator
 never fabricates success from ordinary final prose.
 
+Interactive progress and terminal outcome are distinct output surfaces. Provider-requested progress
+updates are optional, non-authoritative transcript prose: they describe current work but cannot claim
+a Run result and never use the terminal result schema. The responsibility emits that JSON object
+exactly once as its final response after execution settles. This separation lets provider-native
+communication remain readable without leaking the machine outcome protocol into Activity.
+
 If an interactive vendor exits cleanly without a valid outcome, the runner resumes the same Session
 once inside the same Run with a narrow completion instruction. That recovery retains workspace and
 conversation knowledge, does not repeat Repo preparation, and does not create another Attempt. A

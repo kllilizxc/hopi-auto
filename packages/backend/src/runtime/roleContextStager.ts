@@ -1014,7 +1014,7 @@ function renderResponsibilityPrompt(
           'Attached images correspond only to Goal assets cited by the owning Work. Apply their documented purpose and limits.',
         ]
       : []),
-    'Never create or edit evidence/** or append evidenceRefs. Return only the Run-local terminal outcome; the adapter persists result.json and Coordinator derives immutable Evidence from it.',
+    'Never create or edit evidence/** or append evidenceRefs. The final response is the only Run outcome; the adapter persists it as result.json and Coordinator derives immutable Evidence from it.',
     'Targeted Attention is for a blocker this role and retry cannot clear. Name Assistant for HOPI repair; name the operator only for an external decision, credential, permission, or action. Technical diagnostics such as local ports are not operator authority.',
     ...targetedAttentionContract(input),
     '',
@@ -1302,7 +1302,8 @@ function resultInstruction(responsibility: Responsibility) {
   return [
     '## Required Result',
     '',
-    'Finish with exactly one JSON object matching this schema:',
+    'Progress messages and the terminal outcome are different protocol surfaces. Progress, when emitted, is non-authoritative ordinary prose; it never uses the result schema or claims a Run result.',
+    'After all execution settles, finish by emitting exactly one JSON object matching this schema as the final response:',
     '',
     '```json',
     '{"result":"<choose one allowed result>","summary":"Concise evidence-backed result","artifacts":[]}',
