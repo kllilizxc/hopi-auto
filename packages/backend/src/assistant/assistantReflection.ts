@@ -340,7 +340,7 @@ function reflectionPrompt(
     'Objective: decide whether this state change warrants a speaking Assistant turn, and hand off the material facts and consequence when it does.',
     'This is a disposable read-only run. Canonical state and source are immutable here; the available HOPI tools are hopi_read_state and hopi_handoff_to_main.',
     'The supplied snapshot is an observation and may become stale. A handoff creates an internal Inbox event; it does not itself notify the operator or mutate Goal state.',
-    'Current diagnostics are observations at observedAt. Attention text is immutable creation-time rationale: an open Attention is unresolved, but its original diagnosis may already be obsolete.',
+    'Current diagnostics are observations at observedAt. currentCandidateIntegration is the live C1 source preflight; ready means the current task and release inputs need no Generator source repair to cross that merge. creationRationale and latestAttempt are historical records; an open Attention is unresolved, but its original diagnosis may already be obsolete.',
     'Use the trigger to choose the narrowest useful read: Home and Project reads are compact indexes, while a Goal read provides current diagnostic detail.',
     'Attention ownership is exact: copy each selected reference verbatim from hopi_read_state; never construct it from id or target. One handoff may select workspace Attention or Attention from exactly one Goal, never mixed scopes.',
     'Operator action means a human decision, credential, permission, or external act that Assistant authority cannot provide. Assistant-owned technical work remains Assistant action.',

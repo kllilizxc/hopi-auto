@@ -198,7 +198,9 @@ is still current. The Assistant compares the current observations with that hist
 may resolve an Attention whose premise no longer holds. The Assistant tool projection makes this
 temporal boundary structural: live candidate integration appears as `currentCandidateIntegration`,
 while the immutable Attention body appears as `creationRationale`. These names affect only the model
-view; canonical documents and product APIs retain their domain fields.
+view; canonical documents and product APIs retain their domain fields. A `ready` result means the
+current task and release inputs can pass the C1 source merge without Generator source repair; it
+does not mean the Work is schedulable while an unrelated gate remains open.
 An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
 artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
 other Evidence remain first-class Project documents and are read from exact paths only when needed.
