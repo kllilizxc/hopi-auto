@@ -687,8 +687,9 @@ describe('MVP server', () => {
       join(adapterRoot, 'preview'),
       [
         '#!/usr/bin/env bun',
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
-        'process.on("SIGTERM", () => process.exit(0))',
+        'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ready") })',
+        'console.log(`HOPI_PREVIEW_URL=http://127.0.0.1:${server.port}/`)',
+        'process.on("SIGTERM", () => { server.stop(true); process.exit(0) })',
         'await new Promise(() => {})',
         '',
       ].join('\n'),
@@ -719,7 +720,7 @@ describe('MVP server', () => {
       session: { status: 'starting', repair: null },
     })
     expect(await waitForPreviewSession(base, 'P-slow', 'running')).toMatchObject({
-      endpoint: 'http://127.0.0.1:4321',
+      endpoint: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
       repair: null,
     })
   })

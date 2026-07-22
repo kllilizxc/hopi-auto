@@ -56,6 +56,7 @@ interface PreviewOperation {
   logs: BoundedLineTail
   ready: Promise<string>
   signalReady(endpoint: string): void
+  reportedEndpoint: string | null
   streams: Promise<void>[]
   logWriteTail: Promise<void>
   startPromise: Promise<PreviewStartResult>
@@ -69,6 +70,7 @@ export interface PreviewManagerOptions {
   now?: () => Date
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
+  endpointProbe?: (endpoint: string) => Promise<void>
 }
 
 export function createPreviewManager(
@@ -80,6 +82,9 @@ export function createPreviewManager(
   const stopGraceMs = options.stopGraceMs ?? 5_000
   const now = options.now ?? (() => new Date())
   const preparer = options.preparer ?? createProjectPreparer()
+  const endpointProbe =
+    options.endpointProbe ??
+    ((endpoint: string) => probePreviewEndpoint(endpoint, Math.min(startupTimeoutMs, 10_000)))
   const operations = new Map<string, PreviewOperation>()
 
   async function runStart(
@@ -181,6 +186,29 @@ export function createPreviewManager(
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
     }
+    try {
+      await endpointProbe(startup.endpoint)
+    } catch (error) {
+      const message = `Preview endpoint probe failed for ${startup.endpoint}: ${errorMessage(error)}`
+      operation.logs.push(message)
+      operation.logWriteTail = operation.logWriteTail.then(() =>
+        appendFile(paths.logPath, `${message}\n`),
+      )
+      await terminatePreview(child, stopGraceMs)
+      await settlePreviewLogs(operation)
+      if (isStopped(operation)) {
+        return stoppedResult(operation.session, now)
+      }
+      operation.session.status = 'failed'
+      operation.session.endpoint = null
+      operation.session.endedAt = now().toISOString()
+      operation.session.error = message
+      return repairRequired('startup_failed', paths.adapter, operation.logs.text())
+    }
+    if (isStopped(operation)) {
+      return stoppedResult(operation.session, now)
+    }
+    operation.session.endpoint = startup.endpoint
     operation.session.status = 'running'
     void child.exited.then(async (exitCode) => {
       if (operation.session.status === 'stopped') return
@@ -288,6 +316,7 @@ export function createPreviewManager(
         logs: new BoundedLineTail(),
         ready,
         signalReady,
+        reportedEndpoint: null,
         streams: [],
         logWriteTail: Promise.resolve(),
         startPromise: Promise.resolve({ kind: 'started', session }),
@@ -347,9 +376,38 @@ function recordLine(operation: PreviewOperation, line: string, logPath: string) 
   operation.logs.push(line)
   operation.logWriteTail = operation.logWriteTail.then(() => appendFile(logPath, `${line}\n`))
   const endpoint = /^HOPI_PREVIEW_URL=(\S+)$/.exec(line)?.[1]
-  if (endpoint && operation.session.endpoint === null) {
-    operation.session.endpoint = endpoint
+  if (endpoint && operation.reportedEndpoint === null) {
+    operation.reportedEndpoint = endpoint
     operation.signalReady(endpoint)
+  }
+}
+
+async function probePreviewEndpoint(endpoint: string, timeoutMs: number) {
+  let url: URL
+  try {
+    url = new URL(endpoint)
+  } catch {
+    throw new Error('ready URL is invalid')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`ready URL uses unsupported protocol ${url.protocol}`)
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { redirect: 'follow', signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(`GET returned HTTP ${response.status}`)
+    }
+    await response.body?.cancel()
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`GET did not complete within ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -412,8 +470,9 @@ function repairRequired(reason: PreviewRepairReason, adapter: string, logs: stri
     logs,
     prompt: [
       `Preview could not start through ${adapter}.`,
-      "The reviewed contract is every selected Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its ready URL.",
+      "The reviewed contract is every Project Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its operator-usable ready URL.",
       'A captured preparation or startup error is diagnosis rather than successful Preview behavior.',
+      'For a browser-facing Preview, running state or an HTTP application shell is transport evidence only; accepted user-visible behavior requires independent candidate browser evidence.',
       'First check whether an equivalent nonterminal Goal or Work is already creating or repairing either script and reuse it.',
       'A terminal setup Goal whose Repo preparation or Preview startup still fails is not an active repair: reopen it or request the smallest Planning repair instead of declaring the failure already accepted.',
       details,

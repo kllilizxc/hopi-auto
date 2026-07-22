@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createPreviewManager, makePreviewAdapterExecutable } from '../src/runtime/previewManager'
+import {
+  type PreviewManagerOptions,
+  createPreviewManager,
+  makePreviewAdapterExecutable,
+} from '../src/runtime/previewManager'
 import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'preview-manager')
@@ -34,7 +38,7 @@ describe('PreviewManager', () => {
     )
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       startupTimeoutMs: 2_000,
       stopGraceMs: 500,
       now: () => new Date('2026-07-11T00:00:00Z'),
@@ -88,7 +92,7 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
     await initializeGit(apiRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       startupTimeoutMs: 2_000,
       stopGraceMs: 500,
     })
@@ -109,7 +113,7 @@ describe('PreviewManager', () => {
   })
 
   test('returns an ordinary Assistant repair prompt when the adapter is missing', async () => {
-    const manager = createPreviewManager(join(temporaryRoot, 'home'))
+    const manager = createTestPreviewManager()
 
     const result = await manager.start({
       projectId: 'P-1',
@@ -125,13 +129,15 @@ describe('PreviewManager', () => {
       status: 'failed',
       repair: { reason: 'missing', prompt: result.prompt },
     })
+    expect(result.prompt).toContain('operator-usable ready URL')
+    expect(result.prompt).toContain('independent candidate browser evidence')
   })
 
   test('shares one preparation and adapter launch across concurrent Start calls', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       preparer: controlled.preparer,
     })
 
@@ -150,7 +156,7 @@ describe('PreviewManager', () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       preparer: controlled.preparer,
     })
 
@@ -172,7 +178,7 @@ describe('PreviewManager', () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       preparer: controlled.preparer,
     })
 
@@ -219,7 +225,7 @@ describe('PreviewManager', () => {
         }
       },
     }
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), { preparer })
+    const manager = createTestPreviewManager({ preparer })
 
     const failed = await manager.start({ projectId: 'P-1', projectRoot })
     expect(failed).toMatchObject({ kind: 'repair_required', reason: 'preparation_failed' })
@@ -237,7 +243,7 @@ describe('PreviewManager', () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       preparer: controlled.preparer,
     })
 
@@ -264,7 +270,7 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await writePrepareAdapter(projectRoot, 'console.error("lockfile is stale"); process.exit(2)')
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'))
+    const manager = createTestPreviewManager()
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
@@ -286,7 +292,7 @@ describe('PreviewManager', () => {
     await Bun.write(adapter, '#!/bin/sh\nprintf "missing database\\n" >&2\nexit 2\n')
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), { startupTimeoutMs: 2_000 })
+    const manager = createTestPreviewManager({ startupTimeoutMs: 2_000 })
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
@@ -313,7 +319,7 @@ describe('PreviewManager', () => {
     )
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), { startupTimeoutMs: 2_000 })
+    const manager = createTestPreviewManager({ startupTimeoutMs: 2_000 })
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
@@ -353,7 +359,7 @@ describe('PreviewManager', () => {
     )
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       startupTimeoutMs: 2_000,
       stopGraceMs: 500,
     })
@@ -367,6 +373,108 @@ describe('PreviewManager', () => {
       session: { status: 'running', endpoint: 'http://127.0.0.1:4321' },
     })
     await manager.stop('P-1')
+  })
+
+  test('keeps Preview starting until Coordinator probes the exact advertised endpoint', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    let signalProbe: () => void = () => undefined
+    const probeEntered = new Promise<void>((resolve) => {
+      signalProbe = resolve
+    })
+    let releaseProbe: () => void = () => undefined
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve
+    })
+    const endpointServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch() {
+        signalProbe()
+        await probeGate
+        return new Response('ready')
+      },
+    })
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        `console.log("HOPI_PREVIEW_URL=http://127.0.0.1:${endpointServer.port}/app")`,
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      startupTimeoutMs: 2_000,
+      stopGraceMs: 500,
+    })
+
+    try {
+      const starting = manager.start({ projectId: 'P-1', projectRoot })
+      await probeEntered
+      expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', endpoint: null })
+      releaseProbe()
+      expect(await starting).toMatchObject({
+        kind: 'started',
+        session: {
+          status: 'running',
+          endpoint: `http://127.0.0.1:${endpointServer.port}/app`,
+        },
+      })
+      await manager.stop('P-1')
+    } finally {
+      releaseProbe()
+      endpointServer.stop(true)
+    }
+  })
+
+  test('fails startup when the advertised endpoint does not return a successful response', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    const endpointServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        return new Response('missing', { status: 404 })
+      },
+    })
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        `console.log("HOPI_PREVIEW_URL=http://127.0.0.1:${endpointServer.port}/missing")`,
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      startupTimeoutMs: 2_000,
+      stopGraceMs: 500,
+    })
+
+    try {
+      const result = await manager.start({ projectId: 'P-1', projectRoot })
+      expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+      if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+      expect(result.logs).toContain('GET returned HTTP 404')
+      expect(manager.inspect('P-1')).toMatchObject({
+        status: 'failed',
+        endpoint: null,
+        error: expect.stringContaining('GET returned HTTP 404'),
+      })
+    } finally {
+      endpointServer.stop(true)
+    }
   })
 
   test('release invalidation wins when Preview is still starting', async () => {
@@ -387,7 +495,7 @@ describe('PreviewManager', () => {
     )
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       startupTimeoutMs: 500,
       stopGraceMs: 500,
     })
@@ -425,7 +533,7 @@ describe('PreviewManager', () => {
     )
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
-    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+    const manager = createTestPreviewManager({
       startupTimeoutMs: 2_000,
       stopGraceMs: 500,
     })
@@ -441,6 +549,13 @@ describe('PreviewManager', () => {
     })
   })
 })
+
+function createTestPreviewManager(options: PreviewManagerOptions = {}) {
+  return createPreviewManager(join(temporaryRoot, 'home'), {
+    endpointProbe: async () => undefined,
+    ...options,
+  })
+}
 
 function dirname(path: string) {
   return path.slice(0, path.lastIndexOf('/'))

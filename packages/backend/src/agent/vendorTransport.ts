@@ -44,6 +44,7 @@ export interface TransportContextBundle {
   outcomeFile: string
   canonicalOutcomeFile: string
   browserHarnessDir: string
+  browserHarnessCommand?: string
   browserHarnessArtifactDir: string
   canonicalBrowserHarnessArtifactDir: string
   imageFiles?: string[]
@@ -612,6 +613,9 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     HOPI_DESIGN_FILE: bundle.designFile,
     HOPI_PROMPT_FILE: bundle.promptFile,
     HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
+    ...(bundle.browserHarnessCommand
+      ? { HOPI_BROWSER_HARNESS_COMMAND: bundle.browserHarnessCommand }
+      : {}),
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
     ...(bundle.apiOrigin ? { HOPI_API_ORIGIN: bundle.apiOrigin } : {}),
@@ -638,6 +642,7 @@ function placeholderValues(options: {
     DESIGN_FILE: options.bundle.designFile,
     PROMPT_FILE: options.bundle.promptFile,
     BROWSER_HARNESS_DIR: options.bundle.browserHarnessDir,
+    BROWSER_HARNESS_COMMAND: options.bundle.browserHarnessCommand ?? '',
     BROWSER_HARNESS_ARTIFACT_DIR: options.bundle.browserHarnessArtifactDir,
     API_ORIGIN: options.bundle.apiOrigin ?? '',
     GOAL_KEY: options.input.goalKey,

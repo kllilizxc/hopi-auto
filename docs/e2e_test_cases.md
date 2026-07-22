@@ -1006,7 +1006,8 @@ Inbox reply, session, Attention, release refs, delivery bindings, and relocated 
 Actions:
 
 1. Start Preview from the UI for the valid fixture.
-2. Wait for its explicit ready signal and open the endpoint.
+2. Wait for its explicit ready signal, open the endpoint in a real browser, and reach the fixture's
+   defined user-visible state rather than only its HTML shell.
 3. Deliver a new C1 and observe automatic Preview stop.
 4. Start Preview for the missing/stale adapter fixture.
 5. Accept the repair prompt through Assistant, deliver the adapter, and retry Preview.
@@ -1014,7 +1015,11 @@ Actions:
 Pass conditions:
 
 - Preview preparation and process cwd are the managed reviewed integration.
-- `starting` becomes `running` only after the ready signal, not merely a live PID.
+- `starting` becomes `running` only after the ready signal and Coordinator's exact-endpoint probe,
+  not merely a live PID or adapter self-report.
+- The reviewed browser-facing adapter has independent candidate browser evidence for its defined
+  user-visible state; HTTP success, shell HTML, static assets, and its own readiness probe are
+  insufficient by themselves.
 - Startup failure preserves logs and leaves no running session.
 - New release stops Preview with `release_updated` and does not auto-restart it.
 - Missing adapter creates one ordinary repair instruction carrying the viewed Goal context; Assistant

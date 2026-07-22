@@ -1008,6 +1008,18 @@ browser harness when material. It does not own Project Preview, integration, or 
 missing operator-controlled browser permission may justify targeted Attention; inability to bind a
 port solely because HOPI omitted the required Run capability does not.
 
+The Run environment exposes `HOPI_BROWSER_HARNESS_COMMAND` only when a host Browser Harness
+executable is installed, along with a Run-owned artifact directory. Its absence is an environment
+fact rather than a fictitious tool path; project-native browser tooling, package installation,
+network access, local ports, and Run scratch remain available under the ordinary execution envelope.
+
+Changing, creating, or repairing a browser-facing `scripts/hopi/preview` always makes that client
+boundary material. Reviewer starts the candidate adapter independently and uses an available real
+browser client to prove the user-visible state promised by accepted design. The adapter's own probe,
+an HTTP success status, an application-shell response, loaded static assets, or a ready marker cannot
+independently prove that state. The design supplies the observable product outcome; HOPI does not
+replace it with a generic console-error rule, DOM selector list, or prescribed browser product.
+
 Reviewer decides the proof plan before installing optional tools. It reuses the Project's documented
 entrypoint and existing test/browser stack, does not install competing harnesses after decisive proof
 already exists, and does not rerun an unchanged passing check. Helper-only changes normally stop at
@@ -1182,8 +1194,10 @@ The public Project Preview API always starts the current managed integration rel
 cannot prove a pre-C1 task candidate. Engineering Work contains only acceptance criteria that
 Generator and Reviewer can prove by executing the candidate script directly with that Run's Repo
 manifest. When accepted design explicitly requires public Preview proof, the final semantic Planner
-uses the injected `HOPI_API_ORIGIN` after the relevant Engineering Work has integrated; it proposes
-completion only after the public session reaches `running`, and otherwise plans the smallest repair.
+uses the injected `HOPI_API_ORIGIN` after the relevant Engineering Work has integrated. For a
+browser-facing Preview, direct browser evidence of the accepted user-visible state is required;
+`running` and HTTP reachability alone prove only the runtime lease. Planner proposes completion only
+after the required integrated proof, and otherwise plans the smallest repair.
 Planner does not start Preview for Goals that do not require this proof. This reuses final Planning
 instead of adding a post-C1 stage, candidate-Preview mode, or automatic Preview on every release.
 The fixed API paths are `POST /api/projects/:projectId/preview/start`,
@@ -1636,6 +1650,12 @@ before advertising its URL. A clear missing-dependency error is useful diagnosis
 Preview behavior; requiring the operator to enter the managed worktree and install dependencies
 violates the Project contract.
 
+For a browser-facing Project, the advertised URL is an assertion about an operator-usable Preview of
+the release, not merely a transport-ready HTML shell. Any host context, service, fixture, proxy, or
+other runtime support required by the accepted user-visible state belongs to the Project adapter
+contract. If that state cannot be produced in the provided environment, the adapter fails with
+diagnosis instead of advertising a blank, fatally unmounted, or otherwise unusable page.
+
 The first version always runs the Project's current integration target. It does not select a task
 worktree, combine unintegrated Work, or construct a speculative Goal checkout. Coordinator owns the
 disposable process, logs, endpoint, and health facts under runtime storage; none is canonical
@@ -1659,14 +1679,16 @@ directory. Coordinator supplies `HOPI_PROJECT_ROOT` and a disposable
 `HOPI_PREVIEW_RUNTIME_DIR`, stops it with `SIGTERM` (then bounded `SIGKILL`), and captures both
 streams in runtime storage. Exactly one line `HOPI_PREVIEW_URL=<url>` is the required ready signal,
 not an early intention: the adapter emits it only after that endpoint is reachable. Coordinator
-keeps the session at `starting` until this line, adapter exit, or one bounded startup timeout. The
+independently probes the exact advertised endpoint and keeps the session at `starting` until both the
+line and successful probe exist, adapter exit occurs, or one bounded startup timeout expires. The
 public Start request admits that operation and returns the current session immediately; it never
 holds an HTTP connection across Repo preparation or adapter startup. Existing Project-state polling
-observes `starting -> running|failed`. Only the ready line produces `running`; failure records the
-captured logs and ordinary Assistant repair prompt on the same disposable session, so a lost Start
-response cannot lose the diagnosis or leave the UI with only a transport error. These are adapter
-I/O conventions, not generic responsibility-Run environment, canonical Project configuration, or
-workflow state.
+observes `starting -> running|failed`. Only transport readiness produces `running`; exit, timeout,
+or a failed probe records the captured logs and ordinary Assistant repair prompt on the same
+disposable session, so a lost Start response cannot lose the diagnosis or leave the UI with only a
+transport error. These are adapter I/O conventions, not generic responsibility-Run environment,
+canonical Project configuration, or workflow state. Ordinary Start does not rerun semantic browser
+review: the reviewed adapter and integration boundary own that evidence.
 
 One Project has one serialized Preview operation. Concurrent Start calls share the same launch;
 Stop during preparation prevents the adapter from launching, and a later Start waits for that

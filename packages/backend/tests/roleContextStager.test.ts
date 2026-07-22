@@ -105,6 +105,16 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Planner working directory is not a Git checkout')
     expect(prompt).toContain('A Work ID owns one cumulative source lineage')
     expect(prompt).toContain('Public Preview observes only the integrated release')
+    expect(prompt).toContain('direct browser evidence of its user-visible state')
+    expect(prompt).toContain('running or HTTP reachability alone is transport evidence')
+    expect(prompt).toContain('Host Browser Harness, when installed')
+    expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
+    expect(bundle.browserHarnessCommand).toBe(
+      process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim() ||
+        Bun.which('codex-browser-harness') ||
+        Bun.which('browser-harness') ||
+        undefined,
+    )
     expect(prompt).toContain('The Public Preview API is available at $HOPI_API_ORIGIN')
     expect(prompt.length).toBeLessThan(10_000)
     expect(bundle.apiOrigin).toBe('http://127.0.0.1:3000')
@@ -484,11 +494,16 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('complete owning Engineering Work')
     expect(generatorPrompt).toContain('canonical representation')
     expect(generatorPrompt).toContain('exactly one HOPI_PREVIEW_URL=<reachable-url> line')
+    expect(generatorPrompt).toContain('operator-usable user-visible state')
+    expect(generatorPrompt).toContain('HTTP application shell that cannot reach that state')
     expect(generatorPrompt).toContain('not this candidate')
     expect(reviewerPrompt).toContain('strongest proportionate evidence')
     expect(reviewerPrompt).toContain('exact command and input or deterministic inspection')
     expect(reviewerPrompt).toContain('accepted contract and material risk')
     expect(reviewerPrompt).toContain('hypothetical inputs outside an accepted grammar')
+    expect(reviewerPrompt).toContain('requires independent real-browser evidence')
+    expect(reviewerPrompt).toContain("adapter's own probe, HTTP success")
+    expect(reviewerPrompt).toContain('choose the available browser client and assertions')
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('integration belong to Coordinator or Planner')
     expect(reviewerPrompt).toContain('local ports')

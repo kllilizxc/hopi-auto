@@ -624,10 +624,14 @@ prerequisites from a clean managed integration worktree and `scripts/hopi/previe
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
 one readiness transition: the Start command immediately returns the admitted `starting` session,
 then `starting -> running` only when the Preview adapter emits
-`HOPI_PREVIEW_URL=<reachable-url>`; preparation failure, exit, or bounded timeout becomes `failed`
-and retains the captured logs and repair prompt on that same disposable session. Existing Project
-polling observes the transition, so neither slow startup nor a lost command response loses the
-repair path. Operator Stop moves `starting|running -> stopped`.
+`HOPI_PREVIEW_URL=<reachable-url>` and Coordinator independently receives a successful response from
+that exact endpoint; exit, failed probing, or bounded timeout before that becomes `failed` and routes
+the captured logs through the same repair prompt on that disposable session. Existing Project polling
+observes the transition, so neither slow startup nor a lost command response loses the repair path.
+`running` records a transport-ready runtime lease, not semantic product evidence. Browser-facing
+Preview adapters enter the reviewed release only after independent candidate browser evidence proves
+the user-visible state defined by accepted design. Operator Stop moves
+`starting|running -> stopped`.
 A successfully advanced or recovered C1 ref moves `starting|running -> stopped` with runtime reason
 `release_updated` and clears the endpoint; it never auto-restarts Preview or changes the durable C1
 outcome. Other state and document changes do not participate in this runtime transition.

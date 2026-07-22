@@ -103,6 +103,7 @@ export function createRoleContextStager(
       const promptFile = join(runRoot, 'prompt.md')
       const reposFile = join(runRoot, 'repos.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
+      const browserHarnessCommand = resolveBrowserHarnessCommand()
       const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
       const runtimeCacheDir = runtimeCacheRoot(absoluteHomeRoot)
 
@@ -333,12 +334,18 @@ export function createRoleContextStager(
         outcomeFile: resultFile,
         canonicalOutcomeFile: resultFile,
         browserHarnessDir: 'scripts/hopi/browser-harness',
+        browserHarnessCommand,
         browserHarnessArtifactDir,
         canonicalBrowserHarnessArtifactDir: browserHarnessArtifactDir,
         imageFiles,
       }
     },
   }
+}
+
+function resolveBrowserHarnessCommand() {
+  const explicit = process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim()
+  return explicit || Bun.which('codex-browser-harness') || Bun.which('browser-harness') || undefined
 }
 
 async function snapshotOperatorPreference(publisher: PublicationCoordinator, homeRoot: string) {
@@ -1016,6 +1023,7 @@ function renderResponsibilityPrompt(
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
     'Source roots: the complete mapping in $HOPI_REPOS_FILE',
+    'Host Browser Harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND; retained output: $HOPI_BROWSER_HARNESS_ARTIFACT_DIR. Otherwise use the Project browser stack available in this execution environment.',
     ...(paths.operatorPreferenceFile
       ? ['Operator preference snapshot: $HOPI_OPERATOR_PREFERENCE_FILE']
       : []),
@@ -1244,7 +1252,7 @@ function plannerPrompt(paths: {
     'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, and depends only on required output, overlapping writers, or exclusive resources.',
     'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
     'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
-    'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. Planner may use it for final integrated proof when the accepted design requires that proof.',
+    'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. When accepted design requires final proof of a browser-facing Preview, direct browser evidence of its user-visible state is required; running or HTTP reachability alone is transport evidence.',
     'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',
     'Goal assets remain durable only through their exact Goal asset paths and documented purpose. Repo responsibilities and shared contracts have one canonical owner.',
     'New Engineering Work frontmatter (Markdown bodies remain free-form):',
@@ -1293,6 +1301,7 @@ function generatorPrompt() {
     'Project guidance, the complete Project Repo manifest, preparation entrypoints, accepted Inputs, and latest Evidence are environment knowledge for this Run. Each Repo owns its own scripts/hopi/prepare contract.',
     'Candidate runtime proof belongs to the task worktree and Run manifest. Public Project Preview observes the integrated release, not this candidate.',
     'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after the service is ready.',
+    'For a browser-facing Preview, that URL asserts the operator-usable user-visible state defined by accepted design; an HTTP application shell that cannot reach that state is not ready.',
     'The staged canonical context overrides any older .hopi copy in the task branch.',
     '.hopi, canonical documents, the task worktree Git index/HEAD/branch, and shared Git metadata are Coordinator-owned and immutable here. Coordinator checkpoints source edits after the Run.',
     'External effects such as merge, deploy, production-data mutation, or delivery outside the Work require explicit Work or operator authority. Run-owned clones under $HOPI_RUN_SCRATCH are available for authorized branch or PR delivery.',
@@ -1312,6 +1321,7 @@ function reviewerPrompt(projectId: string) {
     'A reproducible rejection identifies the violated invariant, exact command and input or deterministic inspection, and observed failure. Observational findings state their evidence boundary without inventing a reproducer.',
     'Project guidance, preparation, Repo manifest, existing checks, candidate runtime, and browser stack are available evidence sources. Public Project Preview is not candidate evidence.',
     'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready.',
+    "A Work that changes, creates, or repairs a browser-facing scripts/hopi/preview requires independent real-browser evidence from the candidate adapter of the accepted user-visible state. The adapter's own probe, HTTP success, an application shell, loaded assets, or the ready marker cannot independently prove it; choose the available browser client and assertions from project design.",
     'Attention represents missing authority or resources that this responsibility cannot clear; it is not a substitute for an implementation defect or an evidence-backed verdict.',
     '',
   ]
