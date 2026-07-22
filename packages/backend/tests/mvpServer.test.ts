@@ -883,6 +883,9 @@ describe('MVP server', () => {
         },
       ],
     })
+    const missingGoalResponse = await fetch(`${base}/api/projects/P-1/goals/G-missing`)
+    expect(missingGoalResponse.status).toBe(404)
+    expect(await missingGoalResponse.json()).toEqual({ error: 'Goal not found: G-missing' })
     const linkedRepo = (
       linkedState.projects as Array<{
         repos: Array<{ integrationRoot: string; projectPath: string }>

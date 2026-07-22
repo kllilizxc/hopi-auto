@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   parseGoalDocument,
   parseWorkDocument,
@@ -8,7 +8,7 @@ import {
   renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
-import { GoalPackageValidationError } from '../src/domain/goalPackage'
+import { GoalPackageNotFoundError, GoalPackageValidationError } from '../src/domain/goalPackage'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import type { PublicationRoot } from '../src/publication/types'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -25,6 +25,36 @@ afterEach(async () => {
 })
 
 describe('createGoalPackageStore', () => {
+  test('distinguishes an absent Goal root from an incomplete Goal package', async () => {
+    const publisher = new PublicationCoordinator()
+    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+
+    await expect(store.readPackage('G-missing')).rejects.toBeInstanceOf(GoalPackageNotFoundError)
+
+    const workPath = store.paths.workDocument('G-incomplete', 'W-1')
+    await mkdir(dirname(store.paths.absolute(workPath)), { recursive: true })
+    await Bun.write(
+      store.paths.absolute(workPath),
+      renderWorkDocument({
+        attributes: {
+          id: 'W-1',
+          title: 'Orphan Work',
+          kind: 'planning',
+          stage: 'plan',
+          notBefore: null,
+          dependsOn: [],
+          contractRevision: 1,
+          evidenceRefs: [],
+          attempts: 0,
+        },
+        body: 'Incomplete package.\n',
+      }),
+    )
+    await expect(store.readPackage('G-incomplete')).rejects.toBeInstanceOf(
+      GoalPackageValidationError,
+    )
+  })
+
   test('creates Goal, design, and Planning Work through the initial Planning gate', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)

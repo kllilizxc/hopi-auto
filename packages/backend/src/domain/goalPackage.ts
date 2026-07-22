@@ -26,6 +26,11 @@ export interface GoalPackage {
 }
 
 export class GoalPackageValidationError extends Error {}
+export class GoalPackageNotFoundError extends Error {
+  constructor(readonly goalId: string) {
+    super(`Goal not found: ${goalId}`)
+  }
+}
 
 export async function readAndValidateGoalPackage(
   candidate: PublicationCandidate,
@@ -36,6 +41,7 @@ export async function readAndValidateGoalPackage(
   const filePaths = await candidate.listFiles(goalRoot)
   const goalSource = await candidate.readText(paths.goalDocument(goalId))
   if (goalSource === null) {
+    if (filePaths.length === 0) throw new GoalPackageNotFoundError(goalId)
     throw invalid(goalId, 'goal.md is missing')
   }
 

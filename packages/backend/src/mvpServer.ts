@@ -19,7 +19,7 @@ import {
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
 import type { WorkDocument } from './domain/canonicalDocuments'
-import type { GoalPackage } from './domain/goalPackage'
+import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
 import { inboxEventReferenceSchema } from './domain/inboxEventReference'
 import {
   normalizeProjectCodingDefaults,
@@ -808,6 +808,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (error instanceof GoalControllerError) {
           return json({ error: error.message }, 409)
+        }
+        if (error instanceof GoalPackageNotFoundError) {
+          return json({ error: error.message }, 404)
         }
         if (error instanceof CursorPageError) return json({ error: error.message }, 400)
         if (error instanceof AssistantHomeStoreError) {

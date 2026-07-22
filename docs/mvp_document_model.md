@@ -304,6 +304,12 @@ Project documents, `project.yml`, Project-qualified release refs, and task branc
 Project migration. User preferences travel with Assistant Home instead; Project-specific operating
 rules remain in Project docs or Repo-local `AGENTS.md`.
 
+A `Project × Goal` address whose Goal root contains no files is absent and public APIs report it as
+not found. Once any file exists below that Goal root, `goal.md` and the rest of the Goal package
+contract are mandatory; missing authority is corruption rather than absence. This distinction keeps
+stale or cross-Project Board addresses from becoming server faults without hiding partial canonical
+publication or filesystem damage.
+
 Each responsibility dispatch uses one globally identified runtime directory. Project, Goal, Work,
 and responsibility already belong in `attempt.json`; repeating them as filesystem ancestry adds no
 identity or isolation:
