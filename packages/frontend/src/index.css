@@ -2947,11 +2947,12 @@ button:disabled,
 }
 
 .unified-feed-message-row.user .unified-feed-message {
-  width: auto;
+  width: min(86%, 42rem);
   max-width: min(86%, 42rem);
   margin: 0; /* remove auto centering for user */
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message {
@@ -3174,8 +3175,10 @@ button:disabled,
 }
 
 .unified-feed-message__attachments {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 150px));
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 7px;
   justify-content: end;
@@ -3183,6 +3186,9 @@ button:disabled,
 
 .unified-feed-message__attachments a {
   display: block;
+  width: 150px;
+  max-width: 100%;
+  flex: 0 1 150px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-accent-500) 24%, transparent);
   border-radius: 11px;

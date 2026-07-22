@@ -298,6 +298,28 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
   expect(assistant).not.toContain('Responding to')
 })
 
+test('user text and image attachments stay in one right-aligned vertical message stack', async () => {
+  const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const userMessageRule =
+    styles.match(
+      /\.unified-feed-message-row\.user \.unified-feed-message\s*\{([^}]*)\}/,
+    )?.[1] ?? ''
+  const attachmentRule =
+    styles.match(/\.unified-feed-message__attachments\s*\{([^}]*)\}/)?.[1] ?? ''
+  const attachmentLinkRule =
+    styles.match(/\.unified-feed-message__attachments a\s*\{([^}]*)\}/)?.[1] ?? ''
+
+  expect(userMessageRule).toContain('display: flex')
+  expect(userMessageRule).toContain('flex-direction: column')
+  expect(userMessageRule).toContain('align-items: flex-end')
+  expect(userMessageRule).not.toContain('justify-content: flex-end')
+  expect(attachmentRule).toContain('display: flex')
+  expect(attachmentRule).toContain('flex-wrap: wrap')
+  expect(attachmentRule).toContain('justify-content: end')
+  expect(attachmentRule).not.toContain('grid-template-columns')
+  expect(attachmentLinkRule).toContain('flex: 0 1 150px')
+})
+
 test('Project and title-level Goal navigation reuse one peer switcher', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()

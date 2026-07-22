@@ -321,6 +321,40 @@ test('keeps user copy literal while tolerating an incomplete Assistant stream', 
   expect(markup).toContain('Streaming')
 })
 
+test('keeps user text and image attachments in the same message container', () => {
+  const markup = renderToStaticMarkup(
+    <UnifiedMessageFeed
+      feedKey="user-image"
+      items={[
+        {
+          id: 'user-image',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          kind: 'user_message',
+          role: 'user',
+          text: '这个信号根本看不清',
+          attachments: [
+            {
+              reference: '.hopi/docs/assistant/attachments/hash/chart.png',
+              fileName: 'chart.png',
+              url: '/api/assistant/attachments/hash/chart.png',
+            },
+          ],
+        },
+      ]}
+      mode="inline"
+      emptyState={<span>Empty</span>}
+    />,
+  )
+  const message = markup.match(/<div class="unified-feed-message">([\s\S]*?)<\/div><\/article>/)?.[1]
+
+  expect(message).toContain('unified-feed-message__bubble')
+  expect(message).toContain('unified-feed-message__attachments')
+  expect(message?.indexOf('unified-feed-message__bubble')).toBeLessThan(
+    message?.indexOf('unified-feed-message__attachments') ?? -1,
+  )
+  expect(message).toContain('alt="chart.png"')
+})
+
 test('routes completion updates through the shared lazy Markdown surface', () => {
   const artifactUrl = '/api/projects/P-1/goals/G-1/evidence/E-1/artifacts/7'
   const markup = renderToStaticMarkup(

@@ -787,6 +787,9 @@ The Assistant drawer shows one chronological conversation:
   HTML and Markdown images are not rendered; attachments remain explicit durable feed items.
   Artifact and `http(s)` links open in a new tab, while arbitrary machine-local paths remain
   non-clickable. User-authored bubbles and runtime/tool diagnostics remain literal
+- A user turn renders its literal text and attachment thumbnails as one right-aligned vertical
+  stack. Attachments never share the text bubble's horizontal layout or reduce its readable width;
+  image-only turns use the same stack without fabricating an empty bubble
 - targeted Attention is pinned as one direct request without displaying its internal identifier;
   replying preserves every open identifier associated with that exact message invisibly as context
 
