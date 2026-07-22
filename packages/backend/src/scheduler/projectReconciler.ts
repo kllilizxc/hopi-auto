@@ -1,11 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
 import { workAttentionTarget } from '../domain/attentionTarget'
-import {
-  engineeringWorkRepoIds,
-  isEngineeringWork,
-  isWorkTerminal,
-} from '../domain/canonicalDocuments'
+import { isEngineeringWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import {
   DEFAULT_PRIMARY_REPO_ID,
@@ -151,8 +147,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     options.outcomes ??
     createPassOutcomeCoordinator(options.store, options.publisher, {
       now,
-      primaryRepoId,
-      projectRepoIds: projectRepos.map((repo) => repo.repoId),
     })
   const integrator =
     options.integrator ??
@@ -353,16 +347,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         const owningWork = goalPackage.works.get(workId)
         if (!owningWork) throw new Error(`Work is missing: ${workId}`)
-        const selectedRepos =
-          responsibility === 'planner'
+        const runRepos =
+          responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
             ? projectRepos
-            : isEngineeringWork(owningWork.attributes)
-              ? engineeringWorkRepoIds(owningWork.attributes, primaryRepoId).map((repoId) =>
-                  requireProjectRepo({ repos: projectRepos }, repoId),
-                )
-              : []
-        if (responsibility !== 'planner' && selectedRepos.length === 0) {
-          throw new Error(`Engineering Work ${workId} has no Repo workspace`)
+            : []
+        if (responsibility !== 'planner' && runRepos.length === 0) {
+          throw new Error(`Engineering Work ${workId} has no Project Repo environment`)
         }
         let worktreeEntries: Array<{
           repo: LinkedProjectRepo
@@ -373,7 +363,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             responsibility === 'planner'
               ? []
               : await Promise.all(
-                  selectedRepos.map(async (repo) => {
+                  runRepos.map(async (repo) => {
                     const worktreeInput = {
                       projectRoot: repo.integrationRoot,
                       projectId: options.projectId,
@@ -409,7 +399,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         )
         const roleRepoRoots = await Promise.all(
           responsibility === 'planner'
-            ? selectedRepos.map(async (repo) => ({
+            ? runRepos.map(async (repo) => ({
                 repoId: repo.repoId,
                 path: await ensureProjectScope(repo.integrationRoot, repo.projectPath),
                 primary: repo.primary,

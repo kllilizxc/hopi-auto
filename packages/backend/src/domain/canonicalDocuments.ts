@@ -17,10 +17,6 @@ const canonicalRefSchema = z.string().min(1)
 const uniqueStableIdsSchema = z
   .array(stableIdSchema)
   .refine((values) => new Set(values).size === values.length, 'references must be unique')
-const nonEmptyUniqueStableIdsSchema = uniqueStableIdsSchema.refine(
-  (values) => values.length > 0,
-  'references must not be empty',
-)
 
 export const goalAttributesSchema = z
   .object({
@@ -72,15 +68,14 @@ export const engineeringWorkAttributesSchema = workBaseSchema
   .extend({
     kind: z.literal('engineering'),
     stage: z.enum(ENGINEERING_STAGES),
-    repos: nonEmptyUniqueStableIdsSchema.optional(),
     assistantDispatch: inboxEventReferenceSchema.optional(),
   })
   .strict()
 
-export const workAttributesSchema = z.union([
-  planningWorkAttributesSchema,
-  engineeringWorkAttributesSchema,
-])
+export const workAttributesSchema = z.preprocess(
+  stripLegacyEngineeringRepos,
+  z.union([planningWorkAttributesSchema, engineeringWorkAttributesSchema]),
+)
 
 export const attentionAttributesSchema = z
   .object({
@@ -213,9 +208,10 @@ export function isEngineeringWork(work: WorkAttributes): work is EngineeringWork
   return work.kind === 'engineering'
 }
 
-export function engineeringWorkRepoIds(
-  work: EngineeringWorkAttributes,
-  primaryRepoId: string,
-): readonly string[] {
-  return work.repos ?? [primaryRepoId]
+function stripLegacyEngineeringRepos(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const attributes = value as Record<string, unknown>
+  if (attributes.kind !== 'engineering' || !Object.hasOwn(attributes, 'repos')) return value
+  const { repos: _legacyRepos, ...current } = attributes
+  return current
 }

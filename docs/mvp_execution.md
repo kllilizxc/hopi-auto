@@ -417,7 +417,7 @@ or Reviewer runs without making that semantic context stale; task isolation and 
 rebuild or conflict handling own the later source reconciliation.
 
 Generator repair context and Assistant state report the current candidate integration preflight for
-every selected Repo of a nonterminal Engineering Work.
+every Project Repo of a nonterminal Engineering Work.
 That observation is produced by the same isolated-index three-way source merge used by C1 and includes
 the Repo-local release head, task head, merge base, and whether the candidate is currently ready or
 conflicted. It is current environment state, not a second gate or a model instruction. Owning Work
@@ -642,7 +642,7 @@ Reviewer receive the owning Engineering Work as their only expanded task contrac
 Goal title, revision, and canonical path as supporting provenance rather than a second competing
 body, while current Goal-local design documents remain readable staged authority. Reviewer and a
 recovery Generator also receive the latest owning-Work Evidence when present. Planner therefore
-makes each Engineering Work complete for outcome, scope, dependencies, Repo coverage, and measurable
+makes each Engineering Work complete for outcome, scope, dependencies, and measurable
 acceptance, but cites canonical design paths instead of copying durable design contracts. It repeats
 only a boundary whose omission would make execution or review materially ambiguous.
 
@@ -771,11 +771,11 @@ prefers a closed accepted representation or another finite verification oracle o
 negative requirement such as an ever-growing list of forbidden field aliases. These deterministic
 contracts constrain persistence and execution edges, not the model's free-form reasoning or prose.
 
-The Work `repos` list is the complete source workspace for that responsibility: include every Repo
-the Generator or Reviewer must inspect, execute, or modify to prove the Work. HOPI does not add a
-second read-only Repo scope. A Repo that is only exercised may produce no source delta; checkpointing
-and C1 already treat its unchanged task branch as a no-op. Omitting a required runtime dependency is
-therefore an invalid Work contract, not a reason for an agent to search neighboring runtime folders.
+The Project's Repo bindings are the complete source workspace for every Engineering responsibility.
+HOPI does not ask Planner or Assistant to predict a smaller set before implementation begins. A Repo
+that is only inspected or exercised may produce no source delta; checkpointing and C1 treat its
+unchanged task branch as a no-op. This keeps environment membership deterministic while leaving the
+Agent to judge what the Work actually requires.
 
 Planner decides which adopted references matter to which Engineering Work. For every related Work,
 it writes the exact Goal-relative image path and intended use or limitation into the Work Markdown.
@@ -963,14 +963,13 @@ The assigned task worktree's Git index, HEAD, branch, and shared Git directory a
 Generator edits its source files while Coordinator snapshots safe changes after the Run. This
 restriction does not apply globally to Git. When accepted Work requires branch or PR delivery,
 Generator may clone into `$HOPI_RUN_SCRATCH` and freely stage, commit, switch, rebase, and push there.
-Remote mutation must stay within the repository and delivery named by Work; merge, deployment,
+Remote mutation must stay within the accepted Work or operator authority; merge, deployment,
 production-data mutation, or another unrequested external effect still requires explicit authority.
 
-A responsibility Run resolves ordinary project paths only from the Repo IDs and roots in its
+A responsibility Run resolves ordinary project paths from the complete Project Repo mapping in its
 `HOPI_REPOS_FILE`, and reads integration truth only through the immutable context bundle. It never
-searches sibling, historical, or other Work runtime directories for missing source. If a Repo needed
-to implement or prove the contract is absent from the manifest, Generator returns `attention` instead
-of guessing a path. Independent reads and checks should be batched where practical; repeated
+searches sibling, historical, or other Work runtime directories for source. Independent reads and
+checks should be batched where practical; repeated
 discovery and progress narration are not evidence. The Run does not receive the Preview-adapter
 `HOPI_PROJECT_ROOT` variable: exporting the managed integration root there could make a task script
 bypass its stable worktree. Project Preview alone owns that variable.
@@ -1070,7 +1069,7 @@ complete validated managed integration root plus the accepted task changes. No s
 index, or uncommitted file participates in C1 construction or managed materialization.
 
 For a multi-Repo responsibility, `context.md` labels the primary Repo release only as the canonical
-authority snapshot. `repos.json` supplies the common Project release ref and each selected Repo's
+authority snapshot. `repos.json` supplies the common Project release ref and each Project Repo's
 own release head. Commit identities are meaningful only inside that Repo's Git object database;
 Agents are not expected to resolve the primary commit from a secondary Repo.
 
@@ -1100,11 +1099,11 @@ primary Git root remains the base for canonical `.hopi` publication; Project `AG
 scripts, and Preview resolve beneath its portable `projectPath`. Integration and task roots live
 under `<repo-parent>/.hopi-worktrees/<repo-name>/projects/<projectId>/`, distinct from the selected checkout.
 
-An engineering Work deterministically maps to one stable task branch and worktree in each Repo named
-by its `repos` field. Retries reuse those branches. Task worktrees live at
+An engineering Work deterministically maps to one stable task branch and worktree in each Project
+Repo. Retries reuse those branches. Task worktrees live at
 `.hopi-worktrees/<repo-name>/projects/<projectId>/work/<goalId>/<workId>` beside their Repo and start
 from that binding's current release. A responsibility receives one logical
-workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
+workspace containing all Project roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
 
 Immediately before Generator or Reviewer preparation, Coordinator compares each stable task branch
@@ -1146,8 +1145,8 @@ foreground, non-interactive, idempotent, prepares only its own checkout, and ret
 that checkout can be consumed. It may populate ignored dependencies and caches but must not modify
 tracked or non-ignored source.
 
-For an Engineering Run, Coordinator writes one runtime-only `HOPI_REPOS_FILE` containing the exact
-task roots declared by the Work. In stable manifest order it invokes every selected checkout's own
+For an Engineering Run, Coordinator writes one runtime-only `HOPI_REPOS_FILE` containing every
+Project task root. In stable Project manifest order it invokes every checkout's own
 script with that checkout as cwd, `HOPI_REPO_ID`, `HOPI_REPO_ROOT`, and the exact `HOPI_GOAL_ID`.
 For Preview it performs the same sequence over every managed integration root and omits the Goal ID.
 The manifest is context, not delegation authority: a Repo script never scans runtime siblings,
@@ -1160,13 +1159,13 @@ does not discard reusable downloads; cache contents remain an optimization and n
 preparation script runs as the leader of its own process group. A bounded timeout terminates that
 whole group, including descendants holding output streams, before Coordinator reports the failure.
 
-A missing script is allowed only while Generator can bootstrap it in the ordinary Engineering Work
-that already owns that Repo. HOPI does not create an Init or Repair Work. A Repo that needs no setup
+A missing script is allowed only while Generator can bootstrap it in the ordinary Engineering Work.
+HOPI does not create an Init or Repair Work. A Repo that needs no setup
 still owns an explicit executable no-op script, so absence never ambiguously means either "ready" or
-"forgotten". Planner never writes the executable directly; Generator makes every selected candidate
+"forgotten". Planner never writes the executable directly; Generator makes every Project candidate
 preparable and Reviewer validates the result.
 
-Preparation is best-effort before Generator: Coordinator attempts every selected Repo, captures all
+Preparation is best-effort before Generator: Coordinator attempts every Project Repo, captures all
 per-Repo diagnostics, and still starts Generator so the same Work can repair failures. Preparation is
 strict once immediately before Reviewer: any missing, non-executable, failing, timing-out, or
 source-mutating result returns the Work to `generate` with Repo-specific logs but does not call
@@ -1238,7 +1237,7 @@ duplicated Work front matter. It carries no success, retry, or stage semantics: 
 Work gate can advance the workflow. Planning has no task worktree and a read-only Reviewer does not
 create an empty commit.
 
-After checkpointing and publishing a Generator `success`, Coordinator runs the selected Repos'
+After checkpointing and publishing a Generator `success`, Coordinator runs all Project Repos'
 candidate preparation contract exactly once before it invokes Reviewer. A missing, failing,
 timing-out, or source-mutating preparation returns the Work to `generate`, records
 `candidate_preparation_failed` on the preflight Attempt, and publishes no Reviewer Evidence.

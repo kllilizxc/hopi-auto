@@ -6,7 +6,6 @@ export interface AssistantEngineeringWorkInput {
   title: string
   objective: string
   acceptanceCriteria: readonly string[]
-  repos: readonly string[]
   dependsOn?: readonly string[]
   contractRevision: number
   assistantDispatch: InboxEventReference
@@ -21,7 +20,6 @@ export function createAssistantEngineeringWork(input: AssistantEngineeringWorkIn
       title: input.title.trim(),
       kind: 'engineering',
       stage: 'generate',
-      repos: [...input.repos],
       notBefore: null,
       dependsOn: [...(input.dependsOn ?? [])],
       contractRevision: input.contractRevision,

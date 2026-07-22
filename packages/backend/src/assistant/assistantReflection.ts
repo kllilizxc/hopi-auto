@@ -628,7 +628,6 @@ function compactWork(value: Record<string, unknown>) {
     currentCandidateIntegration: value.candidateIntegration,
     dependsOn: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.slice(0, 8) : [],
     dependencyCount: Array.isArray(attributes.dependsOn) ? attributes.dependsOn.length : 0,
-    repos: Array.isArray(attributes.repos) ? attributes.repos.slice(0, 8) : attributes.repos,
   }
 }
 

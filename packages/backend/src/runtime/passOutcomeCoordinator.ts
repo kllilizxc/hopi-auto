@@ -47,8 +47,6 @@ export interface PassOutcomeCoordinator {
 
 export interface PassOutcomeCoordinatorOptions {
   now?: () => Date
-  primaryRepoId?: string
-  projectRepoIds?: readonly string[]
 }
 
 export class PassProposalError extends Error {}
@@ -153,7 +151,6 @@ export function createPassOutcomeCoordinator(
                 evidence,
                 emptyProposal(),
                 current,
-                options,
               )
             : buildEngineeringApplication(store, failedInput, evidence, current)
         return publishWithStaleRecovery(store, failedInput, evidence, application, {
@@ -178,14 +175,7 @@ export function createPassOutcomeCoordinator(
     }
 
     if (input.responsibility === 'planner') {
-      const application = buildPlannerApplication(
-        store,
-        input,
-        evidence,
-        proposal,
-        current,
-        options,
-      )
+      const application = buildPlannerApplication(store, input, evidence, proposal, current)
       return publishWithStaleRecovery(store, input, evidence, application, {
         kind: 'published',
         evidenceId: evidence.attributes.id,
@@ -501,7 +491,6 @@ function buildPlannerApplication(
   evidence: EvidenceDocument,
   proposal: PassProposal,
   current: GoalPackage,
-  options: PassOutcomeCoordinatorOptions,
 ): PassPublication {
   const currentWork = requireWork(current, input.workId)
   if (!isPlanningWork(currentWork.attributes) || currentWork.attributes.stage !== 'plan') {
@@ -551,29 +540,7 @@ function buildPlannerApplication(
         },
       )
       validatePlannerTransition(before, candidate, input, evidence.attributes.id)
-      validatePlannerRepoScopes(before, candidate, options)
     },
-  }
-}
-
-function validatePlannerRepoScopes(
-  before: GoalPackage,
-  candidate: GoalPackage,
-  options: PassOutcomeCoordinatorOptions,
-) {
-  if (!options.projectRepoIds) return
-  const allowed = new Set(options.projectRepoIds)
-  const primaryRepoId = options.primaryRepoId ?? 'primary'
-  for (const [workId, work] of candidate.works) {
-    if (!isEngineeringWork(work.attributes)) continue
-    if (!before.works.has(workId) && !work.attributes.repos) {
-      throw new PassProposalError(`New Engineering Work ${workId} must declare repos`)
-    }
-    for (const repoId of work.attributes.repos ?? [primaryRepoId]) {
-      if (!allowed.has(repoId)) {
-        throw new PassProposalError(`Engineering Work ${workId} references unlinked Repo ${repoId}`)
-      }
-    }
   }
 }
 

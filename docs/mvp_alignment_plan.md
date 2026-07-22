@@ -34,13 +34,13 @@ Alignment is complete only when:
 
 | Concern | Pre-MVP authority | MVP production authority | Verification |
 | --- | --- | --- | --- |
-| Project | selected Repo locator | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, Project-qualified managed release worktrees | migration, dirty checkout, shared binding, link, and rebind tests |
+| Project | user checkout locator | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, Project-qualified managed release worktrees | migration, dirty checkout, shared binding, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
 | Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn` plus singleton Planning guard | graph and readiness tests |
 | Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, vendor-qualified persistent session, read-only Reflection, and validated HOPI tools | direct conversation, per-vendor session resume, Reflection, tool, and recovery tests |
 | Workflow | manual controls and hard-coded task lanes | one code-owned profile through generic `RoleRunner` | profile parity and end-to-end reconcile tests |
 | Publication | direct writes and nested locks | OS instance lock, global mutex, one-gate `publish`, durable receipt and C1 ref | concurrency and fault-injection tests |
-| Isolation | per-Run worktrees merged into user root | stable Work branch/worktree per selected Repo plus managed integration roots | retry, migration rebuild, multi-root, and checkout tests |
+| Isolation | per-Run worktrees merged into user root | stable Work branch/worktree per Project Repo plus managed integration roots | retry, migration rebuild, multi-root, and checkout tests |
 | Completion | lane exhaustion | final Planner proposal plus structural Goal gate | C1 and completion verifier tests |
 | UI | React/Vite writable workflow screens | restored React package, Bun HTML import, Assistant, Goal design, read-only Kanban, Attention, Preview | frontend bundle and API smoke tests |
 | Notification | deduplication concept only | canonical identity, `notifiedAt`, webhook, bounded runtime backoff | delivery and lost-ack tests |
@@ -93,13 +93,13 @@ Alignment is complete only when:
   ordinary Assistant repair.
 - [x] Stop a running Preview after successful or recovered C1 integration, clear its obsolete
   endpoint, and leave restart as one explicit user action without affecting the durable C1 outcome.
-- [x] Bind one or more Repos to a Project, let Work select Repo IDs, and keep one Generator,
+- [x] Bind one or more Repos to a Project, give every Work the complete Project Repo environment,
+  and keep one Generator,
   Reviewer, card, retry counter, and primary C1 across the combined workspace.
 - [x] Persist secondary release commits in primary `project.yml`; recover incomplete ref/worktree
   projections after C1 and block unexpected external ref values without rollback.
-- [x] Treat Work `repos` as the complete inspect/execute/modify workspace, use its exact
-  `HOPI_REPOS_FILE` instead of historical checkout discovery, and let unchanged listed Repos remain
-  C1 no-ops.
+- [x] Use the complete Project Repo set in each Engineering `HOPI_REPOS_FILE` instead of asking a
+  model to preselect execution roots, and let unchanged Repos remain C1 no-ops.
 - [x] Materialize HOPI-owned integration and task worktrees with `core.autocrlf=false` without
   changing the user's checkout or Git configuration.
 - [x] Start Planner in its Run root, keep proposal paths single-prefixed, and make injected MCP
@@ -155,7 +155,7 @@ Alignment is complete only when:
    speaking Assistant; an optional webhook mirrors only its handled public replies.
 7. The restored React UI exposes Assistant, Home-wide model settings by role, Project, Goal
    contract/design, Pause/Resume, Waiting for Assistant, completion updates, four-column Kanban,
-   cancelled archive, Repo add and rebind, Work Repo badges, Work Attempt
+   cancelled archive, Repo add and rebind, Work Attempt
    message streams, an on-demand Reflection debug stream, and managed-target Preview; Bun serves it
    through one backend process.
 8. The old server, stores, Assistant Actions, decision/planning-request graph, merger, per-Run

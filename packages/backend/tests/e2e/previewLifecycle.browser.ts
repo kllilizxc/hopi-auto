@@ -358,7 +358,6 @@ async function plan(input: RoleRunInput, hasEngineering: boolean): Promise<RoleR
           title: 'Publish Preview release version 2',
           kind: 'engineering',
           stage: 'generate',
-          repos: ['primary'],
           notBefore: null,
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,

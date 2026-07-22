@@ -262,11 +262,11 @@ describe('multi-Repo C1', () => {
   })
 })
 
-async function createFixture(workRepoIds: string[]) {
+async function createFixture(changedRepoIds: string[]) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-multi-c1-'))
   temporaryRoots.push(temporaryRoot)
   const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
-  const secondaryIds = [...new Set(workRepoIds.filter((repoId) => repoId !== 'primary'))]
+  const secondaryIds = [...new Set(changedRepoIds.filter((repoId) => repoId !== 'primary'))]
   const secondaryPaths = new Map<string, string>()
   for (const repoId of secondaryIds) {
     secondaryPaths.set(repoId, await createRepo(join(temporaryRoot, repoId)))
@@ -312,14 +312,13 @@ async function createFixture(workRepoIds: string[]) {
             title: 'Build value 2',
             kind: 'engineering',
             stage: 'review',
-            repos: workRepoIds,
             notBefore: null,
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
             attempts: 0,
           },
-          body: '## Acceptance Criteria\n\n- every selected Repo value equals 2.\n',
+          body: '## Acceptance Criteria\n\n- every affected Repo value equals 2.\n',
         }),
       },
     ],
@@ -332,9 +331,8 @@ async function createFixture(workRepoIds: string[]) {
 
   const manager = createStableWorktreeManager(homeRoot)
   const taskWorktrees = new Map<string, string>()
-  for (const repoId of workRepoIds) {
-    const repo = linked.repos.find((candidate) => candidate.repoId === repoId)
-    if (!repo) throw new Error(`Missing fixture Repo ${repoId}`)
+  for (const repo of linked.repos) {
+    const repoId = repo.repoId
     const stable = await manager.prepare({
       projectRoot: repo.integrationRoot,
       projectId: 'project-1',
@@ -343,7 +341,9 @@ async function createFixture(workRepoIds: string[]) {
       repoId,
       primaryRepoId: linked.primaryRepoId,
     })
-    await Bun.write(join(stable.path, 'src', 'value.ts'), 'export const value = 2\n')
+    if (changedRepoIds.includes(repoId)) {
+      await Bun.write(join(stable.path, 'src', 'value.ts'), 'export const value = 2\n')
+    }
     await checkpointTaskWorktree({
       worktreePath: stable.path,
       projectId: 'project-1',
@@ -364,10 +364,10 @@ async function createFixture(workRepoIds: string[]) {
     runId: 'run-review',
     responsibility: 'reviewer',
     primaryRepoId: linked.primaryRepoId,
-    repoRoots: workRepoIds.map((repoId) => ({
-      repoId,
-      path: requireMapValue(taskWorktrees, repoId),
-      primary: repoId === linked.primaryRepoId,
+    repoRoots: linked.repos.map((repo) => ({
+      repoId: repo.repoId,
+      path: requireMapValue(taskWorktrees, repo.repoId),
+      primary: repo.primary,
     })),
   })
   const pass = {
@@ -378,7 +378,7 @@ async function createFixture(workRepoIds: string[]) {
     context,
     outcome: {
       result: 'success' as const,
-      summary: 'Reviewer verified every selected Repo value.',
+      summary: 'Reviewer verified the complete Project Repo environment.',
       artifacts: [],
       exitCode: 0,
     },
@@ -405,8 +405,7 @@ async function createFixture(workRepoIds: string[]) {
     () => new Date('2026-07-12T00:00:00Z'),
     layout,
   )
-  const firstWorkRepoId = workRepoIds[0]
-  if (!firstWorkRepoId) throw new Error('Fixture requires at least one Work Repo')
+  const firstWorkRepoId = linked.primaryRepoId
 
   return {
     linked,

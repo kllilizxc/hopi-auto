@@ -142,7 +142,6 @@ describe('ProjectReconciler', () => {
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
     expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
       stage: 'done',
-      repos: ['primary', 'api'],
     })
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
     expect(await Bun.file(join(api.integrationRoot, 'src', 'feature.ts')).text()).toContain('2')
@@ -1010,7 +1009,6 @@ class DeliveryScriptRunner implements RoleRunner {
       generatorWaitForAbort: boolean
       plannerWaitForAbort: boolean
       plannerResult: 'success' | 'fail'
-      workRepos: readonly string[]
     },
   ) {}
 
@@ -1180,7 +1178,6 @@ class DeliveryScriptRunner implements RoleRunner {
             title: 'Build feature 2',
             kind: 'engineering',
             stage: 'generate',
-            repos: [...this.options.workRepos],
             notBefore: null,
             dependsOn: [],
             contractRevision: planning.attributes.contractRevision,
@@ -1317,7 +1314,6 @@ async function createFixture(
             title: 'Build feature 2',
             objective: 'Set feature to 2.',
             acceptanceCriteria: ['feature equals 2.'],
-            repos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
             assistantDispatch: 'home:H-1/event:EV-1' as const,
           },
         }
@@ -1332,7 +1328,6 @@ async function createFixture(
     generatorWaitForAbort: options.generatorWaitForAbort ?? false,
     plannerWaitForAbort: options.plannerWaitForAbort ?? false,
     plannerResult: options.plannerResult ?? 'success',
-    workRepos: options.includeSecondaryRepo ? ['primary', 'api'] : ['primary'],
   })
   let runSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')

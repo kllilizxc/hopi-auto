@@ -28,8 +28,8 @@ Five internal document types have these minimal durable control fields:
 | Inbox turn       | `status`              | `pending \| handled`                       |
 
 Work also stores `kind`, permanent `dependsOn`, `notBefore`, `contractRevision`, top-level
-`attempts: 0`, and append-only `evidenceRefs`; Engineering Work additionally stores its non-empty
-Repo workspace. Failure context is read from referenced immutable Evidence. These are control facts,
+`attempts: 0`, and append-only `evidenceRefs`. Failure context is read from referenced immutable
+Evidence. These are control facts,
 not additional states. A Run, process, lease, Repo projection, root eligibility, and Kanban badge are
 runtime facts or derived projections. `running`, `queued`, `scheduled`, and `waiting` are not Work
 stages.
@@ -606,8 +606,8 @@ counter. When a nonterminal, non-running Work is not ready, the footer also disp
 `Blocked by …` projection from the failed readiness predicates. `live_run` and `terminal` are not
 blockers. A Done card displays `completedAt`, derived from the persisted successful Planner publish
 or Reviewer integration Attempt that made the terminal transition effective. It does not add a
-canonical Work state or accept a client timestamp. Exact Repo scope and the full predicate list
-remain in Work detail instead of competing for card space. The board is read-only: no drag operation
+canonical Work state or accept a client timestamp. The full predicate list remains in Work detail
+instead of competing for card space. The board is read-only: no drag operation
 edits stage, dependencies, priority, or lifecycle. Assistant conversation is the general control
 entry; explicit **Pause** and **Resume** remain available on Goal. A separate Diagnostics surface is
 deferred beyond MVP.
@@ -643,7 +643,7 @@ outcome. Other state and document changes do not participate in this runtime tra
 - Managed integration worktrees are backend-owned release projections. Workflow model processes may
   read them, but only Coordinator-owned Git operations may write them. Planner and Reviewer write
   only Run-local state; Generator writes only its assigned task worktrees.
-- Every Repo owns one reviewed `scripts/hopi/prepare`. Coordinator invokes each Work Repo's candidate
+- Every Repo owns one reviewed `scripts/hopi/prepare`. Coordinator invokes each Project Repo's candidate
   entrypoint once immediately before Reviewer, plus each managed integration Repo's entrypoint before
   Preview; it never routes preparation through primary or another Repo. Missing or failed candidate
   preparation returns the same Work to Generator as `candidate_preparation_failed`, with no Reviewer

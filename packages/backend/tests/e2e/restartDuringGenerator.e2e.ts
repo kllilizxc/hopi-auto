@@ -312,7 +312,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           title: 'Recover the interrupted Generator candidate',
           kind: 'engineering',
           stage: 'generate',
-          repos: ['primary'],
           notBefore: null,
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,

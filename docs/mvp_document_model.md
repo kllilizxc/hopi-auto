@@ -252,8 +252,9 @@ rebuilt from its exact release ref. If both old and Project-qualified refs exist
 old-format Repo is shared by several Projects, migration raises Project Attention rather than
 choosing a history. Each verified step is idempotent, and version 4 is published only after the new
 ref and paths validate.
-A missing Engineering Work `repos` field still means the Project primary Repo. Newly published links
-and Engineering Work always use the explicit form.
+Legacy Engineering Work may still contain a `repos` field. Readers ignore it because Project Repo
+membership is the execution environment; the field disappears whenever that Work is canonically
+rewritten. No migration guesses whether an old subset was complete.
 
 After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
 administration, relocates the Project-qualified Repo-adjacent managed root when needed, validates its
@@ -544,8 +545,6 @@ not change stage.
 
 Planning Work omits engineering Git fields. For engineering Work:
 
-- `repos` is the non-empty, unique set of stable Repo IDs included in this Work workspace; omission
-  is accepted only as the legacy shorthand for the primary Repo
 - `assistantDispatch`, when present, is the canonical Inbox event reference for the one direct Work
   admitted from that Input; uniqueness is enforced across every Goal linked to the Home
 - branch paths derive from Project, Goal, and Work identity; worktree paths derive from the Repo

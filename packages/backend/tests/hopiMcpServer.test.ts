@@ -102,6 +102,9 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
       'full contract',
     )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
+      'every Project Repo is available',
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.description).toContain(
       'Goal lifecycle or priority action',
     )
@@ -121,6 +124,12 @@ describe('HOPI MCP server', () => {
         properties: { work: expect.any(Object) },
       },
     )
+    expect(
+      JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.inputSchema),
+    ).not.toContain('"repos"')
+    expect(
+      JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema),
+    ).not.toContain('"repos"')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.inputSchema,
     ).toMatchObject({

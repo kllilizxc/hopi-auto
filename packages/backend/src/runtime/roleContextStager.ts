@@ -5,7 +5,6 @@ import type { TransportContextBundle } from '../agent/vendorTransport'
 import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/assistantPreference'
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
-  engineeringWorkRepoIds,
   isEngineeringWork,
   isWorkTerminal,
   parseAttentionDocument,
@@ -148,15 +147,6 @@ export function createRoleContextStager(
         if (!isEngineeringWork(parsedWork.attributes)) {
           throw new RoleContextStagingError(
             `${input.responsibility} requires Engineering Work ${input.workId}`,
-          )
-        }
-        const expectedRepoIds = engineeringWorkRepoIds(parsedWork.attributes, primaryRepoId)
-        const actualRepoIds = repoRoots.map((repo) => repo.repoId)
-        if (
-          JSON.stringify([...expectedRepoIds].sort()) !== JSON.stringify([...actualRepoIds].sort())
-        ) {
-          throw new RoleContextStagingError(
-            `Work Repo workspace disagrees with staged roots (${expectedRepoIds.join(', ')} vs ${actualRepoIds.join(', ')})`,
           )
         }
       }
@@ -1251,7 +1241,7 @@ function plannerPrompt(paths: {
           'Operator preferences are defaults below current accepted Input and Project/Goal authority.',
         ]
       : []),
-    'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, names only required Repos, and depends only on required output, overlapping writers, or exclusive resources.',
+    'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, and depends only on required output, overlapping writers, or exclusive resources.',
     'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
     'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
     'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. Planner may use it for final integrated proof when the accepted design requires that proof.',
@@ -1269,7 +1259,6 @@ function plannerPrompt(paths: {
     'attempts: 0',
     'kind: engineering',
     'stage: generate',
-    'repos: [<one-or-more-listed-repo-ids>]',
     '---',
     '```',
     'Completion Attention frontmatter (final Planner success only):',
@@ -1290,7 +1279,7 @@ function plannerPrompt(paths: {
           'Project guidance is absent; derive a concise AGENTS.md entrypoint from the read-only source snapshot at $HOPI_BOOTSTRAP_SOURCE_ROOT.',
         ]
       : ['Project guidance already exists and is read-only in this responsibility.']),
-    'Every selected Repo owns its own scripts/hopi/prepare contract; preparation delivery belongs to the Engineering Work that needs that Repo.',
+    'Every Project Repo is present in the Engineering environment and owns its own scripts/hopi/prepare contract.',
     '',
   ]
 }
@@ -1301,7 +1290,7 @@ function generatorPrompt() {
     '',
     'Objective: implement the complete owning Engineering Work in its stable task worktree and provide proportionate evidence for every materially affected acceptance criterion.',
     'The accepted Work and durable design define scope. Reviewer findings are evidence about violated invariants; the owning invariant, its canonical representation, and materially adjacent variants define the repair boundary.',
-    'Project guidance, Repo manifest, preparation entrypoints, accepted Inputs, and latest Evidence are environment knowledge for this Run. Each selected Repo owns its own scripts/hopi/prepare contract.',
+    'Project guidance, the complete Project Repo manifest, preparation entrypoints, accepted Inputs, and latest Evidence are environment knowledge for this Run. Each Repo owns its own scripts/hopi/prepare contract.',
     'Candidate runtime proof belongs to the task worktree and Run manifest. Public Project Preview observes the integrated release, not this candidate.',
     'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after the service is ready.',
     'The staged canonical context overrides any older .hopi copy in the task branch.',

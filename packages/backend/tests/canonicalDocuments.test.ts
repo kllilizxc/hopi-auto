@@ -94,6 +94,26 @@ describe('canonical Markdown documents', () => {
     expect(evidence.attributes.producerRun).toContain('/run:R-1')
   })
 
+  test('accepts but removes a legacy Engineering Work Repo subset', () => {
+    const work = parseWorkDocument(`---
+id: W-legacy
+title: Build across the Project
+kind: engineering
+stage: generate
+repos: [frontend]
+notBefore: null
+dependsOn: []
+contractRevision: 1
+evidenceRefs: []
+attempts: 0
+---
+All Project Repos are available.
+`)
+
+    expect(work.attributes).not.toHaveProperty('repos')
+    expect(renderWorkDocument(work)).not.toContain('repos:')
+  })
+
   test('rejects illegal discriminators and duplicated control references', () => {
     expect(() =>
       parseGoalDocument(`---

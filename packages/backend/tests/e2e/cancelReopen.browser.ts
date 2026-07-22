@@ -229,7 +229,6 @@ async function writeWork(root: string, id: string, revision: number, dependsOn: 
         title: id,
         kind: 'engineering',
         stage: 'generate',
-        repos: ['primary'],
         notBefore: null,
         dependsOn,
         contractRevision: revision,

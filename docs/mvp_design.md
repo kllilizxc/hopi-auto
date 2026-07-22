@@ -322,8 +322,10 @@ and Preview entrypoints. Every binding has a HOPI-owned `hopi/project/<projectId
 managed integration worktree. The selected checkout is never a canonical publication or delivery
 root.
 
-Engineering Work explicitly names the Repos in its source workspace. Goal, Work, Kanban, and the
-fixed responsibility passes remain Project-scoped rather than multiplying per Repo. The primary
+Every Engineering Work receives all Repo bindings in its Project as one source workspace. The
+Project binding is already the durable environment boundary; Work does not repeat or narrow it.
+Goal, Work, Kanban, and the fixed responsibility passes remain Project-scoped rather than
+multiplying per Repo. The primary
 Project-qualified release ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
 for each secondary Repo, whose managed refs and worktrees are recoverable projections after C1.
 The complete protocol belongs to [the multi-Repo design](./mvp_multi_repo.md).
@@ -385,6 +387,8 @@ The authority is split by concern rather than repeated in one large document:
 - Project owns stable context, one primary Repo binding, and one or more Project-qualified managed
   release worktrees; a Git Repo may participate in several Projects.
 - Goal owns the outcome contract and lifecycle.
+- Every Engineering Work runs against the Project's complete Repo environment; actual Git deltas,
+  rather than a model-authored Repo subset, determine which bindings change at C1.
 - Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
   sparse Work DAG, and makes the final semantic completion assessment.
 - Engineering Work moves through Generator, Reviewer, and deterministic C1 integration.

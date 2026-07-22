@@ -763,9 +763,7 @@ export function createAssistantTools(options: {
               title: firstWork.title,
               objective: firstWork.objective,
               acceptanceCriteria: firstWork.acceptanceCriteria,
-              repos: firstWork.repos,
             }
-            assertLinkedRepos(project, initialWork.repos)
             const workspace = await options.workspace.readWorkspace()
             const dispatchReference = inboxEventReference(workspace.homeId, eventId)
             return serializeAssistantDispatch(dispatchReference, async () => {
@@ -1010,7 +1008,6 @@ export function createAssistantTools(options: {
           for (const criterion of requestedWork.acceptanceCriteria) {
             assertPortableGoalText('Engineering Work acceptance criterion', criterion)
           }
-          assertLinkedRepos(project, requestedWork.repos)
           const workspace = await options.workspace.readWorkspace()
           const dispatchReference = inboxEventReference(workspace.homeId, eventId)
           return serializeAssistantDispatch(dispatchReference, async () => {
@@ -1028,7 +1025,6 @@ export function createAssistantTools(options: {
               title: requestedWork.title,
               objective: requestedWork.objective,
               acceptanceCriteria: requestedWork.acceptanceCriteria,
-              repos: requestedWork.repos,
               dependsOn: requestedWork.dependsOn,
               assistantDispatch: dispatchReference,
               acceptedInput: admission,
@@ -2050,17 +2046,6 @@ function requireProject(projects: ReadonlyMap<string, AssistantToolProject>, pro
   const project = projects.get(projectId)
   if (!project) throw new AssistantToolRequestError(`Project not found: ${projectId}`)
   return project
-}
-
-function assertLinkedRepos(project: AssistantToolProject, repoIds: readonly string[]) {
-  const linked = new Set(
-    project.repos?.map((repo) => repo.repoId) ?? [project.primaryRepoId ?? 'primary'],
-  )
-  for (const repoId of repoIds) {
-    if (!linked.has(repoId)) {
-      throw new AssistantToolRequestError(`Engineering Work references unlinked Repo ${repoId}`)
-    }
-  }
 }
 
 function dependentWorkIds(

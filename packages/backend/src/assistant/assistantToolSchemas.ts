@@ -21,15 +21,11 @@ const canonicalAttentionReferenceSchema = z
     message: 'value must be one complete canonical Attention reference',
   })
 
-const directEngineeringWorkSchema = z
+const directEngineeringWorkObjectSchema = z
   .object({
     title: z.string().trim().min(1),
     objective: z.string().trim().min(1),
     acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
-    repos: z
-      .array(stableIdSchema)
-      .min(1)
-      .refine((values) => new Set(values).size === values.length, 'repos must be unique'),
     dependsOn: z
       .array(stableIdSchema)
       .refine((values) => new Set(values).size === values.length, 'dependsOn must be unique')
@@ -37,13 +33,16 @@ const directEngineeringWorkSchema = z
   })
   .strict()
 
-const firstWorkSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('planning') }).strict(),
-  directEngineeringWorkSchema
-    .omit({ dependsOn: true })
-    .extend({ kind: z.literal('engineering') })
-    .strict(),
-])
+const firstWorkSchema = z.preprocess(
+  stripLegacyWorkRepos,
+  z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('planning') }).strict(),
+    directEngineeringWorkObjectSchema
+      .omit({ dependsOn: true })
+      .extend({ kind: z.literal('engineering') })
+      .strict(),
+  ]),
+)
 
 export const publicAssistantToolNames = [
   'hopi_read_state',
@@ -102,9 +101,18 @@ const planningWorkSchema = z
   })
   .strict()
 
-const engineeringWorkSchema = directEngineeringWorkSchema
-  .extend({ kind: z.literal('engineering') })
-  .strict()
+const engineeringWorkSchema = z.preprocess(
+  stripLegacyWorkRepos,
+  directEngineeringWorkObjectSchema.extend({ kind: z.literal('engineering') }).strict(),
+)
+
+function stripLegacyWorkRepos(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const work = value as Record<string, unknown>
+  if (work.kind !== 'engineering' || !Object.hasOwn(work, 'repos')) return value
+  const { repos: _legacyRepos, ...current } = work
+  return current
+}
 
 const goalActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pause') }).strict(),
@@ -224,7 +232,7 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
-      work: z.discriminatedUnion('kind', [planningWorkSchema, engineeringWorkSchema]),
+      work: z.union([planningWorkSchema, engineeringWorkSchema]),
       references: goalReferences,
     })
     .strict(),
@@ -408,6 +416,27 @@ const mcpManageProjectSchema = z
     ]),
   })
   .strict()
+const mcpCreateGoalSchema = z
+  .object({
+    projectId: z.string().min(1),
+    goalId: z.string().optional(),
+    title: z.string().min(1),
+    objective: z.string().min(1),
+    priority: z.number().int().optional(),
+    firstWork: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('planning') }).strict(),
+      z
+        .object({
+          kind: z.literal('engineering'),
+          title: z.string().min(1),
+          objective: z.string().min(1),
+          acceptanceCriteria: z.array(z.string().min(1)).min(1),
+        })
+        .strict(),
+    ]),
+    references: goalReferences.optional(),
+  })
+  .strict()
 const mcpCreateWorkSchema = z
   .object({
     projectId: z.string().min(1),
@@ -425,7 +454,6 @@ const mcpCreateWorkSchema = z
           title: z.string().min(1),
           objective: z.string().min(1),
           acceptanceCriteria: z.array(z.string().min(1)).min(1),
-          repos: z.array(z.string().min(1)).min(1),
           dependsOn: z.array(z.string().min(1)).optional(),
         })
         .strict(),
@@ -496,6 +524,7 @@ const mcpResolveAttentionSchema = z
 export const assistantMcpToolSchemas = {
   ...assistantToolSchemas,
   hopi_manage_project: mcpManageProjectSchema,
+  hopi_create_goal: mcpCreateGoalSchema,
   hopi_create_work: mcpCreateWorkSchema,
   hopi_write_design: mcpWriteDesignSchema,
   hopi_control_goal: mcpControlGoalSchema,

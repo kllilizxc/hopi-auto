@@ -47,7 +47,6 @@ export interface CreateCanonicalGoalInput {
     title: string
     objective: string
     acceptanceCriteria: readonly string[]
-    repos: readonly string[]
     assistantDispatch: InboxEventReference
   }
 }

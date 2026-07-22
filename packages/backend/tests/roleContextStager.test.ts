@@ -86,7 +86,8 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('mutually exclusive with completion')
     expect(prompt).toContain('New Engineering Work frontmatter (Markdown bodies remain free-form)')
     expect(prompt).toContain('kind: engineering')
-    expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
+    expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
+    expect(prompt).toContain('Every Project Repo is present in the Engineering environment')
     expect(prompt).toContain('.hopi/docs/repos.md')
     expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
     expect(prompt).not.toContain(bundle.runRoot)
@@ -95,7 +96,6 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
     expect(prompt).toContain('Completion Attention frontmatter (final Planner success only)')
     expect(prompt).toContain('notifiedAt: null')
-    expect(prompt).toContain('Every selected Repo owns its own scripts/hopi/prepare contract')
     expect(prompt).toContain('one cohesive proof boundary')
     expect(prompt).toContain(
       'depends only on required output, overlapping writers, or exclusive resources',

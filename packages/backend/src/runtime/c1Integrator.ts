@@ -4,7 +4,6 @@ import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type EvidenceDocument,
   type WorkDocument,
-  engineeringWorkRepoIds,
   isEngineeringWork,
   parseEvidenceDocument,
   parseWorkDocument,
@@ -96,8 +95,8 @@ export function createC1Integrator(
   return {
     async integrate(input, faultHooks = {}) {
       validateInput(store, input)
-      const selectedRepos = selectedProjectRepos(projectLayout, input.completedWork)
-      const taskWorktrees = resolveTaskWorktrees(projectLayout, selectedRepos, input)
+      const projectRepos = engineeringProjectRepos(projectLayout, input.completedWork)
+      const taskWorktrees = resolveTaskWorktrees(projectLayout, projectRepos, input)
       const workReference = workRef(store, input.pass.goalId, input.pass.workId)
       const existing = await findIntegrationCommits(
         store.paths.projectRoot,
@@ -175,7 +174,7 @@ export function createC1Integrator(
           }
 
           let nextProject = currentProject
-          for (const repo of selectedRepos) {
+          for (const repo of projectRepos) {
             if (repo.primary) continue
             const oldRepoTarget = oldSecondaryTargets.get(repo.repoId)
             if (!oldRepoTarget) {
@@ -209,15 +208,12 @@ export function createC1Integrator(
           if (!primary.primary) {
             throw new C1IntegrationError(`C1 primary Repo must be ${projectLayout.primaryRepoId}`)
           }
-          const primarySelected = selectedRepos.some((repo) => repo.primary)
-          const primarySource = primarySelected
-            ? await buildSourceCandidate({
-                repo: primary,
-                oldTarget,
-                taskWorktreePath: requireTaskWorktree(taskWorktrees, projectLayout.primaryRepoId),
-                env: gitEnv,
-              })
-            : await readTargetIntoIndex(projectRoot, oldTarget, gitEnv)
+          const primarySource = await buildSourceCandidate({
+            repo: primary,
+            oldTarget,
+            taskWorktreePath: requireTaskWorktree(taskWorktrees, projectLayout.primaryRepoId),
+            env: gitEnv,
+          })
           if (primarySource.kind === 'rejected') return primarySource
 
           await replaceCanonicalIndex(projectRoot, gitEnv, snapshot, writes)
@@ -352,13 +348,11 @@ function normalizeProjectLayout(store: GoalPackageStore, layout?: C1ProjectLayou
   return normalized
 }
 
-function selectedProjectRepos(layout: C1ProjectLayout, work: WorkDocument) {
+function engineeringProjectRepos(layout: C1ProjectLayout, work: WorkDocument) {
   if (!isEngineeringWork(work.attributes)) {
     throw new C1IntegrationError('C1 Work must be Engineering Work')
   }
-  return engineeringWorkRepoIds(work.attributes, layout.primaryRepoId).map((repoId) =>
-    requireLayoutRepo(layout, repoId),
-  )
+  return layout.repos
 }
 
 function requireLayoutRepo(layout: C1ProjectLayout, repoId: string) {
@@ -369,21 +363,21 @@ function requireLayoutRepo(layout: C1ProjectLayout, repoId: string) {
 
 function resolveTaskWorktrees(
   layout: C1ProjectLayout,
-  selectedRepos: readonly C1ProjectRepo[],
+  projectRepos: readonly C1ProjectRepo[],
   input: C1IntegrationInput,
 ) {
   let entries: ReadonlyArray<readonly [string, string]>
   if (input.taskWorktrees) {
     entries = Object.entries(input.taskWorktrees)
-  } else if (selectedRepos.length === 1) {
-    const selected = selectedRepos[0]
-    if (!selected) throw new C1IntegrationError('C1 Work has no selected Repo')
-    entries = [[selected.repoId, input.taskWorktreePath]]
+  } else if (projectRepos.length === 1) {
+    const repo = projectRepos[0]
+    if (!repo) throw new C1IntegrationError('C1 Work has no Project Repo')
+    entries = [[repo.repoId, input.taskWorktreePath]]
   } else {
     entries = []
   }
   const worktrees = new Map(entries)
-  for (const repo of selectedRepos) {
+  for (const repo of projectRepos) {
     if (!worktrees.get(repo.repoId)) {
       throw new C1IntegrationError(`C1 is missing task worktree for Repo ${repo.repoId}`)
     }
@@ -412,15 +406,6 @@ function validateProjectLayoutDocument(layout: C1ProjectLayout, document: Projec
 type SourceCandidateResult =
   | { kind: 'ready'; mergeBase?: string; taskHead?: string }
   | { kind: 'rejected'; reason: string }
-
-async function readTargetIntoIndex(
-  repoRoot: string,
-  oldTarget: string,
-  env: Record<string, string>,
-): Promise<SourceCandidateResult> {
-  await git(repoRoot, ['read-tree', oldTarget], env)
-  return { kind: 'ready' }
-}
 
 async function buildSourceCandidate(input: {
   repo: C1ProjectRepo

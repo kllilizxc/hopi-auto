@@ -252,7 +252,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           title: `Deliver ${input.projectId}`,
           kind: 'engineering',
           stage: 'generate',
-          repos: ['primary'],
           notBefore: null,
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,

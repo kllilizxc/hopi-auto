@@ -123,7 +123,6 @@ describe('createGoalPackageStore', () => {
         title: 'Deliver the bounded change',
         objective: 'Implement the accepted bounded change.',
         acceptanceCriteria: ['The bounded change works as requested.'],
-        repos: ['repo'],
         assistantDispatch: 'home:H-1/event:EV-1',
       },
     })
@@ -132,7 +131,6 @@ describe('createGoalPackageStore', () => {
     expect(goalPackage.works.get('W-direct')?.attributes).toMatchObject({
       kind: 'engineering',
       stage: 'generate',
-      repos: ['repo'],
       assistantDispatch: 'home:H-1/event:EV-1',
     })
     expect(goalPackage.works.get('W-direct')?.body).toContain('/H-1/EV-1.md')
@@ -160,7 +158,6 @@ describe('createGoalPackageStore', () => {
         title: 'Deliver the bounded change',
         objective: 'Implement the accepted bounded change.',
         acceptanceCriteria: ['The bounded change works as requested.'],
-        repos: ['repo'],
         assistantDispatch: 'home:H-1/event:EV-1',
       },
     })

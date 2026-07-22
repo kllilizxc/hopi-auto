@@ -194,7 +194,6 @@ async function planDelivery(input: RoleRunInput): Promise<RoleRunResult> {
           title: 'Set fixture feature to 2',
           kind: 'engineering',
           stage: 'generate',
-          repos: [primaryRepoId],
           notBefore: null,
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,

@@ -50,7 +50,6 @@ export interface AssistantEngineeringAdmission {
   title: string
   objective: string
   acceptanceCriteria: readonly string[]
-  repos: readonly string[]
   dependsOn: readonly string[]
   assistantDispatch: InboxEventReference
   acceptedInput: PlanningInputAdmission
@@ -143,7 +142,6 @@ export function createGoalController(
         title: input.title,
         objective: input.objective,
         acceptanceCriteria: input.acceptanceCriteria,
-        repos: input.repos,
         dependsOn: input.dependsOn,
         contractRevision: goalPackage.goal.attributes.contractRevision,
         assistantDispatch: input.assistantDispatch,
@@ -161,7 +159,6 @@ export function createGoalController(
         }
         if (
           existing.attributes.title === work.attributes.title &&
-          JSON.stringify(existing.attributes.repos) === JSON.stringify(work.attributes.repos) &&
           JSON.stringify(existing.attributes.dependsOn) ===
             JSON.stringify(work.attributes.dependsOn) &&
           existing.attributes.contractRevision === work.attributes.contractRevision &&

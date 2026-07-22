@@ -5,7 +5,6 @@ import { goalAttentionReference, workspaceAttentionReference } from '../domain/a
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   type WorkDocument,
-  engineeringWorkRepoIds,
   isEngineeringWork,
   isPlanningWork,
   isWorkTerminal,
@@ -424,7 +423,6 @@ function compactWorkAttributes(work: WorkDocument) {
     attempts: attributes.attempts,
     ...(attributes.kind === 'engineering'
       ? {
-          repos: attributes.repos,
           ...(attributes.assistantDispatch
             ? { assistantDispatch: attributes.assistantDispatch }
             : {}),
@@ -606,15 +604,21 @@ async function readCandidateIntegration(input: {
 }) {
   if (!isEngineeringWork(input.work.attributes)) return []
   const primaryRepoId = input.project.primaryRepoId ?? 'primary'
-  const repoIds = engineeringWorkRepoIds(input.work.attributes, primaryRepoId)
+  const repos = input.project.repos?.length
+    ? input.project.repos
+    : [
+        {
+          repoId: primaryRepoId,
+          integrationRoot: input.project.projectRoot,
+          projectPath: '.',
+          primary: true,
+        },
+      ]
   const scratchRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-candidate-'))
   try {
     return await Promise.all(
-      repoIds.map(async (repoId, index) => {
-        const repo = input.project.repos?.find(
-          (candidate) => (candidate.repoId ?? primaryRepoId) === repoId,
-        )
-        if (!repo) return { repoId, kind: 'unavailable' as const, detail: 'Repo is not linked.' }
+      repos.map(async (repo, index) => {
+        const repoId = repo.repoId ?? primaryRepoId
         try {
           const task = await input.worktrees.inspect({
             projectRoot: repo.integrationRoot,

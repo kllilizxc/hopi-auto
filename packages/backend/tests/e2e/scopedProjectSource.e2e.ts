@@ -456,7 +456,6 @@ async function planScopedWork(input: RoleRunInput): Promise<RoleRunResult> {
           title,
           kind: 'engineering',
           stage: 'generate',
-          repos: [primaryRepoId],
           notBefore: null,
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,

@@ -41,7 +41,7 @@ if (mode === 'main') {
     'hopi_manage_project',
     {
       description:
-        'Create a Project, add one Repo binding, or partially rebind moved Repos. A Git Repo may be bound read-write by several Projects; only duplicate Git identities inside one Project conflict. The selected checkout locates Git and is never changed by delivery. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
+        'Create a Project, add one Repo binding, or partially rebind moved Repos. A Git Repo may be bound read-write by several Projects; only duplicate Git identities inside one Project conflict. The selected checkout locates Git and HOPI never modifies it. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
       inputSchema: assistantMcpToolSchemas.hopi_manage_project,
     },
     (args) => callTool('hopi_manage_project', args),
@@ -73,7 +73,7 @@ if (mode !== 'reflection') {
     'hopi_create_work',
     {
       description:
-        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention. Engineering requires a full contract, Repo scope, and dependencies. One Inbox instruction can directly admit at most one Engineering Work.',
+        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention. Engineering requires a full contract and dependencies; every Project Repo is available to it. One Inbox instruction can directly admit at most one Engineering Work.',
       inputSchema: assistantMcpToolSchemas.hopi_create_work,
     },
     (args) => callTool('hopi_create_work', args),

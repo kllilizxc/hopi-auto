@@ -296,7 +296,6 @@ async function stageEngineeringWork(input: RoleRunInput) {
         title: 'Reach the next execution boundary',
         kind: 'engineering',
         stage: 'generate',
-        repos: ['primary'],
         notBefore: null,
         dependsOn: [],
         contractRevision: planning.attributes.contractRevision,

@@ -1,7 +1,7 @@
 # HOPI MVP Multi-Repo Design
 
 Status: implemented MVP protocol
-Last updated: 2026-07-17
+Last updated: 2026-07-23
 
 This document owns the Repo membership, multi-root execution, integration, and recovery rules for
 one Project spanning multiple Git Repos. Product concepts and lifecycle remain defined by
@@ -33,14 +33,14 @@ The user-facing model remains:
 Project -> Goal -> Work
 ```
 
-Repo is a Project member and Work workspace selector, not another task hierarchy.
+Repo is a Project member, not another task hierarchy or a Work-level selector.
 
 ## Canonical Documents
 
 Assistant-home `projects.yml` is the authority for machine-local bindings:
 
 ```yaml
-version: 2
+version: 4
 projects:
   - projectId: P-1
     primaryRepoId: web
@@ -72,16 +72,12 @@ dependency direction, shared contracts, important commands, and the combined run
 kernel never parses its prose. Membership and commit identity stay in `project.yml`, while local
 paths stay in Assistant home; these documents do not compete for the same fact.
 
-Version 1 Project links and `project.yml` normalize to one primary Repo. Existing Engineering Work
-without `repos` means that primary Repo. New Work always writes a non-empty unique list:
-
-```yaml
-repos: [web, api]
-```
-
-This small structured field is necessary before model execution because Coordinator must choose
-which Git branches and worktrees to allocate. Intent, cross-Repo reasoning, and acceptance criteria
-remain ordinary Markdown.
+Version 1 Project links and `project.yml` normalize to one primary Repo. Every Engineering Work uses
+the complete current Project Repo set. Legacy Work `repos` fields are accepted as inert input and
+removed on canonical rewrite; they never narrow a Run. Coordinator can allocate branches and
+worktrees from Project membership without asking a model to predict which roots implementation or
+proof will eventually need. Intent, cross-Repo reasoning, and acceptance criteria remain ordinary
+Markdown.
 
 ## Linking and Initialization
 
@@ -144,7 +140,7 @@ publication boundary, not a migration workflow.
 ## Work Workspace
 
 One Engineering Work still has one Generator, one Reviewer, one card, one retry counter, and one
-result. For every Repo in `repos`, Coordinator creates or reuses a stable task branch and worktree
+result. For every Repo bound to the Project, Coordinator creates or reuses a stable task branch and worktree
 starting from that binding's current Project release. The responsibility receives the roots together in
 one runtime manifest:
 
@@ -163,22 +159,22 @@ one runtime manifest:
 }
 ```
 
-The process cwd is the primary root when selected, otherwise the first Work Repo; the runtime
-manifest names every other Work root explicitly. `releaseHeads` identifies the commit in each
-Repo's own Git object database; the primary authority snapshot is labeled separately and is never
-presented as a secondary Repo commit. This list defines responsibility and checkpoint scope, not a
-provider filesystem allowlist. Prompts name every Repo ID and path. A Generator checkpoint covers
-every Work root, and Reviewer starts only when every root is checkpoint-clean. Reviewer fingerprints
+The process cwd is the primary root; the runtime manifest names every other Project root explicitly.
+`releaseHeads` identifies the commit in each Repo's own Git object database; the primary authority
+snapshot is labeled separately and is never presented as a secondary Repo commit. Project membership
+defines responsibility and checkpoint scope, not a provider filesystem allowlist. Prompts name every
+Repo ID and path. A Generator checkpoint covers every Project root, and Reviewer starts only when
+every root is checkpoint-clean. Reviewer fingerprints
 all roots and one source mutation rejects the Run.
 
 `dependsOn` continues to express known semantic ordering. HOPI does not infer file locks or serialize
-all Work sharing a Repo. Concurrent Work branches may proceed; C1 revalidates every selected Repo
+all Work sharing a Repo. Concurrent Work branches may proceed; C1 revalidates every Project Repo
 against its current release target and rejects a conflict before the primary boundary.
 
 ## Preparation and Preview
 
 Every Repo owns one local preparation entrypoint; only Preview remains a primary Project adapter.
-Coordinator writes one runtime-only Repo manifest and invokes each selected Repo checkout with:
+Coordinator writes one runtime-only Repo manifest and invokes each Project Repo checkout with:
 
 ```text
 HOPI_REPO_ID=<stable-repo-id>
@@ -187,7 +183,7 @@ HOPI_REPOS_FILE=<runtime-json-path>
 HOPI_GOAL_ID=<owning-goal-id> # Engineering preparation only
 ```
 
-For an Engineering Run the manifest names only its task roots and `HOPI_GOAL_ID` identifies the exact
+For an Engineering Run the manifest names all Project task roots and `HOPI_GOAL_ID` identifies the exact
 canonical Goal. For Preview it names every managed integration root and no Goal ID is invented. A
 script prepares only its own cwd; the manifest may inform cross-Repo compatibility checks but never
 delegates another Repo's setup. HOPI adds no adapter schema, initialized flag, adapter revision, or
@@ -196,7 +192,7 @@ primary fallback.
 Before Generator the sequence is diagnostic and non-blocking. Before Reviewer every manifested Repo
 must prepare successfully or the same logical Work returns to Generator. Before Preview every managed
 integration Repo must prepare successfully, then the primary Preview adapter starts. A missing
-entrypoint is bootstrapped inside the ordinary Work that owns that Repo; a no-setup Repo uses an
+entrypoint is bootstrapped inside the ordinary Engineering Work; a no-setup Repo uses an
 explicit executable no-op entrypoint.
 
 ## Primary C1 and Component Commits
@@ -204,7 +200,7 @@ explicit executable no-op entrypoint.
 Reviewer success is integrated as one logical operation:
 
 1. Under the global publication mutex, Coordinator rereads the primary canonical state and every
-   selected Repo release ref.
+   Project Repo release ref.
 2. It verifies every task worktree is clean and builds one durable component candidate per changed
    secondary Repo. A component candidate has the old Repo release as first parent and carries the
    qualified Project, Goal, Work, Run, and Repo trailers. It is not a C1 gate.
@@ -242,11 +238,6 @@ candidate's first parent. Recovery never rolls back the primary C1, never re-run
 Reviewer, and never invents a Work state. Until all projections match, the Project is ineligible even
 though the Work document inside the durable C1 is already `done`.
 
-Delivery checkouts follow the same durable manifest but are more restrictive, best-effort
-projections: recovery may only repeat a same-Repo, same-branch, clean, ancestry-proven fast-forward.
-A checkout that is dirty, detached, switched, or divergent remains untouched and reports delivery
-pending without blocking the Project or rolling back managed Repo projections or the primary C1.
-
 This is a fixed Project release projection protocol, not a promise of simultaneous physical Git ref
 updates or deployment atomicity. External deployment remains outside HOPI unless a reviewed Project
 adapter implements it under the normal approval policy.
@@ -263,20 +254,22 @@ topology mutation made during an Assistant turn persists first and schedules one
 after that turn settles, rather than interrupting the speaking session mid-call.
 
 Kanban remains Goal/Work based; no Repo columns or Repo subcards are introduced. Card footers
-prioritize the real runtime Attempt count and current blocker, while exact Repo scope stays in Work
-detail. Work Attempts remain one stream and may show the per-Repo workspace paths, checkpoints,
+prioritize the real runtime Attempt count and current blocker. Work Attempts remain one stream and
+may show the per-Repo workspace paths, checkpoints,
 diffs, and integration diagnostics. Preview remains one Project control.
 
 ## Acceptance Scenarios
 
 The implementation is complete only when automated tests cover:
 
-- version 1 single-Repo Projects and Work run without behavioral migration regressions
+- version 1 single-Repo Projects and legacy Work with or without `repos` run without behavioral
+  migration regressions
 - the host chooser can be cancelled without an effect and one create request atomically links two Repos
 - duplicate Git identities inside one Project fail before a durable Project link exists
 - the same Git Repo can be primary or secondary in several Projects with isolated refs and worktrees
 - a secondary Repo can be added and rebound without changing any selected checkout
 - a moved Assistant home and complete Repo set can be rebound together without losing portable state
+- every Work receives every Project Repo even when an obsolete legacy `repos` field names a subset
 - one Work modifies primary and secondary Repos, receives one review, and produces one primary C1
 - one Work modifies only a secondary Repo while its Work and Evidence remain canonical in primary
 - a target advance or merge conflict in any Repo rejects before the primary boundary
@@ -284,6 +277,6 @@ The implementation is complete only when automated tests cover:
 - an unexpected secondary ref value blocks the Project without rollback
 - dirty, switched, detached, or divergent selected checkouts remain unchanged
 - Project prepare and Preview receive the correct multi-Repo runtime manifest
-- the UI manages Repo links and shows Work Repo scope without a Repo workflow
+- the UI manages Project Repo links without adding a Repo workflow
 - Assistant can perform every supported Project/Repo mutation without calling UI HTTP routes, and a
   topology change preserves its final speaking reply before the runtime rebuild

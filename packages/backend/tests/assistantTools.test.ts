@@ -337,7 +337,6 @@ describe('Assistant HOPI tools', () => {
         acceptanceCriteria: [
           'The reader entry uses the requested title and unrelated labels remain unchanged.',
         ],
-        repos: [fixture.primaryRepoId],
       },
     })
 
@@ -357,7 +356,6 @@ describe('Assistant HOPI tools', () => {
     expect(works[0]?.attributes).toMatchObject({
       kind: 'engineering',
       stage: 'generate',
-      repos: [fixture.primaryRepoId],
       assistantDispatch: expect.stringMatching(/^home:.+\/event:EV-direct-goal$/),
     })
     expect(works[0]?.body).toContain('## Accepted Inputs')
@@ -380,7 +378,6 @@ describe('Assistant HOPI tools', () => {
         title: 'Rename the reader entry',
         objective: 'Change the reader entry title.',
         acceptanceCriteria: ['The reader entry uses the requested title.'],
-        repos: [fixture.primaryRepoId],
       },
     }
 
@@ -424,7 +421,6 @@ describe('Assistant HOPI tools', () => {
         title: 'Add career-stage option',
         objective: 'Add the requested career-stage option using the current interaction pattern.',
         acceptanceCriteria: ['The option is available without changing existing choices.'],
-        repos: [fixture.primaryRepoId],
         dependsOn: ['W-existing'],
       },
     })
@@ -470,7 +466,6 @@ describe('Assistant HOPI tools', () => {
         title: 'Ship one increment',
         objective: 'Implement the bounded increment.',
         acceptanceCriteria: ['The bounded increment works as requested.'],
-        repos: [fixture.primaryRepoId],
       },
     }
 
@@ -504,7 +499,6 @@ describe('Assistant HOPI tools', () => {
       kind: 'engineering' as const,
       objective: 'Apply the bounded change.',
       acceptanceCriteria: ['The bounded change is complete.'],
-      repos: [fixture.primaryRepoId],
     }
 
     const outcomes = await Promise.allSettled([
@@ -545,14 +539,13 @@ describe('Assistant HOPI tools', () => {
           title: 'Add one change',
           objective: 'Apply the bounded change.',
           acceptanceCriteria: ['The change works as requested.'],
-          repos: [fixture.primaryRepoId],
         },
       }),
     ).rejects.toThrow('cannot bypass current Planning Work')
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
   })
 
-  test('rejects direct admission for inactive Goals and unlinked Repos without partial writes', async () => {
+  test('rejects direct admission for inactive Goals and ignores legacy Repo subsets', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -569,20 +562,25 @@ describe('Assistant HOPI tools', () => {
       fixture.tools.executeForEvent('EV-paused', 'hopi_create_work', {
         projectId: 'P-1',
         goalId: 'G-1',
-        work: { ...baseWork, repos: [fixture.primaryRepoId] },
+        work: baseWork,
       }),
     ).rejects.toThrow('requires an active Goal')
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
 
+    await fixture.goalStore.createGoal({ goalId: 'G-2', title: 'Goal 2', objective: 'Improve it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-2')
     await fixture.workspace.receiveEvent({ eventId: 'EV-repo', content: 'Use another Repo.' })
-    await expect(
-      fixture.tools.executeForEvent('EV-repo', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: { ...baseWork, repos: ['missing-repo'] },
-      }),
-    ).rejects.toThrow('unlinked Repo missing-repo')
-    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
+    await fixture.tools.executeForEvent('EV-repo', 'hopi_create_work', {
+      projectId: 'P-1',
+      goalId: 'G-2',
+      work: { ...baseWork, repos: ['missing-repo'] },
+    })
+    const packageState = await fixture.goalStore.readPackage('G-2')
+    expect(packageState.inputs).toHaveLength(1)
+    expect(
+      [...packageState.works.values()].find((work) => work.attributes.kind === 'engineering')
+        ?.attributes,
+    ).not.toHaveProperty('repos')
   })
 
   test('atomically supersedes an obsolete completion proposal when direct Work is admitted', async () => {
@@ -618,7 +616,6 @@ describe('Assistant HOPI tools', () => {
         title: 'Add one more increment',
         objective: 'Deliver the requested increment within the current Goal.',
         acceptanceCriteria: ['The new increment works as requested.'],
-        repos: [fixture.primaryRepoId],
       },
     })
 
@@ -967,7 +964,6 @@ describe('Assistant HOPI tools', () => {
           title: 'Bypass reopened planning',
           objective: 'Attempt a direct delivery while Planning owns the Goal.',
           acceptanceCriteria: ['The delivery is complete.'],
-          repos: [fixture.primaryRepoId],
         },
       }),
     ).rejects.toThrow('cannot bypass current Planning Work')

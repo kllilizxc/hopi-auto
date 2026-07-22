@@ -248,7 +248,6 @@ export interface WorkView {
   stage: 'plan' | 'generate' | 'review' | 'done' | 'cancelled'
   notBefore: string | null
   dependsOn: string[]
-  repos?: string[]
   contractRevision: number
   evidenceRefs: string[]
   attempts: number
