@@ -169,6 +169,12 @@ projections, another responsibility's immutable surface, and external side effec
 the current Input, Work, or operator. Natural-language authority remains sufficient; HOPI adds no
 permission DSL, capability field, or command taxonomy.
 
+Each envelope describes only its current process. A speaking Assistant's bounded environment does
+not describe the independent environment of a later responsibility Run. Accepted Work carries the
+authorized objective into that Run, which resolves its own capabilities at start and records actual
+execution failures as diagnostics instead of treating the speaking turn's limits as global HOPI
+limits.
+
 Provider-native unrestricted host access is a Project-local operator preference, not durable Project
 authority. It defaults off and is stored in HOPI's local runtime settings, with localStorage as a UI
 mirror rather than an execution-time source of truth. When enabled, newly started speaking

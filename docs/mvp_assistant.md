@@ -333,6 +333,12 @@ operator-addressable. Canonical Evidence with an available `operatorUrl` is oper
 projection explicitly reports whether HOPI mutation tools are available in the current turn, so the
 model does not infer capability from filesystem permissions.
 
+The Assistant execution envelope describes only the current conversation process. Accepted Work
+runs in its responsibility's independent execution environment and may perform delivery or external
+effects authorized by the operator and Work. That Run resolves its actual capabilities when it
+starts and preserves observed failures as diagnostics. A bounded speaking turn therefore does not
+imply that HOPI lacks an execution path for the requested effect.
+
 HOPI exposes its tools through one local MCP server with a per-turn capability. Each supported
 vendor adapter injects that same server using the vendor's native non-interactive configuration. The server
 runs inside the Coordinator process and sends every mutation through the same validators,

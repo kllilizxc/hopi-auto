@@ -886,6 +886,15 @@ describe('WorkspaceAssistant conversation', () => {
       'A named model, tool, workflow, or delivery path remains part of accepted authority',
     )
     expect(seen[0]?.prompt).toContain(
+      'The current Assistant execution environment describes only this conversation process',
+    )
+    expect(seen[0]?.prompt).toContain(
+      "Accepted Work runs in its responsibility's independent execution environment",
+    )
+    expect(seen[0]?.prompt).toContain(
+      'actual capabilities are resolved for that Run, and failures return their observed diagnostics',
+    )
+    expect(seen[0]?.prompt).toContain(
       "effect of the operator's intent correct in scope, durability, and accessibility",
     )
     expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
