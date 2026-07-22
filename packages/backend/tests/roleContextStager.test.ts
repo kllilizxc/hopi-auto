@@ -68,6 +68,21 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('including an empty proposal')
     expect(prompt).toContain('Terminal Work and Planning Work are immutable')
     expect(prompt).toContain('Coordinator validates and publishes it')
+    expect(prompt).toContain(
+      'Commit identities belong to that Repo object database; the primary authority snapshot is not a secondary Repo commit.',
+    )
+    const repoManifest = await Bun.file(bundle.reposFile).json()
+    expect(repoManifest).toEqual({
+      primaryRepoId: 'primary',
+      releaseRef: projectReleaseRef('project-1'),
+      repos: { primary: fixture.projectRoot },
+      releaseHeads: { primary: bundle.releaseHead },
+    })
+    const context = await Bun.file(bundle.contextFile).text()
+    expect(context).toContain(`Primary authority release snapshot: ${bundle.releaseHead}`)
+    expect(context).toContain(`Project release ref in each Repo: ${projectReleaseRef('project-1')}`)
+    expect(context).toContain(`Release head: ${bundle.releaseHead}`)
+    expect(context).not.toContain('Integration target snapshot:')
     expect(prompt).toContain('mutually exclusive with completion')
     expect(prompt).toContain('New Engineering Work frontmatter (Markdown bodies remain free-form)')
     expect(prompt).toContain('kind: engineering')

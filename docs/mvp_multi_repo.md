@@ -151,16 +151,23 @@ one runtime manifest:
 ```json
 {
   "primaryRepoId": "web",
+  "releaseRef": "refs/heads/hopi/project/P-1/release",
   "repos": {
     "web": "/code/.hopi-worktrees/product-web/work/G-1/W-1",
     "api": "/code/.hopi-worktrees/product-api/work/G-1/W-1"
+  },
+  "releaseHeads": {
+    "web": "<web-release-commit>",
+    "api": "<api-release-commit>"
   }
 }
 ```
 
 The process cwd is the primary root when selected, otherwise the first Work Repo; the runtime
-manifest names every other Work root explicitly. This list defines responsibility and checkpoint
-scope, not a provider filesystem allowlist. Prompts name every Repo ID and path. A Generator checkpoint covers
+manifest names every other Work root explicitly. `releaseHeads` identifies the commit in each
+Repo's own Git object database; the primary authority snapshot is labeled separately and is never
+presented as a secondary Repo commit. This list defines responsibility and checkpoint scope, not a
+provider filesystem allowlist. Prompts name every Repo ID and path. A Generator checkpoint covers
 every Work root, and Reviewer starts only when every root is checkpoint-clean. Reviewer fingerprints
 all roots and one source mutation rejects the Run.
 
@@ -211,6 +218,10 @@ Reviewer success is integrated as one logical operation:
 6. It materializes the primary integration worktree, then advances and materializes each secondary
    Project-qualified release ref to the commit recorded by C1.
 7. It verifies every Project-qualified managed release worktree; user-selected checkouts remain unchanged.
+
+Candidate construction applies Git's complete trivial three-way resolutions before classifying
+unmerged index entries. In particular, an unchanged release plus a task deletion is a clean deletion,
+not a conflict. Only entries left unmerged after those ordinary rules produce a C1 rejection.
 
 Primary history contains exactly one qualified C1 per completed Engineering Work, including a Work
 that changed only secondary Repos. Goal completion verification therefore retains the current exact

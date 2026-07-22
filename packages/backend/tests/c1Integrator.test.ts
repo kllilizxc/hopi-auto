@@ -84,6 +84,24 @@ describe('C1Integrator', () => {
     ).toBe(true)
   })
 
+  test('integrates a task-side deletion when the release left the file unchanged', async () => {
+    const fixture = await createFixture()
+    await rm(join(fixture.taskWorktreePath, 'README.md'))
+    await checkpointTaskWorktree({
+      worktreePath: fixture.taskWorktreePath,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-delete',
+    })
+    const prepared = await fixture.prepareReviewer('run-review-delete')
+
+    const result = await fixture.integrator.integrate(prepared.integrationInput)
+
+    expect(result.kind).toBe('integrated')
+    expect(await Bun.file(join(fixture.projectRoot, 'README.md')).exists()).toBe(false)
+  })
+
   test('rejects a pre-boundary source conflict without moving the release ref', async () => {
     const fixture = await createFixture()
     await Bun.write(join(fixture.projectRoot, 'src', 'feature.ts'), 'export const feature = 3\n')
@@ -298,6 +316,7 @@ async function createFixture() {
   return {
     repoRoot,
     projectRoot: linked.integrationRoot,
+    taskWorktreePath: stable.path,
     store,
     releaseBeforeTask,
     integrator,

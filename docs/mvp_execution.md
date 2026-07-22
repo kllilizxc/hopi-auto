@@ -1023,6 +1023,11 @@ The target is the HOPI-owned `hopi/project/<projectId>/release` branch, and C1's
 complete validated managed integration root plus the accepted task changes. No selected checkout,
 index, or uncommitted file participates in C1 construction or managed materialization.
 
+For a multi-Repo responsibility, `context.md` labels the primary Repo release only as the canonical
+authority snapshot. `repos.json` supplies the common Project release ref and each selected Repo's
+own release head. Commit identities are meaningful only inside that Repo's Git object database;
+Agents are not expected to resolve the primary commit from a secondary Repo.
+
 The guarded ref move to C1 is the one irreversible integration boundary and is independent of
 `publish(bundle)`; success is reported only after Git confirms ref durability. A conflict, failed
 check, or ref-update error verified to have left the old target may record Evidence and increment
@@ -1039,6 +1044,8 @@ merge stage. Mechanical guarantees belong to the publish ADR.
 Within one managed worktree, Coordinator runs index-inspecting Git commands sequentially: commands
 such as `write-tree` and `status` may both refresh and lock the same index. This is part of the one
 C1 critical section, not a new resource lock, retry state, or reduction in parallel model Runs.
+The temporary-index three-way merge enables Git's trivial merge rules before inspecting unmerged
+entries, so an unchanged target and a task-side deletion integrate without false conflict.
 
 ## Worktrees and Parallelism
 

@@ -136,6 +136,14 @@ export function createRoleContextStager(
         prefixes: [paths.goalRoot(input.goalId)],
       })
       const releaseHead = snapshot.releaseHead
+      const repoReleaseHeads = Object.fromEntries(
+        await Promise.all(
+          repoRoots.map(async (repo) => [
+            repo.repoId,
+            await gitOutput(repo.path, ['rev-parse', releaseRef]),
+          ]),
+        ),
+      )
       const goalPath = paths.goalDocument(input.goalId)
       const workPath = paths.workDocument(input.goalId, input.workId)
       const goalFile = requiredSnapshotFile(snapshot.files, goalPath)
@@ -245,7 +253,9 @@ export function createRoleContextStager(
         `${JSON.stringify(
           {
             primaryRepoId,
+            releaseRef,
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
+            releaseHeads: repoReleaseHeads,
           },
           null,
           2,
@@ -260,6 +270,8 @@ export function createRoleContextStager(
           runtimeScratchDir,
           runtimeCacheDir,
           releaseHead,
+          releaseRef,
+          repoReleaseHeads,
           snapshot: authorityFiles,
           evidencePaths,
           artifactManifestFile,
@@ -900,6 +912,8 @@ function renderContextManifest(
     runtimeScratchDir: string
     runtimeCacheDir: string
     releaseHead: string
+    releaseRef: string
+    repoReleaseHeads: Readonly<Record<string, string>>
     snapshot: PublicationSnapshot['files']
     evidencePaths: readonly string[]
     artifactManifestFile?: string
@@ -921,7 +935,7 @@ function renderContextManifest(
     `- Work: ${input.workId}`,
     `- Run: ${input.runId}`,
     `- Responsibility: ${input.responsibility}`,
-    `- Integration target snapshot: ${context.releaseHead}`,
+    `- Primary authority release snapshot: ${context.releaseHead}`,
     `- Immutable authority root: ${context.authorityRoot}`,
     `- Writable proposal root: ${context.proposalRoot}`,
     `- Responsibility session workspace: ${context.runtimeScratchDir}`,
@@ -929,6 +943,7 @@ function renderContextManifest(
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
     `- Repo workspace manifest: ${context.reposFile}`,
+    `- Project release ref in each Repo: ${context.releaseRef}`,
     ...(context.artifactManifestFile
       ? [`- Evidence artifact manifest: ${context.artifactManifestFile}`]
       : []),
@@ -938,8 +953,11 @@ function renderContextManifest(
         ]
       : []),
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
-    ...context.repoRoots.map(
-      (repo) => `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
+    ...context.repoRoots.map((repo) =>
+      [
+        `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
+        `  Release head: ${context.repoReleaseHeads[repo.repoId] ?? 'unavailable'}`,
+      ].join('\n'),
     ),
     ...(context.bootstrapSourceRoot
       ? [`- Read-only bootstrap source snapshot: ${context.bootstrapSourceRoot}`]
@@ -1011,6 +1029,7 @@ function renderResponsibilityPrompt(
     'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
     'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns HOPI-managed task Git metadata, checkpoints, and integration refs.',
     'The Repo manifest is the complete source-root map. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.',
+    'The manifest also gives each Repo release head. Commit identities belong to that Repo object database; the primary authority snapshot is not a secondary Repo commit.',
     'Use $HOPI_RUN_SCRATCH for retained files and $HOPI_CACHE_DIR for caches; evidence requires a retained file or log.',
     ...(paths.hasImages
       ? [

@@ -1058,7 +1058,7 @@ function renderEvidenceBody(input: ApplyPassOutcomeInput) {
     '',
     `- Responsibility: ${input.responsibility}`,
     `- Result: ${input.outcome.result}`,
-    `- Integration target snapshot: ${input.context.releaseHead}`,
+    `- Primary authority release snapshot: ${input.context.releaseHead}`,
     '',
     '## Summary',
     '',

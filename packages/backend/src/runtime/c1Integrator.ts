@@ -466,7 +466,7 @@ async function buildSourceCandidate(input: {
   }
   const merge = await gitResult(
     input.repo.integrationRoot,
-    ['read-tree', '-m', mergeBase, input.oldTarget, taskHead],
+    ['read-tree', '-m', '--aggressive', mergeBase, input.oldTarget, taskHead],
     input.env,
   )
   if (merge.exitCode !== 0) {
