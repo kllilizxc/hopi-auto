@@ -103,6 +103,7 @@ describe('Assistant Reflection', () => {
           resolvedAt: null,
           notifiedAt: null,
           body: 'Coordinator needs safe repair.',
+          inspectionPath: '/diagnostics/workspace-attention.md',
         },
       ],
       projects: [
@@ -183,7 +184,8 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('"currentCandidateIntegration"')
     expect(prompt).toContain('"kind":"ready"')
     expect(prompt).not.toContain('"evidenceRefs"')
-    expect(prompt).not.toContain('SECRET-RUNTIME-PATH')
+    expect(prompt).toContain('SECRET-RUNTIME-PATH')
+    expect(prompt).toContain('/diagnostics/workspace-attention.md')
     expect(prompt.length).toBeLessThan(5_000)
   })
 

@@ -175,6 +175,11 @@ authorized objective into that Run, which resolves its own capabilities at start
 execution failures as diagnostics instead of treating the speaking turn's limits as global HOPI
 limits.
 
+Compact state is an index into durable truth. Every truncated file-backed diagnostic carries its
+readable source path, so an Agent can inspect the complete record before deciding ownership or
+consequence. HOPI does not replace the missing tail of an operational failure with a guessed
+classification.
+
 Provider-native unrestricted host access is a Project-local operator preference, not durable Project
 authority. It defaults off and is stored in HOPI's local runtime settings, with localStorage as a UI
 mirror rather than an execution-time source of truth. When enabled, newly started speaking

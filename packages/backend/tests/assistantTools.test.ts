@@ -2070,7 +2070,12 @@ describe('Assistant HOPI tools', () => {
 
     const homeState = (await fixture.tools.executeForEvent('EV-read-refs', 'hopi_read_state', {}))
       .value as {
-      workspaceAttentions: Array<{ id: string; reference: string; creationRationale: string }>
+      workspaceAttentions: Array<{
+        id: string
+        reference: string
+        creationRationale: string
+        inspectionPath: string
+      }>
       projects: Array<{
         goals: Array<{
           goal: { attributes: { id: string }; body?: string }
@@ -2109,6 +2114,9 @@ describe('Assistant HOPI tools', () => {
       }),
     )
     expect(homeState.workspaceAttentions[0]?.creationRationale.length).toBeLessThanOrEqual(323)
+    expect(homeState.workspaceAttentions[0]?.inspectionPath).toBe(
+      join(fixture.homeRoot, fixture.workspace.paths.attention(workspaceAttention.attributes.id)),
+    )
     expect(homeState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
     expect(homeState.projects[0]?.goals[0]?.attentions).toContainEqual(
       expect.objectContaining({

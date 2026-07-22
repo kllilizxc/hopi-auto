@@ -66,12 +66,16 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
     ...(input.repoId ? [`HOPI-Repo: ${input.repoId}`] : []),
     `HOPI-Producer-Run: ${input.runId}`,
   ].join('\n')
-  const commit = await gitResult(input.worktreePath, ['commit', '--no-gpg-sign', '-m', message], {
-    GIT_AUTHOR_NAME: 'HOPI Generator',
-    GIT_AUTHOR_EMAIL: 'hopi@local',
-    GIT_COMMITTER_NAME: 'HOPI Coordinator',
-    GIT_COMMITTER_EMAIL: 'hopi@local',
-  })
+  const commit = await gitResult(
+    input.worktreePath,
+    ['-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '-m', message],
+    {
+      GIT_AUTHOR_NAME: 'HOPI Generator',
+      GIT_AUTHOR_EMAIL: 'hopi@local',
+      GIT_COMMITTER_NAME: 'HOPI Coordinator',
+      GIT_COMMITTER_EMAIL: 'hopi@local',
+    },
+  )
   if (commit.exitCode !== 0) {
     throw new TaskCheckpointError(commit.stderr || commit.stdout || 'Task checkpoint failed')
   }

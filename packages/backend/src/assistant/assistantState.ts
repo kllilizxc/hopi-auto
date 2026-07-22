@@ -146,6 +146,10 @@ export function createAssistantStateReader(options: {
           reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
           ...attention.attributes,
           body: boundedText(attention.body, 1_200),
+          inspectionPath: resolve(
+            options.workspace.root.path,
+            options.workspace.paths.attention(attention.attributes.id),
+          ),
         }))
 
       const projects = await Promise.all(

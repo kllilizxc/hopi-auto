@@ -1528,6 +1528,7 @@ function compactRuntimeStateIndex(value: Record<string, unknown>, includeSummary
     latestAttempt,
     lastActivityAt: value.lastActivityAt,
     stale: value.stale,
+    ...(isRecord(value.paths) ? { paths: value.paths } : {}),
   }
 }
 

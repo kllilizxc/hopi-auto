@@ -649,6 +649,7 @@ function compactRuntime(value: unknown) {
     latestAttempt: compactAttempt(value.latestAttempt),
     lastActivityAt: value.lastActivityAt,
     stale: value.stale,
+    ...(isRecord(value.paths) ? { paths: value.paths } : {}),
   }
 }
 
@@ -680,6 +681,11 @@ function compactAttention(value: unknown) {
       resolutionInput: attributes.resolutionInput,
     },
     ...(typeof value.body === 'string' ? { body: bounded(value.body, 800) } : {}),
+    ...(typeof value.inspectionPath === 'string'
+      ? { inspectionPath: value.inspectionPath }
+      : typeof value.path === 'string'
+        ? { inspectionPath: value.path }
+        : {}),
   }
 }
 

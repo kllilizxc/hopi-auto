@@ -557,6 +557,12 @@ inlining those potentially large files. Assistant decides what else to read. Thi
 conversation responsive and lets the architecture improve automatically with model tool-use
 capability.
 
+A bounded model-visible field is an index, never the only copy of diagnostic truth. Whenever HOPI
+truncates an Attention, Attempt, Evidence, or other file-backed diagnostic, the same projection names
+the exact readable source path. Reflection and the speaking Assistant may inspect that source when
+the omitted detail can change ownership or the next action. Compact text without a readable source
+is valid only when the complete value is already present.
+
 Tool scope is structurally namespaced by its argument and canonical reference, not inferred from an
 ID's human-readable prefix. `home:<homeId>/...` references describe Home-owned Inbox or Attention
 state, so their Home ID is never a Project argument. A workspace-wide state read omits Project and

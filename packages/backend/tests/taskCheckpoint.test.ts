@@ -30,6 +30,20 @@ describe('checkpointTaskWorktree', () => {
     )
   })
 
+  test('does not run repository hooks for a Coordinator-owned checkpoint', async () => {
+    const fixture = await setup()
+    await mkdir(join(fixture.repoPath, '.git', 'hooks'), { recursive: true })
+    const hook = join(fixture.repoPath, '.git', 'hooks', 'commit-msg')
+    await Bun.write(hook, '#!/bin/sh\nexit 1\n')
+    await Bun.$`chmod +x ${hook}`
+    await Bun.write(join(fixture.worktreePath, 'feature.ts'), 'export const feature = true\n')
+
+    const checkpoint = await checkpointTaskWorktree(fixture.input)
+
+    expect(checkpoint.created).toBe(true)
+    expect(await git(fixture.worktreePath, ['status', '--porcelain'])).toBe('')
+  })
+
   test('is a no-op when the task branch is already checkpointed', async () => {
     const fixture = await setup()
 
@@ -85,6 +99,7 @@ async function setup() {
     workId: 'W-1',
   })
   return {
+    repoPath,
     worktreePath: worktree.path,
     input: {
       worktreePath: worktree.path,
