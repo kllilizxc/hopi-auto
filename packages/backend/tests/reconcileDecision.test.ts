@@ -50,6 +50,20 @@ describe('decideGoalReconciliation', () => {
     })
   })
 
+  test('dispatches through one pending retry without resolving its Attention', () => {
+    const target = 'project:P-1/goal:G-1/work:W-1'
+    const pending = attention('A-1', target)
+    pending.attributes.retryRunId = 'R-1'
+    const goalPackage = packageWith([work('W-1', 'engineering', 'generate')], [pending])
+
+    expect(decide(goalPackage)).toEqual({
+      kind: 'dispatch',
+      workId: 'W-1',
+      responsibility: 'generator',
+    })
+    expect(goalPackage.attentions.get('A-1')?.attributes.resolvedAt).toBeNull()
+  })
+
   test('requests final Planning when no nonterminal Work or proposal exists', () => {
     const goalPackage = packageWith([work('W-1', 'engineering', 'done')])
 

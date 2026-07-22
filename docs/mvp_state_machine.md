@@ -118,6 +118,7 @@ Attention has no `kind`, `status`, or stored scope:
 | `resolvedAt`      | `null` while open; resolution time otherwise                                                |
 | `notifiedAt`      | Attention-linked complete public Assistant reply acknowledgement, otherwise `null`          |
 | `operatorRequest` | Exact public Assistant event currently awaiting an operator reply, otherwise `null`         |
+| `retryRunId`      | Exact reserved or executing Run for one pending invocation, otherwise `null`                |
 
 Storage path derives scope. Goal-local Attention may target only its owning Goal or Work, or use
 `target: null` for that Goal's completion. Workspace Attention may target an Inbox event or linked
@@ -130,11 +131,13 @@ The Run contract supplies the exact `project:<projectId>/goal:<goalId>/work:<wor
 filesystem document path is not another valid representation. Goal targeting remains a readable
 Goal-wide control scope rather than a responsibility-selected alternative.
 
-Every open Attention with a non-null target has exactly the same kernel behavior:
+Every open Attention with a non-null target has exactly the same kernel behavior, except during its
+one pending retry invocation:
 
-- it appears as **Waiting for Assistant** while `operatorRequest` is null and **Needs you** only
-  while `operatorRequest` identifies the exact unanswered public Assistant request
-- it blocks its target and deterministic descendants
+- it appears as **Waiting for Assistant** while both ownership pointers are null and **Needs you**
+  only while `operatorRequest` identifies the exact unanswered public Assistant request
+- it blocks its target and deterministic descendants unless `retryRunId` temporarily admits
+  the requested invocation
 - it remains open after informational notification or an operator request
 - it resolves only after an answer or verified condition change
 
@@ -246,7 +249,11 @@ Attention implicitly; when the accepted instruction makes a reported condition o
 resolves that exact reference as a separate effect. Ordinary page-scoped turns carry no inferred
 Attention references.
 If evidence does not establish a safe effect, the Attention remains open for a later Assistant turn
-or an explicit user request.
+or an explicit user request. For Reflection-selected targeted Attention only, Coordinator gives the
+speaking model one same-Session correction before accepting such an open result: the first final
+response must settle the selected references or stage their exact `request_user` transfer; otherwise
+it is not published and one closure reminder continues the same turn. The continued response skips
+only this settlement check and proceeds through all existing safety validation.
 
 Tool effects are idempotent by qualified source turn `(homeId, eventId)`, target identity, current
 canonical guards, and expected content. Matching Goal Input proves that Goal accepted the source
@@ -456,8 +463,9 @@ or deterministic pre-C1 rejection. `fail` instead appends its Evidence without c
 If a Work gate is absent after a process stop, the result was not consumed. Evidence alone remains
 provenance and does not prevent a new Run.
 
-An interactive responsibility's schema-constrained terminal outcome is persisted to Run-local
-`result.json` by Coordinator. One same-Session outcome recovery may occur inside that Run when the
+An interactive responsibility's captured and validated terminal outcome is persisted to Run-local
+`result.json` by Coordinator. Capturing that final message must not constrain or repurpose
+intermediate progress turns. One same-Session outcome recovery may occur inside that Run when the
 vendor exits cleanly without a valid outcome. It has no state-machine effect, creates no Attempt,
 does not repeat Repo preparation, and cannot publish a default success. A second invalid outcome is
 an operational failure and discards the stuck vendor Session.
@@ -542,10 +550,14 @@ runnable.
 - Consecutive `operational_failure` Attempt records form a derived runtime episode after the latest
   resolved Work-target Attention. The third failure creates ordinary Work-target Attention; resolving
   that exact Attention starts a fresh episode. There is no stored operational counter or failure kind.
-- Explicit Work retry publishes the attempt reset and resolution of open Attention targeted exactly
-  at that Work in one Control operation. Retry and defer do not adopt the current Inbox event as
-  Goal Input. Work cancellation is a material decision and retains its Input while settling only
-  Attention for Work it makes terminal. Neither action closes broader or unrelated Attention.
+- Explicit Work retry publishes the attempt reset and a pending retry marker on open Attention
+  targeted exactly at that Work. Pending retry Attention is unresolved but temporarily nonblocking.
+  An executor-reported success resolves it; any failed invocation clears the marker and appends the
+  diagnostic to that same Attention. An Attention result from the retrying responsibility is folded
+  into the pending retry rather than creating a duplicate blocker. Retry and defer do not adopt the
+  current Inbox event as Goal Input. Work cancellation is a material decision and retains its Input
+  while settling only Attention for Work it makes terminal. Neither action closes broader or
+  unrelated Attention.
 - `attention` leaves Work stage and attempts unchanged. Speaking Assistant may request Planning;
   reconciliation uses ordinary readiness plus Planning and Attention guards.
 - Targeted Attention remains the only durable operator block. It stays open until answered or its
@@ -639,21 +651,25 @@ outcome. Other state and document changes do not participate in this runtime tra
   may dispatch, publish a returning result, or enter `C1`. Planning Work never appears in
   Engineering `dependsOn`.
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
-  non-null target always blocks; its nullable exact `operatorRequest` pointer derives whether its
-  badge is **Waiting for Assistant** or **Needs you**. `notifiedAt` is delivery history only. A null
-  target is Goal completion and never blocks.
+  non-null target blocks except while its nullable `retryRunId` admits one invocation; during
+  that interval it has no attention badge or Assistant handoff. Its nullable exact
+  `operatorRequest` pointer otherwise derives whether its badge is **Waiting for Assistant** or
+  **Needs you**. `notifiedAt` is delivery history only. A null target is Goal completion and never
+  blocks.
 - Attention resolution records Assistant judgment and requests ordinary reconciliation; it never
   overrides an execution precondition. The component that owns a durable or safety boundary checks
   that boundary again before acting and fails closed through ordinary Project Attention when it is
   still unsafe.
 - Operational exhaustion reuses ordinary Work-target Attention and is derived from Attempt history;
-  it adds no Work field, Attention identity convention, or Kanban state. Explicit Work retry settles
-  only the exact Work blocker as part of that control operation.
+  it adds no Work field, Attention identity convention, or Kanban state. Explicit Work retry marks
+  the exact Work blocker pending; only its later invocation result settles or reopens ownership.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
 - An internal Attention handoff records an ordinary Assistant turn. An informational final response
   alone does not transfer ownership, and unresolved Attention remains visible as a fact;
-  Coordinator never makes a hidden correction pass to force a decision.
+  Coordinator makes at most one same-Session correction when the first response leaves selected
+  targeted Attention Assistant-owned and open, then trusts the continued response without repeating
+  that settlement check.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in
   multiple Goals only through explicit successful HOPI tool calls.
 - From its first Goal effect until settlement, one Assistant turn installs a process-local barrier

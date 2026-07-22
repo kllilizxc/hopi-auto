@@ -1394,7 +1394,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
-  test('finishes a retry-only internal handoff without a second model call', async () => {
+  test('accepts a pending retry-only internal handoff without a second model call', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
@@ -1434,8 +1434,8 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
-    ).not.toBeNull()
+        ?.attributes,
+    ).toMatchObject({ resolvedAt: null, retryRunId: expect.any(String) })
   })
 
   test('lets one internal Assistant pass request the exact missing operator decision', async () => {
@@ -1566,10 +1566,24 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('does not invent a hidden correction pass when an internal handoff makes no effect', async () => {
+  test('continues the same Session once when the first internal response leaves Attention open', async () => {
+    const prompts: string[] = []
+    const sessions: Array<string | null> = []
+    let calls = 0
     const fixture = await setup(() => ({
-      async run() {
-        return { reply: '', session: codexSession('thread-omission') }
+      async run(input) {
+        calls += 1
+        prompts.push(input.prompt)
+        sessions.push(input.session?.sessionId ?? null)
+        return calls === 1
+          ? {
+              reply: 'I will settle the blocker next.',
+              session: codexSession('thread-omission-first'),
+            }
+          : {
+              reply: 'I am continuing with the repair.',
+              session: codexSession('thread-omission-corrected'),
+            }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-omission')
@@ -1587,12 +1601,66 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect((await fixture.workspace.readEvent('EV-omission'))?.attributes).toMatchObject({
       status: 'handled',
-      visibility: 'internal',
+      visibility: 'public',
+      reply: 'I am continuing with the repair.',
+    })
+    expect(calls).toBe(2)
+    expect(sessions).toEqual([null, 'thread-omission-first'])
+    expect(prompts[1]).toContain('Your previous final response left')
+    expect(prompts[1]).toContain('Do not merely promise')
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes,
+    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+  })
+
+  test('publishes the corrected result after the continued Session settles Attention', async () => {
+    const reference = 'project:P-1/goal:G-1/attention:A-corrected-settlement'
+    let calls = 0
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        calls += 1
+        if (calls === 1) {
+          return {
+            reply: 'I will clear the blocker.',
+            session: codexSession('thread-correction-first'),
+          }
+        }
+        expect(input.session).toEqual(codexSession('thread-correction-first'))
+        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
+          attentionRef: reference,
+          resolution: 'The continued turn verified and cleared the represented condition.',
+        })
+        return {
+          reply: 'The blocker is cleared.',
+          session: codexSession('thread-correction-settled'),
+        }
+      },
+    }))
+    await createGoalAttention(fixture.goalStore, 'G-1', 'A-corrected-settlement')
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-corrected-settlement',
+      content: 'Settle this blocker.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [reference],
+      },
+    })
+
+    await fixture.assistant.process('EV-corrected-settlement')
+
+    expect(calls).toBe(2)
+    expect(
+      (await fixture.workspace.readEvent('EV-corrected-settlement'))?.attributes,
+    ).toMatchObject({
+      status: 'handled',
+      visibility: 'public',
+      reply: 'The blocker is cleared.',
     })
     expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes
-        .resolvedAt,
-    ).toBeNull()
+      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-corrected-settlement')
+        ?.attributes.resolvedAt,
+    ).not.toBeNull()
   })
 
   test('publishes only the explicit operator request before transferring linked Attention', async () => {

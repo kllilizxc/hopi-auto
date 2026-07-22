@@ -187,15 +187,8 @@ export async function resolveConfiguredTransportCommand(options: {
       : assignment)
 
   if (options.config.transport === 'codex') {
-    const outcomeSchemaFile = join(options.bundle.runtimeScratchDir, 'role-outcome.schema.json')
     const structuredOutcomeFile = join(options.bundle.runtimeScratchDir, 'vendor-outcome.json')
-    await Promise.all([
-      Bun.write(
-        outcomeSchemaFile,
-        `${JSON.stringify(roleOutcomeJsonSchema(options.input.role))}\n`,
-      ),
-      Bun.write(structuredOutcomeFile, ''),
-    ])
+    await Bun.write(structuredOutcomeFile, '')
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
     const sandbox = options.fullAccess
@@ -220,8 +213,6 @@ export async function resolveConfiguredTransportCommand(options: {
       cmd.push('exec', 'resume', '--ignore-user-config', '--skip-git-repo-check')
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
       cmd.push(
-        '--output-schema',
-        outcomeSchemaFile,
         '--output-last-message',
         structuredOutcomeFile,
         '--json',
@@ -237,14 +228,7 @@ export async function resolveConfiguredTransportCommand(options: {
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
-      cmd.push(
-        '--output-schema',
-        outcomeSchemaFile,
-        '--output-last-message',
-        structuredOutcomeFile,
-        '--json',
-        '-',
-      )
+      cmd.push('--output-last-message', structuredOutcomeFile, '--json', '-')
     }
     return {
       cmd,

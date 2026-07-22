@@ -30,7 +30,7 @@ import {
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantStateReader } from './assistantState'
-import type { AssistantTools } from './assistantTools'
+import { type AssistantTools, UnsettledInternalAttentionError } from './assistantTools'
 import { observeAssistantTurn, renderAssistantTurnObservation } from './assistantTurnObservation'
 
 export interface AssistantModelInput {
@@ -465,20 +465,57 @@ export function createWorkspaceAssistant(input: {
           )
         }
 
+        let reply = result.reply.trim()
+        if (!reply && event.attributes.source !== 'reflection') {
+          throw new WorkspaceAssistantError('Assistant produced an empty public reply')
+        }
+        let internalIntent: 'silent' | 'inform' | 'request' | null = null
+        if (event.attributes.source === 'reflection') {
+          try {
+            internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply, {
+              requireAttentionSettlement: true,
+            })
+          } catch (error) {
+            if (!(error instanceof UnsettledInternalAttentionError)) throw error
+            await input.conversation.record(eventId, {
+              kind: 'message',
+              level: 'info',
+              role: 'coordinator',
+              content:
+                'The first response left selected targeted Attention open; continuing the same Assistant Session once for closure.',
+            })
+            result = await input.runner.run(
+              {
+                eventId,
+                ...(projectId ? { projectId } : {}),
+                prompt: renderInternalAttentionSettlementCorrection(event),
+                rebuildPrompt,
+                session: result.session,
+                cwd: workspaceRoot,
+                lastMessageFile: join(turnRoot, 'last-message.txt'),
+                transcriptFile: join(turnRoot, 'transcript.log'),
+                toolUrl: input.resolveToolUrl(),
+                toolToken,
+                imageFiles,
+                readableRoots: [resolve(input.homeRoot)],
+                toolMode,
+                executionPlan,
+                signal,
+              },
+              observer,
+            )
+            reply = result.reply.trim()
+            internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply, {
+              requireAttentionSettlement: false,
+            })
+          }
+        }
         await input.conversation.writeSession(
           conversationScope,
           result.session,
           WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
           runtimeDigest,
         )
-        const reply = result.reply.trim()
-        if (!reply && event.attributes.source !== 'reflection') {
-          throw new WorkspaceAssistantError('Assistant produced an empty public reply')
-        }
-        const internalIntent =
-          event.attributes.source === 'reflection'
-            ? await input.tools.finalizeInternalResponse(toolToken, eventId, reply)
-            : null
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
           disposition:
@@ -872,6 +909,7 @@ const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'There is no separate candidate reprojection state or Coordinator repair action outside `currentCandidateIntegration`. When it is ready and Attention is the only failed readiness predicate, resolving that Attention removes the only gate; normal reconciliation then chooses the next responsibility.',
   'An open targeted Attention is the scheduling gate for its target. Resolving it removes that gate immediately and may make the target runnable; a later operator request does not restore the gate. Requesting the operator records Needs you ownership on a still-open Attention after the public turn is durable, so scheduling remains blocked while the answer is absent.',
   'For an internal turn, the final response is the only operator-facing text: non-empty informs, empty stays hidden, and hopi_request_user stages selected Attention ownership before that same final response asks the question.',
+  'For Reflection-selected targeted Attention, act before the first final response: settle the selected condition through a verified resolution or target control, replace an obsolete path, or use hopi_request_user only for genuine operator authority. A promise of future action is not settlement.',
 ] as const
 
 function workspaceAssistantDeveloperInstructions() {
@@ -970,6 +1008,19 @@ function renderTurn(
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function renderInternalAttentionSettlementCorrection(event: InboxEventDocument) {
+  const references = event.attributes.context
+    ? normalizeInboxAttentionReferences(event.attributes.context)
+    : []
+  return [
+    '[Continue the current internal Inbox turn; do not revisit an earlier turn.]',
+    'Your previous final response left Reflection-selected targeted Attention open and Assistant-owned, so it was not published.',
+    'Act now through the available HOPI tools: resolve a verified-clear condition, retry or cancel its blocked target, cancel an obsolete path and create its replacement, or call hopi_request_user only when an operator decision or external action is genuinely required.',
+    'Do not merely promise or narrate a future action. After acting, return the normal concise operator-facing outcome, or return nothing when no update is useful.',
+    ...(references.length ? [`Selected Attention: ${references.join(', ')}`] : []),
+  ].join('\n\n')
 }
 
 function renderPreference(preference: AssistantPreferenceDocument, writable: boolean) {

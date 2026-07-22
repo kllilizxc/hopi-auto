@@ -91,6 +91,7 @@ export const attentionAttributesSchema = z
     notifiedAt: timestampSchema.nullable(),
     operatorRequest: inboxEventReferenceSchema.nullable().optional(),
     resolutionInput: canonicalRefSchema.nullable().optional(),
+    retryRunId: stableIdSchema.nullable().optional(),
   })
   .strict()
   .superRefine((attention, context) => {
@@ -106,6 +107,20 @@ export const attentionAttributesSchema = z
         code: z.ZodIssueCode.custom,
         path: ['operatorRequest'],
         message: 'Resolved Attention cannot wait for operator input',
+      })
+    }
+    if (attention.resolvedAt !== null && attention.retryRunId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['retryRunId'],
+        message: 'Resolved Attention cannot have a pending retry',
+      })
+    }
+    if (attention.operatorRequest && attention.retryRunId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['retryRunId'],
+        message: 'Operator-owned Attention cannot have a pending retry',
       })
     }
   })
@@ -180,6 +195,14 @@ export const renderEvidenceDocument = renderMarkdownDocument<EvidenceAttributes>
 
 export function isWorkTerminal(work: WorkAttributes) {
   return work.stage === 'done' || work.stage === 'cancelled'
+}
+
+export function isAttentionRetryPending(attention: AttentionAttributes) {
+  return attention.resolvedAt === null && (attention.retryRunId ?? null) !== null
+}
+
+export function isAttentionBlocking(attention: AttentionAttributes) {
+  return attention.resolvedAt === null && !isAttentionRetryPending(attention)
 }
 
 export function isPlanningWork(work: WorkAttributes): work is PlanningWorkAttributes {

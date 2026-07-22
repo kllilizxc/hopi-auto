@@ -687,12 +687,14 @@ createdAt: 2026-07-10T09:00:00Z
 resolvedAt: null
 notifiedAt: null
 operatorRequest: null
+retryRunId: null
 ---
 ```
 
 `target` is exactly one canonical event, project, Goal, or Work reference, or null for completion.
-An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` is null and
-**Needs you** only while `operatorRequest` contains the exact
+An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` and
+`retryRunId` are null, has no ownership badge while its one requested invocation is pending,
+and projects as **Needs you** only while `operatorRequest` contains the exact
 `home:<homeId>/event:<eventId>` public Assistant request awaiting a reply. `notifiedAt` is independent
 delivery history and may be non-null in either projection.
 

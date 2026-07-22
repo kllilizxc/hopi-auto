@@ -112,6 +112,39 @@ describe('GoalController', () => {
     expect(laterCycle.attributes.id).toStartWith('attempts-plan-initial-3-')
   })
 
+  test('resolves a pending retry only after its invocation succeeds', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      3,
+      'provider unavailable',
+    )
+
+    await controller.retryWork('G-1', 'plan-initial', null, {
+      resolution: 'Request one new invocation.',
+    })
+    const pending = (await store.readPackage('G-1')).attentions.get(attention.attributes.id)
+    expect(pending?.attributes).toMatchObject({
+      resolvedAt: null,
+      retryRunId: expect.any(String),
+    })
+
+    expect(
+      await controller.finishWorkRetry('G-1', 'plan-initial', {
+        status: 'succeeded',
+        diagnostic: 'Planner invocation completed.',
+      }),
+    ).toEqual([attention.attributes.id])
+    const resolved = (await store.readPackage('G-1')).attentions.get(attention.attributes.id)
+    expect(resolved?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      retryRunId: null,
+    })
+    expect(resolved?.body).toContain('Planner invocation completed.')
+  })
+
   test('uses ordinary Work Attention for operational exhaustion', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

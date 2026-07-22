@@ -49,6 +49,7 @@ describe('resolveConfiguredTransportCommand', () => {
   })
 
   test('builds a codex exec command that reads the bundled prompt from stdin', async () => {
+    await rm('/tmp/run/scratch/role-outcome.schema.json', { force: true })
     await Bun.write(bundle.promptFile, '# prompt for codex\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -89,14 +90,13 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '-m',
       'gpt-5-codex',
-      ...codexStructuredOutcomeArgs(),
+      ...codexOutcomeCaptureArgs(),
       '--json',
       '-',
     ])
     expect(command.structuredOutcomeFile).toBe('/tmp/run/scratch/vendor-outcome.json')
-    expect(await Bun.file('/tmp/run/scratch/role-outcome.schema.json').json()).toMatchObject({
-      properties: { result: { enum: ['success', 'attention', 'fail'] } },
-    })
+    expect(command.cmd).not.toContain('--output-schema')
+    expect(await Bun.file('/tmp/run/scratch/role-outcome.schema.json').exists()).toBe(false)
   })
 
   test('uses one resolved execution envelope in the responsibility prompt', async () => {
@@ -175,7 +175,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '/tmp/screen-1.png',
       '-i',
       '/tmp/screen-2.webp',
-      ...codexStructuredOutcomeArgs(),
+      ...codexOutcomeCaptureArgs(),
       '--json',
       '-',
     ])
@@ -213,7 +213,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'resume',
       '--ignore-user-config',
       '--skip-git-repo-check',
-      ...codexStructuredOutcomeArgs(),
+      ...codexOutcomeCaptureArgs(),
       '--json',
       'thread-generator',
       '-',
@@ -430,7 +430,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '--add-dir',
       '/tmp/project/.hopi/docs/goals/goal-1',
-      ...codexStructuredOutcomeArgs(),
+      ...codexOutcomeCaptureArgs(),
       '--json',
       '-',
     ])
@@ -464,7 +464,7 @@ describe('resolveConfiguredTransportCommand', () => {
         '--skip-git-repo-check',
         '-s',
         'workspace-write',
-        ...codexStructuredOutcomeArgs(),
+        ...codexOutcomeCaptureArgs(),
         '--json',
         '-',
       ])
@@ -781,13 +781,8 @@ function codexHttpsOnlyArgs() {
   return command
 }
 
-function codexStructuredOutcomeArgs() {
-  return [
-    '--output-schema',
-    '/tmp/run/scratch/role-outcome.schema.json',
-    '--output-last-message',
-    '/tmp/run/scratch/vendor-outcome.json',
-  ]
+function codexOutcomeCaptureArgs() {
+  return ['--output-last-message', '/tmp/run/scratch/vendor-outcome.json']
 }
 
 function claudeStructuredOutcomeArgs(role: 'planner' | 'generator' | 'reviewer') {

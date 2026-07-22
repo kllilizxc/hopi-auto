@@ -679,6 +679,7 @@ function compactAttention(value: unknown) {
       notifiedAt: attributes.notifiedAt,
       operatorRequest: attributes.operatorRequest ?? null,
       resolutionInput: attributes.resolutionInput,
+      retryRunId: attributes.retryRunId ?? null,
     },
     ...(typeof value.body === 'string' ? { body: bounded(value.body, 800) } : {}),
     ...(typeof value.inspectionPath === 'string'
@@ -744,5 +745,9 @@ function hasImmediateReflectionSignal(snapshot: AssistantStateSnapshot) {
 function isAssistantOwnedAttention(value: unknown) {
   if (!isRecord(value)) return false
   const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.resolvedAt === null && (attributes.operatorRequest ?? null) === null
+  return (
+    attributes.resolvedAt === null &&
+    (attributes.operatorRequest ?? null) === null &&
+    (attributes.retryRunId ?? null) === null
+  )
 }

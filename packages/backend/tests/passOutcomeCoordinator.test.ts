@@ -268,6 +268,48 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-attention')).toBe(true)
   })
 
+  test('returns retry Attention output to the pending retry instead of creating a duplicate', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const original = await controller.ensureOperationalFailureAttention(
+      'goal-1',
+      'W-1',
+      3,
+      'provider unavailable',
+    )
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request one new invocation.',
+    })
+    const context = await fixture.stage('W-1', 'run-retry-attention', 'generator')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-duplicate')
+    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedAttentionPath), { recursive: true })
+    await Bun.write(
+      stagedAttentionPath,
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-duplicate',
+          target: 'project:project-1/goal:goal-1/work:W-1',
+          createdAt: '2099-12-31T23:59:59Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Still blocked\n\nThe requested invocation could not continue.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-retry-attention', 'generator', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.attentions.size).toBe(1)
+    expect(goalPackage.attentions.has(original.attributes.id)).toBe(true)
+    expect(goalPackage.attentions.has('A-duplicate')).toBe(false)
+    expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual(['E-run-retry-attention'])
+  })
+
   test('rejects a Planner document path target with the exact owning Work target', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-planner-path-target', 'planner')

@@ -1067,7 +1067,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
-  test('atomically retries exhausted Work and resolves its exact Attention', async () => {
+  test('requests exhausted Work retry without resolving its exact Attention early', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const path = fixture.goalStore.paths.workDocument('G-1', 'plan-initial')
@@ -1101,19 +1101,25 @@ describe('Assistant HOPI tools', () => {
       action: { kind: 'retry' },
     })
     expect(retried.value).toMatchObject({
-      effect: { kind: 'work_retried', workId: 'plan-initial', stage: 'plan' },
-      settledAttentionRefs: [attentionRef],
+      effect: {
+        kind: 'work_retry_requested',
+        workId: 'plan-initial',
+        stage: 'plan',
+        retryRunId: expect.any(String),
+      },
+      pendingAttentionRefs: [attentionRef],
+      settledAttentionRefs: [],
     })
-    const resolvedPackage = await fixture.goalStore.readPackage('G-1')
-    expect(resolvedPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
-    expect(resolvedPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      resolutionInput: null,
+    const pendingPackage = await fixture.goalStore.readPackage('G-1')
+    expect(pendingPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
+    expect(pendingPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: null,
+      retryRunId: expect.any(String),
     })
-    expect(resolvedPackage.inputs).toHaveLength(0)
+    expect(pendingPackage.inputs).toHaveLength(0)
   })
 
-  test('settles operational Attention even when retry changes no Work fields', async () => {
+  test('persists operational retry even when it changes no Work fields', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await fixture.controller.ensureOperationalFailureAttention(
@@ -1144,8 +1150,14 @@ describe('Assistant HOPI tools', () => {
     )
 
     expect(retried.value).toMatchObject({
-      effect: { kind: 'work_retried', workId: 'plan-initial', stage: 'plan' },
-      settledAttentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      effect: {
+        kind: 'work_retry_requested',
+        workId: 'plan-initial',
+        stage: 'plan',
+        retryRunId: expect.any(String),
+      },
+      pendingAttentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      settledAttentionRefs: [],
     })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
@@ -1153,8 +1165,8 @@ describe('Assistant HOPI tools', () => {
       notBefore: null,
     })
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      resolutionInput: null,
+      resolvedAt: null,
+      retryRunId: expect.any(String),
     })
     expect(goalPackage.inputs).toHaveLength(0)
   })
@@ -1189,8 +1201,8 @@ describe('Assistant HOPI tools', () => {
     const target = await fixture.goalStore.readPackage('G-target')
     expect(target.inputs).toHaveLength(0)
     expect(target.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      resolutionInput: null,
+      resolvedAt: null,
+      retryRunId: expect.any(String),
     })
     expect((await fixture.goalStore.readPackage('G-page')).inputs).toHaveLength(0)
   })
@@ -1903,11 +1915,20 @@ describe('Assistant HOPI tools', () => {
       context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
     })
     const token = fixture.tools.issue(event.attributes.id)
+    await expect(
+      fixture.tools.finalizeInternalResponse(
+        token,
+        event.attributes.id,
+        'The internal repair is underway; no action is required.',
+        { requireAttentionSettlement: true },
+      ),
+    ).rejects.toThrow('remains Assistant-owned and open')
     expect(
       await fixture.tools.finalizeInternalResponse(
         token,
         event.attributes.id,
         'The internal repair is underway; no action is required.',
+        { requireAttentionSettlement: false },
       ),
     ).toBe('inform')
     await fixture.workspace.handleEvent(event.attributes.id, {

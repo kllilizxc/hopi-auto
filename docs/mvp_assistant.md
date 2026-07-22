@@ -115,7 +115,10 @@ snapshot. Reflection follows one small protocol:
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
    turn may remain silent, publish one informational final response, or call `request_user` before
-   returning one exact question for a decision or external action. Only an explicit `handoff_to_main` call creates an
+   returning one exact question for a decision or external action. When that handoff selected open
+   targeted Attention and the first response neither settles it nor stages `request_user`, Coordinator
+   continues the same speaking Session once with an exact closure reminder before accepting the
+   resulting response normally. Only an explicit `handoff_to_main` call creates an
    internal brief. Reflection selects any Attention references it means to hand off; Coordinator
    validates but never infers or expands that selection. Coordinator publishes a brief only after
    confirming the observed digest is still current; it does not accept an `actions[]` plan.
@@ -438,7 +441,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
-| Control Work | Retry or defer one Work, or cancel one Engineering Work | Validated Work transition; retry and cancellation settle only affected Work Attention |
+| Control Work | Retry or defer one Work, or cancel one Engineering Work | Validated Work transition; retry remains pending until its invocation result, while cancellation settles only affected Work Attention |
 | Resolve Attention | Record that one exact reported condition has cleared | Attention settlement after the owning validator accepts the condition |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Request user | Stage selected open Attention for an operator question from an internal turn | None by itself; the validated final response becomes the public Inbox reply and then records Attention `operatorRequest` |
@@ -446,10 +449,10 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 
-Every mutation returns its verified canonical effect and any Attention references it settled. The
-model does not infer success from the requested verb or reconstruct state from prose. Results omit
-derived continuation, Kanban predicates, and unrelated open Attention; Assistant reads current state
-only when the next decision actually needs them.
+Every mutation returns its verified canonical effect, pending retry references, and any Attention
+references it settled. The model does not infer execution success from a retry request or reconstruct
+state from prose. Results omit derived continuation, Kanban predicates, and unrelated open Attention;
+Assistant reads current state only when the next decision actually needs them.
 
 A failed Preview produces an ordinary Assistant turn with Project and Goal context. Assistant uses
 the existing design and Create Work capabilities when source repair is needed; Preview has no
@@ -649,9 +652,12 @@ the request stale and rejects it rather than asking for an already unnecessary a
 
 Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
 after an ordinary turn when its evidence is insufficient to resolve it. Coordinator records the
-turn normally; a later state change or Assistant turn decides the next action. An informational
-response does not settle a blocker, and there is no hidden follow-up model pass that tries to force a
-decision.
+turn normally; a later state change or Assistant turn decides the next action. For exact targeted
+Attention selected by Reflection, Coordinator first rejects a response that would leave selected
+conditions Assistant-owned and open, then continues that same speaking Session once with the current
+closure requirement. The continued response is accepted without repeating this settlement test;
+ordinary reference, ownership, completion-artifact, and tool safety validation still applies. This
+is one bounded opportunity for the model to act, not a new Reflection handoff or retry state.
 
 ## Tool Safety And Recovery
 

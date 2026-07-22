@@ -18,7 +18,11 @@ import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../runtime/completionVerifier'
-import { type GoalController, createGoalController } from '../runtime/goalController'
+import {
+  type GoalController,
+  type WorkRetryResult,
+  createGoalController,
+} from '../runtime/goalController'
 import {
   type PassOutcomeApplication,
   type PassOutcomeCoordinator,
@@ -35,6 +39,7 @@ import {
 } from '../runtime/responsibilitySessionStore'
 import {
   type PreviousGeneratorObservation,
+  type Responsibility,
   type RoleContextStager,
   createRoleContextStager,
 } from '../runtime/roleContextStager'
@@ -214,8 +219,45 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         work: workInterruptionSequence,
       }
       await readSoftwareDeliveryProfile()
-      const goalPackage = await options.store.readPackage(goalId)
+      let goalPackage = await options.store.readPackage(goalId)
       const attemptSnapshot = await attempts.snapshot()
+      let recoveredRetry = false
+      for (const work of goalPackage.works.values()) {
+        const target = workAttentionTarget(options.projectId, goalId, work.attributes.id)
+        const pending = [...goalPackage.attentions.values()].find(
+          (attention) =>
+            attention.attributes.target === target &&
+            attention.attributes.resolvedAt === null &&
+            (attention.attributes.retryRunId ?? null) !== null,
+        )
+        const retryRunId = pending?.attributes.retryRunId ?? null
+        if (!retryRunId) continue
+        if (isWorkTerminal(work.attributes)) {
+          await goalController.finishWorkRetry(goalId, work.attributes.id, {
+            status: 'succeeded',
+            diagnostic: 'The Work became terminal while its retry result was being finalized.',
+          })
+          recoveredRetry = true
+          continue
+        }
+        const attempt = attemptSnapshot
+          .list(options.projectId, goalId, work.attributes.id)
+          .find((candidate) => candidate.runId === retryRunId)
+        if (!attempt) continue
+        const liveKey = `${goalId}/${work.attributes.id}`
+        if (attempt.status === 'running' && live.has(liveKey)) continue
+        const progressed = work.attributes.stage !== responsibilityStage(attempt.responsibility)
+        const succeeded = progressed || retryAttemptSucceeded(attempt)
+        await goalController.finishWorkRetry(goalId, work.attributes.id, {
+          status: succeeded ? 'succeeded' : 'failed',
+          diagnostic: progressed
+            ? `The bound retry Run ${attempt.runId} durably advanced the Work.`
+            : (attempt.summary ??
+              `The bound retry Run ${attempt.runId} ended with status ${attempt.status}.`),
+        })
+        recoveredRetry = true
+      }
+      if (recoveredRetry) goalPackage = await options.store.readPackage(goalId)
       for (const work of goalPackage.works.values()) {
         if (isWorkTerminal(work.attributes)) continue
         const episode = operationalFailureEpisode(
@@ -285,10 +327,23 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const { workId, responsibility } = decision
       const liveKey = `${goalId}/${workId}`
       if (live.has(liveKey)) return { kind: 'wait', decision }
+      const retryRunId = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.target === workAttentionTarget(options.projectId, goalId, workId) &&
+          attention.attributes.resolvedAt === null &&
+          (attention.attributes.retryRunId ?? null) !== null,
+      )?.attributes.retryRunId
+      const retryPending = Boolean(retryRunId)
+      let retryResult: WorkRetryResult | null = retryPending
+        ? {
+            status: 'failed' as const,
+            diagnostic: 'The requested invocation ended before reporting a completed pass.',
+          }
+        : null
       live.add(liveKey)
       const runController = new AbortController()
       runControllers.set(liveKey, runController)
-      const runId = createRunId()
+      const runId = retryRunId ?? createRunId()
       let attempt: RunAttemptRecorder | null = null
       try {
         if (
@@ -340,6 +395,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 )
         } catch (error) {
           if (!(error instanceof StableWorktreeSyncError)) throw error
+          retryResult = retryPending ? { status: 'failed', diagnostic: error.message } : null
           const attention = await goalController.ensureSynchronizationAttention(
             goalId,
             workId,
@@ -445,6 +501,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 roleRepoRoots,
               })
               await attempt?.finish({ outcome, application: 'candidate_preparation_failed' })
+              retryResult = retryPending
+                ? {
+                    status: 'failed',
+                    diagnostic: outcome.summary,
+                  }
+                : null
               return {
                 kind: 'pass_finished',
                 workId,
@@ -564,6 +626,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 },
                 application: 'project_blocked',
               })
+              retryResult = retryPending ? { status: 'failed', diagnostic: summary } : null
               return {
                 kind: 'project_blocked',
                 reason: summary,
@@ -591,6 +654,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (outcome.failureKind === 'operational') {
+          retryResult = retryPending ? { status: 'failed', diagnostic: outcome.summary } : null
           await attempt?.finish({ outcome, application: 'operational_failure' })
           const currentGoalPackage = await options.store.readPackage(goalId)
           const currentAttemptSnapshot = await attempts.snapshot()
@@ -646,6 +710,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               application.summary,
             )
           }
+          retryResult = retryPending
+            ? application.kind === 'published' && application.result === 'fail'
+              ? { status: 'failed', diagnostic: application.summary }
+              : application.kind === 'attention'
+                ? { status: 'failed', diagnostic: outcome.summary }
+                : {
+                    status: 'succeeded',
+                    diagnostic: `The requested ${responsibility} invocation completed with application ${application.kind}.`,
+                  }
+            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -678,6 +752,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           } catch {
             // Disposable Preview cleanup cannot change an already durable C1 outcome.
           }
+          retryResult = retryPending
+            ? {
+                status: 'succeeded',
+                diagnostic: `The requested ${responsibility} invocation completed and integration was ${integration.kind}.`,
+              }
+            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -698,6 +778,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             outcome: rejectedOutcome,
           })
           await finishAttempt(attempt, options.store, goalId, rejectedOutcome, rejected)
+          retryResult = retryPending
+            ? {
+                status: 'succeeded',
+                diagnostic: `The requested ${responsibility} invocation completed with a reviewed rejection.`,
+              }
+            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -708,6 +794,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (integration.kind === 'blocked') {
+          retryResult = retryPending ? { status: 'failed', diagnostic: integration.reason } : null
           await options.onProjectBlocked?.({
             projectId: options.projectId,
             reason: integration.reason,
@@ -747,18 +834,23 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           },
           application: 'project_blocked',
         })
+        retryResult = retryPending ? { status: 'failed', diagnostic: integration.reason } : null
         return {
           kind: 'project_blocked',
           reason: integration.reason,
           commit: integration.commit,
         }
       } catch (error) {
+        retryResult = retryPending ? { status: 'failed', diagnostic: errorMessage(error) } : null
         await attempt?.interrupt(error)
         if (runController.signal.aborted) {
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
         throw error
       } finally {
+        if (retryResult) {
+          await goalController.finishWorkRetry(goalId, workId, retryResult)
+        }
         await clearTerminalWorkSessions(
           responsibilitySessions,
           options.store,
@@ -946,6 +1038,25 @@ async function readPreviousGeneratorObservation(
 function boundedPromptDiagnostic(value: string, limit = 320) {
   const compact = value.replaceAll(/\s+/g, ' ').trim()
   return compact.length <= limit ? compact : `${compact.slice(0, limit - 1)}…`
+}
+
+function responsibilityStage(responsibility: Responsibility) {
+  return responsibility === 'planner'
+    ? 'plan'
+    : responsibility === 'generator'
+      ? 'generate'
+      : 'review'
+}
+
+function retryAttemptSucceeded(attempt: RunAttemptSummary) {
+  if (attempt.status !== 'finished') return false
+  if (attempt.result !== 'success' && attempt.result !== 'reject') return false
+  return ![
+    'stale',
+    'operational_failure',
+    'project_blocked',
+    'candidate_preparation_failed',
+  ].includes(attempt.application ?? '')
 }
 
 function scheduleOperationalRetry(

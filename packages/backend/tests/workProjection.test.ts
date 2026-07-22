@@ -136,6 +136,19 @@ describe('derived Work projection', () => {
     ).toBe('Waiting for Assistant')
   })
 
+  test('projects a pending retry as executable instead of Assistant-owned', () => {
+    const target = 'project:Project-1/goal:G-1/work:W-1'
+    const pending = attention('A-retry', target)
+    pending.attributes.retryRunId = 'R-1'
+    const goalPackage = packageWith([work('W-1', 'engineering', 'generate')], [pending])
+
+    expect(deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]).toMatchObject({
+      ready: true,
+      primaryBadge: 'queued',
+      failedPredicates: [],
+    })
+  })
+
   test('queues Planning behind already admitted same-Goal Engineering', () => {
     const goalPackage = packageWith([
       work('P-1', 'planning', 'plan'),

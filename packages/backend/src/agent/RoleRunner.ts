@@ -288,7 +288,7 @@ export function roleSessionCompatibilityKey(
         ? 'workspace-write'
         : config.sandbox
     return JSON.stringify({
-      version: 3,
+      version: 4,
       transport: config.transport,
       binary: config.binary ?? 'codex',
       cwdMode: config.cwdMode,
@@ -404,7 +404,8 @@ function outcomeRecoveryPrompt(responsibility: Responsibility) {
     `The previous non-interactive ${responsibility} invocation ended without a valid terminal outcome.`,
     'Continue from the current Session and workspace. Retain completed discovery and edits; do not repeat Repo preparation or already-completed work.',
     "If the assignment is incomplete, continue it now through proportionate verification. Do not stop for vendor plan approval or a direct user question; use the assignment's Attention path only for authority that cannot be resolved here.",
-    'Finish with only the schema-constrained responsibility outcome. Do not return explanatory prose before or after it.',
+    'During any remaining execution, progress messages use ordinary prose and never use the result schema.',
+    'After execution settles, make the final assistant message exactly one responsibility outcome JSON object with no explanatory prose before or after it.',
   ].join('\n')
 }
 

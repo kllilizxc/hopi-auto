@@ -1,6 +1,11 @@
 import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
 import { goalAttentionTarget, workAttentionTarget } from './attentionTarget'
-import { type WorkAttributes, isPlanningWork, isWorkTerminal } from './canonicalDocuments'
+import {
+  type WorkAttributes,
+  isAttentionBlocking,
+  isPlanningWork,
+  isWorkTerminal,
+} from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
@@ -155,7 +160,7 @@ function findCoveringAttention(
   const workTarget = workAttentionTarget(projectId, goalId, workId)
   const covering = [...goalPackage.attentions.values()].filter(
     (attention) =>
-      attention.attributes.resolvedAt === null &&
+      isAttentionBlocking(attention.attributes) &&
       (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
   )
   return covering.find((attention) => Boolean(attention.attributes.operatorRequest)) ?? covering[0]

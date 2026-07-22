@@ -282,11 +282,13 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(fixture.context.resultFile).json()).toEqual(outcome)
   })
 
-  test('persists a schema-constrained Codex outcome from its adapter-owned output file', async () => {
+  test('persists a validated Codex outcome from its adapter-owned final-message file', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(
       fixture.root,
       `console.log(JSON.stringify({type:"thread.started",thread_id:"codex-structured"}))
+      console.log(JSON.stringify({method:"item/completed",params:{item:{type:"agent_message",text:"Checking the implementation before completion."}}}))
+      if (Bun.argv.includes("--output-schema")) throw new Error("progress must not be schema-constrained")
       const outputIndex = Bun.argv.indexOf("--output-last-message")
       if (outputIndex < 0) throw new Error("missing structured output path")
       await Bun.write(Bun.argv[outputIndex + 1], JSON.stringify({result:"success",summary:"codex completion",artifacts:[]}))`,
@@ -301,9 +303,21 @@ describe('ConfiguredRoleRunner', () => {
       }),
     })
 
-    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+    const events: AgentRuntimeEvent[] = []
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
+      onEvent: (event) => {
+        events.push(event)
+      },
+    })
 
     expect(result).toMatchObject({ result: 'success', summary: 'codex completion' })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'transcript',
+        entryKind: 'assistant',
+        summary: 'Checking the implementation before completion.',
+      }),
+    )
     expect(await Bun.file(fixture.context.resultFile).json()).toEqual({
       result: 'success',
       summary: 'codex completion',

@@ -77,6 +77,8 @@ export interface AssistantToolResult {
   value: unknown
 }
 
+export class UnsettledInternalAttentionError extends AssistantToolRequestError {}
+
 export interface AssistantTools {
   issue(eventId: string): string
   issueReflection(
@@ -89,6 +91,7 @@ export interface AssistantTools {
     token: string,
     eventId: string,
     message: string,
+    options?: { requireAttentionSettlement?: boolean },
   ): Promise<'silent' | 'inform' | 'request'>
   acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   acceptUserAttentionReply(eventId: string): Promise<string[]>
@@ -229,13 +232,24 @@ export function createAssistantTools(options: {
     project: AssistantToolProject
     goalId: string
     workId: string
-    kind: 'work_retried' | 'work_cancelled' | 'work_deferred'
+    kind: 'work_retry_requested' | 'work_cancelled' | 'work_deferred'
     affectedWorkIds?: readonly string[]
     settledRefs?: readonly string[]
+    pendingRefs?: readonly string[]
   }): Promise<AssistantToolResult> {
     const currentPackage = await input.project.store.readPackage(input.goalId)
     const currentWork = currentPackage.works.get(input.workId)
     if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
+    const retryRunId =
+      input.kind === 'work_retry_requested'
+        ? ([...currentPackage.attentions.values()].find(
+            (attention) =>
+              attention.attributes.target ===
+                workAttentionTarget(input.project.projectId, input.goalId, input.workId) &&
+              attention.attributes.resolvedAt === null &&
+              (attention.attributes.retryRunId ?? null) !== null,
+          )?.attributes.retryRunId ?? null)
+        : null
     return {
       summary: `${input.kind} applied to Work ${input.workId}.`,
       changed: true,
@@ -248,8 +262,10 @@ export function createAssistantTools(options: {
           affectedWorkIds: input.affectedWorkIds ?? [input.workId],
           stage: currentWork.attributes.stage,
           notBefore: currentWork.attributes.notBefore,
+          retryRunId,
         },
         settledAttentionRefs: input.settledRefs ?? [],
+        pendingAttentionRefs: input.pendingRefs ?? [],
       },
     }
   }
@@ -283,7 +299,7 @@ export function createAssistantTools(options: {
       capabilities.delete(token)
     },
 
-    async finalizeInternalResponse(token, eventId, message) {
+    async finalizeInternalResponse(token, eventId, message, finalizeOptions = {}) {
       const capability = capabilities.get(token)
       if (capability?.mode !== 'main' || capability.eventId !== eventId) {
         throw new AssistantToolRequestError('Assistant tool capability does not own this turn')
@@ -315,6 +331,9 @@ export function createAssistantTools(options: {
         }
         await assertAssistantOwnedAttentionRefs(references, event.attributes.context)
         return 'request'
+      }
+      if (finalizeOptions.requireAttentionSettlement) {
+        await assertSelectedTargetedAttentionsSettled(event.attributes.context)
       }
       if (!reply) return 'silent'
       await assertCompletionArtifactsLinked({
@@ -1109,7 +1128,7 @@ export function createAssistantTools(options: {
             )
           }
           if (args.action.kind === 'retry') {
-            const settledRefs = openWorkAttentionRefs(
+            const pendingRefs = openWorkAttentionRefs(
               goalPackage,
               project.projectId,
               args.goalId,
@@ -1121,14 +1140,16 @@ export function createAssistantTools(options: {
               args.action.notBefore === undefined
                 ? work.attributes.notBefore
                 : args.action.notBefore,
-              { resolution: 'Assistant requested another run in the existing Work lineage.' },
+              {
+                resolution: 'Assistant requested another invocation in the existing Work lineage.',
+              },
             )
             return currentWorkResult({
               project,
               goalId: args.goalId,
               workId: args.workId,
-              kind: 'work_retried',
-              settledRefs,
+              kind: 'work_retry_requested',
+              pendingRefs,
             })
           }
           if (args.action.kind === 'defer') {
@@ -1394,6 +1415,53 @@ export function createAssistantTools(options: {
           `Attention is already owned by the operator: ${reference}`,
         )
     }
+  }
+
+  async function assertSelectedTargetedAttentionsSettled(context?: InboxContext | null) {
+    if (!context) return
+    const workspace = await options.workspace.readWorkspace()
+    const unsettled: string[] = []
+    for (const reference of normalizeInboxAttentionReferences(context)) {
+      const parsed = parseAttentionReference(reference)
+      if (!parsed) throw new AssistantToolRequestError(`Invalid Attention reference: ${reference}`)
+      if (parsed.scope === 'workspace') {
+        if (parsed.homeId !== workspace.homeId) {
+          throw new AssistantToolRequestError(
+            `Workspace Attention reference belongs to another Home: ${reference}`,
+          )
+        }
+        const attention = workspace.attentions.get(parsed.attentionId)
+        if (!attention) {
+          throw new AssistantToolRequestError(`Workspace Attention not found: ${reference}`)
+        }
+        if (
+          attention.attributes.resolvedAt === null &&
+          (attention.attributes.operatorRequest ?? null) === null
+        ) {
+          unsettled.push(reference)
+        }
+        continue
+      }
+      const project = requireProject(options.projects, parsed.projectId)
+      const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
+        parsed.attentionId,
+      )
+      if (!attention) {
+        throw new AssistantToolRequestError(`Goal Attention not found: ${reference}`)
+      }
+      if (
+        attention.attributes.target !== null &&
+        attention.attributes.resolvedAt === null &&
+        (attention.attributes.operatorRequest ?? null) === null &&
+        (attention.attributes.retryRunId ?? null) === null
+      ) {
+        unsettled.push(reference)
+      }
+    }
+    if (unsettled.length === 0) return
+    throw new UnsettledInternalAttentionError(
+      `Selected targeted Attention remains Assistant-owned and open: ${unsettled.join(', ')}`,
+    )
   }
 }
 
@@ -1934,6 +2002,7 @@ async function resolveGoalAttention(
   if (attention.attributes.resolvedAt !== null) return false
   await assertAttentionBlockerChanged(store, goalId, attention.attributes.target)
   attention.attributes.operatorRequest = null
+  attention.attributes.retryRunId = null
   attention.attributes.resolvedAt = resolvedAt.toISOString()
   attention.attributes.resolutionInput = admission.path
   attention.body = [

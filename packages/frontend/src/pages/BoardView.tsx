@@ -512,7 +512,10 @@ export function BoardView() {
   }
 
   const openAssistantAttentions = goal.attentions.filter(
-    (attention) => attention.target !== null && attention.resolvedAt === null,
+    (attention) =>
+      attention.target !== null &&
+      attention.resolvedAt === null &&
+      (attention.retryRunId ?? null) === null,
   )
   const assistantAttention =
     openAssistantAttentions.find((attention) => Boolean(attention.operatorRequest)) ??

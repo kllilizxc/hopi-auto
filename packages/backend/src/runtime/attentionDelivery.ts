@@ -139,6 +139,7 @@ export async function acknowledgeGoalAttention(
   attention.attributes.notifiedAt ??= acknowledgedAt.toISOString()
   attention.attributes.operatorRequest = nextOperatorRequest
   if (completion) {
+    attention.attributes.retryRunId = null
     attention.attributes.resolvedAt = acknowledgedAt.toISOString()
     attention.body += '\n## Resolution\n\nCompletion update delivered.\n'
   }

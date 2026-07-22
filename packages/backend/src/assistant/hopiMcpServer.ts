@@ -103,7 +103,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Retry or defer one Work, or cancel one Engineering Work. Cancellation includes every nonterminal dependent and preserves history. Retry settles only the exact Work blocker.',
+        'Request one new invocation for a Work, defer it, or cancel one Engineering Work. Cancellation includes every nonterminal dependent and preserves history. Retry is pending until that invocation succeeds or fails; it never claims immediate success.',
       inputSchema: assistantMcpToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),

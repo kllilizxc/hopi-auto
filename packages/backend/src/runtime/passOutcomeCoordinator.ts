@@ -4,6 +4,7 @@ import {
   type AttentionDocument,
   type EvidenceDocument,
   type WorkDocument,
+  isAttentionBlocking,
   isEngineeringWork,
   isPlanningWork,
   isWorkTerminal,
@@ -131,6 +132,36 @@ export function createPassOutcomeCoordinator(
         throw new PassProposalError(
           `Targeted Attention requires attention, received ${input.outcome.result}`,
         )
+      }
+      const retryPending = [...current.attentions.values()].some(
+        (attention) =>
+          attention.attributes.target ===
+            workAttentionTarget(store.paths.projectId, input.goalId, input.workId) &&
+          attention.attributes.resolvedAt === null &&
+          (attention.attributes.retryRunId ?? null) !== null,
+      )
+      if (retryPending) {
+        const failedInput: ApplyPassOutcomeInput = {
+          ...input,
+          outcome: { ...input.outcome, result: 'fail' },
+        }
+        const application =
+          input.responsibility === 'planner'
+            ? buildPlannerApplication(
+                store,
+                failedInput,
+                evidence,
+                emptyProposal(),
+                current,
+                options,
+              )
+            : buildEngineeringApplication(store, failedInput, evidence, current)
+        return publishWithStaleRecovery(store, failedInput, evidence, application, {
+          kind: 'published',
+          evidenceId: evidence.attributes.id,
+          result: 'fail',
+          summary: input.outcome.summary,
+        })
       }
       const application = buildAttentionApplication(
         store,
@@ -688,7 +719,7 @@ export async function validatePassSemanticGuard(
   if (
     [...current.attentions.values()].some(
       (attention) =>
-        attention.attributes.resolvedAt === null &&
+        isAttentionBlocking(attention.attributes) &&
         (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
     )
   ) {

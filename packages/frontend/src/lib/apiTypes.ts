@@ -152,6 +152,7 @@ export interface AttentionView {
   resolvedAt: string | null
   notifiedAt: string | null
   operatorRequest: string | null
+  retryRunId?: string | null
   body: string
   projectId?: string
   goalId?: string

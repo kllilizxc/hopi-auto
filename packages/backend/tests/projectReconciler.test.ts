@@ -17,6 +17,7 @@ import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { runStoragePath } from '../src/runtime/runPaths'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -735,6 +736,140 @@ describe('ProjectReconciler', () => {
       attempts: 0,
       evidenceRefs: [],
     })
+
+    if (!attention) throw new Error('Expected synchronization Attention')
+    const controller = createGoalController(fixture.store, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      verifyCompletion: () => false,
+    })
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request one new invocation.',
+    })
+    const retryResult = await fixture.reconciler.reconcileGoal('goal-1')
+    const afterRetry = await fixture.store.readPackage('goal-1')
+    const current = afterRetry.attentions.get(attention.attributes.id)
+
+    expect(retryResult).toEqual({
+      kind: 'attention_ensured',
+      attentionId: attention.attributes.id,
+    })
+    expect(afterRetry.attentions.size).toBe(1)
+    expect(current?.attributes).toMatchObject({
+      resolvedAt: null,
+      retryRunId: null,
+    })
+    expect(current?.body).toContain('## Retry result')
+    expect(current?.body).toContain('task delta conflicts with the current release')
+  })
+
+  test('keeps a semantic retry failure on the original Attention', async () => {
+    const fixture = await createFixture({ directInitialWork: true, generatorResult: 'fail' })
+    const controller = createGoalController(fixture.store, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      verifyCompletion: () => false,
+    })
+    const attention = await controller.ensureOperationalFailureAttention(
+      'goal-1',
+      'W-1',
+      3,
+      'provider unavailable',
+    )
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request one new invocation.',
+    })
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const current = goalPackage.attentions.get(attention.attributes.id)
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect(goalPackage.attentions.size).toBe(1)
+    expect(current?.attributes).toMatchObject({
+      resolvedAt: null,
+      retryRunId: null,
+    })
+    expect(current?.body).toContain('## Retry result')
+    expect(current?.body).toContain('generator completed its fixed responsibility')
+  })
+
+  test('resolves the original Attention after a successful retry invocation', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    const controller = createGoalController(fixture.store, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      verifyCompletion: () => false,
+    })
+    const attention = await controller.ensureOperationalFailureAttention(
+      'goal-1',
+      'W-1',
+      3,
+      'provider unavailable',
+    )
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request one new invocation.',
+    })
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'success',
+      application: 'published',
+    })
+    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('review')
+    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
+      resolvedAt: expect.any(String),
+      retryRunId: null,
+    })
+  })
+
+  test('recovers an interrupted bound retry after Coordinator restart', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    const controller = createGoalController(fixture.store, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      verifyCompletion: () => false,
+    })
+    const attention = await controller.ensureOperationalFailureAttention(
+      'goal-1',
+      'W-1',
+      3,
+      'provider unavailable',
+    )
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request one new invocation.',
+    })
+    const retryRunId = (await fixture.store.readPackage('goal-1')).attentions.get(
+      attention.attributes.id,
+    )?.attributes.retryRunId
+    if (!retryRunId) throw new Error('Expected reserved retry Run')
+    const runRoot = runStoragePath(fixture.homeRoot, retryRunId)
+    await mkdir(runRoot, { recursive: true })
+    const attempt = await fixture.attempts.start({
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: retryRunId,
+      responsibility: 'generator',
+      runRoot,
+    })
+    await attempt.interrupt(new Error('Coordinator restarted'))
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const current = (await fixture.store.readPackage('goal-1')).attentions.get(
+      attention.attributes.id,
+    )
+
+    expect(result).toMatchObject({ kind: 'wait', decision: { reasons: ['attention'] } })
+    expect(fixture.runner.responsibilities).toEqual([])
+    expect(current?.attributes).toMatchObject({
+      resolvedAt: null,
+      retryRunId: null,
+    })
+    expect(current?.body).toContain('Coordinator restarted')
   })
 
   test('keeps operational process failure out of Work attempts and backs off redispatch', async () => {

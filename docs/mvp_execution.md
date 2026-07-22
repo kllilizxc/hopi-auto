@@ -197,16 +197,30 @@ blocker. A reply may leave an Attention open when its evidence does not clear th
 Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do not infer
 closure from prose or from a Goal revision because an environmental or external blocker may survive it.
 
-The Work control boundary removes a split command. Explicitly retrying a Work means that Assistant
-has judged its current blocker clear or superseded; cancelling means that the Work will no longer
-run. The corresponding dedicated tool therefore settles every open
-Attention targeted exactly at that Work as part of the same logical operation. Retry publishes the
-Work reset and Attention resolution together, with resolution as the final gate, but does not copy
-the current Inbox event into Goal Input or set `resolutionInput`; its audit authority is the existing
-Work Attention plus the durable Assistant turn. A crash before that gate leaves the Work
-conservatively blocked and repeating the command completes it idempotently. Cancellation remains a
-material decision and retains its accepted Input. Neither operation closes Goal, Project, or another
-Work's Attention.
+The Work control boundary removes a split command. Explicitly retrying a Work requests one new
+invocation in the existing lineage; it does not claim that the invocation succeeded. For every open
+Attention targeted exactly at that Work, the same publication resets the Work attempt boundary and
+records a durable pending retry. A pending retry temporarily stops that exact Attention from blocking
+dispatch or returning to Assistant, while the Attention remains unresolved and auditable. The next
+invocation result owns the state transition: an executor-reported success resolves the pending
+Attention, while any failed invocation clears the pending marker and appends its current diagnostic
+to the same Attention. An agent-produced Attention during that invocation is failure evidence for
+the pending retry rather than a second blocker identity. Failure never fabricates resolution or a
+duplicate Attention. Repeating the command while the retry is pending is idempotent.
+
+Retry reserves its exact Run ID in the same publication as the Work reset. Coordinator must use that
+ID when it admits the invocation. A restart compares that Run's durable Attempt application and the
+current Work stage: an applied or stage-advancing result completes the pending retry, while an
+interrupted, unapplied, or failed result returns the same Attention to Assistant ownership. A
+reserved Run with no Attempt may still be admitted. This closes the process-crash window without a
+second binding state, retry counter, or failure-kind workflow.
+
+This retry contract is independent of failure kind. The Work executor only reports `succeeded` or
+`failed` plus its ordinary diagnostic; `retry` contains no Git-, test-, sandbox-, or vendor-specific
+recovery policy. Assistant chooses a different control action, repair Work, or exact operator request
+after a failed invocation. Retry does not copy the current Inbox event into Goal Input or set
+`resolutionInput`. Cancellation remains a material decision and retains its accepted Input. Neither
+operation closes Goal, Project, or another Work's Attention.
 
 Assistant derives the next ordinary operation from canonical target and Work state: Control retries
 or cancels Work, design plus Planning changes authority, and Resolve Attention clears only a verified
@@ -216,8 +230,9 @@ Attention as a separate explicit effect. An empty Planner proposal means only th
 nothing.
 
 Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
-not proof that a deterministic environment defect was repaired. Speaking Assistant may describe a
-worktree as synchronized only after a later state or Attempt proves Coordinator's synchronization.
+not proof that a deterministic environment defect was repaired. The tool reports the request as
+pending, and speaking Assistant may describe a worktree as synchronized only after the pending retry
+resolves from a later state or Attempt.
 An internal Reflection handoff that identifies an unchanged branch defect must request Planning or
 another represented effect instead of using retry as a fictional repair. Direct operator retry keeps
 the atomic settlement shortcut above because the operator instruction itself is accepted authority
@@ -804,10 +819,12 @@ rewrites historical dependency edges.
 Both writable outputs have explicit empty-file semantics. `proposal/` starts with no descendant
 files, so a responsibility creates every proposed path and its parents rather than trying to update
 an authority file in place. Run-local `result.json` starts as a zero-byte missing-result marker.
-Interactive vendor responsibilities return one schema-constrained terminal outcome; Coordinator
-validates that outcome and persists it as `result.json`, so persistence does not depend on the model
-remembering a file write. Opaque process adapters retain the direct file contract. Coordinator
-never fabricates success from ordinary final prose.
+Interactive vendor responsibilities return one validated terminal outcome. The adapter captures the
+provider's final assistant message independently from its event stream, then Coordinator validates
+and persists that outcome as `result.json`, so persistence does not depend on the model remembering a
+file write. A provider-native output schema may be used only when it constrains that terminal message
+without constraining intermediate agent turns. Opaque process adapters retain the direct file
+contract. Coordinator never fabricates success from ordinary final prose.
 
 Interactive progress and terminal outcome are distinct output surfaces. Provider-requested progress
 updates are optional, non-authoritative transcript prose: they describe current work but cannot claim
@@ -1408,6 +1425,13 @@ Inbox turn. Coordinator validates the selected scope and may attach canonical re
 scope, but it does not select another scope or synthesize a brief. The speaking thread then
 revalidates current state and owns every action and optional operator notification.
 
+For a handoff carrying exact targeted Attention, its first final response must find those references
+resolved or stage their exact `request_user` transfer. If it does neither, Coordinator keeps the same
+Inbox turn and tool capability, continues the same vendor Session once with a concise settlement
+reminder, and accepts the resulting response without applying the settlement check again. Existing
+reference, request, artifact, and mutation validation remains authoritative. This correction does
+not rerun Reflection, publish the rejected response, acknowledge delivery, or add workflow state.
+
 One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
 that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
 remains pending for revalidation after resolution, but cannot suppress assessment of the Assistant-owned
@@ -1504,7 +1528,8 @@ hidden, returns a non-empty informational final response, or first calls `reques
 current Attention references and then returns the exact public question. Coordinator publishes the
 complete public reply before acknowledging every still-current linked Attention. Only a staged
 request sets `operatorRequest`; informational delivery leaves ownership with Assistant. Targeted
-Attention remains open. Completion resolves in its acknowledgement publication. A crash between
+Attention may remain open after the one bounded same-Session closure correction. Completion resolves
+in its acknowledgement publication. A crash between
 roots leaves a complete public reply and an unacknowledged Attention; ordinary Inbox recovery
 finishes the acknowledgement. HOPI never records delivery before the message exists.
 

@@ -41,6 +41,11 @@ export interface WorkRetrySettlement {
   acceptedInput?: PlanningInputAdmission
 }
 
+export interface WorkRetryResult {
+  status: 'succeeded' | 'failed'
+  diagnostic: string
+}
+
 export interface AssistantEngineeringAdmission {
   title: string
   objective: string
@@ -109,6 +114,7 @@ export interface GoalController {
     notBefore: string | null,
     settlement?: WorkRetrySettlement,
   ): Promise<WorkDocument>
+  finishWorkRetry(goalId: string, workId: string, result: WorkRetryResult): Promise<string[]>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
   reopenGoal(goalId: string, input: { eventId: string; content: string }): Promise<GoalDocument>
@@ -801,36 +807,38 @@ export function createGoalController(
 
       if (settlement) {
         const target = workAttentionTarget(store.paths.projectId, goalId, workId)
+        const retryRunId = `R-${crypto.randomUUID()}`
         for (const attention of goalPackage.attentions.values()) {
           if (attention.attributes.target !== target || attention.attributes.resolvedAt !== null) {
             continue
           }
+          if ((attention.attributes.retryRunId ?? null) !== null) continue
           const path = store.paths.attentionDocument(goalId, attention.attributes.id)
           const source = await Bun.file(store.paths.absolute(path)).text()
-          const resolved: AttentionDocument = {
+          const requested: AttentionDocument = {
             ...attention,
             attributes: {
               ...attention.attributes,
               operatorRequest: null,
-              resolvedAt: now().toISOString(),
-              resolutionInput: settlement.acceptedInput?.path ?? null,
+              retryRunId,
             },
             body: [
               attention.body.trimEnd(),
               '',
-              '## Resolution',
+              '## Retry requested',
               '',
               ...(settlement.acceptedInput
                 ? [`Answer Input: \`${settlement.acceptedInput.path}\``, '']
                 : []),
               settlement.resolution.trim(),
+              'This Attention remains unresolved until the requested invocation reports its result.',
               '',
             ].join('\n'),
           }
           writes.push({
             path,
             expectedHash: await hashBytes(new TextEncoder().encode(source)),
-            content: renderAttentionDocument(resolved),
+            content: renderAttentionDocument(requested),
           })
         }
       }
@@ -845,6 +853,51 @@ export function createGoalController(
       if (!gateWrite) return next
       await store.publishGoal(goalId, { supportingWrites: writes, gateWrite })
       return next
+    },
+    async finishWorkRetry(goalId, workId, result) {
+      const goalPackage = await store.readPackage(goalId)
+      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
+      const writes: PublicationWrite[] = []
+      const attentionIds: string[] = []
+      const finishedAt = now().toISOString()
+      for (const attention of goalPackage.attentions.values()) {
+        if (
+          attention.attributes.target !== target ||
+          attention.attributes.resolvedAt !== null ||
+          (attention.attributes.retryRunId ?? null) === null
+        ) {
+          continue
+        }
+        const path = store.paths.attentionDocument(goalId, attention.attributes.id)
+        const source = await Bun.file(store.paths.absolute(path)).text()
+        const next: AttentionDocument = {
+          ...attention,
+          attributes: {
+            ...attention.attributes,
+            retryRunId: null,
+            ...(result.status === 'succeeded' ? { resolvedAt: finishedAt } : {}),
+          },
+          body: [
+            attention.body.trimEnd(),
+            '',
+            result.status === 'succeeded' ? '## Resolution' : '## Retry result',
+            '',
+            result.diagnostic.trim(),
+            '',
+          ].join('\n'),
+        }
+        writes.push({
+          path,
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderAttentionDocument(next),
+        })
+        attentionIds.push(attention.attributes.id)
+      }
+      if (writes.length === 0) return []
+      const gateWrite = writes.pop()
+      if (!gateWrite) return []
+      await store.publishGoal(goalId, { supportingWrites: writes, gateWrite })
+      return attentionIds.toSorted()
     },
     async cancelWork(goalId, workId) {
       let goalPackage = await store.readPackage(goalId)
@@ -961,6 +1014,7 @@ export function createGoalController(
           attributes: {
             ...completion.attributes,
             operatorRequest: null,
+            retryRunId: null,
             resolvedAt: now().toISOString(),
           },
           body: `${completion.body}\n## Resolution\n\nSuperseded by explicit Goal reopen.\n`,
@@ -1033,6 +1087,7 @@ async function planningAttentionResolutionWrites(
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
     resolved.attributes.operatorRequest = null
+    resolved.attributes.retryRunId = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.attributes.resolutionInput = acceptedInput.path
     resolved.body = [
@@ -1079,6 +1134,7 @@ async function supersededCompletionWrites(
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
     resolved.attributes.operatorRequest = null
+    resolved.attributes.retryRunId = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.body = [
       resolved.body.trimEnd(),
@@ -1124,6 +1180,7 @@ async function resolveAttention(
   const source = await Bun.file(store.paths.absolute(path)).text()
   const next = parseAttentionDocument(source)
   next.attributes.operatorRequest = null
+  next.attributes.retryRunId = null
   next.attributes.resolvedAt = resolvedAt.toISOString()
   next.body += `\n## Resolution\n\n${reason}\n`
   await store.publishGoal(goalId, {

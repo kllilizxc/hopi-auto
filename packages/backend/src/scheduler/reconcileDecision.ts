@@ -1,5 +1,5 @@
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
-import { isWorkTerminal } from '../domain/canonicalDocuments'
+import { isAttentionBlocking, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { type WorkRuntimeFacts, deriveGoalWorkProjections } from '../domain/workProjection'
 
@@ -124,7 +124,7 @@ function hasCoveringAttention(
   const workTarget = workAttentionTarget(projectId, goalId, workId)
   return [...goalPackage.attentions.values()].some(
     (attention) =>
-      attention.attributes.resolvedAt === null &&
+      isAttentionBlocking(attention.attributes) &&
       (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
   )
 }

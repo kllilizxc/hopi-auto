@@ -274,6 +274,11 @@ async function validateImmutableDocuments(
     if (before.resolvedAt !== null && beforeOperatorRequest !== afterOperatorRequest) {
       throw invalid(goalId, `Resolved Attention ownership changed: ${attentionId}`)
     }
+    const beforeRetryRunId = before.retryRunId ?? null
+    const afterRetryRunId = after.retryRunId ?? null
+    if (before.resolvedAt !== null && beforeRetryRunId !== afterRetryRunId) {
+      throw invalid(goalId, `Resolved Attention retry Run changed: ${attentionId}`)
+    }
     if (
       beforeOperatorRequest !== null &&
       afterOperatorRequest !== null &&
