@@ -6,6 +6,7 @@ import {
   appendCodexHttpsOnlyConfig,
   resolveConfiguredTransportCommand,
   roleTransportConfigSchema,
+  withNativeCompactionEnabled,
 } from '../src/agent/vendorTransport'
 
 const bundle = {
@@ -33,6 +34,27 @@ const input = {
 }
 
 describe('resolveConfiguredTransportCommand', () => {
+  test('keeps vendor-native compaction enabled without changing unrelated environment', () => {
+    const environment = {
+      KEEP: 'yes',
+      DISABLE_AUTO_COMPACT: '1',
+      DISABLE_COMPACT: '1',
+      OPENCODE_DISABLE_AUTOCOMPACT: '1',
+    }
+
+    expect(withNativeCompactionEnabled('claude', environment)).toEqual({
+      KEEP: 'yes',
+      OPENCODE_DISABLE_AUTOCOMPACT: '1',
+    })
+    expect(withNativeCompactionEnabled('opencode', environment)).toEqual({
+      KEEP: 'yes',
+      DISABLE_AUTO_COMPACT: '1',
+      DISABLE_COMPACT: '1',
+    })
+    expect(withNativeCompactionEnabled('codex', environment)).toEqual(environment)
+    expect(environment).toHaveProperty('DISABLE_AUTO_COMPACT', '1')
+  })
+
   test('rejects an OpenCode model without its provider namespace', () => {
     const parsed = roleTransportConfigSchema.safeParse({
       transport: 'opencode',
@@ -289,6 +311,59 @@ describe('resolveConfiguredTransportCommand', () => {
       expect(unchanged.stdin).toContain('No assignment section changed')
       expect(unchanged.stdin).not.toContain('## Primary Task')
       expect((unchanged.stdin ?? '').length).toBeLessThan(700)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test('re-grounds a rejected Generator Session with the complete current assignment', async () => {
+    const root = join('/tmp', `hopi-vendor-reground-${crypto.randomUUID()}`)
+    await mkdir(root, { recursive: true })
+    const scopedBundle = {
+      ...bundle,
+      runtimeScratchDir: root,
+      promptFile: join(root, 'prompt.md'),
+      outcomeFile: join(root, 'outcome.json'),
+      canonicalOutcomeFile: join(root, 'outcome.json'),
+    }
+    const section = (id: string, content: string) =>
+      [
+        `<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:${id} -->`,
+        content,
+        `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
+      ].join('\n')
+    const previous = [
+      section('primary-task', '## Primary Task\n\nOld Work.'),
+      section('supporting-authority', '## Supporting Authority\n\nOld review.'),
+    ].join('\n')
+    const current = [
+      section('primary-task', '## Primary Task\n\nComplete current Work.'),
+      section('supporting-authority', '## Supporting Authority\n\nCurrent rejection.'),
+      section('required-result', '## Required Result\n\nCurrent result contract.'),
+    ].join('\n')
+
+    try {
+      await Bun.write(join(root, 'assignment.snapshot.md'), previous)
+      await Bun.write(scopedBundle.promptFile, current)
+      const command = await resolveConfiguredTransportCommand({
+        config: {
+          transport: 'codex',
+          cwdMode: 'worktree',
+          sandbox: 'workspace-write',
+          approvalPolicy: 'never',
+        },
+        bundle: scopedBundle,
+        input,
+        session: { transport: 'codex', sessionId: 'thread-generator' },
+        refreshAssignment: true,
+      })
+
+      expect(command.stdin).toContain('# Re-ground Responsibility Session')
+      expect(command.stdin).toContain('Complete current Work.')
+      expect(command.stdin).toContain('Current rejection.')
+      expect(command.stdin).toContain('Current result contract.')
+      expect(command.stdin).toContain('prior completion claim as non-authoritative')
+      expect(command.stdin).not.toContain('Old Work.')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -580,6 +655,9 @@ describe('resolveConfiguredTransportCommand', () => {
       'high',
     ])
     expect(command.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
+    expect(await Bun.file('/tmp/run/scratch/opencode.json').json()).toMatchObject({
+      compaction: { auto: true },
+    })
   })
 
   test('passes OpenCode image inputs as file attachments', async () => {
@@ -676,6 +754,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(boundedOpencode.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
     expect(await Bun.file('/tmp/run/scratch/opencode.json').json()).toEqual({
       $schema: 'https://opencode.ai/config.json',
+      compaction: { auto: true },
       permission: {
         '*': 'allow',
         external_directory: {
@@ -727,6 +806,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(opencode.env?.OPENCODE_CONFIG).toBe('/tmp/run/scratch/opencode.json')
     expect(await Bun.file('/tmp/run/scratch/opencode.json').json()).toEqual({
       $schema: 'https://opencode.ai/config.json',
+      compaction: { auto: true },
       permission: { '*': 'allow' },
     })
   })

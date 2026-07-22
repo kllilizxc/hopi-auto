@@ -208,6 +208,11 @@ describe('ProjectReconciler', () => {
         .map((run) => run.sessionId),
     ).toEqual([null, 'session-W-1-generator'])
     expect(
+      fixture.runner.refreshAssignmentsByRun
+        .filter((run) => run.responsibility === 'generator')
+        .map((run) => run.refreshAssignment),
+    ).toEqual([false, true])
+    expect(
       fixture.runner.sessionsByRun
         .filter((run) => run.responsibility === 'reviewer')
         .map((run) => run.sessionId),
@@ -271,8 +276,8 @@ describe('ProjectReconciler', () => {
     expect(repairPrompt?.runPrompt).toContain(
       '### Current Repair View (Diagnostics, Not Authority)',
     )
-    expect(repairPrompt?.runPrompt).toContain('Previous claimed summary (not proof)')
-    expect(repairPrompt?.runPrompt).toContain('[completed] Tool call: Bash (bun test focused)')
+    expect(repairPrompt?.runPrompt).not.toContain('Previous claimed summary')
+    expect(repairPrompt?.runPrompt).not.toContain('Observed execution commands')
   })
 
   test('turns Planner semantic failure into one ordinary Work Attention', async () => {
@@ -977,6 +982,10 @@ describe('ProjectReconciler', () => {
 class DeliveryScriptRunner implements RoleRunner {
   readonly responsibilities: string[] = []
   readonly sessionsByRun: Array<{ responsibility: string; sessionId: string | null }> = []
+  readonly refreshAssignmentsByRun: Array<{
+    responsibility: string
+    refreshAssignment: boolean
+  }> = []
   readonly sessionWorkspacesByRun: Array<{
     responsibility: string
     path: string
@@ -1015,6 +1024,10 @@ class DeliveryScriptRunner implements RoleRunner {
     this.sessionsByRun.push({
       responsibility: input.responsibility,
       sessionId: input.session?.sessionId ?? null,
+    })
+    this.refreshAssignmentsByRun.push({
+      responsibility: input.responsibility,
+      refreshAssignment: input.refreshAssignment ?? false,
     })
     const continuityMarker = join(input.context.runtimeScratchDir, 'continuity.txt')
     const markerFound = await Bun.file(continuityMarker).exists()

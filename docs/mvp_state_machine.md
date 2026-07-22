@@ -433,7 +433,7 @@ stateDiagram-v2
         [*] --> Generate
         Generate --> Review : Generator success Work gate
         Review --> EngDone : Reviewer success and durable C1 ref
-        Review --> Generate : Reviewer reject or integration rejection
+        Review --> Generate : reject; same Session, full assignment re-grounding
 
         Generate --> Generate : fail, then Work Attention
         Review --> Review : fail, then Work Attention
@@ -444,6 +444,11 @@ stateDiagram-v2
         Review --> EngCancelled : validated Work or Goal cancellation
     }
 ```
+
+The `Review -> Generate` transition preserves the Generator responsibility Session and task
+workspace, but the next Attempt receives the complete current assignment. Current Reviewer or
+integration rejection supersedes prior completion claims; ordinary interruption and Pause/Resume
+continue to use changed-section continuation.
 
 Dispatch never changes stage. Responsibility is a pure function of Work kind and stage:
 

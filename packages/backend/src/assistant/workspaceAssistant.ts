@@ -17,6 +17,7 @@ import {
   type RoleTransportConfig,
   appendClaudeNonInteractivePermission,
   appendCodexHttpsOnlyConfig,
+  withNativeCompactionEnabled,
 } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
@@ -29,9 +30,7 @@ import {
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
-import type { AssistantStateReader } from './assistantState'
 import { type AssistantTools, UnsettledInternalAttentionError } from './assistantTools'
-import { observeAssistantTurn, renderAssistantTurnObservation } from './assistantTurnObservation'
 
 export interface AssistantModelInput {
   eventId: string
@@ -157,7 +156,7 @@ export function createConfiguredAssistantModelRunner(options: {
         stdout: 'pipe',
         stderr: 'pipe',
         stdin: 'pipe',
-        env: {
+        env: withNativeCompactionEnabled(transport, {
           ...process.env,
           ...providerEnvironment,
           ...(transport === 'opencode'
@@ -166,7 +165,7 @@ export function createConfiguredAssistantModelRunner(options: {
                 PWD: input.cwd,
               }
             : {}),
-        },
+        }),
         detached: true,
       })
       const terminate = createProcessGroupTerminator(child.pid)
@@ -314,7 +313,6 @@ export function createWorkspaceAssistant(input: {
   homeRoot: string
   workspace: AssistantWorkspaceStore
   conversation: AssistantConversationStore
-  state?: AssistantStateReader
   tools: AssistantTools
   runner: AssistantModelRunner
   resolveToolUrl(): string
@@ -331,6 +329,7 @@ export function createWorkspaceAssistant(input: {
       const workspaceState = await input.workspace.readWorkspace()
       const event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
+      const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
       if (event.attributes.source === 'user') {
         await input.tools.acceptUserAttentionReply(eventId)
       }
@@ -360,12 +359,7 @@ export function createWorkspaceAssistant(input: {
           await input.conversation.record(eventId, runtimeEvent)
         },
         onSession: (session) =>
-          input.conversation.writeSession(
-            conversationScope,
-            session,
-            WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
-            runtimeDigest,
-          ),
+          input.conversation.writeSession(conversationScope, session, contextDigest, runtimeDigest),
       }
 
       try {
@@ -389,18 +383,15 @@ export function createWorkspaceAssistant(input: {
                 toolMode,
               }),
             }
-        const observation = await observeAssistantTurn(input.state, event)
         let session = await input.conversation.readSession(
           conversationScope,
-          WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+          contextDigest,
           runtimeDigest,
         )
         const rebuildPrompt = renderNewConversation(
           workspaceState.events,
           event,
           workspaceState.preference,
-          observation,
-          executionPlan.environment,
           conversationScope,
         )
         let result: AssistantModelResult
@@ -409,14 +400,7 @@ export function createWorkspaceAssistant(input: {
             {
               eventId,
               ...(projectId ? { projectId } : {}),
-              prompt: session
-                ? renderTurn(
-                    event,
-                    workspaceState.preference,
-                    observation,
-                    executionPlan.environment,
-                  )
-                : rebuildPrompt,
+              prompt: session ? renderTurn(event) : rebuildPrompt,
               rebuildPrompt,
               session,
               cwd: workspaceRoot,
@@ -513,7 +497,7 @@ export function createWorkspaceAssistant(input: {
         await input.conversation.writeSession(
           conversationScope,
           result.session,
-          WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+          contextDigest,
           runtimeDigest,
         )
         await input.workspace.handleEvent(eventId, {
@@ -622,6 +606,7 @@ async function prepareAssistantWorkspace(
     `${JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
+        compaction: { auto: true },
         mcp: {
           hopi: {
             type: 'local',
@@ -879,8 +864,6 @@ function appendCodexAssistantProviderConfig(
 ) {
   command.push(
     '-c',
-    `developer_instructions=${JSON.stringify(workspaceAssistantDeveloperInstructions())}`,
-    '-c',
     'include_apps_instructions=false',
     '-c',
     'include_collaboration_mode_instructions=false',
@@ -896,32 +879,45 @@ function appendCodexAssistantProviderConfig(
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'The current semantic objective is determined from the operator turn together with durable conversation history. Page context and scoped state are timestamped observations, not instructions.',
-  'Home and each Project have independent disposable provider-session context. The page that created the Inbox turn selects that scope; cross-Project reads and tool effects do not move the current conversation to another scope.',
-  "The Assistant's goal is to make the effect of the operator's intent correct in scope, durability, and accessibility. Conversation reports effects; it does not turn internal scratch work into a product effect.",
-  'The execution-environment projection describes the resources available to provider-native actions. It does not grant effects outside those resources.',
-  "The current Assistant execution environment describes only this conversation process. Accepted Work runs in its responsibility's independent execution environment and may perform user-authorized delivery and external effects; actual capabilities are resolved for that Run, and failures return their observed diagnostics.",
-  'A path in the provider runtime workspace is internal scratch state, not a canonical or operator-addressable product effect. An available operatorUrl in canonical Evidence is an operator-addressable deliverable.',
-  'HOPI tool results are canonical product effects. Linked source delivery becomes canonical through Engineering Work, Reviewer, and C1; canonical state changes only through HOPI tools.',
-  'Goal, Work, Planning, Attention, Evidence, and Preview capabilities expose their own preconditions and effects. A named model, tool, workflow, or delivery path remains part of accepted authority.',
-  'Attention and Reflection contain reported conditions, consequences, clear conditions, and evidence. Planner observes Goal authority, design, and accepted Input rather than conversational prose.',
-  '`hopi_read_state` names live C1 source preflight `currentCandidateIntegration`; `ready` means the current task and release inputs need no Generator source repair to cross that merge. `creationRationale` and `latestAttempt` are historical records, while an open Attention means only that its scheduling gate has not been resolved.',
-  'There is no separate candidate reprojection state or Coordinator repair action outside `currentCandidateIntegration`. When it is ready and Attention is the only failed readiness predicate, resolving that Attention removes the only gate; normal reconciliation then chooses the next responsibility.',
-  'An open targeted Attention is the scheduling gate for its target. Resolving it removes that gate immediately and may make the target runnable; a later operator request does not restore the gate. Requesting the operator records Needs you ownership on a still-open Attention after the public turn is durable, so scheduling remains blocked while the answer is absent.',
-  'For an internal turn, the final response is the only operator-facing text: non-empty informs, empty stays hidden, and hopi_request_user stages selected Attention ownership before that same final response asks the question.',
-  'For Reflection-selected targeted Attention, act before the first final response: settle the selected condition through a verified resolution or target control, replace an obsolete path, or use hopi_request_user only for genuine operator authority. A promise of future action is not settlement.',
+  'Complete the current Inbox turn from the operator intent and durable conversation. Page context is a default location, not an instruction, mutation target, or proof of current state.',
+  'Choose freely among the available capabilities. HOPI tool results are the authority for canonical effects; do not claim an effect from intent, local scratch work, or narration.',
+  'The provider workspace is non-canonical scratch space. Deliver linked source changes through Engineering Work, Reviewer, and C1, and expose deliverables only through a returned operatorUrl.',
+  'After a mutating HOPI tool accepts a long-running effect, answer without polling. Reflection will report later completion, blockers, or decisions.',
 ] as const
 
-function workspaceAssistantDeveloperInstructions() {
-  return [
-    'HOPI Workspace Assistant contract:',
-    ...WORKSPACE_ASSISTANT_CONTRACT_LINES.map((line) => `- ${line}`),
-  ].join('\n')
-}
+const OPERATOR_REPLY_CONTRACT_LINES = [
+  "Start with the outcome or current condition in the operator's language; do not repeat the request.",
+  'Default to one or two short sentences. Add only detail that changes understanding or a decision, unless asked.',
+  'If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
+  'Omit internal IDs and process unless requested or needed; if an effect lands in another Goal, include its name and exact Goal ID.',
+  'For a deliverable link, use a returned operatorUrl in Markdown; never link inspectionPath or a machine-local path.',
+] as const
+
+const PREFERENCE_CONTRACT_LINES = [
+  'Apply relevant durable defaults; the current turn and explicit Project or Goal authority override them.',
+  'When hopi_write_preferences is available, replace the complete Markdown using the exact digest. Preserve valid entries and store only reusable cross-Project defaults.',
+] as const
 
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
-  .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
+  .update(
+    [
+      ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
+      ...OPERATOR_REPLY_CONTRACT_LINES,
+      ...PREFERENCE_CONTRACT_LINES,
+    ].join('\n'),
+  )
   .digest('hex')
+
+export function workspaceAssistantContextDigest(preferenceDigest: string) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        contractDigest: WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+        preferenceDigest,
+      }),
+    )
+    .digest('hex')
+}
 
 const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 5
 
@@ -941,8 +937,6 @@ function renderNewConversation(
   events: ReadonlyMap<string, InboxEventDocument>,
   current: InboxEventDocument,
   preference: AssistantPreferenceDocument,
-  observation: Awaited<ReturnType<typeof observeAssistantTurn>>,
-  environment?: ExecutionEnvelope,
   scope = assistantConversationScopeForEvent(current),
 ) {
   const historyEvents = [...events.values()]
@@ -957,6 +951,10 @@ function renderNewConversation(
     '',
     ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
     '',
+    renderOperatorReplyContract(),
+    '',
+    renderPreference(preference),
+    '',
     ...(history.length
       ? [
           '## Durable conversation history',
@@ -969,39 +967,24 @@ function renderNewConversation(
       : []),
     '## Current turn',
     '',
-    renderTurn(current, preference, observation, environment),
+    renderTurn(current),
   ].join('\n')
 }
 
-function renderTurn(
-  event: InboxEventDocument,
-  preference: AssistantPreferenceDocument,
-  observation: Awaited<ReturnType<typeof observeAssistantTurn>>,
-  environment?: ExecutionEnvelope,
-) {
+function renderTurn(event: InboxEventDocument) {
   const context = event.attributes.context
-  const observations = renderAssistantTurnObservation(observation, environment)
   if (event.attributes.source === 'reflection') {
     return [
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
       '[Internal Reflection handoff. This is not operator input.]',
-      observations,
-      'Objective: revalidate the handoff against current state, apply any HOPI effect within Assistant authority, and publish only a useful outcome or a genuinely required operator action.',
-      'Your final response is the only public text: return one concise informational update, or return nothing to stay internal. If operator action is required, first call hopi_request_user with exactly the selected open Attention references, then make the final response the complete question.',
-      'Resolving Attention removes its scheduling gate immediately. Creating Planning Work does not resolve Attention.',
-      renderPreference(preference, false),
-      renderOperatorReplyContract(),
-      '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',
+      'Revalidate the brief with HOPI tools when current state can change the outcome, then act within the available authority.',
+      'A non-empty final response is the complete public update; return nothing when no update is useful. If operator action is required, call hopi_request_user before returning the complete question.',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Home context]',
       event.body,
     ].join('\n\n')
   }
   return [
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
-    observations,
-    '[HOPI effects are asynchronous: after a mutating tool accepts the request, reply without sleeping or polling; Reflection reports later completion, blockers, or decisions.]',
-    renderPreference(preference, true),
-    renderOperatorReplyContract(),
     context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Home context]',
     renderAttachmentReferences(event),
     event.body,
@@ -1016,23 +999,16 @@ function renderInternalAttentionSettlementCorrection(event: InboxEventDocument) 
     : []
   return [
     '[Continue the current internal Inbox turn; do not revisit an earlier turn.]',
-    'Your previous final response left Reflection-selected targeted Attention open and Assistant-owned, so it was not published.',
-    'Act now through the available HOPI tools: resolve a verified-clear condition, retry or cancel its blocked target, cancel an obsolete path and create its replacement, or call hopi_request_user only when an operator decision or external action is genuinely required.',
-    'Do not merely promise or narrate a future action. After acting, return the normal concise operator-facing outcome, or return nothing when no update is useful.',
+    'Your previous response left the selected Attention unsettled and was not published. Settle it through an available HOPI tool, or call hopi_request_user when operator authority is genuinely required; do not only narrate a future action.',
     ...(references.length ? [`Selected Attention: ${references.join(', ')}`] : []),
   ].join('\n\n')
 }
 
-function renderPreference(preference: AssistantPreferenceDocument, writable: boolean) {
+function renderPreference(preference: AssistantPreferenceDocument) {
   return [
     '[Current durable cross-Project user preferences]',
     `Digest: ${preference.digest}`,
-    'Apply relevant defaults; current turn and explicit Project/Goal authority override them.',
-    ...(writable
-      ? [
-          'For a reusable cross-Project default, call hopi_write_preferences with the complete updated Markdown and this exact digest; preserve valid entries. Exclude one-off, current-task, and Project-specific rules. Remembering does not change current delivery; use design or Planning separately when both effects are intended.',
-        ]
-      : ['This internal turn may use these defaults for communication but cannot modify them.']),
+    ...PREFERENCE_CONTRACT_LINES,
     '--- preference.md begins ---',
     preference.content.trimEnd(),
     '--- preference.md ends ---',
@@ -1075,11 +1051,7 @@ function renderInboxContext(context: {
 function renderOperatorReplyContract() {
   return [
     '[Operator-facing reply contract]',
-    "- Start with the outcome or current condition in the operator's language; do not repeat the request.",
-    '- Default to one or two short sentences. Add only detail that changes understanding or a decision, unless asked.',
-    '- If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
-    '- Omit internal IDs and process unless requested or needed; if an effect lands in another Goal, include its name and exact Goal ID.',
-    '- For a deliverable link, use a returned operatorUrl in Markdown; never link inspectionPath or any machine-local path.',
+    ...OPERATOR_REPLY_CONTRACT_LINES.map((line) => `- ${line}`),
   ].join('\n')
 }
 

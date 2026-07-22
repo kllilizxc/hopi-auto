@@ -156,11 +156,14 @@ does not prohibit Project-relative source image paths or ordinary remote URLs.
 Historical Inbox events may contain the removed `routeClaim` field. The compatibility reader keeps
 it as provenance, but new turns never write it and no forward control rule depends on it.
 
-`runtime/assistant/session.json` is a rebuildable vendor-session cache, not conversation authority:
+`runtime/assistant/sessions/home.json` and
+`runtime/assistant/sessions/projects/<projectId>.json` are rebuildable vendor-session caches, not
+conversation authority:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
+  "scope": "project:P-example",
   "transport": "opencode",
   "sessionId": "vendor-session-id",
   "contractDigest": "sha256",
@@ -168,14 +171,17 @@ it as provenance, but new turns never write it and no forward control rule depen
 }
 ```
 
-Only `codex | claude | opencode` is accepted. HOPI resumes the cache only when `transport` matches
-the current Home Assistant configuration and both the initial-contract and stable-workspace runtime
-digests match. A missing, invalid, or incompatible cache starts a new vendor session from ordered
-durable Inbox history; it does not alter or synthesize canonical turns.
+Only `codex | claude | opencode` is accepted. HOPI selects the cache from immutable Inbox scope and
+resumes it only when scope, transport, the initial Assistant context digest, and the stable-workspace
+runtime digest match. The context digest covers the stable Assistant contract and current durable
+preference digest. A missing, invalid, or incompatible cache starts a new vendor session from the
+same initial context and ordered bounded Inbox history; it does not alter or synthesize canonical
+turns.
 An adapter may discard an already selected cache during a turn only when the vendor explicitly
 reports that session missing or incompatible. Provider, quota, authentication, model, and process
 failures do not imply session incompatibility and therefore do not rebuild conversation history.
-Legacy thread-only manifests migrate as Codex. Per-turn `events.jsonl` stores normalized live
+The legacy global cache is discarded because its conversation scope cannot be recovered without
+guessing. Per-turn `events.jsonl` stores normalized live
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
 output for debugging.
 

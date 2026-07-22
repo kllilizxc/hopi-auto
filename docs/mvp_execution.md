@@ -494,7 +494,19 @@ material Work revision never inherits either. The first invocation receives the 
 assignment. A resumed invocation receives every complete top-level assignment section that changed
 since the Session last accepted an invocation; unchanged sections remain authoritative in the saved
 conversation. If no accepted assignment snapshot exists, recovery sends the complete assignment.
-Current facts always supersede remembered conversation without replaying an unchanged contract.
+After Reviewer or deterministic integration rejection returns a Work to Generator, the same
+Generator Session receives the complete current assignment rather than a delta. The rejection and
+current authority supersede every prior completion claim, while the retained conversation and
+workspace remain useful implementation context. Generator must reassess the complete Work and reread
+its referenced design authority before claiming success. Current facts always supersede remembered
+conversation without replaying an unchanged contract during ordinary recovery.
+
+Every built-in vendor adapter keeps its native automatic context compaction enabled for Planner,
+Generator, and Reviewer, including a disposable first invocation and every resumed responsibility
+Session. Compaction preserves the vendor Session identity and responsibility workspace. The Agent is
+not prompted to request or reason about it, and HOPI does not estimate tokens, produce a parallel
+summary, or add a lifecycle transition. Vendor-specific triggers and compact records remain at the
+adapter and raw-transcript boundary.
 
 The vendor process working directory belongs to the responsibility Session rather than to an
 Attempt. Generator runs in the primary stable task worktree. Planner and Reviewer run in their
@@ -898,11 +910,18 @@ instead of redispatching Generator unchanged or inventing a Goal-wide Planning g
 Assistant decides whether the exact recovery is retry, Planning, cancellation, or operator action.
 
 The current assignment presents one bounded repair view after the stable Work authority: changed
-files relative to the release base, the previous Generator's claimed summary, and its observed
-command outcomes. These are diagnostic starting points, not another checklist or completion state;
-missing observed checks are stated explicitly. Latest Reviewer artifacts are copied into the current
+files relative to the release base and any candidate-inspection diagnostics. These are workspace
+facts, not another checklist or completion state. It does not repeat the previous Generator's
+claimed summary or selected command outcomes. Latest Reviewer artifacts are copied into the current
 Run and mapped beside the findings. Generator may use its resumed code map to avoid repeating healthy
 discovery, but it must use the current view and current paths rather than remembered Run locations.
+
+Reviewer rejection is a semantic re-grounding boundary, not a Session boundary. The resumed
+Generator receives the complete current assignment with an explicit statement that the rejection
+invalidates its earlier completion judgment. It retains useful source discovery and partial edits,
+but repairs the owning invariant and reassesses all acceptance criteria instead of treating the
+latest findings as an exhaustive patch list. HOPI adds no rejection counter, fresh-Session rule, or
+second repair protocol.
 
 Generator treats a Reviewer reproducer as evidence that an accepted invariant is false, not as the
 scope of the repair. It fixes the owning invariant, checks adjacent representations and representative

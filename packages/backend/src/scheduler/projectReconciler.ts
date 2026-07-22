@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
-import { isExecutionToolName } from '../agent/runtimeEvents'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   engineeringWorkRepoIds,
@@ -38,7 +37,6 @@ import {
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
 import {
-  type PreviousGeneratorObservation,
   type Responsibility,
   type RoleContextStager,
   createRoleContextStager,
@@ -444,10 +442,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
           runtimeScratchDir: responsibilitySession.workspaceDir,
-          previousGenerator:
-            responsibility === 'generator'
-              ? await readPreviousGeneratorObservation(attempts, options.projectId, goalId, workId)
-              : null,
         })
         attempt = await attempts
           .start({
@@ -538,6 +532,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             session: responsibilitySession.session,
+            refreshAssignment: followsReviewerRejection(
+              attemptSnapshot.list(options.projectId, goalId, workId),
+              responsibility,
+            ),
             signal: runController.signal,
           },
           {
@@ -986,58 +984,17 @@ async function appendPreparationDiagnostic(
   )
 }
 
-async function readPreviousGeneratorObservation(
-  attempts: RunAttemptStore,
-  projectId: string,
-  goalId: string,
-  workId: string,
-): Promise<PreviousGeneratorObservation | null> {
-  const previous = (await attempts.list(projectId, goalId, workId)).find(
-    (attempt) => attempt.responsibility === 'generator' && attempt.status === 'finished',
+function followsReviewerRejection(
+  history: readonly RunAttemptSummary[],
+  responsibility: Responsibility,
+) {
+  if (responsibility !== 'generator') return false
+  const previous = history.find(
+    (attempt) =>
+      attempt.status === 'finished' &&
+      (attempt.application === 'published' || attempt.application === 'attention'),
   )
-  if (!previous) return null
-  const events = await attempts.readEvents(projectId, goalId, workId, previous.runId)
-  const commands: Array<{
-    key: string
-    command: string
-    outcome: 'completed' | 'failed' | 'unfinished'
-  }> = []
-  const byInvocation = new Map<string, (typeof commands)[number]>()
-  let anonymousSequence = 0
-  for (const event of events ?? []) {
-    if (event.kind !== 'transcript') continue
-    if (event.entryKind === 'tool_call' && isExecutionToolName(event.toolName)) {
-      anonymousSequence += 1
-      const key = event.toolInvocationKey ?? `anonymous-${anonymousSequence}`
-      const command = {
-        key,
-        command: boundedPromptDiagnostic(event.summary),
-        outcome: 'unfinished' as const,
-      }
-      commands.push(command)
-      if (event.toolInvocationKey) byInvocation.set(event.toolInvocationKey, command)
-      continue
-    }
-    if (
-      (event.entryKind === 'tool_result' || event.entryKind === 'error') &&
-      event.toolInvocationKey
-    ) {
-      const command = byInvocation.get(event.toolInvocationKey)
-      if (!command) continue
-      command.outcome = event.entryKind === 'error' ? 'failed' : 'completed'
-      byInvocation.delete(event.toolInvocationKey)
-    }
-  }
-  return {
-    runId: previous.runId,
-    summary: previous.summary ? boundedPromptDiagnostic(previous.summary, 800) : null,
-    commands: commands.slice(-8).map(({ command, outcome }) => ({ command, outcome })),
-  }
-}
-
-function boundedPromptDiagnostic(value: string, limit = 320) {
-  const compact = value.replaceAll(/\s+/g, ' ').trim()
-  return compact.length <= limit ? compact : `${compact.slice(0, limit - 1)}…`
+  return previous?.responsibility === 'reviewer' && previous.result === 'reject'
 }
 
 function responsibilityStage(responsibility: Responsibility) {

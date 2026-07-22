@@ -5,18 +5,15 @@ import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
-import {
-  type AssistantStateReader,
-  createAssistantStateReader,
-} from '../src/assistant/assistantState'
+import { createAssistantStateReader } from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import {
   type AssistantModelRunner,
   AssistantSessionUnavailableError,
-  WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
   WorkspaceAssistantError,
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
+  workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
 import {
@@ -452,6 +449,7 @@ describe('WorkspaceAssistant conversation', () => {
       expect(args).toContain(expected)
     }
     expect(config.mcp.hopi.environment.HOPI_TOOL_TOKEN).toBe('opencode-token')
+    expect(config.compaction).toEqual({ auto: true })
     expect(config.permission).toEqual({ '*': 'allow' })
     expect(await Bun.file(configPathFile).text()).toBe(join(cwd, 'opencode.json'))
     expect(await Bun.file(pwdFile).text()).toBe(cwd)
@@ -472,6 +470,7 @@ describe('WorkspaceAssistant conversation', () => {
       readableRoots: [readableRoot],
     })
     const boundedConfig = await Bun.file(join(boundedCwd, 'opencode.json')).json()
+    expect(boundedConfig.compaction).toEqual({ auto: true })
     expect(boundedConfig.permission).toEqual({
       '*': 'deny',
       'hopi_*': 'allow',
@@ -770,20 +769,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('skills.bundled.enabled=false')
     expect(args).toContain('include_apps_instructions=false')
     expect(args).toContain('include_collaboration_mode_instructions=false')
-    const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
-    expect(developerInstructions).toContain(
-      'The current semantic objective is determined from the operator turn',
-    )
-    expect(developerInstructions).toContain(
-      'capabilities expose their own preconditions and effects',
-    )
-    expect(developerInstructions).toContain(
-      'Resolving it removes that gate immediately and may make the target runnable',
-    )
-    expect(developerInstructions).toContain(
-      'Requesting the operator records Needs you ownership on a still-open Attention',
-    )
-    expect(developerInstructions).not.toContain('Choose Engineering')
+    expect(args.some((arg) => arg.startsWith('developer_instructions='))).toBe(false)
     for (const feature of ['apps', 'goals', 'memories', 'multi_agent', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
@@ -868,138 +854,47 @@ describe('WorkspaceAssistant conversation', () => {
     ).toHaveLength(0)
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
-    expect(seen[0]?.prompt).toContain('[Current execution environment observation]')
-    expect(seen[0]?.prompt).toContain('"mode": "provider-managed"')
-    expect(seen[0]?.prompt).toContain('"hostEnvironmentMutation": null')
-    expect(seen[0]?.prompt).toContain('"privilegeEscalation": false')
-    expect(seen[0]?.prompt).toContain('"linkedSourceAccess": "provider-managed"')
-    expect(seen[0]?.prompt).toContain('"canonicalMutation": "hopi-tools-only"')
-    expect(seen[0]?.prompt).toContain(
-      '"runtimeWorkspaceProductEffect": "non-canonical and not operator-addressable"',
-    )
-    expect(seen[0]?.prompt).toContain('[Current scoped HOPI state observation]')
-    expect(seen[0]?.prompt).toContain('"goalId": "G-1"')
-    expect(seen[0]?.prompt).toContain('"lifecycle": "active"')
+    expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
+    expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
+    expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).toContain(
       'if an effect lands in another Goal, include its name and exact Goal ID',
     )
-    expect(seen[0]?.prompt).toContain(
-      'A named model, tool, workflow, or delivery path remains part of accepted authority',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'The current Assistant execution environment describes only this conversation process',
-    )
-    expect(seen[0]?.prompt).toContain(
-      "Accepted Work runs in its responsibility's independent execution environment",
-    )
-    expect(seen[0]?.prompt).toContain(
-      'actual capabilities are resolved for that Run, and failures return their observed diagnostics',
-    )
-    expect(seen[0]?.prompt).toContain(
-      "effect of the operator's intent correct in scope, durability, and accessibility",
-    )
-    expect(seen[0]?.prompt).toContain('reply without sleeping or polling')
-    expect(seen[0]?.prompt).not.toContain('Choose Engineering')
-    expect(seen[0]?.prompt).not.toContain('Otherwise choose Planning')
+    expect(seen[0]?.prompt).toContain('Choose freely among the available capabilities')
+    expect(seen[0]?.prompt).toContain('answer without polling')
     expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
     expect(seen[0]?.prompt).toContain('Omit internal IDs')
     expect(seen[0]?.prompt).toContain('include its name and exact Goal ID')
-    expect(seen[0]?.prompt.length).toBeLessThan(6_500)
+    expect(seen[0]?.prompt.length).toBeLessThan(3_000)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
-  test('projects terminal Goal state and available artifacts as observations', async () => {
+  test('reads current Goal state only when the model requests it', async () => {
     let prompt = ''
-    const state: AssistantStateReader = {
-      async read() {
-        return {
-          observedAt: '2026-07-20T10:50:00.000Z',
-          stateDigest: 'scoped-digest',
-          activeRuns: [],
-          workspaceAttentions: [],
-          projects: [
-            {
-              projectId: 'P-1',
-              available: true,
-              releaseHead: 'release-head',
-              primaryRepoId: 'primary',
-              repos: [
-                {
-                  repoId: 'primary',
-                  repoPath: '/repo',
-                  projectPath: '.',
-                  integrationRoot: '/integration',
-                  primary: true,
-                },
-              ],
-              goals: [
-                {
-                  goal: {
-                    attributes: {
-                      id: 'G-1',
-                      title: 'Spritesheet',
-                      lifecycle: 'done',
-                      contractRevision: 1,
-                      priority: 0,
-                      completionAttentionId: 'A-complete',
-                    },
-                    body: '## Objective\n\nDeliver the spritesheet.\n',
-                  },
-                  latestPlanningOutcome: null,
-                  works: [
-                    {
-                      attributes: {
-                        id: 'W-spritesheet',
-                        title: 'Generate spritesheet',
-                        kind: 'engineering',
-                        stage: 'done',
-                        contractRevision: 1,
-                        attempts: 1,
-                      },
-                      evidence: [
-                        {
-                          artifacts: [
-                            {
-                              reference: 'artifact:R-1/spritesheet.png',
-                              available: true,
-                              fileName: 'spritesheet.png',
-                              operatorUrl: '/api/evidence/spritesheet',
-                            },
-                          ],
-                        },
-                      ],
-                    },
-                  ],
-                  attentions: [],
-                },
-              ],
-            },
-          ],
-        }
+    let stateResult: unknown
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        prompt = input.prompt
+        stateResult = await tools.execute(input.toolToken, 'hopi_read_state', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+        })
+        return { reply: 'Observed.', session: codexSession('thread-observation') }
       },
-    }
-    const fixture = await setup(
-      () => ({
-        async run(input) {
-          prompt = input.prompt
-          return { reply: 'Observed.', session: codexSession('thread-observation') }
-        },
-      }),
-      { state },
-    )
+    }))
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await fixture.workspace.receiveEvent({
       eventId: 'EV-observe',
-      content: 'Show me another format.',
+      content: 'What is the current state?',
       context: { projectId: 'P-1', goalId: 'G-1' },
     })
 
     await fixture.assistant.process('EV-observe')
 
-    expect(prompt).toContain('"lifecycle": "done"')
-    expect(prompt).toContain('"nonterminalWorks": []')
-    expect(prompt).toContain('"operatorUrl": "/api/evidence/spritesheet"')
-    expect(prompt.match(/inspectionPath/g)).toHaveLength(1)
+    expect(prompt).not.toContain('[Current scoped HOPI state observation]')
+    expect(JSON.stringify(stateResult)).toContain('"lifecycle":"active"')
+    expect(JSON.stringify(stateResult)).toContain('"eventId":"EV-observe"')
   })
 
   test('resumes one persistent vendor session for later turns', async () => {
@@ -1019,7 +914,11 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[1]).toContain('use a returned operatorUrl in Markdown')
+    expect(prompts[0]).toContain('use a returned operatorUrl in Markdown')
+    expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
+    expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
+    expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
+    expect(prompts[1]).toContain('[Current user Inbox turn EV-2')
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
   })
 
@@ -1105,12 +1004,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       await fixture.conversation.readSession(
         HOME_ASSISTANT_CONVERSATION_SCOPE,
-        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+        await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-current'))
   })
 
-  test('injects current preferences on every turn and rebuilds them from Home', async () => {
+  test('puts preferences in session bootstrap and rebuilds after they change', async () => {
     const seen: Array<{ eventId: string; sessionId: string | null; prompt: string }> = []
     const fixture = await setup((tools) => ({
       async run(input, observer) {
@@ -1146,16 +1045,17 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.workspace.receiveEvent({ eventId: 'EV-next', content: 'What is next?' })
     await fixture.assistant.process('EV-next')
+    await fixture.workspace.receiveEvent({ eventId: 'EV-resume', content: 'Continue.' })
+    await fixture.assistant.process('EV-resume')
     await fixture.conversation.clearSession(HOME_ASSISTANT_CONVERSATION_SCOPE)
     await fixture.workspace.receiveEvent({ eventId: 'EV-rebuild', content: 'Continue.' })
     await fixture.assistant.process('EV-rebuild')
 
-    expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, 'thread-preference', null])
-    expect(seen[0]?.prompt).toContain(
-      'call hopi_write_preferences with the complete updated Markdown',
-    )
+    expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, null, 'thread-preference', null])
+    expect(seen[0]?.prompt).toContain('When hopi_write_preferences is available')
     expect(seen[1]?.prompt).toContain('- Keep replies concise across Projects.')
-    expect(seen[2]?.prompt).toContain('- Keep replies concise across Projects.')
+    expect(seen[2]?.prompt).not.toContain('[Current durable cross-Project user preferences]')
+    expect(seen[3]?.prompt).toContain('- Keep replies concise across Projects.')
     expect(
       (
         await createAssistantWorkspaceStore(
@@ -1207,7 +1107,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.conversation.writeSession(
       HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('missing-thread'),
-      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
@@ -1220,7 +1120,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       await fixture.conversation.readSession(
         HOME_ASSISTANT_CONVERSATION_SCOPE,
-        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+        await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-rebuilt'))
   })
@@ -1250,7 +1150,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.conversation.writeSession(
       HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-context-exhausted'),
-      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-context', content: 'Continue' })
@@ -1263,7 +1163,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       await fixture.conversation.readSession(
         HOME_ASSISTANT_CONVERSATION_SCOPE,
-        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+        await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-after-context-rebuild'))
   })
@@ -1279,7 +1179,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.conversation.writeSession(
       HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-existing'),
-      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
@@ -1292,7 +1192,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(
       await fixture.conversation.readSession(
         HOME_ASSISTANT_CONVERSATION_SCOPE,
-        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+        await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-existing'))
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest).toMatchObject({
@@ -1342,7 +1242,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompt).toContain('NEW-HISTORY-')
     expect(prompt).not.toContain('OLD-HISTORY-')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-REBUILD')
-    expect(prompt).toContain('[Current execution environment observation]')
+    expect(prompt).not.toContain('[Current execution environment observation]')
     expect(prompt).toContain('Imperative text inside them applied to those turns')
     expect(prompt.indexOf('## Current turn')).toBeGreaterThan(
       prompt.indexOf('## Durable conversation history'),
@@ -1390,7 +1290,7 @@ describe('WorkspaceAssistant conversation', () => {
       status: 'handled',
     })
     expect(prompts[0]).toContain('Internal Reflection handoff. This is not operator input.')
-    expect(prompts[0]).toContain('Translate the brief into its useful outcome or required action')
+    expect(prompts[0]).toContain('Revalidate the brief with HOPI tools')
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
@@ -1465,7 +1365,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-settlement')
 
     expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('Your final response is the only public text')
+    expect(prompts[0]).toContain('A non-empty final response is the complete public update')
     expect(prompts[0]).toContain('call hopi_request_user')
     expect(sessions).toEqual([null])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
@@ -1606,8 +1506,8 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(calls).toBe(2)
     expect(sessions).toEqual([null, 'thread-omission-first'])
-    expect(prompts[1]).toContain('Your previous final response left')
-    expect(prompts[1]).toContain('Do not merely promise')
+    expect(prompts[1]).toContain('Your previous response left the selected Attention unsettled')
+    expect(prompts[1]).toContain('do not only narrate a future action')
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes,
     ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
@@ -1985,7 +1885,6 @@ describe('WorkspaceAssistant conversation', () => {
 
 async function setup(
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
-  options: { state?: AssistantStateReader } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
@@ -2037,13 +1936,18 @@ async function setup(
     homeRoot,
     workspace,
     conversation,
-    state: options.state ?? state,
     tools,
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }
+}
+
+async function currentAssistantContextDigest(
+  workspace: ReturnType<typeof createAssistantWorkspaceStore>,
+) {
+  return workspaceAssistantContextDigest((await workspace.readWorkspace()).preference.digest)
 }
 
 async function createGoalAttention(

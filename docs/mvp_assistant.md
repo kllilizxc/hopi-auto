@@ -294,11 +294,20 @@ mutation authority.
 The vendor-qualified session cache and normalized live events are runtime data under
 `.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses
 `sessions/projects/<projectId>.json`. Each manifest stores `version`, scope, `transport`, `sessionId`,
-the digest of the durable initial Assistant contract, and the runtime-affinity digest. HOPI resumes
+the digest of the durable initial Assistant context, and the runtime-affinity digest. The initial
+context consists of the small stable Assistant contract plus the current `preference.md` digest.
+HOPI resumes
 only the session selected by the immutable Inbox context while the configured transport and both
 digests match. The legacy global `session.json` mixed scopes and is discarded rather than assigned
 to a Project by guesswork. A model change within one transport may reuse a compatible scoped session
 because the next invocation still receives the current configured model.
+
+The same adapter keeps vendor-native automatic context compaction enabled for the speaking
+Assistant, internal handoff turns, and disposable Reflection runs. Compaction continues the same
+vendor Session when one exists and is invisible to the model-facing HOPI contract: no Assistant
+tool, prompt rule, Inbox item, or canonical summary represents it. The vendor owns the trigger and
+summary format; raw provider output remains the diagnostic record. This MVP does not add a separate
+post-compaction quality check or rebuild policy.
 
 A vendor session must also remain attached to the stable HOPI Assistant workspace and adapter
 runtime contract under which HOPI created it. The session manifest therefore stores a runtime digest
@@ -309,9 +318,9 @@ session storage on every turn.
 
 Losing or invalidating vendor session state does not lose product truth: HOPI starts a new session
 from the durable Home instructions, a fixed character budget of the newest public user-visible
-exchanges in that same Home or Project scope, and the oldest pending turn in that scope. A Project
-rebuild also receives its current canonical observation. Internal Reflection briefs are not
-reconstructed as conversation memory; only their public final updates belong to the selected scope.
+exchanges in that same Home or Project scope, and the oldest pending turn in that scope. Internal
+Reflection briefs are not reconstructed as conversation memory; only their public final updates
+belong to the selected scope.
 Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
 rather than an unbounded vendor thread transcript.
 
@@ -336,17 +345,16 @@ shows a bounded, safe error summary and at most the latest retry status.
 ## Assistant Execution Boundary
 
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
-managed project root. Each turn receives one exact execution envelope derived from the same resolved
-transport, Project access preference, mode, roots, and network policy used to launch the provider.
-The envelope is the single source for both process configuration and model-visible capability facts;
-it never claims broader access than the launched process has. Project-local unrestricted access
-defaults off, and Reflection remains read-only. This is execution capability, not product authority:
-canonical mutations are accepted only through HOPI tools and source delivery is accepted only
-through Engineering Work publication. The runtime root remains provider scratch space: its paths
-are neither canonical nor
-operator-addressable. Canonical Evidence with an available `operatorUrl` is operator-addressable. The
-projection explicitly reports whether HOPI mutation tools are available in the current turn, so the
-model does not infer capability from filesystem permissions.
+managed project root. Each invocation resolves one exact execution envelope from the transport,
+Project access preference, mode, roots, and network policy, then uses it to configure the provider
+process. The prompt does not repeat that envelope: the model observes the actual native capabilities
+and HOPI tool surface instead of a second, potentially stale description. Project-local
+unrestricted access defaults off, and Reflection remains read-only. This is execution capability,
+not product authority: canonical mutations are accepted only through HOPI tools and source delivery
+is accepted only through Engineering Work publication. The runtime root remains provider scratch
+space: its paths are neither canonical nor operator-addressable. Canonical Evidence with an
+available `operatorUrl` is operator-addressable.
+The server-selected MCP mode determines which HOPI mutations are available in the current turn.
 
 The Assistant execution envelope describes only the current conversation process. Accepted Work
 runs in its responsibility's independent execution environment and may perform delivery or external
@@ -371,14 +379,12 @@ access bounded; the Project-local full-access switch makes future non-Reflection
 unrestricted. The backend persists and resolves that setting at invocation start; browser
 localStorage mirrors it for the Project UI but does not authorize execution by itself. Unrelated
 personal MCP servers and provider configuration remain excluded.
-The speaking Assistant may use the capabilities present in that envelope. Its prompt contains
-the environment projection, current scoped state observation, resource ownership, and HOPI effect
-semantics rather than a prescribed tool-selection procedure. Provider apps, plugins, memories, and
-workflow tools remain excluded because they introduce competing product authority rather than
-execution capability. Reflection has only HOPI read/handoff authority and receives no provider
-skill catalog. Responsibility Agents remain free to use execution capabilities within accepted
-Work. The MCP process has only a single-turn capability token, and the backend revokes that token
-when the turn ends. Every built-in vendor adapter disables its interactive approval layer: Codex
+The speaking Assistant may use the capabilities present in that envelope. Provider apps, plugins,
+memories, and workflow tools remain excluded because they introduce competing product authority
+rather than execution capability. Reflection has only HOPI read/handoff authority and receives no
+provider skill catalog. Responsibility Agents remain free to use execution capabilities within
+accepted Work. The MCP process has only a single-turn capability token, and the backend revokes that
+token when the turn ends. Every built-in vendor adapter disables its interactive approval layer: Codex
 uses `never`, Claude bypasses permission prompts, and OpenCode uses deterministic `allow` or `deny`
 rules. This removes an impossible unattended UI prompt without becoming the authorization boundary.
 Server-side capability validation, canonical target validation,
@@ -387,12 +393,14 @@ will reject. Provider sandboxing enforces the resolved envelope; these product b
 pretend to infer semantic intent from shell commands. Reflection is always read-only because it has
 read and handoff authority but no execution responsibility.
 
-The initial session instructions state only durable operating rules and available tool semantics.
-They do not require a fixed response shape or output file. Their digest is derived from those exact
-instructions, so changing the contract transparently rebuilds each scoped session on its next use
-from matching durable conversation history rather than leaving a restarted backend on stale
-behavior. Subsequent user messages use normal compatible scoped vendor session resume. A public
-turn's final model answer is the operator-facing
+The initial session context contains only durable operating rules and current cross-Project user
+preferences. Operation-specific preconditions and effects live with the corresponding tool
+description, schema, and backend validator instead of being repeated as an Assistant workflow.
+The context does not require a fixed action shape or output file. Its digest is derived from the
+stable instructions and preference digest, so changing either transparently rebuilds each scoped
+Session on its next use from matching durable conversation history rather than leaving a restarted
+backend on stale behavior. Subsequent turns send only the current Inbox event envelope and use
+normal compatible scoped vendor session resume. A public turn's final model answer is the operator-facing
 reply. For an internal turn, a non-empty final answer is likewise the complete informational update;
 an empty answer keeps the turn internal. No notification tool duplicates that native response.
 
@@ -401,21 +409,23 @@ event-target Attention. Coordinator does not rerun the same failed invocation: a
 Assistant decision may explicitly retry after the condition changes. This keeps transport failure at
 the execution boundary instead of turning it into a hidden workflow retry policy.
 
-The model receives the current operator turn, bounded durable conversation, preferences, execution
-environment, page context, and a timestamped scoped state observation. Goal and Project tools expose
-validated preconditions and effects. Its goal is an effect whose scope, durability, and accessibility
-match the operator's intent; conversation reports that effect but does not substitute for it. No
-deterministic classifier maps prose, tool failures, or page context to a required operation; the model
-judges the semantic owner and any missing authority from those facts. Current tool validation remains
-authoritative when the observation or thread memory is stale.
+The current-turn envelope contains the immutable Inbox ID, source, body, optional Project/Goal page
+context, and attachment references. It contains no automatic execution-environment or canonical-state
+snapshot. The model decides whether the message needs current HOPI facts and calls
+`hopi_read_state` or `hopi_read_conversation` only then. Goal and Project tools expose validated
+preconditions and effects. The Assistant aims for an effect whose scope, durability, and
+accessibility match the operator's intent; conversation reports that effect but does not substitute
+for it. No deterministic classifier maps prose, tool failures, or page context to a required
+operation. Current tool validation remains authoritative when thread memory is stale.
 
 ## User Preferences
 
-Speaking Assistant receives the current Assistant-home `preference.md` content and digest on every
-turn, including resumed vendor sessions. This document contains only durable cross-Project defaults.
-The model applies relevant defaults to its communication and judgment, while the current turn and
-explicit Project or Goal authority always win. Reflection analysis does not receive or modify this
-document.
+Speaking Assistant receives the current Assistant-home `preference.md` content and digest when a
+scoped vendor Session is created or rebuilt. This document contains only durable cross-Project
+defaults. A compatible resumed Session already owns that initial context, so HOPI does not repeat the
+document on every turn. The model applies relevant defaults to its communication and judgment, while
+the current turn and explicit Project or Goal authority always win. Reflection analysis does not
+receive or modify this document.
 
 Speaking Assistant is the sole preference writer. It uses model judgment rather than keywords,
 classification fields, or a fixed feedback workflow to distinguish a reusable preference from a
@@ -554,12 +564,11 @@ Goal's exact canonical design prefix, the tool strips it instead of creating a n
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
-When page context identifies a Project or Goal, the turn also receives a compact, timestamped state
-observation containing the scoped Goal lifecycle and revision, nonterminal Work, open Attention,
-active Runs, and available Evidence artifacts. This observation helps the model relate the current
-instruction to existing delivery without prescribing an operation. It is not canonical authority:
-every mutation still passes through the ordinary tool validator against current state, so a stale
-observation cannot publish an invalid effect.
+Page context supplies only the selected Project and Goal identities. HOPI does not automatically
+project Goal lifecycle, Work, Attention, Runs, Evidence, or execution-environment facts into every
+turn. When those facts can change the answer or action, Assistant reads their current bounded
+projection through the existing tools. This removes a parallel state feed and its stale-state
+interpretation rules without weakening mutation validation.
 
 The available effects remain facts of the architecture. Assistant runtime writes do not integrate
 linked source; Engineering Work, Reviewer, and C1 own that delivery path. Goal and Work tools expose

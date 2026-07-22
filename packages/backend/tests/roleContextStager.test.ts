@@ -519,7 +519,7 @@ describe('RoleContextStager', () => {
     ).toBe(true)
   })
 
-  test('projects the latest reproducer and prior Generator proof into the current repair view', async () => {
+  test('projects the latest reproducer without repeating prior Generator claims', async () => {
     const fixture = await createFixture(true)
     const artifactReference = 'artifact:R-review/reproducer.txt'
     const artifactPath = join(
@@ -550,11 +550,6 @@ describe('RoleContextStager', () => {
       runId: 'run-repair-view',
       responsibility: 'generator',
       repoRoots: [{ repoId: 'primary', path: taskRoot, primary: true }],
-      previousGenerator: {
-        runId: 'R-generator',
-        summary: 'Changed the validator.',
-        commands: [{ command: 'Tool call: Bash (bun test unit)', outcome: 'completed' }],
-      },
     })
     const projectedPath = join(bundle.contextRoot, 'evidence-artifacts', '001-reproducer.txt')
     const prompt = await Bun.file(bundle.promptFile).text()
@@ -569,8 +564,8 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('- Repo primary')
     expect(prompt).toContain('  - Result: ready')
     expect(prompt).toContain('- primary:src/index.ts')
-    expect(prompt).toContain('Previous claimed summary (not proof): Changed the validator.')
-    expect(prompt).toContain('[completed] Tool call: Bash (bun test unit)')
+    expect(prompt).not.toContain('Previous Generator Attempt')
+    expect(prompt).not.toContain('Observed execution commands')
   })
 
   test('stages transitive dependency Evidence and resolves its Run artifacts', async () => {

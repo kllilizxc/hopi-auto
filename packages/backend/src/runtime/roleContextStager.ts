@@ -38,18 +38,6 @@ export interface PrepareRoleContextInput {
   repoRoots?: readonly RoleRepoRoot[]
   apiOrigin?: string
   runtimeScratchDir?: string
-  previousGenerator?: PreviousGeneratorObservation | null
-}
-
-export interface PreviousGeneratorObservation {
-  runId: string
-  summary: string | null
-  commands: readonly PreviousGeneratorCommand[]
-}
-
-export interface PreviousGeneratorCommand {
-  command: string
-  outcome: 'completed' | 'failed' | 'unfinished'
 }
 
 export interface RoleRepoRoot {
@@ -203,7 +191,6 @@ export function createRoleContextStager(
         input.responsibility === 'generator'
           ? {
               candidate: await inspectCurrentCandidate(repoRoots, releaseRef, runtimeScratchDir),
-              previousGenerator: input.previousGenerator ?? null,
             }
           : null
       const assignment = createRunAssignment(
@@ -769,7 +756,6 @@ interface RunAssignment {
   } | null
   repairView: {
     candidate: CandidateInspection
-    previousGenerator: PreviousGeneratorObservation | null
   } | null
 }
 
@@ -1200,9 +1186,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
 
 function renderRepairView(repairView: RunAssignment['repairView']) {
   if (!repairView) return []
-  const previous = repairView.previousGenerator
   if (
-    !previous &&
     repairView.candidate.files.length === 0 &&
     repairView.candidate.unavailable.length === 0 &&
     repairView.candidate.integrations.length === 0
@@ -1245,17 +1229,6 @@ function renderRepairView(repairView: RunAssignment['repairView']) {
           ...repairView.candidate.unavailable.map((diagnostic) => `- ${diagnostic}`),
         ]
       : []),
-    '',
-    ...(previous
-      ? [
-          `Previous Generator Attempt: ${previous.runId}`,
-          `Previous claimed summary (not proof): ${previous.summary ?? 'No terminal summary was recorded.'}`,
-          'Observed execution commands:',
-          ...(previous.commands.length > 0
-            ? previous.commands.map((command) => `- [${command.outcome}] ${command.command}`)
-            : ['- No command execution was observed.']),
-        ]
-      : ['Previous Generator Attempt: none.', 'Observed execution commands: none.']),
   ]
 }
 

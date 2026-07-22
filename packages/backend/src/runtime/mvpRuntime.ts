@@ -242,7 +242,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     homeRoot: options.homeRoot,
     workspace,
     conversation: assistantConversation,
-    state: assistantState,
     tools: assistantTools,
     runner: assistantRunner,
     resolveToolUrl:

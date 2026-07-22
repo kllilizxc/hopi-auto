@@ -109,6 +109,20 @@ const HOPI_CODEX_HTTPS_PROVIDER = 'hopi_chatgpt_https'
 const NON_INTERACTIVE_CLAUDE_TOOLS = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion']
 export const NON_INTERACTIVE_CODEX_APPROVAL_POLICY = 'never'
 
+export function withNativeCompactionEnabled(
+  transport: AssistantTransport | undefined,
+  environment: Record<string, string | undefined>,
+) {
+  const disabledKeys =
+    transport === 'claude'
+      ? new Set(['DISABLE_AUTO_COMPACT', 'DISABLE_COMPACT'])
+      : transport === 'opencode'
+        ? new Set(['OPENCODE_DISABLE_AUTOCOMPACT'])
+        : null
+  if (!disabledKeys) return { ...environment }
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => !disabledKeys.has(name)))
+}
+
 export function appendClaudeNonInteractivePermission(command: string[]) {
   command.push('--dangerously-skip-permissions')
 }
@@ -147,6 +161,7 @@ export async function resolveConfiguredTransportCommand(options: {
   fullAccess?: boolean
   runtimeWorkspace?: string
   continuationPrompt?: string
+  refreshAssignment?: boolean
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -183,7 +198,12 @@ export async function resolveConfiguredTransportCommand(options: {
   const prompt =
     options.continuationPrompt ??
     (savedSession
-      ? await responsibilityContinuationPrompt(assignment, options.input, assignmentSnapshotFile)
+      ? await responsibilityContinuationPrompt(
+          assignment,
+          options.input,
+          assignmentSnapshotFile,
+          options.refreshAssignment ?? false,
+        )
       : assignment)
 
   if (options.config.transport === 'codex') {
@@ -327,6 +347,7 @@ export async function resolveConfiguredTransportCommand(options: {
     `${JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
+        compaction: { auto: true },
         permission: options.fullAccess
           ? { '*': 'allow' }
           : {
@@ -471,7 +492,20 @@ async function responsibilityContinuationPrompt(
   assignment: string,
   input: ConfiguredTransportInvocation,
   snapshotFile: string,
+  refreshAssignment: boolean,
 ) {
+  if (refreshAssignment) {
+    return [
+      '# Re-ground Responsibility Session',
+      '',
+      `Continue the same ${input.role ?? input.stepId} responsibility for Work ${input.taskRef ?? input.stepId} in a new Attempt.`,
+      'Reviewer or deterministic integration rejection returned this Work for repair. Retain useful source discovery and workspace changes, but treat every prior completion claim as non-authoritative.',
+      'The complete current assignment below replaces remembered assignment authority. Reassess the complete Work, reread its referenced design authority, and treat the latest rejection as evidence rather than an exhaustive patch list.',
+      'Use the stable $HOPI_* environment names for current Attempt inputs and outputs; never recover a historical Run path from conversation.',
+      '',
+      assignment,
+    ].join('\n')
+  }
   const previous = await Bun.file(snapshotFile)
     .text()
     .catch(() => '')

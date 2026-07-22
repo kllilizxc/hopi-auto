@@ -27,8 +27,11 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
   Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
-- a vendor-session compatibility identity derived from the effective transport, model, reasoning,
-  and execution boundary; incompatible or legacy identities are not resumed
+- a vendor-session compatibility identity derived from the transport, execution boundary, stable
+  Assistant contract, and current preference digest; incompatible or legacy identities are not
+  resumed, while the current model configuration is supplied to a compatible resumed invocation
+- vendor-native automatic context compaction for every built-in Agent invocation, including the
+  speaking Assistant, Reflection, Planner, Generator, and Reviewer
 - no vendor-owned interactive approval channel: Codex always uses `never`, Claude bypasses its
   prompt layer, and OpenCode receives only deterministic `allow` or `deny` rules. HOPI's resolved
   sandbox and capability envelope remain the authorization boundary; a denied operation fails
@@ -39,22 +42,36 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
   when an envelope is malformed and cannot be separated without guessing
 
-Vendor commands, event shapes, session flags, permission flags, and configuration files stay inside
-the adapter. Canonical documents, Inbox ordering, Attention delivery, Reflection handoff, Work
-results, and UI state never branch by vendor.
+Vendor commands, event shapes, session flags, permission flags, compaction, and configuration files
+stay inside the adapter. Canonical documents, Inbox ordering, Attention delivery, Reflection
+handoff, Work results, and UI state never branch by vendor.
 
 ## Supported Transports
 
-| Transport | Speaking resume | Images | HOPI MCP | Model setting |
-| --- | --- | --- | --- | --- |
-| Codex | native thread resume | native image arguments | injected CLI config | optional model plus reasoning effort |
-| Claude | native session resume | local image references in the turn | injected MCP config | optional model |
-| OpenCode | native session resume | local file arguments | injected MCP and permission config | optional model and variant |
+| Transport | Speaking resume | Native compaction | Images | HOPI MCP | Model setting |
+| --- | --- | --- | --- | --- | --- |
+| Codex | native thread resume | model-native auto compact | native image arguments | injected CLI config | optional model plus reasoning effort |
+| Claude | native session resume | CLI auto compact | local image references in the turn | injected MCP config | optional model |
+| OpenCode | native session resume | `compaction.auto` | local file arguments | injected MCP and permission config | optional model and variant |
 
 Reflection uses the same configured transport and model but always starts a disposable session.
 Responsibility Runs may use any supported transport independently through Home-wide role settings.
 `process` remains a responsibility-only escape hatch and cannot run Assistant or Reflection because
 it has no guaranteed conversation, MCP, or session contract.
+
+Compaction is invisible transport maintenance. The adapter keeps native automatic compaction
+enabled and lets the vendor choose its threshold and summary representation. A successful compact
+continues the same vendor Session and responsibility workspace. It does not create a HOPI tool,
+prompt instruction, Inbox event, Work transition, or canonical summary; any provider event remains
+available only in the raw runtime transcript. This MVP adds no second degradation detector or
+post-compaction recovery policy.
+
+For the speaking Assistant, the compatible vendor Session owns the stable contract, current durable
+preferences, and recent conversation. Ordinary turns therefore send only the current Inbox event
+envelope. HOPI does not repeatedly inject a state snapshot or execution-envelope description;
+current product facts are read through the injected tools when needed. A missing or incompatible
+Session is rebuilt from the same initial context and bounded public Inbox history before the current
+turn.
 
 ## Configuration Rules
 

@@ -50,12 +50,11 @@ describe('canonical Attention references', () => {
     ).toEqual(['project:P-1/goal:G-1/attention:A-1', 'project:P-2/goal:G-2/attention:A-1'])
   })
 
-  test('accepts reference-only Workspace context and rejects partial page context', () => {
+  test('accepts Workspace and Project context and rejects a Goal without its Project', () => {
     expect(inboxContextSchema.parse({ attentionRefs: ['home:H-1/attention:A-project'] })).toEqual({
       attentionRefs: ['home:H-1/attention:A-project'],
     })
-    expect(() => inboxContextSchema.parse({ projectId: 'P-1' })).toThrow(
-      'projectId and goalId must appear together',
-    )
+    expect(inboxContextSchema.parse({ projectId: 'P-1' })).toEqual({ projectId: 'P-1' })
+    expect(() => inboxContextSchema.parse({ goalId: 'G-1' })).toThrow('goalId requires projectId')
   })
 })

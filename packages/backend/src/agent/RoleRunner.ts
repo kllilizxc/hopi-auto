@@ -17,7 +17,11 @@ import {
   parseVendorAssistantOutput,
 } from './vendorAssistantOutput'
 import { type ProcessTranscriptFormat, isNonFatalProcessDiagnostic } from './vendorTranscript'
-import { type RoleTransportConfig, resolveConfiguredTransportCommand } from './vendorTransport'
+import {
+  type RoleTransportConfig,
+  resolveConfiguredTransportCommand,
+  withNativeCompactionEnabled,
+} from './vendorTransport'
 
 export const PASS_RESULTS = ['success', 'reject', 'attention', 'fail'] as const
 export const STORED_PASS_RESULTS = [...PASS_RESULTS, 'replan'] as const
@@ -42,6 +46,7 @@ export interface RoleRunInput {
   sourceRoots?: readonly string[]
   context: RoleContextBundle
   session?: VendorSession | null
+  refreshAssignment?: boolean
   signal?: AbortSignal
 }
 
@@ -136,6 +141,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         fullAccess,
         runtimeWorkspace: input.cwd,
         continuationPrompt,
+        refreshAssignment: input.refreshAssignment,
       })
       return executeProcess(
         command,
@@ -619,7 +625,7 @@ async function executeProcessWithTempDir(
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: command.stdin === undefined ? 'ignore' : 'pipe',
-    env: {
+    env: withNativeCompactionEnabled(command.sessionTransport, {
       ...process.env,
       TMPDIR: tempDir,
       TMP: tempDir,
@@ -629,7 +635,7 @@ async function executeProcessWithTempDir(
       npm_config_cache: join(cacheDir, 'npm'),
       PIP_CACHE_DIR: join(cacheDir, 'pip'),
       ...command.env,
-    },
+    }),
     detached: true,
   })
   const terminate = createProcessGroupTerminator(child.pid)
