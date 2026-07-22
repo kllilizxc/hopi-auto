@@ -21,6 +21,7 @@ import type { PublicationSnapshot, PublicationSnapshotFile } from '../publicatio
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
+import { type SourceMergePreflightResult, stageSourceMerge } from './sourceMergePreflight'
 
 export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
 export type Responsibility = (typeof RESPONSIBILITIES)[number]
@@ -201,7 +202,7 @@ export function createRoleContextStager(
       const repairView =
         input.responsibility === 'generator'
           ? {
-              candidate: await inspectCurrentCandidate(repoRoots, releaseRef),
+              candidate: await inspectCurrentCandidate(repoRoots, releaseRef, runtimeScratchDir),
               previousGenerator: input.previousGenerator ?? null,
             }
           : null
@@ -532,26 +533,28 @@ interface CandidateInspection {
   files: string[]
   omitted: number
   unavailable: string[]
+  integrations: Array<{
+    repoId: string
+    releaseHead: string
+    taskHead: string
+    mergeBase: string
+    result: SourceMergePreflightResult
+  }>
 }
 
 async function inspectCurrentCandidate(
   repoRoots: readonly RoleRepoRoot[],
   releaseRef: string,
+  scratchRoot: string,
 ): Promise<CandidateInspection> {
   const files = new Set<string>()
   const unavailable: string[] = []
-  for (const repo of repoRoots) {
+  const integrations: CandidateInspection['integrations'] = []
+  for (const [index, repo] of repoRoots.entries()) {
     try {
-      const [committed, working] = await Promise.all([
-        gitOutput(repo.path, [
-          'diff',
-          '--name-only',
-          releaseRef,
-          'HEAD',
-          '--',
-          '.',
-          ':(exclude).hopi/**',
-        ]),
+      const [releaseHead, taskHead, working] = await Promise.all([
+        gitOutput(repo.path, ['rev-parse', releaseRef]),
+        gitOutput(repo.path, ['rev-parse', 'HEAD']),
         gitOutput(repo.path, [
           'status',
           '--porcelain=v1',
@@ -561,6 +564,29 @@ async function inspectCurrentCandidate(
           ':(exclude).hopi/**',
         ]),
       ])
+      const [committed, mergeBase] = await Promise.all([
+        gitOutput(repo.path, [
+          'diff',
+          '--name-only',
+          releaseHead,
+          taskHead,
+          '--',
+          '.',
+          ':(exclude).hopi/**',
+        ]),
+        gitOutput(repo.path, ['merge-base', releaseHead, taskHead]),
+      ])
+      const indexPath = join(scratchRoot, `integration-preflight-${index}.index`)
+      await rm(indexPath, { force: true })
+      const result = await stageSourceMerge({
+        repoRoot: repo.path,
+        mergeBase,
+        releaseHead,
+        taskHead,
+        indexPath,
+      })
+      await rm(indexPath, { force: true })
+      integrations.push({ repoId: repo.repoId, releaseHead, taskHead, mergeBase, result })
       for (const path of committed.split('\n').filter(Boolean)) files.add(`${repo.repoId}:${path}`)
       for (const line of working.split('\n').filter(Boolean)) {
         const path = line.slice(3).trim().split(' -> ').at(-1)
@@ -572,7 +598,7 @@ async function inspectCurrentCandidate(
   }
   const sorted = [...files].sort()
   const visible = sorted.slice(0, 80)
-  return { files: visible, omitted: sorted.length - visible.length, unavailable }
+  return { files: visible, omitted: sorted.length - visible.length, unavailable, integrations }
 }
 
 function selectGuardFiles(
@@ -1153,8 +1179,9 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
       ? [
           ...(responsibility === 'planner' ? ['## Supporting Authority', ''] : []),
           '',
-          '### Latest Owning Work Evidence',
+          '### Latest Owning Work Evidence (Historical Run Result)',
           `Source: ${assignment.latestEvidence.path}`,
+          'This records the producing Run; current candidate and release state are reported separately below.',
           '',
           '<latest-evidence>',
           assignment.latestEvidence.body.trim(),
@@ -1184,13 +1211,33 @@ function renderRepairView(repairView: RunAssignment['repairView']) {
   if (
     !previous &&
     repairView.candidate.files.length === 0 &&
-    repairView.candidate.unavailable.length === 0
+    repairView.candidate.unavailable.length === 0 &&
+    repairView.candidate.integrations.length === 0
   ) {
     return []
   }
   return [
     '',
     '### Current Repair View (Diagnostics, Not Authority)',
+    '',
+    'Current candidate integration preflight:',
+    ...repairView.candidate.integrations.flatMap((integration) => [
+      `- Repo ${integration.repoId}`,
+      `  - Release head: ${integration.releaseHead}`,
+      `  - Task head: ${integration.taskHead}`,
+      `  - Merge base: ${integration.mergeBase}`,
+      ...(integration.result.kind === 'ready'
+        ? ['  - Result: ready']
+        : integration.result.kind === 'conflict'
+          ? [
+              '  - Result: conflict',
+              ...integration.result.paths.map((path) => `  - Conflict path: ${path}`),
+            ]
+          : ['  - Result: failed', `  - Diagnostic: ${integration.result.detail}`]),
+    ]),
+    ...(repairView.candidate.integrations.length === 0
+      ? ['- No Repo integration preflight available.']
+      : []),
     '',
     'Changed files relative to the current release base:',
     ...(repairView.candidate.files.length > 0

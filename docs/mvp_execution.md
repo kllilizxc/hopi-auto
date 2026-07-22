@@ -401,6 +401,15 @@ Attention, and other selected authority. An unrelated C1 may advance the Project
 or Reviewer runs without making that semantic context stale; task isolation and deterministic C1
 rebuild or conflict handling own the later source reconciliation.
 
+Generator repair context reports the current candidate integration preflight for every selected Repo.
+That observation is produced by the same isolated-index three-way source merge used by C1 and includes
+the Repo-local release head, task head, merge base, and whether the candidate is currently ready or
+conflicted. It is current environment state, not a second gate or a model instruction. Owning Work
+Evidence remains the immutable result of its producing Run and is labelled as historical when staged;
+it is never rewritten to resemble current Git state. This keeps one definition of candidate mergeability
+across execution context and publication without advancing Work, refs, or managed worktrees during
+context staging.
+
 A newly published Planning Work also does not retroactively stale an already-running Engineering
 pass. It is an admission guard: the Planner Run waits for same-Goal Engineering Runs that were
 already admitted to drain, then runs before any new Engineering pass. If Planning changes Goal

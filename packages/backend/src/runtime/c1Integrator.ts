@@ -26,6 +26,7 @@ import type { PublicationSnapshot, PublicationWrite } from '../publication/types
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { ApplyPassOutcomeInput } from './passOutcomeCoordinator'
 import { validatePassSemanticGuard } from './passOutcomeCoordinator'
+import { stageSourceMerge } from './sourceMergePreflight'
 
 export interface C1IntegrationInput {
   pass: ApplyPassOutcomeInput
@@ -425,7 +426,7 @@ async function buildSourceCandidate(input: {
   repo: C1ProjectRepo
   oldTarget: string
   taskWorktreePath: string
-  env: Record<string, string>
+  env: Record<string, string> & { GIT_INDEX_FILE: string }
 }): Promise<SourceCandidateResult> {
   const taskStatus = await git(input.taskWorktreePath, [
     'status',
@@ -464,22 +465,23 @@ async function buildSourceCandidate(input: {
       }
     }
   }
-  const merge = await gitResult(
-    input.repo.integrationRoot,
-    ['read-tree', '-m', '--aggressive', mergeBase, input.oldTarget, taskHead],
-    input.env,
-  )
-  if (merge.exitCode !== 0) {
+  const merge = await stageSourceMerge({
+    repoRoot: input.repo.integrationRoot,
+    mergeBase,
+    releaseHead: input.oldTarget,
+    taskHead,
+    indexPath: input.env.GIT_INDEX_FILE,
+  })
+  if (merge.kind === 'failed') {
     return {
       kind: 'rejected',
-      reason: `Cannot construct Repo ${input.repo.repoId} source merge: ${merge.stderr || merge.stdout}`,
+      reason: `Cannot construct Repo ${input.repo.repoId} source merge: ${merge.detail}`,
     }
   }
-  const conflicts = await git(input.repo.integrationRoot, ['ls-files', '-u'], input.env)
-  if (conflicts) {
+  if (merge.kind === 'conflict') {
     return {
       kind: 'rejected',
-      reason: `Repo ${input.repo.repoId} task changes conflict with its current release`,
+      reason: `Repo ${input.repo.repoId} task changes conflict with its current release: ${merge.paths.join(', ')}`,
     }
   }
   return { kind: 'ready', mergeBase, taskHead }

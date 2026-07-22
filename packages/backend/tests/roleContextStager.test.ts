@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   parseGoalDocument,
   parseWorkDocument,
@@ -536,6 +536,11 @@ describe('RoleContextStager', () => {
       '## Acceptance Criteria\n\n- The implementation is verified.\n',
       [artifactReference],
     )
+    const taskRoot = join(dirname(fixture.homeRoot), 'task-worktree')
+    await git(fixture.projectRoot, ['worktree', 'add', '-b', 'hopi/test-task', taskRoot, 'HEAD'])
+    await rm(join(taskRoot, 'src', 'index.ts'))
+    await git(taskRoot, ['add', '.'])
+    await git(taskRoot, ['commit', '-m', 'delete source file'])
 
     const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
       projectRoot: fixture.projectRoot,
@@ -544,6 +549,7 @@ describe('RoleContextStager', () => {
       workId: 'W-1',
       runId: 'run-repair-view',
       responsibility: 'generator',
+      repoRoots: [{ repoId: 'primary', path: taskRoot, primary: true }],
       previousGenerator: {
         runId: 'R-generator',
         summary: 'Changed the validator.',
@@ -555,6 +561,14 @@ describe('RoleContextStager', () => {
 
     expect(await Bun.file(projectedPath).text()).toBe('bun test regression\n')
     expect(prompt).toContain(`- ${artifactReference} -> ${projectedPath}`)
+    expect(prompt).toContain('### Latest Owning Work Evidence (Historical Run Result)')
+    expect(prompt).toContain(
+      'This records the producing Run; current candidate and release state are reported separately below.',
+    )
+    expect(prompt).toContain('Current candidate integration preflight:')
+    expect(prompt).toContain('- Repo primary')
+    expect(prompt).toContain('  - Result: ready')
+    expect(prompt).toContain('- primary:src/index.ts')
     expect(prompt).toContain('Previous claimed summary (not proof): Changed the validator.')
     expect(prompt).toContain('[completed] Tool call: Bash (bun test unit)')
   })
