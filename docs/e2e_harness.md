@@ -196,14 +196,13 @@ of the fixture's source files or test command.
 
 The Project adapter creates one committed Git fixture and verifies its integrated release with the
 Project's own command. The initial adapter contains a failing `bun test` for a small TypeScript bug.
-It also verifies that the delivery checkout retains its recorded branch and clean status while its
-HEAD and content fast-forward exactly to the accepted release.
+It also verifies that the selected user checkout's branch, HEAD, index, and working tree remain
+byte-for-byte unchanged.
 
-All scenarios that cross accepted C1 use one shared delivery assertion: the recorded branch is
-unchanged, the checkout is clean, its initial HEAD remains an ancestor, and final HEAD equals
-`hopi/release`. Scenarios that never cross C1 instead compare the complete checkout snapshot. Keeping
-those two boundaries distinct prevents presentation, recovery, or cancellation cases from silently
-redefining delivery semantics.
+All scenarios use one shared checkout assertion: HOPI never mutates the selected user checkout.
+Scenarios that cross accepted C1 additionally verify that the Project's managed integration matches
+`refs/heads/hopi/project/<projectId>/release`. This keeps release authority inside the binding and
+prevents presentation, recovery, or cancellation cases from redefining checkout ownership.
 
 ## First Live Scenario
 
@@ -217,8 +216,8 @@ The final assertions require:
 - one created Goal reaches `done` without unresolved targeted Attention or active Runs;
 - real Planner, Generator, and Reviewer Attempts exist, and integration follows successful Review;
 - dependencies are complete whenever their dependent Work is active;
-- the managed integration passes the Project adapter and the delivery checkout cleanly fast-forwards
-  to the same accepted release;
+- the managed integration passes the Project adapter and matches the Project release ref while the
+  selected user checkout remains unchanged;
 - the completed Goal renders through the production Kanban UI; and
 - the completed speaking turn does not leave a misleading failure activity in the Assistant UI.
 

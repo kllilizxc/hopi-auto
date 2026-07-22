@@ -44,8 +44,9 @@ The deployment runs one Coordinator:
 - One writable project may belong to only one active Assistant home.
 
 Ordinary `publish` still changes exactly one root. Project canonical documents live in the primary
-Repo's stable HOPI-managed integration worktree on `hopi/release`; each `repoPath` identifies the
-separate delivery checkout and its recorded branch. Cross-Repo Engineering completion does not pretend that one ordinary bundle
+Repo binding's stable HOPI-managed integration worktree on
+`hopi/project/<projectId>/release`; each `repoPath` only locates the Git object database and initial
+HEAD. Cross-Repo Engineering completion does not pretend that one ordinary bundle
 is atomic. It uses the fixed primary-C1 manifest and secondary projection protocol specified in
 [the multi-Repo design](./mvp_multi_repo.md).
 
@@ -54,7 +55,7 @@ A bundle contains stable root identity, its current path, writes, and expected p
 ```yaml
 root:
   id: project:P-1
-  path: /code/.hopi-worktrees/product-web/integration
+  path: /code/.hopi-worktrees/product-web/projects/P-1/integration
 supportingWrites:
   - path: .hopi/docs/goals/G-1/evidence/E-1.md
     expectedHash: null
@@ -358,27 +359,12 @@ paths or reset the managed root: ordinary canonical publications may be newer th
 checkpoint. Since the ref already contains Work `done`, projection recovery never returns Work to
 `generate` or increments `attempts`.
 
-### Delivery projection
+### Selected checkout boundary
 
-For each Repo, `projects.yml` records the selected checkout and its symbolic branch at link time.
-After managed projections succeed, Coordinator reads the exact accepted commit and advances that
-checkout only when every guard holds:
-
-1. the checkout and managed root resolve to the same Git common directory
-2. the checkout is still on the recorded delivery branch
-3. its index and working tree, including untracked files, are clean
-4. its current HEAD is an ancestor of the accepted commit
-5. `git merge --ff-only` with hooks disabled succeeds, and the resulting HEAD equals the accepted
-   commit with a clean index and working tree
-
-Already-equal clean delivery is idempotent. Delivery is a best-effort projection, not Project
-authority: a detached or changed branch, dirty checkout, divergent HEAD, failed fast-forward, or
-mismatched final tree leaves that checkout unchanged and is reported as delivery pending. It does
-not create Project Attention, make the Project ineligible, change Work or Goal truth, or invalidate
-the durable C1. Startup and reconciliation retry the same guarded fast-forward when it becomes safe;
-they never switch branches, stash, commit, merge, rebase, reset, force-update, or delete checkout
-content. Multi-Repo delivery may therefore remain partial while managed Repo projections and the
-durable primary manifest stay authoritative.
+For each Repo binding, `projects.yml` records a checkout path only as the current-machine locator for
+the Git object database and the HEAD used when the binding release is first created. Coordinator
+never switches, stages, commits, merges, resets, or otherwise changes that checkout. The
+Project-qualified managed integration worktree is the complete accepted release view.
 
 ## Git Audit
 
@@ -396,12 +382,12 @@ support, not a second workflow authority.
 
 ## Boot
 
-Before enabling Assistant turn processing, dispatch, integration, or delivery, Coordinator:
+Before enabling Assistant turn processing, dispatch, integration, or Preview, Coordinator:
 
 1. acquires the instance lock and removes known temporary files
 2. validates Assistant-home identity, Inbox turns, project links, and Attention
-3. validates each Repo binding, `hopi/release` ref, stable managed integration worktree, and guarded
-   delivery projection, then
+3. validates each Repo binding, Project-qualified release ref, and stable managed integration
+   worktree, then
    validates Project identity, Goal and Work documents, references, Evidence, and qualified
    trailers
 4. blocks and excludes any ambiguous, invalid, or unwritable project
@@ -433,8 +419,7 @@ The MVP does not guarantee:
 - automatic repair of a post-C1 managed-worktree mismatch
 - exactly-once notification
 - safe coordination with direct external canonical-file edits
-- importing checkout content or rewriting a delivery branch by any operation other than the guarded
-  fast-forward above
+- importing checkout content or rewriting any selected checkout branch
 - continuation of a pass subprocess after Coordinator exits
 
 An ambiguous project creates or reuses project-targeted blocking Attention and remains unscheduled.

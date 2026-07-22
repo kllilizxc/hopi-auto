@@ -4,9 +4,9 @@ import { goalAttentionReference, workspaceAttentionReference } from '../domain/a
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
+import { projectReleaseRef } from '../domain/project'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
-import { inspectDeliveryProjection } from '../runtime/c1Integrator'
 import {
   EvidenceArtifactResolutionError,
   evidenceArtifactUrl,
@@ -35,7 +35,6 @@ export interface AssistantStateProject {
     repoPath?: string
     integrationRoot: string
     projectPath: string
-    deliveryBranch?: string
     primary?: boolean
   }[]
   store: GoalPackageStore
@@ -327,19 +326,13 @@ export function createAssistantStateReader(options: {
             }),
           )
           const repos = project.repos
-            ? await Promise.all(
-                project.repos.map(async (repo) => ({
-                  ...(repo.repoId ? { repoId: repo.repoId } : {}),
-                  ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
-                  projectPath: repo.projectPath,
-                  integrationRoot: repo.integrationRoot,
-                  ...(repo.deliveryBranch ? { deliveryBranch: repo.deliveryBranch } : {}),
-                  ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
-                  ...(repo.repoId && repo.repoPath && repo.deliveryBranch
-                    ? { delivery: await deliveryProjection(repo) }
-                    : {}),
-                })),
-              )
+            ? project.repos.map((repo) => ({
+                ...(repo.repoId ? { repoId: repo.repoId } : {}),
+                ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
+                projectPath: repo.projectPath,
+                integrationRoot: repo.integrationRoot,
+                ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
+              }))
             : undefined
           return {
             projectId: project.projectId,
@@ -347,7 +340,7 @@ export function createAssistantStateReader(options: {
             ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
             ...(repos ? { repos } : {}),
             available: !projectAttentionOpen,
-            releaseHead: await releaseHead(project.projectRoot),
+            releaseHead: await releaseHead(project.projectRoot, project.projectId),
             goals,
           }
         }),
@@ -652,59 +645,18 @@ function responsibilityCounts(active: ReadonlyMap<string, Responsibility>) {
   return counts
 }
 
-async function releaseHead(projectRoot: string) {
-  const child = Bun.spawn(['git', 'rev-parse', 'refs/heads/hopi/release'], {
+function boundedText(value: string, limit: number) {
+  return value.length > limit ? `${value.slice(0, limit)}...` : value
+}
+
+async function releaseHead(projectRoot: string, projectId: string) {
+  const child = Bun.spawn(['git', 'rev-parse', projectReleaseRef(projectId)], {
     cwd: projectRoot,
     stdout: 'pipe',
     stderr: 'pipe',
   })
   const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
   return exitCode === 0 ? stdout.trim() : null
-}
-
-async function deliveryProjection(repo: {
-  repoId?: string
-  repoPath?: string
-  integrationRoot: string
-  deliveryBranch?: string
-  primary?: boolean
-}) {
-  if (!repo.repoId || !repo.repoPath || !repo.deliveryBranch) {
-    return { status: 'pending' as const, commit: null, reason: 'Delivery binding is incomplete' }
-  }
-  const desired = await releaseHead(repo.integrationRoot)
-  if (!desired) {
-    return {
-      status: 'pending' as const,
-      commit: null,
-      reason: `Repo ${repo.repoId} managed release is unavailable`,
-    }
-  }
-  try {
-    const inspected = await inspectDeliveryProjection(
-      {
-        repoId: repo.repoId,
-        integrationRoot: repo.integrationRoot,
-        checkoutRoot: repo.repoPath,
-        deliveryBranch: repo.deliveryBranch,
-        primary: repo.primary ?? false,
-      },
-      desired,
-    )
-    return inspected.status === 'current'
-      ? inspected
-      : { status: inspected.status, commit: inspected.commit, reason: inspected.reason }
-  } catch (error) {
-    return {
-      status: 'pending' as const,
-      commit: null,
-      reason: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
-function boundedText(value: string, limit: number) {
-  return value.length > limit ? `${value.slice(0, limit)}...` : value
 }
 
 async function pathExists(path: string) {

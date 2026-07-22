@@ -71,7 +71,7 @@ const legacyMultiRepoLinksSchema = z
     ),
   })
   .strict()
-const linksSchema = z
+const legacyConfiguredLinksSchema = z
   .object({
     version: z.literal(3),
     projects: z.array(
@@ -96,15 +96,38 @@ const linksSchema = z
     ),
   })
   .strict()
-const legacyConfiguredLinksSchema = z
+const legacyConfiguredLinksWithSettingsSchema = z
   .object({
     version: z.literal(3),
     projects: z.array(
-      linksSchema.shape.projects.element
+      legacyConfiguredLinksSchema.shape.projects.element
         .extend({
           codingDefaults: projectCodingDefaultsInputSchema
             .transform((value) => normalizeProjectCodingDefaults(value))
             .optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+const linksSchema = z
+  .object({
+    version: z.literal(4),
+    projects: z.array(
+      z
+        .object({
+          projectId: stableIdSchema,
+          primaryRepoId: stableIdSchema,
+          repos: z.array(
+            z
+              .object({
+                repoId: stableIdSchema,
+                repoPath: z.string().min(1),
+                projectPath: z.string().refine(isNormalizedProjectPath).optional(),
+              })
+              .strict(),
+          ),
         })
         .strict(),
     ),
@@ -160,6 +183,7 @@ export async function readAndValidateAssistantWorkspace(
     await requiredText(candidate, paths.projectLinks),
     z.union([
       linksSchema,
+      legacyConfiguredLinksWithSettingsSchema,
       legacyConfiguredLinksSchema,
       legacyMultiRepoLinksSchema,
       legacyLinksSchema,
@@ -177,7 +201,11 @@ export async function readAndValidateAssistantWorkspace(
         : rawLinks.projects.map((project) => ({
             projectId: project.projectId,
             primaryRepoId: project.primaryRepoId,
-            repos: project.repos,
+            repos: project.repos.map((repo) => ({
+              repoId: repo.repoId,
+              repoPath: repo.repoPath,
+              ...(repo.projectPath ? { projectPath: repo.projectPath } : {}),
+            })),
           })),
   }
   if (new Set(links.projects.map((project) => project.projectId)).size !== links.projects.length) {

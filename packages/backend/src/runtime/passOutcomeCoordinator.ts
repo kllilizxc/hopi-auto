@@ -16,7 +16,7 @@ import {
 import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { type GoalPackage, GoalPackageValidationError } from '../domain/goalPackage'
 import { MarkdownDocumentError } from '../domain/markdownDocument'
-import { HOPI_RELEASE_REF } from '../domain/project'
+import { projectReleaseRef } from '../domain/project'
 import { WorkCancellationError, workCancellationClosure } from '../domain/workCancellation'
 import { PublicationError, hashBytes } from '../publication/publisher'
 import type { PublicationCoordinator } from '../publication/publisher'
@@ -701,7 +701,10 @@ export async function validatePassSemanticGuard(
     allowedWrites,
     options.currentAuthority,
   )
-  const releaseHead = gitOutputSync(store.paths.projectRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const releaseHead = gitOutputSync(store.paths.projectRoot, [
+    'rev-parse',
+    projectReleaseRef(store.paths.projectId),
+  ])
   const allowReleaseHeadChange =
     options.allowReleaseHeadChange ?? input.responsibility !== 'planner'
   if (!allowReleaseHeadChange && releaseHead !== input.context.releaseHead) {

@@ -14,7 +14,7 @@ import {
   parseInputDocument,
   parseWorkDocument,
 } from '../domain/canonicalDocuments'
-import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, projectReleaseRef } from '../domain/project'
 import { STABLE_ID_PATTERN } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
@@ -124,7 +124,8 @@ export function createRoleContextStager(
       await mkdir(runtimeScratchDir, { recursive: true })
       await mkdir(runtimeCacheDir, { recursive: true })
 
-      const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, {
+      const releaseRef = projectReleaseRef(input.projectId)
+      const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, releaseRef, {
         paths: [
           paths.agentsPath,
           '.hopi/project.yml',
@@ -192,7 +193,7 @@ export function createRoleContextStager(
       const repairView =
         input.responsibility === 'generator'
           ? {
-              candidate: await inspectCurrentCandidate(repoRoots),
+              candidate: await inspectCurrentCandidate(repoRoots, releaseRef),
               previousGenerator: input.previousGenerator ?? null,
             }
           : null
@@ -523,6 +524,7 @@ interface CandidateInspection {
 
 async function inspectCurrentCandidate(
   repoRoots: readonly RoleRepoRoot[],
+  releaseRef: string,
 ): Promise<CandidateInspection> {
   const files = new Set<string>()
   const unavailable: string[] = []
@@ -532,7 +534,7 @@ async function inspectCurrentCandidate(
         gitOutput(repo.path, [
           'diff',
           '--name-only',
-          HOPI_RELEASE_REF,
+          releaseRef,
           'HEAD',
           '--',
           '.',
@@ -819,12 +821,13 @@ function createRunAssignment(
 async function stableAuthoritySnapshot(
   publisher: PublicationCoordinator,
   root: { id: string; path: string },
+  releaseRef: string,
   selection: { paths: string[]; prefixes: string[] },
 ) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const before = await gitOutput(root.path, ['rev-parse', HOPI_RELEASE_REF])
+    const before = await gitOutput(root.path, ['rev-parse', releaseRef])
     const snapshot = await publisher.snapshotSelection(root, selection)
-    const after = await gitOutput(root.path, ['rev-parse', HOPI_RELEASE_REF])
+    const after = await gitOutput(root.path, ['rev-parse', releaseRef])
     if (before === after) {
       return { ...snapshot, releaseHead: before }
     }
@@ -1024,7 +1027,7 @@ function renderResponsibilityPrompt(
       ? plannerPrompt(paths)
       : input.responsibility === 'generator'
         ? generatorPrompt()
-        : reviewerPrompt()
+        : reviewerPrompt(input.projectId)
   const current = renderCurrentAssignment(input.responsibility, assignment)
   return [
     '# HOPI Responsibility Run',
@@ -1276,12 +1279,13 @@ function generatorPrompt() {
   ]
 }
 
-function reviewerPrompt() {
+function reviewerPrompt(projectId: string) {
+  const releaseRef = projectReleaseRef(projectId)
   return [
     '## Reviewer',
     '',
     'Objective: independently determine whether the owning Work satisfies its accepted contract and material integrity or safety obligations, using the strongest proportionate evidence.',
-    `The candidate is the Work's cumulative delta from git merge-base ${HOPI_RELEASE_REF} HEAD to HEAD. Release-only commits, canonical .hopi movement, persistent Preview, and integration belong to Coordinator or Planner rather than this review.`,
+    `The candidate is the Work's cumulative delta from git merge-base ${releaseRef} HEAD to HEAD. Release-only commits, canonical .hopi movement, persistent Preview, and integration belong to Coordinator or Planner rather than this review.`,
     'Source, ordinary project documents, .hopi, and Git metadata are read-only in this responsibility.',
     'Rejection is bounded by the accepted contract and material risk. Presentation preferences and hypothetical inputs outside an accepted grammar do not expand the contract into unlimited validation.',
     'A reproducible rejection identifies the violated invariant, exact command and input or deterministic inspection, and observed failure. Observational findings state their evidence boundary without inventing a reproducer.',

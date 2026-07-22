@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { RoleRunner } from '../../src/agent/RoleRunner'
 import { createAssistantConversationStore } from '../../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
+import { projectReleaseRef } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { PublicationCoordinator } from '../../src/publication/publisher'
 import { createMvpRuntime } from '../../src/runtime/mvpRuntime'
@@ -53,8 +54,8 @@ try {
     ],
   })
   const releaseBefore = {
-    web: await gitOutput(sourceWeb, ['rev-parse', 'refs/heads/hopi/release']),
-    api: await gitOutput(sourceApi, ['rev-parse', 'refs/heads/hopi/release']),
+    web: await gitOutput(sourceWeb, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
+    api: await gitOutput(sourceApi, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
   }
   const runtime = await createMvpRuntime({ homeRoot: sourceHome, start: false })
   const request = await runtime.workspace.receiveEvent({
@@ -256,8 +257,8 @@ try {
   )
   assert.deepEqual(
     {
-      web: await gitOutput(movedWeb, ['rev-parse', 'refs/heads/hopi/release']),
-      api: await gitOutput(movedApi, ['rev-parse', 'refs/heads/hopi/release']),
+      web: await gitOutput(movedWeb, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
+      api: await gitOutput(movedApi, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
     },
     releaseBefore,
   )

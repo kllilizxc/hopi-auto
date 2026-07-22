@@ -6,7 +6,6 @@ import {
   defaultAssistantHomeRoot,
   migrateRepositoryAssistantHome,
 } from '../src/runtime/assistantHomeMigration'
-import { managedRepoWorktreePaths } from '../src/runtime/managedWorktreePaths'
 
 const temporaryRoots: string[] = []
 
@@ -28,15 +27,15 @@ describe('Assistant Home migration', () => {
     const homeRoot = join(root, 'data', 'hopi')
     const legacyHopi = join(legacyRoot, '.hopi')
     const repoPath = join(root, 'sample-repo')
-    const integrationRoot = managedRepoWorktreePaths(repoPath).integration
-    const evidencePath = join(
-      integrationRoot,
+    const evidenceRelativePath = join('.hopi', 'docs', 'goals', 'G-1', 'evidence', 'E-R-1.md')
+    const evidencePath = join(legacyHopi, 'projects', 'P-1', 'integration', evidenceRelativePath)
+    const migratedEvidencePath = join(
+      homeRoot,
       '.hopi',
-      'docs',
-      'goals',
-      'G-1',
-      'evidence',
-      'E-R-1.md',
+      'projects',
+      'P-1',
+      'integration',
+      evidenceRelativePath,
     )
     const nestedRun = join(legacyHopi, 'runtime', 'runs', 'P-1', 'G-1', 'W-1', 'R-1')
     const legacyArtifact = join(nestedRun, 'scratch', 'deep', 'asset.png')
@@ -110,8 +109,8 @@ describe('Assistant Home migration', () => {
     expect(await Bun.file(join(flatRun, 'result.json')).json()).toMatchObject({
       artifacts: ['artifact:R-1/001-asset.png'],
     })
-    expect(await Bun.file(evidencePath).text()).toContain('artifact:R-1/001-asset.png')
-    expect(await Bun.file(evidencePath).text()).not.toContain(legacyRoot)
+    expect(await Bun.file(migratedEvidencePath).text()).toContain('artifact:R-1/001-asset.png')
+    expect(await Bun.file(migratedEvidencePath).text()).not.toContain(legacyRoot)
 
     const recordPath = join(homeRoot, '.hopi', 'runtime', 'migrations', 'external-home-v1.json')
     const record = await Bun.file(recordPath).text()

@@ -34,7 +34,7 @@ Alignment is complete only when:
 
 | Concern | Pre-MVP authority | MVP production authority | Verification |
 | --- | --- | --- | --- |
-| Project | user `rootDir` and mutable checkout | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, managed `hopi/release` worktrees | migration, dirty checkout, link, and rebind tests |
+| Project | selected Repo locator | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, Project-qualified managed release worktrees | migration, dirty checkout, shared binding, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
 | Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn` plus singleton Planning guard | graph and readiness tests |
 | Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, vendor-qualified persistent session, read-only Reflection, and validated HOPI tools | direct conversation, per-vendor session resume, Reflection, tool, and recovery tests |
@@ -133,7 +133,7 @@ Alignment is complete only when:
 ## Implemented Slices
 
 1. Assistant home initializes a stable `homeId`, links one or more Repos per Project, creates each
-   `hopi/release`, records each delivery branch, and keeps selected checkouts non-canonical. Explicit
+   `hopi/project/<projectId>/release`, and keeps selected checkouts read-only and non-canonical. Explicit
    per-Repo rebind repairs moved Git
    worktree administration but refuses to reconstruct a missing canonical primary root.
 2. `PublicationCoordinator` serializes snapshots and publications, validates the complete candidate,

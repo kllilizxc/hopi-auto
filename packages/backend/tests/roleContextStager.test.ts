@@ -11,7 +11,7 @@ import {
   renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../src/domain/project'
+import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { runStoragePath } from '../src/runtime/runPaths'
@@ -474,7 +474,7 @@ describe('RoleContextStager', () => {
     expect(reviewerPrompt).toContain('exact command and input or deterministic inspection')
     expect(reviewerPrompt).toContain('accepted contract and material risk')
     expect(reviewerPrompt).toContain('hypothetical inputs outside an accepted grammar')
-    expect(reviewerPrompt).toContain(`git merge-base ${HOPI_RELEASE_REF} HEAD`)
+    expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('integration belong to Coordinator or Planner')
     expect(reviewerPrompt).toContain('local ports')
     expect(reviewerPrompt).toContain('$HOPI_RUN_SCRATCH')

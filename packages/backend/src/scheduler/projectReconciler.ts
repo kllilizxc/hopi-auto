@@ -10,7 +10,6 @@ import {
 import type { GoalPackage } from '../domain/goalPackage'
 import {
   DEFAULT_PRIMARY_REPO_ID,
-  HOPI_RELEASE_BRANCH,
   type LinkedProjectRepo,
   requireProjectRepo,
 } from '../domain/project'
@@ -130,19 +129,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       repoId: primaryRepoId,
       repoPath: options.projectRoot,
       projectPath: '.',
-      deliveryBranch: HOPI_RELEASE_BRANCH,
       integrationRoot: options.projectRoot,
       primary: true,
     },
   ]
   const primaryProjectRepo = requireProjectRepo({ repos: projectRepos }, primaryRepoId)
   const c1Layout = {
+    projectId: options.projectId,
     primaryRepoId,
     repos: projectRepos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
-      checkoutRoot: repo.repoPath,
-      deliveryBranch: repo.deliveryBranch,
       projectPath: repo.projectPath,
       primary: repo.primary,
     })),
@@ -672,17 +669,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           completedWork: application.work,
         })
         if (integration.kind === 'integrated' || integration.kind === 'already_integrated') {
-          const recordedOutcome =
-            integration.deliveryIssues.length > 0
-              ? {
-                  ...outcome,
-                  summary: [
-                    outcome.summary,
-                    `Delivery pending: ${integration.deliveryIssues.map((issue) => issue.reason).join('; ')}`,
-                  ].join('\n\n'),
-                }
-              : outcome
-          await attempt?.finish({ outcome: recordedOutcome, application: integration.kind })
+          await attempt?.finish({ outcome, application: integration.kind })
           try {
             await options.onReleaseUpdated?.({
               projectId: options.projectId,

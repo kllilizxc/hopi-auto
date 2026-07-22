@@ -133,7 +133,6 @@ describe('Assistant HOPI tools', () => {
         repoId: 'generated',
         repoPath: await realpath(repoRoot),
         projectPath: '.',
-        deliveryBranch: 'main',
         primary: false,
       })
       expect(await git(repoRoot, ['branch', '--show-current'])).toBe('main')
@@ -199,7 +198,6 @@ describe('Assistant HOPI tools', () => {
       repoId: 'primary',
       repoPath: finalPrimary,
       projectPath: '.',
-      deliveryBranch: 'main',
       primary: true,
     })
 
@@ -217,7 +215,6 @@ describe('Assistant HOPI tools', () => {
       repoId: 'api',
       repoPath: finalApi,
       projectPath: '.',
-      deliveryBranch: 'main',
       primary: false,
     })
     expect(fixture.topologyChangedEventIds).toEqual([
@@ -1565,39 +1562,26 @@ describe('Assistant HOPI tools', () => {
     )
   })
 
-  test('derives nonblocking delivery status from the current checkout', async () => {
+  test('keeps selected checkout state outside the Project state contract', async () => {
     const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-delivery', content: 'Read delivery.' })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-state', content: 'Read state.' })
 
-    const current = await fixture.tools.executeForEvent('EV-delivery', 'hopi_read_state', {
+    const current = await fixture.tools.executeForEvent('EV-state', 'hopi_read_state', {
       projectId: 'P-1',
     })
     expect(current.value).toMatchObject({
-      projects: [
-        {
-          available: true,
-          repos: [{ repoId: 'primary', delivery: { status: 'current' } }],
-        },
-      ],
+      projects: [{ available: true, repos: [{ repoId: 'primary' }] }],
     })
+    expect(JSON.stringify(current.value)).not.toContain('delivery')
 
     await git(fixture.repoRoot, ['switch', '-c', 'local-experiment'])
-    const pending = await fixture.tools.executeForEvent('EV-delivery', 'hopi_read_state', {
+    const pending = await fixture.tools.executeForEvent('EV-state', 'hopi_read_state', {
       projectId: 'P-1',
     })
     expect(pending.value).toMatchObject({
-      projects: [
-        {
-          available: true,
-          repos: [
-            {
-              repoId: 'primary',
-              delivery: { status: 'pending', reason: expect.stringContaining('expected main') },
-            },
-          ],
-        },
-      ],
+      projects: [{ available: true, repos: [{ repoId: 'primary' }] }],
     })
+    expect(JSON.stringify(pending.value)).not.toContain('delivery')
   })
 
   test('limits Reflection to one internal handoff and lets only main expose it', async () => {

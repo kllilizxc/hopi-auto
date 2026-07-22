@@ -5,7 +5,7 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
-import { HOPI_RELEASE_REF } from '../domain/project'
+import { projectReleaseRef } from '../domain/project'
 import { parseProjectDocument, repoRelease } from '../domain/projectDocument'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { type C1ProjectLayout, findIntegrationCommits } from './c1Integrator'
@@ -25,7 +25,7 @@ export function createCompletionStructureVerifier(
         const workReference = workAttentionTarget(store.paths.projectId, goalId, work.attributes.id)
         const commits = await findIntegrationCommits(
           store.paths.projectRoot,
-          HOPI_RELEASE_REF,
+          projectReleaseRef(store.paths.projectId),
           workReference,
         )
         if (commits.length !== 1) return false
@@ -57,6 +57,7 @@ export function createCompletionStructureVerifier(
 }
 
 async function releaseProjectionMatches(store: GoalPackageStore, layout: C1ProjectLayout) {
+  const releaseRef = projectReleaseRef(layout.projectId)
   const source = await Bun.file(`${store.paths.projectRoot}/.hopi/project.yml`).text()
   const document = parseProjectDocument(source, layout.primaryRepoId)
   for (const repo of layout.repos) {
@@ -64,7 +65,7 @@ async function releaseProjectionMatches(store: GoalPackageStore, layout: C1Proje
     const expected = repoRelease(document, repo.repoId)
     if (!expected) return false
     // Both write-tree and status may refresh and lock this worktree's index.
-    const target = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+    const target = await git(repo.integrationRoot, ['rev-parse', releaseRef])
     const head = await git(repo.integrationRoot, ['rev-parse', 'HEAD'])
     const indexTree = await git(repo.integrationRoot, ['write-tree'])
     const expectedTree = await git(repo.integrationRoot, ['show', '-s', '--format=%T', expected])

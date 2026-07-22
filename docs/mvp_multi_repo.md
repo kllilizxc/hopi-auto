@@ -10,15 +10,17 @@ Repo workflow, Repo Kanban, new responsibility, or general transaction engine.
 
 ## One Project, One Control Boundary
 
-A Project contains one or more Repos with stable `repoId` values and exactly one `primaryRepoId`.
+A Project contains one or more Repo bindings with stable `repoId` values and exactly one
+`primaryRepoId`. A Git Repo may be bound read-write by several Projects; binding-owned refs and
+worktrees isolate their histories.
 The primary Repo is the existing Project control boundary:
 
 - its managed integration worktree contains the canonical `.hopi` package
 - its root `AGENTS.md` is the Project agent-instruction entrypoint
 - its `scripts/hopi/preview` is the one Project Preview adapter
-- its `hopi/release` ref is the one logical C1 boundary
+- its `hopi/project/<projectId>/release` ref is the one logical C1 boundary
 
-Every secondary Repo has its own HOPI-owned `hopi/release` ref and managed integration worktree, but
+Every secondary binding has its own Project-qualified release ref and managed integration worktree, but
 no duplicate Goal package. Every Repo owns the same local `scripts/hopi/prepare` capability; primary
 status does not change preparation ownership. Choosing a primary Repo instead of creating a
 synthetic control Repo preserves the current single-Repo layout and migration model. Changing or
@@ -62,8 +64,8 @@ repos:
 ```
 
 The primary release is implicit in the C1 containing this document, avoiding an impossible
-self-reference. Every secondary `releaseCommit` is required and names the commit its managed
-`hopi/release` must materialize.
+self-reference. Every secondary `releaseCommit` is required and names the commit its
+Project-qualified managed release must materialize.
 
 `.hopi/docs/repos.md` is Planner-maintained semantic context. It records what each Repo owns,
 dependency direction, shared contracts, important commands, and the combined runtime shape. The
@@ -94,8 +96,9 @@ Explorer folder chooser at the operator's WSL Home, then normalizes either a Win
 `\\wsl.localhost` path back to one WSL absolute path. A directory inside a Git worktree yields the
 canonical Git `repoPath` plus its relative `projectPath`; managed Git operations stay rooted at the
 Repo while responsibility processes, Project `AGENTS.md`, preparation, and Preview use the selected
-Project scope. Linking records that checkout's symbolic delivery branch. HOPI never treats `.git` or
-its own root `.hopi` authority as a selectable source scope.
+Project scope. Linking uses checkout HEAD only to initialize a new binding release. HOPI never treats
+`.git` or its own root `.hopi` authority as a selectable source scope and never mutates the selected
+checkout.
 
 The ordinary UI never asks for `projectId`. On the first link, Coordinator derives it from the
 primary selected Project folder as `P-<folder>` after stable-ID normalization. Unicode letters and
@@ -142,7 +145,7 @@ publication boundary, not a migration workflow.
 
 One Engineering Work still has one Generator, one Reviewer, one card, one retry counter, and one
 result. For every Repo in `repos`, Coordinator creates or reuses a stable task branch and worktree
-starting from that Repo's current `hopi/release`. The responsibility receives the roots together in
+starting from that binding's current Project release. The responsibility receives the roots together in
 one runtime manifest:
 
 ```json
@@ -203,11 +206,11 @@ Reviewer success is integrated as one logical operation:
    naming the complete secondary release vector.
 4. It rechecks semantic guards and every expected old ref. Any source conflict, stale target, or
    invalid candidate rejects before publication.
-5. It durably moves only the primary `hopi/release` from the expected old commit to the new C1.
+5. It durably moves only the primary Project-qualified release ref from the expected old commit to the new C1.
    This guarded ref move is the single irreversible logical boundary.
 6. It materializes the primary integration worktree, then advances and materializes each secondary
-   `hopi/release` to the commit recorded by C1.
-7. It fast-forwards each Repo's recorded clean delivery checkout to that Repo's accepted release.
+   Project-qualified release ref to the commit recorded by C1.
+7. It verifies every Project-qualified managed release worktree; user-selected checkouts remain unchanged.
 
 Primary history contains exactly one qualified C1 per completed Engineering Work, including a Work
 that changed only secondary Repos. Goal completion verification therefore retains the current exact
@@ -259,16 +262,16 @@ The implementation is complete only when automated tests cover:
 
 - version 1 single-Repo Projects and Work run without behavioral migration regressions
 - the host chooser can be cancelled without an effect and one create request atomically links two Repos
-- two selected checkouts of one Git common directory fail before a durable Project link exists
-- a secondary Repo can be added and rebound while preserving both delivery checkouts
+- duplicate Git identities inside one Project fail before a durable Project link exists
+- the same Git Repo can be primary or secondary in several Projects with isolated refs and worktrees
+- a secondary Repo can be added and rebound without changing any selected checkout
 - a moved Assistant home and complete Repo set can be rebound together without losing portable state
 - one Work modifies primary and secondary Repos, receives one review, and produces one primary C1
 - one Work modifies only a secondary Repo while its Work and Evidence remain canonical in primary
 - a target advance or merge conflict in any Repo rejects before the primary boundary
 - a crash after primary C1 but before zero, one, or all secondary projections converges on restart
 - an unexpected secondary ref value blocks the Project without rollback
-- dirty, switched, detached, or divergent delivery checkouts remain nonblocking and unchanged, and a
-  later safe state converges by fast-forward
+- dirty, switched, detached, or divergent selected checkouts remain unchanged
 - Project prepare and Preview receive the correct multi-Repo runtime manifest
 - the UI manages Repo links and shows Work Repo scope without a Repo workflow
 - Assistant can perform every supported Project/Repo mutation without calling UI HTTP routes, and a

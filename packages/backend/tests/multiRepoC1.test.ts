@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../src/domain/project'
+import { projectReleaseRef } from '../src/domain/project'
 import {
   parseProjectDocument,
   renderProjectDocument,
@@ -20,6 +20,7 @@ import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
+const HOPI_RELEASE_REF = projectReleaseRef('project-1')
 
 afterEach(async () => {
   await Promise.all(
@@ -64,11 +65,7 @@ describe('multi-Repo C1', () => {
     ).toBe(true)
     for (const repo of fixture.linked.repos) {
       const before = requireMapValue(fixture.userBefore, repo.repoId)
-      expect(await checkoutSnapshot(repo.repoPath)).toEqual({
-        head: await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF]),
-        branch: before.branch,
-        status: '',
-      })
+      expect(await checkoutSnapshot(repo.repoPath)).toEqual(before)
     }
   })
 
@@ -131,7 +128,6 @@ describe('multi-Repo C1', () => {
     expect(recovered).toEqual({
       kind: 'already_integrated',
       commit: interrupted.commit,
-      deliveryIssues: [],
     })
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
     expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
@@ -247,7 +243,7 @@ describe('multi-Repo C1', () => {
     )
   })
 
-  test('keeps one multi-Repo delivery pending and recovers it after checkout becomes clean', async () => {
+  test('never changes selected checkouts while managed releases advance', async () => {
     const fixture = await createFixture(['primary', 'api'])
     const api = fixture.repo('api')
     await Bun.write(join(api.repoPath, 'local.txt'), 'local state\n')
@@ -256,16 +252,13 @@ describe('multi-Repo C1', () => {
 
     expect(integrated.kind).toBe('integrated')
     if (integrated.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(integrated.deliveryIssues).toEqual([
-      { repoId: 'api', reason: 'Repo api delivery checkout is dirty' },
-    ])
-    expect(await sourceValue(fixture.repo('primary').repoPath)).toBe(2)
+    expect(await sourceValue(fixture.repo('primary').repoPath)).toBe(1)
     expect(await sourceValue(api.repoPath)).toBe(1)
     await rm(join(api.repoPath, 'local.txt'))
 
     await reconcileProjectReleaseProjection(fixture.layout)
 
-    expect(await sourceValue(api.repoPath)).toBe(2)
+    expect(await sourceValue(api.repoPath)).toBe(1)
   })
 })
 
@@ -397,12 +390,11 @@ async function createFixture(workRepoIds: string[]) {
     throw new Error(`Expected integration_required, got ${application.kind}`)
   }
   const layout = {
+    projectId: linked.projectId,
     primaryRepoId: linked.primaryRepoId,
     repos: linked.repos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
-      checkoutRoot: repo.repoPath,
-      deliveryBranch: repo.deliveryBranch,
       primary: repo.primary,
     })),
   }

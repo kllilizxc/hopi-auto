@@ -14,7 +14,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   clickGoalControl,
   errorMessage,
@@ -86,7 +86,7 @@ try {
   assert.deepEqual(
     await checkoutSnapshot(repoRoot),
     checkoutBefore,
-    'Pause must not expose the partial Generator candidate in the delivery checkout',
+    'Pause must not expose the partial Generator candidate in the selected checkout',
   )
   const runCountWhilePaused = roles.runs.length
   await Bun.sleep(1_200)
@@ -138,7 +138,7 @@ try {
     [false, true],
     'The resumed Attempt must read a file written in the pre-Pause workspace',
   )
-  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
+  const checkoutAfter = await assertAcceptedRelease(repoRoot, PROJECT_ID, checkoutBefore)
   assert.equal(
     await Bun.file(join(roles.generatorWorkspaces[1]?.path ?? '', 'pause-continuity.txt')).exists(),
     false,

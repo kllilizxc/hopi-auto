@@ -14,7 +14,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -312,7 +312,7 @@ async function assertProjectDelivery(
   before: Awaited<ReturnType<typeof checkoutSnapshot>>,
   projectId: string,
 ) {
-  const after = await assertAcceptedDelivery(root, before)
+  const after = await assertAcceptedRelease(root, projectId, before)
   assert.equal(
     (await Bun.file(join(root, 'src', 'feature.ts')).text()).trim(),
     `export const project = '${projectId}'`,

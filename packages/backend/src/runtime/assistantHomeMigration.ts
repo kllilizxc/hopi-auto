@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { resolveProjectPath } from '../domain/projectPath'
-import { managedRepoWorktreePaths } from './managedWorktreePaths'
+import { legacyManagedRepoWorktreePaths, managedRepoWorktreePaths } from './managedWorktreePaths'
 import { cleanupRunScratch, preserveRunArtifacts } from './runArtifacts'
 
 interface StoredProjectRepoLink {
@@ -278,7 +278,7 @@ async function rewriteLinkedEvidence(hopiRoot: string, replacements: ReadonlyMap
   for (const project of links.projects ?? []) {
     const binding = primaryProjectBinding(project)
     if (!binding) continue
-    const integrationRoot = managedRepoWorktreePaths(binding.repoPath).integration
+    const integrationRoot = await existingIntegrationRoot(hopiRoot, project, binding)
     const projectRoot = resolveProjectPath(integrationRoot, binding.projectPath ?? '.')
     const glob = new Bun.Glob('.hopi/docs/goals/*/evidence/*.md')
     for await (const relativePath of glob.scan({ cwd: projectRoot, onlyFiles: true, dot: true })) {
@@ -297,7 +297,26 @@ async function rewriteLinkedEvidence(hopiRoot: string, replacements: ReadonlyMap
   return rewritten
 }
 
-function primaryProjectBinding(project: StoredProjectLink) {
+async function existingIntegrationRoot(
+  hopiRoot: string,
+  project: StoredProjectLink,
+  binding: StoredProjectRepoLink,
+) {
+  const managedRoot = managedRepoWorktreePaths(binding.repoPath, project.projectId).integration
+  const candidates = [
+    managedRoot,
+    legacyManagedRepoWorktreePaths(binding.repoPath).integration,
+    binding.repoId === (project.primaryRepoId ?? binding.repoId)
+      ? join(hopiRoot, 'projects', project.projectId, 'integration')
+      : join(hopiRoot, 'projects', project.projectId, 'repos', binding.repoId, 'integration'),
+  ]
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate
+  }
+  return managedRoot
+}
+
+function primaryProjectBinding(project: StoredProjectLink): StoredProjectRepoLink | null {
   if (project.repos?.length) {
     return (
       project.repos.find((repo) => repo.repoId === project.primaryRepoId) ??

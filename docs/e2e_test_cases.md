@@ -495,8 +495,8 @@ Pass conditions:
 
 - One admitted Goal reaches `done` through successful real Planner, Generator, and Reviewer Attempts.
 - Generator output is published, successful Review precedes C1, and the integration test passes.
-- The delivery checkout remains clean and unchanged before C1, then fast-forwards exactly to the
-  accepted release without exposing unreviewed task files.
+- The managed integration reaches the accepted Project release without exposing unreviewed task
+  files, while the selected user checkout remains byte-for-byte unchanged.
 - No shared invariant is violated and no targeted Attention remains unresolved.
 - The completion update is visible without misleading Assistant error activity.
 - The report retains every real model Run and provider usage event.
@@ -589,15 +589,16 @@ Pass conditions:
 - Each instruction produces effects only in its named Project.
 - Both Goals either complete or expose a precise targeted Attention; neither silently stalls.
 - Global capacity is respected without encoding an exact incidental Run order in the test.
-- Both delivery checkouts remain clean on their recorded branches and reach their accepted releases.
+- Both managed integrations reach their Project release refs while both selected user checkouts
+  remain unchanged.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-08`.
 
 Current implementation: `packages/backend/tests/e2e/multipleInstructions.e2e.ts`
 (`bun run e2e:instructions:011`). It runs a production Server with two real Git Projects, keeps
 Project A's Generator active while two public Inbox turns arrive, verifies FIFO handling of a status
-turn followed by a Project B Goal creation, then completes both scoped deliveries and verifies each
-guarded checkout fast-forward. Assistant tool selection and role output are deterministic; a real-model
+turn followed by a Project B Goal creation, then completes both scoped releases and verifies each
+managed projection. Assistant tool selection and role output are deterministic; a real-model
 concurrent canary remains pending.
 
 ### HOPI-E2E-012: Design Revision During Active Delivery
@@ -625,8 +626,8 @@ Pass conditions:
 - The revised Work starts a fresh responsibility conversation and empty workspace; the prior
   revision's workspace remains diagnostic until the Work becomes terminal but is never inherited.
 - The final integration and UI implement the latest design, not a mixture of revisions.
-- The delivery checkout remains clean during the race and fast-forwards exactly to the accepted C1
-  only after revised Review succeeds.
+- The managed integration moves to the accepted Project release only after revised Review succeeds;
+  the selected user checkout remains unchanged throughout the race.
 - Historical design and Attempts remain available for diagnosis without becoming current authority.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`, `INV-07`.
@@ -746,8 +747,8 @@ Pass conditions:
 - Resume ensures a valid Planning guard before Engineering proceeds.
 - The resumed Generator uses the same Work-revision responsibility session and retained workspace
   while producing a distinct Attempt; a file written before Pause remains readable afterward.
-- The delivery checkout remains unchanged while paused, then cleanly fast-forwards to the accepted
-  release only after Review and C1.
+- The selected user checkout remains unchanged while paused and after completion; only the managed
+  integration moves to the accepted Project release after Review and C1.
 
 Primary invariants: `INV-01`, `INV-02`, `INV-05`, `INV-06`.
 
@@ -829,7 +830,8 @@ Pass conditions:
 - No Repo ref moves before the combined candidate is accepted.
 - One primary C1 records reviewed Repo heads, then every secondary release projects to its recorded head.
 - Cross-Repo native verification and the user-visible feature pass.
-- Every delivery checkout reaches its Repo release by clean fast-forward.
+- Every managed integration reaches its binding-owned Repo release while every selected user
+  checkout remains unchanged.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-07`, `INV-11`, `INV-14`.
 
@@ -1300,8 +1302,8 @@ Pass conditions:
 - A non-empty non-Git directory and `.git`/`.hopi` metadata scopes are rejected without mutation or a partial Project link.
 - `projects.yml` stores the canonical Git `repoPath` plus portable `projectPath`, and reload renders the selected source scope.
 - Project `AGENTS.md`, `scripts/hopi/prepare`, responsibility cwd, and Preview resolve beneath `projectPath` while Git/worktree ownership remains at the Repo root.
-- C1 accepts scoped source, fast-forwards the selected delivery checkout, and deterministically
-  rejects a task commit that changes the sibling sentinel; the sibling remains unchanged.
+- C1 accepts scoped source into the managed integration and deterministically rejects a task commit
+  that changes the sibling sentinel; the sibling and selected user checkout remain unchanged.
 - The complete link remains one publication gate and creates no Init Goal, Work, model Run, or extra workflow state.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-05`, `INV-06`, `INV-10`, `INV-12`, `INV-14`.

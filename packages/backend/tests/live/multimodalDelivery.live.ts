@@ -7,7 +7,7 @@ import {
   type LiveHarness,
   type LiveState,
   type StateRecorder,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   captureBrowserPage,
   checkoutSnapshot,
   enterHarnessPhase,
@@ -255,7 +255,7 @@ try {
 
   const tests = await runCommand(['bun', 'test'], integrationRoot)
   assert.equal(tests.exitCode, 0, tests.stderr || tests.stdout)
-  await assertAcceptedDelivery(harness.repoRoot, checkoutBefore)
+  await assertAcceptedRelease(harness.repoRoot, PROJECT_ID, checkoutBefore)
   assert.deepEqual(recorder.violations, [])
   assert.deepEqual(await readPendingInboxEvents(harness.homeRoot), [])
 

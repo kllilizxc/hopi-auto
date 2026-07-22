@@ -110,14 +110,7 @@ function compactProject(project: Record<string, unknown>) {
     releaseHead: project.releaseHead,
     primaryRepoId: project.primaryRepoId,
     repos: asRecords(project.repos).map((repo) =>
-      select(repo, [
-        'repoId',
-        'repoPath',
-        'projectPath',
-        'integrationRoot',
-        'deliveryBranch',
-        'primary',
-      ]),
+      select(repo, ['repoId', 'repoPath', 'projectPath', 'integrationRoot', 'primary']),
     ),
   }
 }

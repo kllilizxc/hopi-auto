@@ -12,6 +12,7 @@ import {
   renderAttentionDocument,
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
+import { projectReleaseRef } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
 import {
@@ -144,10 +145,10 @@ try {
     'The replacement Coordinator must integrate only an accepted Review',
   )
   assert.equal(
-    await gitOutput(managedRepoWorktreePaths(repoRoot).integration, [
+    await gitOutput(managedRepoWorktreePaths(repoRoot, PROJECT_ID).integration, [
       'rev-list',
       '--count',
-      'refs/heads/hopi/release',
+      projectReleaseRef(PROJECT_ID),
       '--grep',
       `project:${PROJECT_ID}/goal:${GOAL_ID}/work:${WORK_ID}`,
     ]),

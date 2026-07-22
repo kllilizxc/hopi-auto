@@ -397,7 +397,7 @@ Planner owns interpretation of that broader history.
 
 Planner requires the same integration-target snapshot because it defines new ordering and scope.
 Engineering results instead guard Goal, design, owning Work, permanent dependencies, relevant
-Attention, and other selected authority. An unrelated C1 may advance `hopi/release` while Generator
+Attention, and other selected authority. An unrelated C1 may advance the Project release while Generator
 or Reviewer runs without making that semantic context stale; task isolation and deterministic C1
 rebuild or conflict handling own the later source reconciliation.
 
@@ -940,9 +940,9 @@ Work lease.
 Before every Reviewer Run, Coordinator discards and rematerializes the HOPI-managed task checkout
 from its stable task-branch checkpoint, even when `git status` reports clean. Git clean status does
 not prove a stable materialization under line-ending conversion or other worktree-local changes.
-The Work's committed delta from `hopi/release` remains present, and the rebuilt files are materialized
+The Work's committed delta from its Project-qualified release remains present, and the rebuilt files are materialized
 from that exact checkpoint under HOPI's fixed Git configuration. This makes review proof
-describe exactly the candidate C1 can integrate. The task checkout is disposable and the delivery checkout is untouched. A Reviewer
+describe exactly the candidate C1 can integrate. The task checkout is disposable and the selected user checkout is untouched. A Reviewer
 that writes source produces an invalid Run: Coordinator discards that Run's checkout delta and
 retries Reviewer without returning Work to Generator or consuming a business recovery attempt.
 
@@ -950,7 +950,7 @@ Reviewer receives the same Work-selected image references as Generator, allowing
 be checked against the original reference rather than a prose-only summary.
 
 Reviewer attributes only the stable task branch's cumulative delta to the owning Work. Its diff base
-is `git merge-base refs/heads/hopi/release HEAD`, not the current release tip: independent integrations may
+is `git merge-base refs/heads/hopi/project/<projectId>/release HEAD`, not the current release tip: independent integrations may
 move that tip after Work admission, and release-only commits or canonical `.hopi` changes are not
 task changes. C1 alone owns applying the accepted task delta to the current release target.
 
@@ -1019,8 +1019,8 @@ changes, immutable integration Evidence, and the owning Work already at `done` w
 references. Qualified Work and producer Run trailers make the integration commit derivable without
 copying its hash into Work.
 
-The target is the HOPI-owned `hopi/release` branch, and C1's tree snapshots the complete validated
-managed integration root plus the accepted task changes. No delivery checkout, delivery branch,
+The target is the HOPI-owned `hopi/project/<projectId>/release` branch, and C1's tree snapshots the
+complete validated managed integration root plus the accepted task changes. No selected checkout,
 index, or uncommitted file participates in C1 construction or managed materialization.
 
 The guarded ref move to C1 is the one irreversible integration boundary and is independent of
@@ -1029,10 +1029,9 @@ check, or ref-update error verified to have left the old target may record Evide
 `attempts`; rebuilding on a clean target advance does not. If an uncertain update leaves the ref at C1, source
 is treated as integrated and the project blocks rather than publishing Work failure or retrying.
 After the boundary, source is never integrated again, rolled back, or counted as Work recovery. Any
-ref, commit, Work, Evidence, managed-worktree, or delivery inconsistency creates workspace project
+ref, commit, Work, Evidence, or managed-worktree inconsistency creates workspace project
 Attention and keeps the project out of scheduling. Coordinator never repairs individual paths or
-resets the managed root. It may only fast-forward the recorded clean delivery branch after verifying
-Repo identity, current branch, ancestry, and exact result. Since ordinary
+resets the managed root or mutates a selected checkout. Since ordinary
 canonical publications may be newer than the last Git checkpoint, ownership alone does not make
 the managed root disposable. There is no metadata follow-up commit, integration-pending state, or
 merge stage. Mechanical guarantees belong to the publish ADR.
@@ -1043,20 +1042,20 @@ C1 critical section, not a new resource lock, retry state, or reduction in paral
 
 ## Worktrees and Parallelism
 
-Each linked Repo has a stable managed integration worktree materializing its `hopi/release`. The
+Each Repo binding has a stable managed integration worktree materializing its Project-qualified release. The
 primary Git root remains the base for canonical `.hopi` publication; Project `AGENTS.md`, entrypoint
 scripts, and Preview resolve beneath its portable `projectPath`. Integration and task roots live
-under `<repo-parent>/.hopi-worktrees/<repo-name>/`, distinct from the selected checkout.
+under `<repo-parent>/.hopi-worktrees/<repo-name>/projects/<projectId>/`, distinct from the selected checkout.
 
 An engineering Work deterministically maps to one stable task branch and worktree in each Repo named
 by its `repos` field. Retries reuse those branches. Task worktrees live at
-`.hopi-worktrees/<repo-name>/work/<goalId>/<workId>` beside their Repo and start from its current
-`hopi/release`. A responsibility receives one logical
+`.hopi-worktrees/<repo-name>/projects/<projectId>/work/<goalId>/<workId>` beside their Repo and start
+from that binding's current release. A responsibility receives one logical
 workspace containing all named roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
 
 Immediately before Generator or Reviewer preparation, Coordinator compares each stable task branch
-with that Repo's current `hopi/release`. If release is already an ancestor, no Git mutation occurs.
+with that binding's current release. If release is already an ancestor, no Git mutation occurs.
 If the clean task branch is behind or divergent, Coordinator fast-forwards it or merges release into
 it with hooks and signing disabled, preserving the task delta and then verifying a clean checkout and
 release ancestry. A failed merge is aborted back to the exact prior task HEAD and creates or reuses a
@@ -1170,10 +1169,10 @@ generated output and caches to its owned roots and leaves the candidate snapshot
 Coordinator recovery treats unexpected managed-integration source as system-owned projection drift:
 it archives the observed bytes and patches outside the worktree, rematerializes the recorded release,
 and validates the result before scheduling. Primary canonical `.hopi` documents and the allowed
-Planner `AGENTS.md` bootstrap remain authoritative and are not cleaned as source drift. User and
-delivery checkouts are never cleaned or rewritten by this recovery path.
+Planner `AGENTS.md` bootstrap remain authoritative and are not cleaned as source drift. Selected
+user checkouts are never cleaned or rewritten by this recovery path.
 
-User-authored code enters `hopi/release` only through an explicit ordinary Assistant Input naming a
+User-authored code enters a Project release only through an explicit ordinary Assistant Input naming a
 committed branch or commit. Planner first reuses any Work already handling the same change and
 otherwise plans normal Engineering Work; Generator and Reviewer inspect and integrate it through
 the existing path. HOPI never reads or imports uncommitted user-checkout content, and there is no
@@ -1416,12 +1415,11 @@ Consecutive internal handoffs are also bounded so a feedback loop cannot consume
 ## Reconciler and Scheduling
 
 Before Reconciler starts, Coordinator fully validates the Assistant home and every linked project.
-It validates the Repo binding and release ref, then validates the stable managed integration
-worktree and Project package. Missing or inconsistent managed projection truth creates workspace
-project Attention. Delivery checkout drift only prevents its own guarded fast-forward: it remains
-visible as delivery pending but never makes the Project ineligible and is never reset or overwritten.
+It validates each Repo binding's Project-qualified release ref, stable managed integration worktree,
+and Project package. Missing or inconsistent managed projection truth creates workspace Project
+Attention. Selected checkout state is outside reconciliation and remains untouched.
 Invalid Assistant-home truth still fails closed to supervisor intervention.
-Reconciliation, dispatch, integration, and delivery never race this startup scan or proceed from
+Reconciliation, dispatch, integration, and Preview never race this startup scan or proceed from
 missing original intent.
 
 Each cycle:
@@ -1582,7 +1580,7 @@ workflow truth. A later multi-Repo Project may extend the same adapter input wit
 product model, but Preview does not imply cross-Repo delivery support.
 
 A running Preview is a lease on the release materialized when it started, not a hot-reload contract.
-After C1 has durably advanced `hopi/release` and verified the managed integration projection,
+After C1 has durably advanced the Project-qualified release and verified the managed integration projection,
 Coordinator immediately stops any running or starting Preview for that Project, clears its endpoint,
 and records runtime reason `release_updated`. Recovery that observes the C1 ref already advanced
 performs the same idempotent invalidation. Planning, task-worktree changes, canonical document-only

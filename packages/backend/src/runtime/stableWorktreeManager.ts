@@ -1,6 +1,6 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_BRANCH, HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, projectReleaseBranch, projectReleaseRef } from '../domain/project'
 import { STABLE_ID_PATTERN } from '../domain/stableId'
 import { relocateRegisteredWorktree } from './worktreeRelocator'
 
@@ -16,7 +16,7 @@ export interface StableWorktreeInput {
 export interface StableWorktree {
   path: string
   branch: string
-  baseRef: typeof HOPI_RELEASE_BRANCH
+  baseRef: string
   repoId: string
 }
 
@@ -39,7 +39,7 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
     return {
       path: workRoot,
       branch: stableWorkBranch(input),
-      baseRef: HOPI_RELEASE_BRANCH,
+      baseRef: projectReleaseBranch(input.projectId),
       repoId,
     }
   }
@@ -109,7 +109,14 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       ).exitCode === 0
     const args = branchExists
       ? ['worktree', 'add', '--force', expected.path, expected.branch]
-      : ['worktree', 'add', '-b', expected.branch, expected.path, HOPI_RELEASE_REF]
+      : [
+          'worktree',
+          'add',
+          '-b',
+          expected.branch,
+          expected.path,
+          projectReleaseRef(input.projectId),
+        ]
     const result = await runGit(input.projectRoot, args, true)
     if (result.exitCode !== 0) {
       throw new StableWorktreeError(
@@ -122,7 +129,7 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
   async function synchronize(input: StableWorktreeInput, expected: StableWorktree) {
     const [taskHead, releaseHead] = await Promise.all([
       runGit(expected.path, ['rev-parse', 'HEAD']),
-      runGit(input.projectRoot, ['rev-parse', HOPI_RELEASE_REF]),
+      runGit(input.projectRoot, ['rev-parse', projectReleaseRef(input.projectId)]),
     ])
     if (taskHead.stdout === releaseHead.stdout) return expected
 

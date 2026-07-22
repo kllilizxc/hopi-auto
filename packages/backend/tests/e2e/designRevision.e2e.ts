@@ -19,7 +19,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -161,7 +161,7 @@ try {
     false,
     'Terminal Work must clean every revision workspace',
   )
-  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
+  const checkoutAfter = await assertAcceptedRelease(repoRoot, PROJECT_ID, checkoutBefore)
   await Bun.write(
     join(artifactRoot, 'design-revision-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, settled, attempts, checkoutBefore, checkoutAfter, roleRuns: roles.runs }, null, 2)}\n`,

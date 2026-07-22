@@ -9,7 +9,7 @@ import {
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -113,7 +113,7 @@ try {
       (attempt) => attempt.responsibility === 'reviewer' && attempt.application === 'integrated',
     ),
   )
-  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
+  const checkoutAfter = await assertAcceptedRelease(repoRoot, PROJECT_ID, checkoutBefore)
   await Bun.write(
     join(artifactRoot, 'cancel-reopen-contract.json'),
     `${JSON.stringify({ status: 'passed', startedAt, cancelled, archive, reopenedBrowser, settled, attempts, checkoutBefore, checkoutAfter, runs: roles.runs }, null, 2)}\n`,

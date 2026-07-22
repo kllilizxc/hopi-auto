@@ -4,7 +4,7 @@ import {
   type BrowserHarnessContext,
   type LiveGoalDetail,
   type LiveState,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   captureCompletionUpdate,
   type checkoutSnapshot,
   inspectKanban,
@@ -68,8 +68,11 @@ export async function verifyGoalDeliveryDomain(input: {
   const attempts = await readAttempts(input.context, input.projectId, input.goalId, finalGoal)
   assertRealResponsibilityPath(attempts)
   const projectVerification = await verifyIntegratedClampProject(input.integrationRoot)
-  const checkoutAfter = await assertAcceptedDelivery(input.context.repoRoot, input.checkoutBefore)
-  const deliveryVerification = await verifyIntegratedClampProject(input.context.repoRoot)
+  const checkoutAfter = await assertAcceptedRelease(
+    input.context.repoRoot,
+    input.projectId,
+    input.checkoutBefore,
+  )
 
   return {
     finalState,
@@ -77,7 +80,6 @@ export async function verifyGoalDeliveryDomain(input: {
     completion,
     attempts,
     projectVerification,
-    deliveryVerification,
     checkoutAfter,
   }
 }

@@ -9,7 +9,6 @@ import {
   renderAttentionDocument,
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { requestJson, waitForValue } from './deterministicHarness'
 
@@ -134,14 +133,8 @@ test('hands accepted dependency Evidence and immutable Run artifacts to downstre
     expect(await Bun.file(join(integrationRoot as string, 'src', 'consumer.ts')).text()).toBe(
       'export const consumed = 42\n',
     )
-    expect(await Bun.file(join(repoRoot, 'src', 'consumer.ts')).text()).toBe(
-      'export const consumed = 42\n',
-    )
-    expect(await checkoutSnapshot(repoRoot)).toEqual({
-      head: await git(integrationRoot as string, ['rev-parse', HOPI_RELEASE_REF]),
-      branch: checkoutBefore.branch,
-      status: '',
-    })
+    expect(await Bun.file(join(repoRoot, 'src', 'consumer.ts')).exists()).toBe(false)
+    expect(await checkoutSnapshot(repoRoot)).toEqual(checkoutBefore)
   } finally {
     await server?.shutdown()
     await rm(temporaryRoot, { recursive: true, force: true })

@@ -58,7 +58,6 @@ export interface ProjectRepoSummary {
   repoId: string
   repoPath: string
   projectPath: string
-  deliveryBranch: string
   integrationRoot: string
   primary: boolean
 }

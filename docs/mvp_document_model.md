@@ -200,27 +200,26 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 required before Coordinator starts and travels with every lossless Assistant-home export; the
 filesystem path of Assistant home is only a current machine binding.
 
-Each `projects.yml` link owns `{ projectId, primaryRepoId, repos }`. Each Repo entry
-owns a stable `repoId`, its current-machine `repoPath` Git-checkout binding, the `deliveryBranch`
-recorded from that checkout at link time, and an optional portable `projectPath` relative to the Git
-root. Missing `projectPath` means `.`. Coordinator derives one Repo-adjacent managed integration
-path, then resolves the Project's source scope inside that managed worktree from `projectPath`. The
-primary managed root remains the canonical Project document root. `repoPath` is non-canonical and
-may be written only by the guarded release fast-forward protocol.
+Each version 4 `projects.yml` link owns `{ projectId, primaryRepoId, repos }`. Each Repo entry owns a
+stable Project-local `repoId`, its current-machine `repoPath` Git-checkout locator, and an optional
+portable `projectPath` relative to the Git root. Missing `projectPath` means `.`. The same Git Repo
+may occur in several Projects, while duplicate Git identities remain invalid inside one Project.
+Coordinator derives a Project-qualified Repo-adjacent managed integration path, then resolves the
+Project's source scope inside that managed worktree from `projectPath`. The primary managed root
+remains the canonical Project document root. `repoPath` supplies the Git object database and initial
+HEAD only; HOPI never writes its branch, index, or working tree.
 
 ```yaml
-version: 3
+version: 4
 projects:
   - projectId: product-a
     primaryRepoId: web
     repos:
       - repoId: web
         repoPath: /home/operator/Code/product-web
-        deliveryBranch: main
         projectPath: apps/storefront
       - repoId: api
         repoPath: /home/operator/Code/product-api
-        deliveryBranch: main
 ```
 
 Legacy Project `codingDefaults` are discarded during Assistant-home initialization. They are not
@@ -240,21 +239,25 @@ settings document. A missing role entry means inherit Home `defaults`; removing 
 restores that fallback. Role settings affect only future responsibility Runs and never rewrite a
 Project link, Goal, Work, or active Run command.
 
-Version 1 `{ projectId, repoPath }` and version 2 multi-Repo links migrate by recording each linked
-checkout's current symbolic branch and relocating its registered managed worktrees without changing
-their branch, index, or working tree. A detached legacy checkout is ambiguous and blocks migration.
-A version 3 link carrying legacy `codingDefaults` is rewritten without that field.
+Version 1 through 3 links migrate by moving the binding's legacy release ref and registered managed
+worktrees into its Project-qualified namespace without changing the selected checkout. A version 3
+link carrying legacy `codingDefaults` is rewritten without that field. A missing legacy worktree is
+rebuilt from its exact release ref. If both old and Project-qualified refs exist but disagree, or an
+old-format Repo is shared by several Projects, migration raises Project Attention rather than
+choosing a history. Each verified step is idempotent, and version 4 is published only after the new
+ref and paths validate.
 A missing Engineering Work `repos` field still means the Project primary Repo. Newly published links
 and Engineering Work always use the explicit form.
 
 After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
-administration, relocates the Repo-adjacent managed root when needed, validates its `hopi/release`
-and delivery projections, then changes the machine-local binding.
+administration, relocates the Project-qualified Repo-adjacent managed root when needed, validates its
+release projection, then changes the machine-local binding.
 A single moved Repo and a complete moved Repo set use the same operation; the complete form requires
 exactly the existing stable Repo IDs and publishes `projects.yml` only after every target validates.
 This lets several stale old paths recover together without weakening duplicate-Git-identity checks.
-A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
-canonical documents may be newer than the ref; that loss remains Project Attention.
+Outside the legacy migration, a missing primary managed integration root is not reconstructed from
+Git because its uncheckpointed canonical documents may be newer than the ref; that loss remains
+Project Attention.
 
 The managed root's `project.yml` remains authority for Project identity, Repo membership, and each
 portable `projectPath`; the local link must match it after missing paths normalize to `.`.
@@ -264,7 +267,7 @@ the canonical project target for workspace Attention; it never guesses or replac
 ### Managed project root
 
 ```text
-<repo-parent>/.hopi-worktrees/<repo-name>/integration/    # one per linked Repo
+<repo-parent>/.hopi-worktrees/<repo-name>/projects/<projectId>/integration/
   AGENTS.md
   .hopi/
     project.yml
@@ -297,7 +300,7 @@ checkout. `HOPI_HOME` selects their owner directory; when it is unset the produc
 worktrees live under the Repo-adjacent root above. The managed
 integration worktree is stable rather than disposable
 because ordinary canonical document publications may precede their next Git checkpoint. Canonical
-Project documents, `project.yml`, the `hopi/release` ref, and task branch refs travel with a lossless
+Project documents, `project.yml`, Project-qualified release refs, and task branch refs travel with a lossless
 Project migration. User preferences travel with Assistant Home instead; Project-specific operating
 rules remain in Project docs or Repo-local `AGENTS.md`.
 
@@ -360,10 +363,10 @@ Attention IDs, or UI projection, and no new Attention field or kind is introduce
 paths remain solely in Assistant-home `projects.yml`; runtime diagnostics may record the machine-
 local source from which a portable artifact was preserved.
 The primary Repo's release commit is the `project.yml`-containing C1 itself and is therefore implicit;
-embedding its own hash would be self-referential. The integration target remains the kernel
-convention `hopi/release`, not editable Project configuration. Goal completion means the primary C1
-and all secondary managed and delivery projections are verified. Delivery changes only the recorded
-checkout branch by clean fast-forward and never makes that checkout canonical authority.
+embedding its own hash would be self-referential. The integration target is derived as
+`hopi/project/<projectId>/release`, not editable Project configuration. Goal completion means the
+primary C1 and every secondary managed release projection are verified. User checkouts are outside
+completion and recovery.
 
 Root `AGENTS.md` is the model-readable project context entrypoint. It may describe stable repository
 structure, responsibilities, commands, constraints, and links to deeper authoritative documents,

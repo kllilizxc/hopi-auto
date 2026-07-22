@@ -2,7 +2,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
-import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, projectReleaseRef } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -88,8 +88,6 @@ export async function recoverCoordinatorProject(
     linkedBeforeValidation.repos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
-      checkoutRoot: repo.repoPath,
-      deliveryBranch: repo.deliveryBranch,
       projectPath: repo.projectPath,
       primary: repo.primary,
     }))
@@ -99,7 +97,7 @@ export async function recoverCoordinatorProject(
       new Set([join(repo.integrationRoot, '.git')]),
     )
   }
-  await reconcileProjectReleaseProjection({ primaryRepoId, repos })
+  await reconcileProjectReleaseProjection({ projectId: project.projectId, primaryRepoId, repos })
   await project.store.invalidateCache()
   const linked = await home.validateProject(project.projectId)
   if (linked.integrationRoot !== project.projectRoot) {
@@ -117,9 +115,10 @@ export async function recoverCoordinatorProject(
 
 async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   // Index-reading Git commands may refresh and lock the index, so bootstrap must not race them.
+  const releaseRef = projectReleaseRef(project.projectId)
   const head = await git(project.projectRoot, ['rev-parse', 'HEAD'])
-  const target = await git(project.projectRoot, ['rev-parse', HOPI_RELEASE_REF])
-  const targetTree = await git(project.projectRoot, ['show', '-s', '--format=%T', HOPI_RELEASE_REF])
+  const target = await git(project.projectRoot, ['rev-parse', releaseRef])
+  const targetTree = await git(project.projectRoot, ['show', '-s', '--format=%T', releaseRef])
   if (head !== target) {
     throw new Error('managed integration index does not materialize the durable release ref')
   }
@@ -157,6 +156,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   const packages = new Map<string, Awaited<ReturnType<GoalPackageStore['readPackage']>>>()
   const completionLayout = project.repos
     ? {
+        projectId: project.projectId,
         primaryRepoId:
           project.primaryRepoId ?? project.repos.find((repo) => repo.primary)?.repoId ?? 'primary',
         repos: project.repos,
@@ -175,7 +175,10 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
     }
   }
 
-  const records = await listIntegrationRecords(project.projectRoot)
+  const records = await listIntegrationRecords(
+    project.projectRoot,
+    projectReleaseRef(project.projectId),
+  )
   const uniqueWork = new Set<string>()
   for (const record of records) {
     if (uniqueWork.has(record.workReference)) {

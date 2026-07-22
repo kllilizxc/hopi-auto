@@ -78,7 +78,7 @@ describe('ProjectReconciler', () => {
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
     const workAttempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     const generatorAttempt = workAttempts.find((attempt) => attempt.responsibility === 'generator')
     expect(workAttempts).toHaveLength(2)
@@ -145,8 +145,8 @@ describe('ProjectReconciler', () => {
     })
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
     expect(await Bun.file(join(api.integrationRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(await Bun.file(join(fixture.apiRepoRoot, 'src', 'feature.ts')).text()).toContain('2')
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(await Bun.file(join(fixture.apiRepoRoot, 'src', 'feature.ts')).text()).toContain('1')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
   })
 
@@ -162,9 +162,14 @@ describe('ProjectReconciler', () => {
     }
 
     if (!fixture.apiRepoRoot) throw new Error('Expected api Repo fixture')
+    const api = fixture.linked.repos.find((repo) => repo.repoId === 'api')
+    if (!api) throw new Error('Expected linked api Repo')
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
-    expect(await Bun.file(join(fixture.apiRepoRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
+    expect(await Bun.file(join(api.integrationRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
       true,
+    )
+    expect(await Bun.file(join(fixture.apiRepoRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
+      false,
     )
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     const generator = attempts.find((attempt) => attempt.responsibility === 'generator')
@@ -319,7 +324,7 @@ describe('ProjectReconciler', () => {
     expect(await Bun.file(join(managedScope, 'AGENTS.md')).exists()).toBe(true)
     expect(await Bun.file(join(fixture.projectRoot, 'AGENTS.md')).exists()).toBe(false)
     expect(await Bun.file(join(fixture.projectSourceRoot, 'src', 'feature.ts')).text()).toContain(
-      '2',
+      '1',
     )
   })
 

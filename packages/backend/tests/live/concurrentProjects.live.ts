@@ -6,7 +6,7 @@ import {
   type LiveHarness,
   type LiveState,
   type StateRecorder,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
@@ -183,16 +183,16 @@ try {
     2,
     'The read-only status question must not create a third Goal',
   )
-  for (const [integration, repo, checkout] of [
-    [integrationA, repoA, checkoutA],
-    [integrationB, repoB, checkoutB],
+  for (const [projectId, integration, repo, checkout] of [
+    [PROJECT_A, integrationA, repoA, checkoutA],
+    [PROJECT_B, integrationB, repoB, checkoutB],
   ] as const) {
     assert.equal(
       await Bun.file(join(integration, 'src', 'protocol.ts')).text(),
       "export const protocol = 'v2'\n",
     )
     assert.equal((await runCommand(['bun', 'test'], integration)).exitCode, 0)
-    await assertAcceptedDelivery(repo, checkout)
+    await assertAcceptedRelease(repo, projectId, checkout)
   }
   assert.deepEqual(recorder.violations, [])
   assert.deepEqual(await readPendingInboxEvents(harness.homeRoot), [])

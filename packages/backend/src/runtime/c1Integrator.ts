@@ -1,4 +1,4 @@
-import { chmod, cp, lstat, mkdir, mkdtemp, realpath, rename, rm, symlink } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, mkdtemp, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -12,7 +12,7 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { validateGoalPackageTransition } from '../domain/goalPackage'
-import { DEFAULT_PRIMARY_REPO_ID, HOPI_RELEASE_REF, type ProjectDocument } from '../domain/project'
+import { DEFAULT_PRIMARY_REPO_ID, type ProjectDocument, projectReleaseRef } from '../domain/project'
 import {
   parseProjectDocument,
   renderProjectDocument,
@@ -40,25 +40,14 @@ export type C1IntegrationResult =
       kind: 'integrated'
       commit: string
       recoveredUncertainUpdate: boolean
-      deliveryIssues: readonly DeliveryProjectionIssue[]
     }
   | {
       kind: 'already_integrated'
       commit: string
-      deliveryIssues: readonly DeliveryProjectionIssue[]
     }
   | { kind: 'rejected'; reason: string }
   | { kind: 'blocked'; reason: string }
   | { kind: 'blocked_after_boundary'; commit: string; reason: string }
-
-export interface DeliveryProjectionIssue {
-  repoId: string
-  reason: string
-}
-
-export type DeliveryProjectionStatus =
-  | { status: 'current'; commit: string }
-  | { status: 'pending'; commit: string; reason: string; canFastForward: boolean }
 
 export interface C1FaultHooks {
   updateRef?(input: {
@@ -75,13 +64,12 @@ export interface C1FaultHooks {
 export interface C1ProjectRepo {
   repoId: string
   integrationRoot: string
-  checkoutRoot?: string
-  deliveryBranch?: string
   projectPath?: string
   primary: boolean
 }
 
 export interface C1ProjectLayout {
+  projectId: string
   primaryRepoId: string
   repos: readonly C1ProjectRepo[]
 }
@@ -102,6 +90,7 @@ export function createC1Integrator(
 ): C1Integrator {
   const temporaryRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'integration')
   const projectLayout = normalizeProjectLayout(store, layout)
+  const releaseRef = projectReleaseRef(projectLayout.projectId)
 
   return {
     async integrate(input, faultHooks = {}) {
@@ -111,7 +100,7 @@ export function createC1Integrator(
       const workReference = workRef(store, input.pass.goalId, input.pass.workId)
       const existing = await findIntegrationCommits(
         store.paths.projectRoot,
-        HOPI_RELEASE_REF,
+        releaseRef,
         workReference,
       )
       if (existing.length > 1) {
@@ -124,13 +113,9 @@ export function createC1Integrator(
       if (existing[0]) {
         await validateIntegratedCommit(store, input, existing[0])
         try {
-          const deliveryIssues = await recoverProjectProjection(
-            projectLayout,
-            existing[0],
-            faultHooks,
-          )
+          await recoverProjectProjection(projectLayout, existing[0], faultHooks)
           await store.invalidateCache()
-          return { kind: 'already_integrated', commit: existing[0], deliveryIssues }
+          return { kind: 'already_integrated', commit: existing[0] }
         } catch (error) {
           return {
             kind: 'blocked_after_boundary',
@@ -146,7 +131,7 @@ export function createC1Integrator(
       try {
         return await publisher.runExclusive(async (session) => {
           const projectRoot = store.paths.projectRoot
-          const oldTarget = await git(projectRoot, ['rev-parse', HOPI_RELEASE_REF])
+          const oldTarget = await git(projectRoot, ['rev-parse', releaseRef])
 
           const snapshot = await session.snapshotSelection(store.paths.publicationRoot, {
             paths: [store.paths.agentsPath, store.paths.preparePath],
@@ -177,7 +162,7 @@ export function createC1Integrator(
           const oldSecondaryTargets = new Map<string, string>()
           for (const repo of projectLayout.repos) {
             if (repo.primary) continue
-            const actual = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+            const actual = await git(repo.integrationRoot, ['rev-parse', releaseRef])
             const documented = repoRelease(currentProject, repo.repoId)
             if (!documented || actual !== documented) {
               return {
@@ -262,7 +247,7 @@ export function createC1Integrator(
           )
           for (const [repoId, expected] of oldSecondaryTargets) {
             const repo = requireLayoutRepo(projectLayout, repoId)
-            const actual = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+            const actual = await git(repo.integrationRoot, ['rev-parse', releaseRef])
             if (actual !== expected) {
               return {
                 kind: 'blocked',
@@ -271,7 +256,7 @@ export function createC1Integrator(
             }
           }
           let recoveredUncertainUpdate = false
-          const move = () => durableUpdateRef(projectRoot, commit, oldTarget)
+          const move = () => durableUpdateRef(projectRoot, releaseRef, commit, oldTarget)
           try {
             if (faultHooks.updateRef) {
               await faultHooks.updateRef({ oldTarget, commit, move })
@@ -279,7 +264,7 @@ export function createC1Integrator(
               await move()
             }
           } catch (error) {
-            const actual = await git(projectRoot, ['rev-parse', HOPI_RELEASE_REF])
+            const actual = await git(projectRoot, ['rev-parse', releaseRef])
             if (actual === oldTarget) {
               return {
                 kind: 'rejected',
@@ -303,6 +288,7 @@ export function createC1Integrator(
             await materializeCommit(projectRoot, oldTarget, commit)
             await ensureMaterializedCommit(
               requireLayoutRepo(projectLayout, projectLayout.primaryRepoId),
+              releaseRef,
               commit,
             )
             await faultHooks.beforeSecondaryProjection?.(commit)
@@ -312,12 +298,7 @@ export function createC1Integrator(
               nextProject,
               faultHooks,
             )
-            const deliveryIssues = await materializeDeliveryProjections(
-              projectLayout,
-              nextProject,
-              commit,
-            )
-            return { kind: 'integrated', commit, recoveredUncertainUpdate, deliveryIssues }
+            return { kind: 'integrated', commit, recoveredUncertainUpdate }
           } catch (error) {
             return {
               kind: 'blocked_after_boundary',
@@ -335,6 +316,7 @@ export function createC1Integrator(
 
 function normalizeProjectLayout(store: GoalPackageStore, layout?: C1ProjectLayout) {
   const candidate: C1ProjectLayout = layout ?? {
+    projectId: store.paths.projectId,
     primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
     repos: [
       {
@@ -594,7 +576,8 @@ async function recoverProjectProjection(
   faultHooks: C1FaultHooks,
 ) {
   const primary = requireLayoutRepo(layout, layout.primaryRepoId)
-  const primaryTarget = await git(primary.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const releaseRef = projectReleaseRef(layout.projectId)
+  const primaryTarget = await git(primary.integrationRoot, ['rev-parse', releaseRef])
   if (primaryTarget !== commit) {
     throw new C1IntegrationError(`Primary release no longer points at existing C1 ${commit}`)
   }
@@ -602,7 +585,7 @@ async function recoverProjectProjection(
   if (primaryHead !== commit) {
     await materializeCommit(primary.integrationRoot, primaryHead, commit)
   }
-  await ensureMaterializedCommit(primary, commit)
+  await ensureMaterializedCommit(primary, releaseRef, commit)
 
   const nextProject = await readProjectDocumentAt(
     primary.integrationRoot,
@@ -630,15 +613,15 @@ async function recoverProjectProjection(
       const parentResult = await gitResult(repo.integrationRoot, ['rev-parse', `${desired}^`])
       expected = parentResult.exitCode === 0 ? parentResult.stdout : undefined
     }
-    await materializeSecondaryRepo(repo, expected ?? null, desired)
+    await materializeSecondaryRepo(repo, releaseRef, expected ?? null, desired)
     await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
   }
-  return materializeDeliveryProjections(layout, nextProject, commit)
 }
 
 export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout) {
   const primary = requireLayoutRepo(layout, layout.primaryRepoId)
-  const target = await git(primary.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const releaseRef = projectReleaseRef(layout.projectId)
+  const target = await git(primary.integrationRoot, ['rev-parse', releaseRef])
   const [targetTree, initialIndexTree] = await Promise.all([
     git(primary.integrationRoot, ['show', '-s', '--format=%T', target]),
     git(primary.integrationRoot, ['write-tree']),
@@ -691,124 +674,8 @@ export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout)
       const componentParent = await gitResult(repo.integrationRoot, ['rev-parse', `${desired}^`])
       expected = componentParent.exitCode === 0 ? componentParent.stdout : undefined
     }
-    await materializeSecondaryRepo(repo, expected ?? null, desired)
+    await materializeSecondaryRepo(repo, releaseRef, expected ?? null, desired)
   }
-  return materializeDeliveryProjections(layout, currentProject, target)
-}
-
-async function materializeDeliveryProjections(
-  layout: C1ProjectLayout,
-  project: ProjectDocument,
-  primaryCommit: string,
-): Promise<DeliveryProjectionIssue[]> {
-  const issues: DeliveryProjectionIssue[] = []
-  for (const repo of layout.repos) {
-    if (!repo.checkoutRoot && !repo.deliveryBranch) continue
-    if (!repo.checkoutRoot || !repo.deliveryBranch) {
-      throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
-    }
-    const desired = repo.primary ? primaryCommit : repoRelease(project, repo.repoId)
-    if (!desired) throw new C1IntegrationError(`Repo ${repo.repoId} has no delivery commit`)
-    const issue = await materializeDeliveryCheckout(repo, desired)
-    if (issue) issues.push({ repoId: repo.repoId, reason: issue })
-  }
-  return issues
-}
-
-async function materializeDeliveryCheckout(repo: C1ProjectRepo, desired: string) {
-  const state = await inspectDeliveryProjection(repo, desired)
-  if (state.status === 'current') return null
-  if (!state.canFastForward) return state.reason
-
-  const checkoutRoot = repo.checkoutRoot
-  const deliveryBranch = repo.deliveryBranch
-  if (!checkoutRoot || !deliveryBranch) {
-    throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
-  }
-  const merge = await gitResult(checkoutRoot, [
-    '-c',
-    'core.hooksPath=/dev/null',
-    'merge',
-    '--ff-only',
-    '--no-edit',
-    desired,
-  ])
-  if (merge.exitCode !== 0) {
-    return `Repo ${repo.repoId} delivery fast-forward failed: ${merge.stderr || merge.stdout}`
-  }
-
-  const materialized = await inspectDeliveryProjection(repo, desired)
-  if (materialized.status !== 'current') {
-    return `Repo ${repo.repoId} delivery checkout does not exactly materialize ${desired}: ${materialized.reason}`
-  }
-  return null
-}
-
-export async function inspectDeliveryProjection(
-  repo: C1ProjectRepo,
-  desired: string,
-): Promise<DeliveryProjectionStatus> {
-  const checkoutRoot = repo.checkoutRoot
-  const deliveryBranch = repo.deliveryBranch
-  if (!checkoutRoot || !deliveryBranch) {
-    throw new C1IntegrationError(`Repo ${repo.repoId} has an incomplete delivery binding`)
-  }
-  const [managedCommon, checkoutCommon] = await Promise.all([
-    gitCommonDir(repo.integrationRoot),
-    gitCommonDir(checkoutRoot),
-  ])
-  if (managedCommon !== checkoutCommon) {
-    throw new C1IntegrationError(
-      `Repo ${repo.repoId} delivery checkout belongs to another Git Repo`,
-    )
-  }
-
-  const current = await git(checkoutRoot, ['rev-parse', 'HEAD'])
-  const branch = await gitResult(checkoutRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
-  if (branch.exitCode !== 0 || branch.stdout !== deliveryBranch) {
-    return {
-      status: 'pending',
-      commit: current,
-      reason: `Repo ${repo.repoId} delivery checkout is on ${branch.stdout || 'detached HEAD'}, expected ${deliveryBranch}`,
-      canFastForward: false,
-    }
-  }
-  const status = await git(checkoutRoot, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all',
-  ])
-  if (status) {
-    return {
-      status: 'pending',
-      commit: current,
-      reason: `Repo ${repo.repoId} delivery checkout is dirty`,
-      canFastForward: false,
-    }
-  }
-  if (current === desired) return { status: 'current', commit: current }
-
-  const ancestor = await gitResult(checkoutRoot, ['merge-base', '--is-ancestor', current, desired])
-  if (ancestor.exitCode !== 0) {
-    return {
-      status: 'pending',
-      commit: current,
-      reason: `Repo ${repo.repoId} delivery branch ${deliveryBranch} cannot fast-forward to ${desired}`,
-      canFastForward: false,
-    }
-  }
-  return {
-    status: 'pending',
-    commit: current,
-    reason: `Repo ${repo.repoId} delivery checkout can fast-forward to ${desired}`,
-    canFastForward: true,
-  }
-}
-
-async function gitCommonDir(cwd: string) {
-  const common = await git(cwd, ['rev-parse', '--git-common-dir'])
-  return realpath(resolve(cwd, common))
 }
 
 async function materializeSecondaryProjections(
@@ -824,17 +691,18 @@ async function materializeSecondaryProjections(
     if (!desired || !expected) {
       throw new C1IntegrationError(`Cannot project Repo ${repo.repoId} without release commits`)
     }
-    await materializeSecondaryRepo(repo, expected, desired)
+    await materializeSecondaryRepo(repo, projectReleaseRef(layout.projectId), expected, desired)
     await faultHooks.afterSecondaryProjection?.(repo.repoId, desired)
   }
 }
 
 async function materializeSecondaryRepo(
   repo: C1ProjectRepo,
+  releaseRef: string,
   expectedOld: string | null,
   desired: string,
 ) {
-  const current = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+  const current = await git(repo.integrationRoot, ['rev-parse', releaseRef])
   const [indexTree, desiredTree, expectedOldTree] = await Promise.all([
     git(repo.integrationRoot, ['write-tree']),
     git(repo.integrationRoot, ['show', '-s', '--format=%T', desired]),
@@ -854,17 +722,17 @@ async function materializeSecondaryRepo(
         `Repo ${repo.repoId} release is ${current}, expected ${expectedOld ?? desired} or ${desired}`,
       )
     }
-    await durableUpdateRef(repo.integrationRoot, desired, expectedOld)
+    await durableUpdateRef(repo.integrationRoot, releaseRef, desired, expectedOld)
     await durabilitySync(repo.integrationRoot)
   }
   if (!materializedCommit) {
-    await ensureMaterializedCommit(repo, desired)
+    await ensureMaterializedCommit(repo, releaseRef, desired)
     return
   }
   if (materializedCommit !== desired) {
     await materializeCommit(repo.integrationRoot, materializedCommit, desired)
   }
-  await ensureMaterializedCommit(repo, desired)
+  await ensureMaterializedCommit(repo, releaseRef, desired)
 }
 
 async function readProjectDocumentAt(repoRoot: string, commit: string, primaryRepoId: string) {
@@ -995,8 +863,13 @@ async function createIntegrationCommit(
   )
 }
 
-async function durableUpdateRef(projectRoot: string, commit: string, oldTarget: string) {
-  await durableGit(projectRoot, ['update-ref', HOPI_RELEASE_REF, commit, oldTarget])
+async function durableUpdateRef(
+  projectRoot: string,
+  releaseRef: string,
+  commit: string,
+  oldTarget: string,
+) {
+  await durableGit(projectRoot, ['update-ref', releaseRef, commit, oldTarget])
 }
 
 async function durabilitySync(projectRoot: string) {
@@ -1047,7 +920,7 @@ async function materializeCommit(projectRoot: string, oldTarget: string, commit:
   await git(projectRoot, ['read-tree', commit])
 }
 
-async function ensureMaterializedCommit(repo: C1ProjectRepo, commit: string) {
+async function ensureMaterializedCommit(repo: C1ProjectRepo, releaseRef: string, commit: string) {
   try {
     await validateMaterializedCommit(repo, commit)
     return
@@ -1055,7 +928,7 @@ async function ensureMaterializedCommit(repo: C1ProjectRepo, commit: string) {
     if (!(initialError instanceof ManagedIntegrationDriftError)) throw initialError
     const recoveryPath = await archiveManagedIntegrationDrift(repo, commit)
     try {
-      await rematerializeManagedIntegration(repo, commit)
+      await rematerializeManagedIntegration(repo, releaseRef, commit)
       await validateMaterializedCommit(repo, commit)
     } catch (recoveryError) {
       throw new C1IntegrationError(
@@ -1160,7 +1033,11 @@ async function archiveManagedIntegrationDrift(
   return recoveryPath
 }
 
-async function rematerializeManagedIntegration(repo: C1ProjectRepo, commit: string) {
+async function rematerializeManagedIntegration(
+  repo: C1ProjectRepo,
+  releaseRef: string,
+  commit: string,
+) {
   const projectRoot = resolve(repo.integrationRoot)
   const [tracked, untracked] = await Promise.all([
     gitBytes(projectRoot, ['ls-files', '-z']),
@@ -1172,7 +1049,7 @@ async function rematerializeManagedIntegration(repo: C1ProjectRepo, commit: stri
       force: true,
     })
   }
-  await git(projectRoot, ['symbolic-ref', 'HEAD', HOPI_RELEASE_REF])
+  await git(projectRoot, ['symbolic-ref', 'HEAD', releaseRef])
   await git(projectRoot, ['read-tree', commit])
   await git(projectRoot, ['checkout-index', '--all', '--force'])
 }
@@ -1359,7 +1236,7 @@ export interface IntegrationRecord {
   producerRun: string | null
 }
 
-export async function listIntegrationRecords(projectRoot: string, target = HOPI_RELEASE_REF) {
+export async function listIntegrationRecords(projectRoot: string, target: string) {
   const bytes = await gitBytes(projectRoot, ['log', target, '--format=%H%x00%B%x00'])
   const fields = bytes.toString().split('\0')
   const records: IntegrationRecord[] = []

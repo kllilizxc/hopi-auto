@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../src/domain/project'
+import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createC1Integrator, findIntegrationCommits } from '../src/runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../src/runtime/completionVerifier'
@@ -15,6 +15,7 @@ import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
+const HOPI_RELEASE_REF = projectReleaseRef('project-1')
 
 afterEach(async () => {
   await Promise.all(
@@ -23,7 +24,7 @@ afterEach(async () => {
 })
 
 describe('C1Integrator', () => {
-  test('moves hopi/release, materializes C1, and fast-forwards the delivery checkout', async () => {
+  test('moves the Project release, materializes C1, and leaves the selected checkout unchanged', async () => {
     const fixture = await createFixture()
     const beforeUser = await checkoutSnapshot(fixture.repoRoot)
     const prepared = await fixture.prepareReviewer('run-review')
@@ -46,17 +47,12 @@ describe('C1Integrator', () => {
     expect(
       await git(fixture.projectRoot, ['show', '-s', '--format=%B', integrated.commit]),
     ).toContain('HOPI-Work-Ref: project:project-1/goal:goal-1/work:W-1')
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual({
-      head: integrated.commit,
-      branch: beforeUser.branch,
-      status: '',
-    })
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(beforeUser)
 
     const repeated = await fixture.integrator.integrate(prepared.integrationInput)
     expect(repeated).toEqual({
       kind: 'already_integrated',
       commit: integrated.commit,
-      deliveryIssues: [],
     })
   })
 
@@ -156,7 +152,7 @@ describe('C1Integrator', () => {
     )
   })
 
-  test('keeps a dirty delivery checkout pending without blocking C1 and converges later', async () => {
+  test('never changes a dirty selected checkout', async () => {
     const fixture = await createFixture()
     const prepared = await fixture.prepareReviewer('run-dirty-delivery')
     await Bun.write(join(fixture.repoRoot, 'local.txt'), 'local work\n')
@@ -166,38 +162,48 @@ describe('C1Integrator', () => {
 
     expect(integrated.kind).toBe('integrated')
     if (integrated.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(integrated.deliveryIssues).toEqual([
-      { repoId: 'primary', reason: 'Repo primary delivery checkout is dirty' },
-    ])
     expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
     expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(integrated.commit)
     expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
       'done',
     )
 
-    await rm(join(fixture.repoRoot, 'local.txt'))
     const recovered = await fixture.integrator.integrate(prepared.integrationInput)
 
     expect(recovered).toEqual({
       kind: 'already_integrated',
       commit: integrated.commit,
-      deliveryIssues: [],
     })
-    expect(await git(fixture.repoRoot, ['rev-parse', 'HEAD'])).toBe(integrated.commit)
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
   })
 
-  test('leaves a switched delivery checkout pending without blocking C1', async () => {
+  test('never changes detached selected checkout index or working-tree bytes', async () => {
     const fixture = await createFixture()
     const prepared = await fixture.prepareReviewer('run-switched-delivery')
-    await git(fixture.repoRoot, ['switch', '-c', 'local-experiment'])
+    await git(fixture.repoRoot, ['switch', '--detach'])
+    await Bun.write(join(fixture.repoRoot, 'README.md'), '# Staged locally\n')
+    await git(fixture.repoRoot, ['add', 'README.md'])
+    await Bun.write(join(fixture.repoRoot, 'README.md'), '# Working tree locally\n')
+    const localBytes = Uint8Array.from([0, 255, 1, 254, 2])
+    await Bun.write(join(fixture.repoRoot, 'local.bin'), localBytes)
+    const before = await checkoutSnapshot(fixture.repoRoot)
+    const stagedBefore = await git(fixture.repoRoot, ['show', ':README.md'])
+    const workingBefore = new Uint8Array(
+      await Bun.file(join(fixture.repoRoot, 'README.md')).arrayBuffer(),
+    )
 
     const result = await fixture.integrator.integrate(prepared.integrationInput)
 
     expect(result.kind).toBe('integrated')
     if (result.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(result.deliveryIssues).toHaveLength(1)
-    expect(result.deliveryIssues[0]?.reason).toContain('expected main')
-    expect(await git(fixture.repoRoot, ['branch', '--show-current'])).toBe('local-experiment')
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
+    expect(await git(fixture.repoRoot, ['show', ':README.md'])).toBe(stagedBefore)
+    expect(
+      new Uint8Array(await Bun.file(join(fixture.repoRoot, 'README.md')).arrayBuffer()),
+    ).toEqual(workingBefore)
+    expect(
+      new Uint8Array(await Bun.file(join(fixture.repoRoot, 'local.bin')).arrayBuffer()),
+    ).toEqual(localBytes)
   })
 })
 
@@ -278,12 +284,11 @@ async function createFixture() {
     publisher,
     () => new Date('2026-07-11T00:00:00Z'),
     {
+      projectId: linked.projectId,
       primaryRepoId: linked.primaryRepoId,
       repos: linked.repos.map((repo) => ({
         repoId: repo.repoId,
         integrationRoot: repo.integrationRoot,
-        checkoutRoot: repo.repoPath,
-        deliveryBranch: repo.deliveryBranch,
         projectPath: repo.projectPath,
         primary: repo.primary,
       })),

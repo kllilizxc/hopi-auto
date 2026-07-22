@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { HOPI_RELEASE_REF } from '../src/domain/project'
+import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { CoordinatorBootError, bootstrapCoordinator } from '../src/runtime/coordinatorBootstrap'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
@@ -10,6 +10,7 @@ import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspace
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'coordinator-bootstrap')
+const HOPI_RELEASE_REF = projectReleaseRef('P-1')
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -21,7 +22,7 @@ afterEach(async () => {
 })
 
 describe('bootstrapCoordinator', () => {
-  test('keeps a dirty delivery checkout unchanged without blocking the Project', async () => {
+  test('keeps a dirty selected checkout unchanged without blocking the Project', async () => {
     const fixture = await setup()
     await Bun.write(join(fixture.repoRoot, 'local.txt'), 'dirty user checkout\n')
     const legitimate = join(fixture.projectRoot, '.hopi', 'notes.tmp.keep')
@@ -101,7 +102,7 @@ describe('bootstrapCoordinator', () => {
     ).toHaveLength(1)
   })
 
-  test('repairs a regressed managed ref without blocking on a newer delivery checkout', async () => {
+  test('repairs a regressed managed ref without consulting a newer selected checkout', async () => {
     const fixture = await setup(true)
     const deliveryHead = await git(fixture.repoRoot, ['rev-parse', 'HEAD'])
     const parent = await git(fixture.projectRoot, ['rev-parse', `${HOPI_RELEASE_REF}^`])

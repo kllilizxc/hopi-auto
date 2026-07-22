@@ -28,7 +28,7 @@ if (mode === 'main') {
     'hopi_manage_project',
     {
       description:
-        'Create a Project, add one Repo, or partially rebind moved Repos. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
+        'Create a Project, add one Repo binding, or partially rebind moved Repos. A Git Repo may be bound read-write by several Projects; only duplicate Git identities inside one Project conflict. The selected checkout locates Git and is never changed by delivery. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
       inputSchema: assistantMcpToolSchemas.hopi_manage_project,
     },
     (args) => callTool('hopi_manage_project', args),

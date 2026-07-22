@@ -3,12 +3,14 @@ import { join, resolve } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { parseInboxEventDocument } from '../../src/domain/assistantWorkspaceDocuments'
+import { projectReleaseRef } from '../../src/domain/project'
 import {
   type ProjectCodingDefaults,
   type ProjectCodingDefaultsInput,
   normalizeProjectCodingDefaults,
 } from '../../src/domain/projectCodingDefaults'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
 import {
   type TestRunClaim,
   type TestRunCodeProvenance,
@@ -1874,21 +1876,25 @@ export async function checkoutSnapshot(repoRoot: string) {
   }
 }
 
-export async function assertAcceptedDelivery(
+export async function assertAcceptedRelease(
   repoRoot: string,
+  projectId: string,
   before: { head: string; branch: string; status: string },
 ) {
   const after = await checkoutSnapshot(repoRoot)
-  if (after.branch !== before.branch) {
-    throw new Error(`Accepted delivery switched branch from ${before.branch} to ${after.branch}`)
+  if (JSON.stringify(after) !== JSON.stringify(before)) {
+    throw new Error(`Accepted release changed the selected checkout for Project ${projectId}`)
   }
-  if (after.status !== '') throw new Error('Accepted delivery left the checkout dirty')
-  if (after.head === before.head) throw new Error('Accepted delivery did not advance the checkout')
-  const release = await gitOutput(repoRoot, ['rev-parse', 'refs/heads/hopi/release'])
-  if (after.head !== release) {
-    throw new Error(`Accepted delivery HEAD ${after.head} does not equal hopi/release ${release}`)
+  const integrationRoot = managedRepoWorktreePaths(repoRoot, projectId).integration
+  const [integrationHead, release] = await Promise.all([
+    gitOutput(integrationRoot, ['rev-parse', 'HEAD']),
+    gitOutput(repoRoot, ['rev-parse', projectReleaseRef(projectId)]),
+  ])
+  if (integrationHead !== release) {
+    throw new Error(
+      `Managed integration HEAD ${integrationHead} does not equal ${projectReleaseRef(projectId)} ${release}`,
+    )
   }
-  await gitOutput(repoRoot, ['merge-base', '--is-ancestor', before.head, after.head])
   return after
 }
 

@@ -205,12 +205,12 @@ or checkpoint not to be used at all, Planner creates a distinct Engineering Work
 the monotonic DAG through it. Coordinator never resets the old stable branch and HOPI adds no
 `freshWorktree`, repair mode, or branch-generation field.
 
-Each Project also owns the fixed HOPI-managed integration branch `hopi/release` and one stable
-integration worktree. Task worktrees branch from that target and C1 moves only that target. Managed
-worktrees live together under a Repo-adjacent `.hopi-worktrees/<repo-name>/` root, never inside the
-selected checkout or Assistant-home state. The selected checkout remains non-canonical, but its
-branch recorded at link time is the delivery projection: after C1 and every managed Repo projection
-are verified, Coordinator may advance that clean branch by fast-forward only.
+Each Project-to-Repo binding owns the derived HOPI-managed integration branch
+`hopi/project/<projectId>/release` and one stable integration worktree. Task worktrees branch from
+that target and C1 moves only that target. Managed worktrees live under the Repo-adjacent
+`.hopi-worktrees/<repo-name>/projects/<projectId>/` root, never inside the selected checkout or
+Assistant-home state. The selected checkout only locates the Git object database and initial HEAD;
+Coordinator never changes its branch, index, or working tree.
 
 ### 6. Prefer one publisher over a lock hierarchy
 
@@ -303,16 +303,17 @@ reviewed planning path.
 
 #### Project and Repo boundary
 
-`Project` is the user's durable product context; `Repo` is a Git object and ref namespace. A Project
-owns one or more Repos with stable `repoId` values and exactly one `primaryRepoId`. The primary Repo
+`Project` is the user's durable product context; `Repo` is a Git object database shared by one or
+more Project bindings. A Project owns one or more Repo bindings with stable `repoId` values and
+exactly one `primaryRepoId`. The primary Repo binding
 contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md`, preparation,
-and Preview entrypoints. Every Repo has a HOPI-owned `hopi/release` ref and managed integration
-worktree. The selected checkout is never a canonical publication root; it is a guarded delivery
-projection of the accepted release.
+and Preview entrypoints. Every binding has a HOPI-owned `hopi/project/<projectId>/release` ref and
+managed integration worktree. The selected checkout is never a canonical publication or delivery
+root.
 
 Engineering Work explicitly names the Repos in its source workspace. Goal, Work, Kanban, and the
 fixed responsibility passes remain Project-scoped rather than multiplying per Repo. The primary
-`hopi/release` ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
+Project-qualified release ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
 for each secondary Repo, whose managed refs and worktrees are recoverable projections after C1.
 The complete protocol belongs to [the multi-Repo design](./mvp_multi_repo.md).
 
@@ -370,8 +371,8 @@ The authority is split by concern rather than repeated in one large document:
   a portable Goal asset whose path and purpose live in editable design Markdown.
 - Reflection proactively assesses meaningful state changes but can only hand a brief to that same
   Assistant; it never mutates state or appears as another product thread.
-- Project owns stable context, one primary Repo, and one or more HOPI-managed `hopi/release`
-  worktrees; it has no workflow lifecycle.
+- Project owns stable context, one primary Repo binding, and one or more Project-qualified managed
+  release worktrees; a Git Repo may participate in several Projects.
 - Goal owns the outcome contract and lifecycle.
 - Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
   sparse Work DAG, and makes the final semantic completion assessment.
@@ -493,7 +494,7 @@ The MVP does not include:
 - per-project, per-Goal, or target-aware publication locks
 - switching or removing the primary Repo after Project creation
 - a general cross-root transaction layer outside the fixed primary-C1 Repo projection protocol
-- importing uncommitted checkout content, rewriting a delivery branch, or delivering by merge,
+- importing uncommitted checkout content or rewriting a selected checkout by branch switch, merge,
   rebase, reset, force update, or conflict resolution
 - one writable project attached to multiple active HOPI homes
 - child-process reattachment
@@ -539,8 +540,8 @@ adapter-config schema migration; neither can write an old authority.
 
 ## Completed Delivery Order
 
-1. Establish `{ projectId, repoPath, deliveryBranch }` linking, the HOPI-owned `hopi/release` branch,
-   the Repo-adjacent stable integration worktree, and guarded delivery fast-forward.
+1. Establish `{ projectId, repoPath }` bindings, Project-qualified HOPI release branches, and
+   Repo-adjacent stable integration worktrees without mutating selected checkouts.
 2. Implement the single Coordinator instance lock, global publication mutex, single-gate
    `publish(bundle)` contract, and startup validation against that managed root.
 3. Add the fixed three-pass profile, canonical context bundles, root `AGENTS.md` bootstrap,

@@ -6,7 +6,7 @@ import {
   type LiveHarness,
   type LiveState,
   type StateRecorder,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
@@ -200,8 +200,8 @@ try {
   assert.notEqual((await prepare.stat()).mode & 0o111, 0)
   const reposDoc = await Bun.file(join(primaryIntegration, '.hopi', 'docs', 'repos.md')).text()
   assert.ok(reposDoc.includes(PRIMARY_REPO_ID) && reposDoc.includes(SECONDARY_REPO_ID))
-  await assertAcceptedDelivery(primaryRoot, primaryBefore)
-  await assertAcceptedDelivery(secondaryRoot, secondaryBefore)
+  await assertAcceptedRelease(primaryRoot, PROJECT_ID, primaryBefore)
+  await assertAcceptedRelease(secondaryRoot, PROJECT_ID, secondaryBefore)
   assert.deepEqual(recorder.violations, [])
   assert.deepEqual(await readPendingInboxEvents(harness.homeRoot), [])
 

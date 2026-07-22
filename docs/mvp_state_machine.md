@@ -56,11 +56,10 @@ Stable identity is explicit: event `(homeId, eventId)`, Goal `(projectId, goalId
 Attention `(projectId, goalId, attentionId)`, and workspace Attention `(homeId, attentionId)`.
 Each Assistant-home project link retains expected `{ projectId, primaryRepoId, repos }`, where every
 Repo owns a stable ID and local path. Agent model settings are Home-wide configuration and are not
-Project or lifecycle state. The selected checkout locates the Repo but is never a canonical root.
-Its symbolic branch at link time is retained as the delivery branch. Coordinator derives
-Repo-adjacent stable integration and task worktrees. A missing, corrupt, or divergent managed
-projection is blocked under the expected identity; delivery-only drift is a nonblocking,
-best-effort projection diagnostic.
+Project or lifecycle state. The selected checkout only locates the Repo and initial HEAD; it is
+never a canonical or delivery root. Coordinator derives Project-qualified Repo-adjacent stable
+integration and task worktrees. A missing, corrupt, or divergent managed projection is blocked
+under the expected binding identity.
 
 ## Publication Boundary
 
@@ -484,15 +483,15 @@ are unchanged, and C1 owns deterministic rebuild or source conflict handling.
 Reviewer is the last model pass. On success, Coordinator performs independent deterministic `C1`
 integration. `C1` contains source and ordinary document changes, integration Evidence, and the Work
 at `done` with its Evidence references. A guarded ref move observed at C1 is the irreversible
-completion gate on HOPI-owned `hopi/release`; success is reported only after durability is
+completion gate on the HOPI-owned Project-qualified release ref; success is reported only after durability is
 confirmed. Work stores no integration-commit field. An update error may return Work to `generate`
 or increment `attempts` only when the ref is verified at its old value. A ref at C1 means Work is
 done and never retries. A missing or inconsistent managed integration worktree blocks the Project;
-the MVP does not reconstruct newer canonical content or repair individual paths automatically. A
-delivery checkout is validated and fast-forwarded only under the recorded branch, clean-tree,
-same-Repo, and ancestry guards. Detailed Git mechanics belong only to the publish protocol ADR.
+the MVP does not reconstruct newer canonical content or repair individual paths automatically.
+Selected user checkouts never participate in integration or recovery. Detailed Git mechanics belong
+only to the publish protocol ADR.
 
-If another independently ordered C1 advances `hopi/release` after Reviewer staging, Coordinator
+If another independently ordered C1 advances the Project release after Reviewer staging, Coordinator
 rebuilds the candidate on that target. A clean merge completes directly; a mechanical conflict is a
 normal pre-boundary rejection. Neither case adds a stale-target state.
 
@@ -555,8 +554,7 @@ runnable.
   reuses project-target Attention; invalid Assistant-home truth fails closed to the supervisor.
 - Ordinary documents provide process-crash recovery. Durable Inbox acknowledgement and the `C1`
   ref are the two stronger persistence boundaries. An inconsistent managed projection blocks the
-  Project; an inconsistent delivery projection remains a nonblocking diagnostic, and neither path
-  destructively mutates the checkout.
+  Project; no path destructively mutates the selected checkout.
 
 ## Derived Goal Kanban
 
@@ -598,7 +596,7 @@ entry; explicit **Pause** and **Resume** remain available on Goal. A separate Di
 deferred beyond MVP.
 
 P2 Preview adds no canonical state. Coordinator starts the reviewed primary Project adapter against
-the complete managed `hopi/release` Repo projection and keeps its process, logs, health, and endpoint
+the complete managed Project release projection and keeps its process, logs, health, and endpoint
 in disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
 Assistant turn carrying the current Project/Goal page context. Assistant reuses current Preview setup

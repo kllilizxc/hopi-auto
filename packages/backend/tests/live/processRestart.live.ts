@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
+import { projectReleaseRef } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { signalProcessGroup } from '../../src/runtime/processGroup'
 import { type TestRunCleanupRegistration, registerTestRunCleanup } from '../testRunArtifact'
 import {
   type LiveGoalDetail,
   type LiveState,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   errorMessage,
   finishTestRun,
@@ -294,7 +295,7 @@ try {
     await gitOutput(integrationRoot, [
       'rev-list',
       '--count',
-      'refs/heads/hopi/release',
+      projectReleaseRef(PROJECT_ID),
       '--grep',
       `project:${PROJECT_ID}/goal:${GOAL_ID}/work:${checkpoint.workId}`,
     ]),
@@ -305,7 +306,7 @@ try {
     "export const protocol = 'v2'\n",
   )
   assert.equal((await runCommand(['bun', 'test'], integrationRoot)).exitCode, 0)
-  await assertAcceptedDelivery(repoRoot, checkout)
+  await assertAcceptedRelease(repoRoot, PROJECT_ID, checkout)
   const browser = await inspectKanban(
     {
       scenario: SCENARIO,

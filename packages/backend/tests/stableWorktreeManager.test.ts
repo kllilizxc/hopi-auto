@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { HOPI_RELEASE_BRANCH } from '../src/domain/project'
+import { projectReleaseBranch } from '../src/domain/project'
 import {
   StableWorktreeSyncError,
   createStableWorktreeManager,
@@ -64,7 +64,7 @@ describe('createStableWorktreeManager', () => {
     expect(await git(prepared.path, ['branch', '--show-current'])).toBe(prepared.branch)
   })
 
-  test('branches from hopi/release without linking canonical .hopi into the task checkout', async () => {
+  test('branches from the Project release without linking canonical .hopi into the task checkout', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     const home = createAssistantHomeStore(homeRoot)
@@ -80,7 +80,7 @@ describe('createStableWorktreeManager', () => {
       workId: 'W-1',
     })
 
-    expect(prepared.baseRef).toBe(HOPI_RELEASE_BRANCH)
+    expect(prepared.baseRef).toBe(projectReleaseBranch('P-1'))
     expect(await checkoutSnapshot(repoPath)).toEqual(before)
     expect(await Bun.file(join(prepared.path, '.hopi', 'project.yml')).exists()).toBe(false)
   })
@@ -138,6 +138,36 @@ describe('createStableWorktreeManager', () => {
     expect(api.path.startsWith(`${primary.path}/`)).toBe(false)
     expect(primary.branch).toBe(api.branch)
     expect(await git(primary.path, ['status', '--porcelain'])).toBe('')
+  })
+
+  test('isolates identical Goal and Work IDs across Projects sharing one Repo', async () => {
+    const homeRoot = join(temporaryRoot, 'home-shared')
+    const repoPath = await createRepo(join(temporaryRoot, 'shared'))
+    const home = createAssistantHomeStore(homeRoot)
+    const firstProject = await home.linkProject({ projectId: 'P-1', repoPath })
+    const secondProject = await home.linkProject({ projectId: 'P-2', repoPath })
+    const manager = createStableWorktreeManager(homeRoot)
+
+    const [first, second] = await Promise.all([
+      manager.prepare({
+        projectRoot: firstProject.integrationRoot,
+        projectId: 'P-1',
+        goalId: 'G-shared',
+        workId: 'W-shared',
+      }),
+      manager.prepare({
+        projectRoot: secondProject.integrationRoot,
+        projectId: 'P-2',
+        goalId: 'G-shared',
+        workId: 'W-shared',
+      }),
+    ])
+    await Bun.write(join(first.path, 'only-p1.txt'), 'P-1 task state\n')
+
+    expect(first.path).not.toBe(second.path)
+    expect(first.branch).toBe('hopi/work/P-1/G-shared/W-shared')
+    expect(second.branch).toBe('hopi/work/P-2/G-shared/W-shared')
+    expect(await Bun.file(join(second.path, 'only-p1.txt')).exists()).toBe(false)
   })
 
   test('rebuilds a disposable checkout from its stable task branch after migration cleanup', async () => {

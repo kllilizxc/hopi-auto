@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import {
   type LiveHarness,
   type LiveState,
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   checkoutSnapshot,
   enterHarnessPhase,
   errorMessage,
@@ -197,7 +197,7 @@ try {
       value.activeRuns.length === 0,
     { timeoutMs: 15 * 60_000, description: 'selected delivery to complete' },
   )
-  await assertAcceptedDelivery(harness.repoRoot, checkoutBefore)
+  await assertAcceptedRelease(harness.repoRoot, PROJECT_ID, checkoutBefore)
   assert.equal(
     (await Bun.file(join(harness.repoRoot, 'src', 'release.ts')).text()).replaceAll('\r\n', '\n'),
     "export const releaseLabel = 'compact'\n",

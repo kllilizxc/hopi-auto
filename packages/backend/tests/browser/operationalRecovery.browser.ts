@@ -16,7 +16,7 @@ import {
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { runStoragePath } from '../../src/runtime/runPaths'
 import {
-  assertAcceptedDelivery,
+  assertAcceptedRelease,
   captureAssistantReply,
   captureCompletionUpdate,
   checkoutSnapshot,
@@ -245,7 +245,7 @@ try {
     assistantRuns.some((run) => run.action === `retried:${blocker.id}`),
     'One explicit resolution and Work retry must recover the exact blocker',
   )
-  const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
+  const checkoutAfter = await assertAcceptedRelease(repoRoot, PROJECT_ID, checkoutBefore)
 
   const evidence = {
     status: 'passed',

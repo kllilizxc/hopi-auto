@@ -8,7 +8,6 @@ import {
   renderAttentionDocument,
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
-import { HOPI_RELEASE_REF } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   ScriptedAssistantRunner,
@@ -152,13 +151,9 @@ test('contracts one ordinary Assistant instruction through Planner, Generator, R
       'export const feature = 2\n',
     )
     expect(await Bun.file(join(repoRoot, 'src', 'feature.ts')).text()).toBe(
-      'export const feature = 2\n',
+      'export const feature = 1\n',
     )
-    expect(await checkoutSnapshot(repoRoot)).toEqual({
-      head: await git(integrationRoot as string, ['rev-parse', HOPI_RELEASE_REF]),
-      branch: checkoutBefore.branch,
-      status: '',
-    })
+    expect(await checkoutSnapshot(repoRoot)).toEqual(checkoutBefore)
   } finally {
     await server?.shutdown()
     await rm(temporaryRoot, { recursive: true, force: true })

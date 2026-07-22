@@ -1401,9 +1401,7 @@ function compactRepoStateIndex(value: unknown) {
   return {
     ...(typeof value.repoId === 'string' ? { repoId: value.repoId } : {}),
     ...(typeof value.projectPath === 'string' ? { projectPath: value.projectPath } : {}),
-    ...(typeof value.deliveryBranch === 'string' ? { deliveryBranch: value.deliveryBranch } : {}),
     ...(typeof value.primary === 'boolean' ? { primary: value.primary } : {}),
-    ...(isRecord(value.delivery) ? { delivery: value.delivery } : {}),
   }
 }
 
@@ -1568,7 +1566,6 @@ function presentProjectTopology(project: LinkedProject) {
         repoId: repo.repoId,
         repoPath: repo.repoPath,
         projectPath: repo.projectPath,
-        deliveryBranch: repo.deliveryBranch,
         primary: repo.primary,
       }))
       .toSorted((left, right) => left.repoId.localeCompare(right.repoId)),

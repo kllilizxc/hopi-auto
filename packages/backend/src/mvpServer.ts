@@ -922,7 +922,6 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         repoId: repo.repoId,
         repoPath: repo.repoPath,
         projectPath: repo.projectPath,
-        deliveryBranch: repo.deliveryBranch,
         integrationRoot: repo.integrationRoot,
         primary: repo.primary,
       })),

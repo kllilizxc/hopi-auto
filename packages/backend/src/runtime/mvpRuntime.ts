@@ -133,12 +133,11 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       linked.projectPath,
     )
     const layout = {
+      projectId: linked.projectId,
       primaryRepoId: linked.primaryRepoId,
       repos: linked.repos.map((repo) => ({
         repoId: repo.repoId,
         integrationRoot: repo.integrationRoot,
-        checkoutRoot: repo.repoPath,
-        deliveryBranch: repo.deliveryBranch,
         projectPath: repo.projectPath,
         primary: repo.primary,
       })),
@@ -196,8 +195,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       repos: project.repos.map((repo) => ({
         repoId: repo.repoId,
         integrationRoot: repo.integrationRoot,
-        checkoutRoot: repo.repoPath,
-        deliveryBranch: repo.deliveryBranch,
         primary: repo.primary,
       })),
       store: project.store,
@@ -300,8 +297,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
         repos: project.repos.map((repo) => ({
           repoId: repo.repoId,
           integrationRoot: repo.integrationRoot,
-          checkoutRoot: repo.repoPath,
-          deliveryBranch: repo.deliveryBranch,
           projectPath: repo.projectPath,
           primary: repo.primary,
         })),
