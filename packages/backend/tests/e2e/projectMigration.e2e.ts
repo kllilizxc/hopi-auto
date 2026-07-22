@@ -105,10 +105,13 @@ try {
     'Repository paths must be rebound after the machine move.',
   )
   await runtime.workspace.markAttentionNotified(attention.attributes.id)
-  await runtime.assistantConversation.writeSession({
-    transport: 'codex',
-    sessionId: 'migration-session',
-  })
+  await runtime.assistantConversation.writeSession(
+    { kind: 'project', projectId: PROJECT_ID },
+    {
+      transport: 'codex',
+      sessionId: 'migration-session',
+    },
+  )
   const sourceHomeDocument = await runtime.home.readHome()
   const sourceGoalStore = createGoalPackageStore(
     linked.integrationRoot,
@@ -206,7 +209,10 @@ try {
   const migratedPackage = await migratedGoalStore.readPackage(GOAL_ID)
   const migratedRequest = await migratedWorkspace.readEvent(request.attributes.id)
   const migratedAttachment = await migratedWorkspace.resolveAttachment(attachmentRef)
-  const migratedSession = await createAssistantConversationStore(movedHome).readSession()
+  const migratedSession = await createAssistantConversationStore(movedHome).readSession({
+    kind: 'project',
+    projectId: PROJECT_ID,
+  })
 
   assert.equal(migratedHomeDocument.homeId, sourceHomeDocument.homeId)
   assert.equal(migratedPackage.goal.attributes.id, GOAL_ID)

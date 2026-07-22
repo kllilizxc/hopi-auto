@@ -392,7 +392,7 @@ describe('MVP server', () => {
     })
     let handled = false
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      const feed = await request(base, '/api/assistant/feed?limit=20')
+      const feed = await request(base, '/api/assistant/feed?projectId=P-1&limit=20')
       const event = (feed.items as Array<{ event?: { id: string; status: string } }>).find(
         (item) => item.event?.id === submitted.eventId,
       )?.event
@@ -538,7 +538,9 @@ describe('MVP server', () => {
     expect(goalVisible).toBe(true)
     expect(speakingRuns).toBe(1)
     expect(
-      await Bun.file(join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')).json(),
+      await Bun.file(
+        join(homeRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'home.json'),
+      ).json(),
     ).toMatchObject({ transport: 'codex', sessionId: 'session-after-project-change' })
   })
 
@@ -760,7 +762,14 @@ describe('MVP server', () => {
       body: { projectId: 'P-1', repoPath: repoRoot },
     })
     expect(linkedState).toMatchObject({ projects: [{ projectId: 'P-1' }] })
-    const assistantSessionPath = join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')
+    const assistantSessionPath = join(
+      homeRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'sessions',
+      'home.json',
+    )
     await mkdir(join(assistantSessionPath, '..'), { recursive: true })
     await Bun.write(
       assistantSessionPath,
@@ -967,7 +976,10 @@ describe('MVP server', () => {
       body: expect.any(String),
     })
     expect(await request(base, '/api/state?view=shell')).toMatchObject({ attentions: [] })
-    const assistantAttentionProjection = await request(base, '/api/assistant/attentions')
+    const assistantAttentionProjection = await request(
+      base,
+      '/api/assistant/attentions?projectId=P-1',
+    )
     expect(assistantAttentionProjection.attentions).toHaveLength(2)
     expect(
       (assistantAttentionProjection.attentions as Array<{ id: string; body: string }>).find(
@@ -1152,12 +1164,12 @@ describe('MVP server', () => {
       ],
     })
     expect(state.events).toBeUndefined()
-    const assistantFeed = await request(base, '/api/assistant/feed')
+    const assistantFeed = await request(base, '/api/assistant/feed?projectId=P-1')
     const assistantEntries = assistantFeed.items as Array<{
       kind: string
       event?: { id: string }
     }>
-    expect(assistantEntries).toHaveLength(6)
+    expect(assistantEntries).toHaveLength(5)
     expect(assistantEntries.find((entry) => entry.event?.id === message.eventId)).toMatchObject({
       kind: 'event',
       event: {
@@ -1182,7 +1194,7 @@ describe('MVP server', () => {
         context: { projectId: 'P-1', goalId: 'G-1' },
       },
     })
-    const repairFeed = await request(base, '/api/assistant/feed')
+    const repairFeed = await request(base, '/api/assistant/feed?projectId=P-1')
     const repairEntries = repairFeed.items as Array<{
       event?: {
         id: string
@@ -1587,7 +1599,7 @@ describe('MVP server', () => {
       },
     })
 
-    const feed = await request(base, '/api/assistant/feed')
+    const feed = await request(base, '/api/assistant/feed?projectId=P-1')
     const items = feed.items as Array<{
       kind: string
       event?: { id: string }
@@ -1618,7 +1630,7 @@ describe('MVP server', () => {
         },
       },
     })
-    const changes = await request(base, '/api/assistant/feed/changes')
+    const changes = await request(base, '/api/assistant/feed/changes?projectId=P-1')
     expect(changes.removedIds).toEqual(
       expect.arrayContaining([
         'completion:project:P-1/goal:G-1/attention:A-complete',
@@ -1727,6 +1739,58 @@ describe('MVP server', () => {
       activity: null,
       syncCursor: '2026-07-16T09:03:00.000Z',
     })
+  })
+
+  test('scopes Assistant Inbox, Feed, and incremental cursors by Home or Project page', async () => {
+    const homeRoot = join(temporaryRoot, 'assistant-scope-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'assistant-scope-repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    const homeEvent = await workspace.receiveEvent({
+      eventId: 'EV-home-scope',
+      content: 'Home message.',
+      receivedAt: new Date('2026-07-16T08:00:00.000Z'),
+    })
+    await workspace.handleEvent(homeEvent.attributes.id, {
+      reply: 'Home reply.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T08:00:01.000Z'),
+    })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const initialHome = await request(base, '/api/assistant/feed')
+
+    const projectReceipt = await request(base, '/api/inbox', {
+      method: 'POST',
+      body: { content: 'Project-only message.', context: { projectId: 'P-1' } },
+    })
+    const invalidGoalOnly = await fetch(`${base}/api/inbox`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'Invalid.', context: { goalId: 'G-1' } }),
+    })
+    expect(invalidGoalOnly.status).toBe(400)
+
+    const homeChanges = await request(
+      base,
+      `/api/assistant/feed/changes?cursor=${encodeURIComponent(String(initialHome.syncCursor))}`,
+    )
+    expect((homeChanges.items as Array<{ id: string }>).map(({ id }) => id)).not.toContain(
+      `event:${projectReceipt.eventId}`,
+    )
+    expect(Date.parse(String(homeChanges.syncCursor))).toBeGreaterThan(
+      Date.parse(String(initialHome.syncCursor)),
+    )
+    const projectFeed = await request(base, '/api/assistant/feed?projectId=P-1')
+    expect((projectFeed.items as Array<{ id: string }>).map(({ id }) => id)).toContain(
+      `event:${projectReceipt.eventId}`,
+    )
+    expect((initialHome.items as Array<{ id: string }>).map(({ id }) => id)).toEqual([
+      'event:EV-home-scope',
+    ])
   })
 
   test('shows hidden Reflection speaking work only as conversation Thinking activity', async () => {

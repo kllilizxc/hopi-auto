@@ -535,8 +535,9 @@ The production path is the MVP path:
   entry remains `packages/frontend/src/main.tsx`. The same server must serve every JS, CSS, and asset
   URL emitted into that HTML; an HTML shell without loadable assets is not a working UI.
 - `RoleRunner` is the only responsibility runner; vendor transports are adapters beneath it.
-- Assistant runs one persistent conversation through its Home-configured vendor adapter and reaches canonical state only through HOPI
-  tools; it has no staged-diff or model-produced Action protocol.
+- Assistant keeps one Home conversation and one conversation per Project through its Home-configured
+  vendor adapter, while one Home-wide queue serializes speech. It reaches canonical state only through
+  HOPI tools and has no staged-diff or model-produced Action protocol.
 - canonical Assistant-home and Project documents, one `PublicationCoordinator`, stable Work
   worktrees, and deterministic C1 own control and integration.
 - one built-in profile fixes Planner, Generator, Reviewer, retry, and concurrency behavior.
@@ -559,8 +560,8 @@ adapter-config schema migration; neither can write an old authority.
    deterministic Coordinator integration, and the single recovery counter.
 4. Make task branches stable and derive branch and checkpoint facts from qualified Work identity
    and task branch HEAD.
-5. Introduce global two-state Inbox turns, one persistent vendor-qualified session, live events, and HOPI
-   control tools.
+5. Introduce global two-state Inbox turns, Home/Project vendor-qualified session caches, live events,
+   and HOPI control tools.
 6. Add `contractRevision`, semantic guards, and singleton Planning Work.
 7. Introduce bounded Goal packages, single-target Attention, and per-Work documents.
 8. Make Assistant, Project, Goal, and derived Goal Kanban the primary UI; expose Pause or Resume

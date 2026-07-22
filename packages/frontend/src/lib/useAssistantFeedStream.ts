@@ -23,6 +23,7 @@ interface UseAssistantFeedStreamOptions {
   enabled?: boolean
   refetchInterval?: number | false
   historyPageSize?: number
+  projectId?: string
 }
 
 interface AssistantFeedSyncState {
@@ -36,11 +37,12 @@ export function useAssistantFeedStream({
   enabled = true,
   refetchInterval = false,
   historyPageSize = 10,
+  projectId,
 }: UseAssistantFeedStreamOptions) {
   const queryClient = useQueryClient()
   const historyQueryKey = useMemo(
-    () => ['assistant-feed', 'history', historyPageSize] as const,
-    [historyPageSize],
+    () => ['assistant-feed', projectId ?? 'home', 'history', historyPageSize] as const,
+    [historyPageSize, projectId],
   )
   const historySnapshotKey = messageStreamSnapshotKey(historyQueryKey)
   const persistedHistory = useMemo(
@@ -62,6 +64,7 @@ export function useAssistantFeedStream({
       readAssistantFeed({
         ...(pageParam ? { before: pageParam } : {}),
         limit: historyPageSize,
+        ...(projectId ? { projectId } : {}),
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (page) =>
@@ -88,8 +91,8 @@ export function useAssistantFeedStream({
   }, [initialPage])
 
   const changesQuery = useQuery({
-    queryKey: ['assistant-feed', 'changes'],
-    queryFn: () => readAssistantFeedChanges(cursorRef.current ?? null),
+    queryKey: ['assistant-feed', projectId ?? 'home', 'changes'],
+    queryFn: () => readAssistantFeedChanges(cursorRef.current ?? null, projectId),
     enabled: enabled && syncState.initialized,
     refetchInterval: enabled ? refetchInterval : false,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,

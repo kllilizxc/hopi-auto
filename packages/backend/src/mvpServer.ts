@@ -7,6 +7,11 @@ import {
   type AgentRuntimeEvent,
   isPresentableAgentRuntimeEvent,
 } from './agent/runtimeEvents'
+import {
+  type AssistantConversationScope,
+  assistantConversationScopeKey,
+  assistantEventBelongsToScope,
+} from './assistant/assistantConversationScope'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
@@ -148,16 +153,16 @@ const inboxSchema = z
         replyTo: inboxEventReferenceSchema.optional(),
       })
       .superRefine((context, refinement) => {
-        if (Boolean(context.projectId) !== Boolean(context.goalId)) {
+        if (context.goalId && !context.projectId) {
           refinement.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'projectId and goalId must appear together',
+            message: 'goalId requires projectId',
           })
         }
         if (!context.projectId && !context.attentionRefs?.length) {
           refinement.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'context requires a Goal location or Attention reference',
+            message: 'context requires a Project location or Attention reference',
           })
         }
         if (context.replyTo && !context.attentionRefs?.length) {
@@ -283,13 +288,27 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           }
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed/changes') {
-          return json(await presentAssistantFeedChanges(runtime, readAssistantChangeCursor(url)))
+          return json(
+            await presentAssistantFeedChanges(
+              runtime,
+              readAssistantChangeCursor(url),
+              readAssistantConversationScope(runtime, url),
+            ),
+          )
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/attentions') {
-          return json(await presentAssistantAttentions(runtime))
+          return json(
+            await presentAssistantAttentions(runtime, readAssistantConversationScope(runtime, url)),
+          )
         }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed') {
-          return json(await presentAssistantFeed(runtime, readPageRequest(url, 40, 100)))
+          return json(
+            await presentAssistantFeed(
+              runtime,
+              readPageRequest(url, 40, 100),
+              readAssistantConversationScope(runtime, url),
+            ),
+          )
         }
         if (
           request.method === 'PATCH' &&
@@ -477,9 +496,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'POST' && url.pathname === '/api/inbox') {
           const body = await parseInboxRequest(request)
           const context = canonicalInboxContext(body.context)
-          if (body.context?.projectId && body.context.goalId) {
+          if (body.context?.projectId) {
             const project = requireProject(runtime.projects, body.context.projectId)
-            if (!(await project.store.readGoal(body.context.goalId))) {
+            if (body.context.goalId && !(await project.store.readGoal(body.context.goalId))) {
               throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
             }
           }
@@ -960,10 +979,11 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
   }
 }
 
-async function presentAssistantAttentions(runtime: MvpRuntime) {
+async function presentAssistantAttentions(runtime: MvpRuntime, scope: AssistantConversationScope) {
   const workspace = await runtime.workspace.readWorkspace()
   const goalAttentions = []
   for (const project of runtime.projects.values()) {
+    if (scope.kind !== 'project' || project.projectId !== scope.projectId) continue
     let goalIds: string[]
     try {
       goalIds = await project.store.listGoalIds()
@@ -986,12 +1006,14 @@ async function presentAssistantAttentions(runtime: MvpRuntime) {
   }
   return {
     attentions: [
-      ...[...workspace.attentions.values()].map((attention) => ({
-        scope: 'workspace' as const,
-        ...attention.attributes,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        body: attention.body,
-      })),
+      ...(scope.kind === 'home'
+        ? [...workspace.attentions.values()].map((attention) => ({
+            scope: 'workspace' as const,
+            ...attention.attributes,
+            operatorRequest: attention.attributes.operatorRequest ?? null,
+            body: attention.body,
+          }))
+        : []),
       ...goalAttentions.map((attention) => ({ scope: 'goal' as const, ...attention })),
     ],
   }
@@ -1034,10 +1056,14 @@ function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, Inb
   return earliest?.value ?? null
 }
 
-async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequest) {
-  const projection = await readAssistantFeedProjection(runtime)
+async function presentAssistantFeed(
+  runtime: MvpRuntime,
+  request: CursorPageRequest,
+  scope: AssistantConversationScope,
+) {
+  const projection = await readAssistantFeedProjection(runtime, scope)
   const page = paginateItems(projection.entries, request, {
-    scope: 'assistant-feed',
+    scope: `assistant-feed:${assistantConversationScopeKey(scope)}`,
     getId: (entry) => entry.id,
   })
 
@@ -1049,8 +1075,12 @@ async function presentAssistantFeed(runtime: MvpRuntime, request: CursorPageRequ
   }
 }
 
-async function presentAssistantFeedChanges(runtime: MvpRuntime, cursor: string | null) {
-  const projection = await readAssistantFeedProjection(runtime)
+async function presentAssistantFeedChanges(
+  runtime: MvpRuntime,
+  cursor: string | null,
+  scope: AssistantConversationScope,
+) {
+  const projection = await readAssistantFeedProjection(runtime, scope)
   const replayFrom = cursor ? Date.parse(cursor) - 1 : null
   const changed =
     replayFrom !== null
@@ -1067,7 +1097,7 @@ async function presentAssistantFeedChanges(runtime: MvpRuntime, cursor: string |
   }
 }
 
-async function readAssistantFeedProjection(runtime: MvpRuntime) {
+async function readAssistantFeedProjection(runtime: MvpRuntime, scope: AssistantConversationScope) {
   const workspace = await runtime.workspace.readWorkspace()
   const goalCompletions = await readGoalCompletionAttentions(runtime)
   const completions = [
@@ -1090,16 +1120,20 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
     ]),
   )
   const workspaceEvents = [...workspace.events.values()]
-  const publicEvents = workspaceEvents.filter((event) => event.attributes.visibility === 'public')
+  const allPublicEvents = workspaceEvents.filter(
+    (event) => event.attributes.visibility === 'public',
+  )
+  const publicEvents = allPublicEvents.filter((event) => assistantEventBelongsToScope(event, scope))
   const internalSpeakingEvents = workspaceEvents.filter(
     (event) =>
       event.attributes.source === 'reflection' &&
       event.attributes.visibility === 'internal' &&
-      event.attributes.status === 'pending',
+      event.attributes.status === 'pending' &&
+      assistantEventBelongsToScope(event, scope),
   )
-  const [eventStates, internalSpeakingTurns] = await Promise.all([
+  const [allEventStates, internalSpeakingTurns] = await Promise.all([
     Promise.all(
-      publicEvents.map(async (event) => {
+      allPublicEvents.map(async (event) => {
         if (event.attributes.status === 'handled') {
           return {
             event,
@@ -1127,6 +1161,9 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
       ),
     ),
   ])
+  const eventStates = allEventStates.filter(({ event }) =>
+    assistantEventBelongsToScope(event, scope),
+  )
   const linkedCompletionReferences = new Set<string>()
   const eventCompletionReferences = new Map<string, string>()
   for (const event of publicEvents.toSorted(
@@ -1170,9 +1207,14 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
     const reference = eventCompletionReferences.get(entry.event.attributes.id)
     return reference ? [{ id: `completion:${reference}`, updatedAt: entry.updatedAt }] : []
   })
-  const entries = [
+  const allEntries = [
     ...eventEntries,
     ...completions
+      .filter((attention) =>
+        attention.scope === 'goal'
+          ? scope.kind === 'project' && attention.projectId === scope.projectId
+          : scope.kind === 'home',
+      )
       .filter((attention) => {
         const reference =
           attention.scope === 'goal'
@@ -1196,18 +1238,23 @@ async function readAssistantFeedProjection(runtime: MvpRuntime) {
   )
   const statuses = eventStates.map((state) => state.runtimeStatus)
   return {
-    entries,
+    entries: allEntries,
     removals,
     activity: deriveAssistantFeedActivity({
       publicStatuses: statuses,
       internalSpeakingRunning: internalSpeakingTurns.some(
         (turn) => turn?.manifest.status === 'running',
       ),
-      reflectionRunning: runtime.reflection.isActive(),
+      reflectionRunning: scope.kind === 'home' && runtime.reflection.isActive(),
     }),
-    syncCursor: entries.reduce<string | null>(
-      (latest, entry) =>
-        !latest || Date.parse(entry.updatedAt) > Date.parse(latest) ? entry.updatedAt : latest,
+    syncCursor: [
+      ...allEventStates.map(({ updatedAt }) => updatedAt),
+      ...completions.map((completion) =>
+        maxTimestamp(completion.createdAt, completion.resolvedAt, completion.notifiedAt),
+      ),
+    ].reduce<string | null>(
+      (latest, timestamp) =>
+        !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
       null,
     ),
   }
@@ -1862,6 +1909,14 @@ function matchEvidenceArtifactRoute(parts: string[]) {
   }
 }
 
+function readAssistantConversationScope(runtime: MvpRuntime, url: URL): AssistantConversationScope {
+  const rawProjectId = url.searchParams.get('projectId')?.trim()
+  if (!rawProjectId) return { kind: 'home' }
+  const projectId = stableIdSchema.parse(rawProjectId)
+  if (!runtime.projects.has(projectId)) throw new ApiError(404, `Project not found: ${projectId}`)
+  return { kind: 'project', projectId }
+}
+
 function readPageRequest(url: URL, defaultLimit: number, maxLimit: number): CursorPageRequest {
   const before = url.searchParams.get('before') ?? undefined
   const after = url.searchParams.get('after') ?? undefined
@@ -1923,9 +1978,8 @@ function canonicalInboxContext(context: z.infer<typeof inboxSchema>['context']) 
   if (!context) return undefined
   const attentionRefs = normalizeInboxAttentionReferences(context)
   return {
-    ...(context.projectId && context.goalId
-      ? { projectId: context.projectId, goalId: context.goalId }
-      : {}),
+    ...(context.projectId ? { projectId: context.projectId } : {}),
+    ...(context.goalId ? { goalId: context.goalId } : {}),
     ...(attentionRefs.length ? { attentionRefs } : {}),
     ...(context.replyTo ? { replyTo: context.replyTo } : {}),
   }

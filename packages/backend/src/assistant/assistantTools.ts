@@ -1,4 +1,4 @@
-import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
+import type { InboxContext, InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
@@ -42,6 +42,10 @@ import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
+import {
+  type AssistantConversationScope,
+  assistantEventBelongsToScope,
+} from './assistantConversationScope'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { AssistantToolRequestError } from './assistantToolRequestError'
 import {
@@ -618,6 +622,26 @@ export function createAssistantTools(options: {
                 attachments: [...event.attributes.attachments],
                 body: event.body,
               },
+            },
+          }
+        }
+        case 'hopi_read_conversation': {
+          const args = parseAssistantToolArguments(name, input)
+          const scope: AssistantConversationScope = args.projectId
+            ? { kind: 'project', projectId: args.projectId }
+            : { kind: 'home' }
+          if (scope.kind === 'project') requireProject(options.projects, scope.projectId)
+          const workspace = await options.workspace.readWorkspace()
+          const page = readPublicConversationPage([...workspace.events.values()], scope, args)
+          return {
+            summary: `Read ${page.exchanges.length} durable public Assistant exchange${page.exchanges.length === 1 ? '' : 's'}.`,
+            changed: false,
+            value: {
+              scope:
+                scope.kind === 'home'
+                  ? { kind: 'home' }
+                  : { kind: 'project', projectId: scope.projectId },
+              ...page,
             },
           }
         }
@@ -1509,6 +1533,53 @@ function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
       ? { runtime: compactRuntimeStateIndex(value.runtime, includeSummary) }
       : {}),
   }
+}
+
+function readPublicConversationPage(
+  events: readonly InboxEventDocument[],
+  scope: AssistantConversationScope,
+  input: { query?: string; before?: string; limit: number },
+) {
+  const query = input.query?.toLocaleLowerCase()
+  const matching = events
+    .filter(
+      (event) =>
+        event.attributes.status === 'handled' &&
+        event.attributes.visibility === 'public' &&
+        assistantEventBelongsToScope(event, scope),
+    )
+    .map((event) => ({ event, cursor: conversationCursor(event) }))
+    .filter(({ cursor }) => !input.before || cursor < input.before)
+    .filter(({ event }) => {
+      if (!query) return true
+      const text =
+        event.attributes.source === 'reflection'
+          ? (event.attributes.reply ?? '')
+          : `${event.body}\n${event.attributes.reply ?? ''}`
+      return text.toLocaleLowerCase().includes(query)
+    })
+    .toSorted((left, right) => left.cursor.localeCompare(right.cursor))
+  const selected = matching.slice(-input.limit)
+  return {
+    exchanges: selected.map(({ event, cursor }) => ({
+      cursor,
+      eventId: event.attributes.id,
+      receivedAt: event.attributes.receivedAt,
+      source: event.attributes.source,
+      ...(event.attributes.source === 'user' ? { user: boundedConversationText(event.body) } : {}),
+      assistant: boundedConversationText(event.attributes.reply ?? ''),
+    })),
+    nextBefore: matching.length > selected.length && selected[0] ? selected[0].cursor : null,
+  }
+}
+
+function conversationCursor(event: InboxEventDocument) {
+  return `${event.attributes.receivedAt}|${event.attributes.id}`
+}
+
+function boundedConversationText(value: string) {
+  const limit = 2_000
+  return value.length <= limit ? value : `${value.slice(0, limit)}\n[…truncated]`
 }
 
 function compactRuntimeStateIndex(value: Record<string, unknown>, includeSummary: boolean) {

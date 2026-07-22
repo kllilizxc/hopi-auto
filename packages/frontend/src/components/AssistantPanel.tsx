@@ -9,6 +9,7 @@ import {
 } from '../lib/api'
 import {
   type AssistantInboxContext,
+  type AssistantPageScope,
   assistantAttentionReference,
   findAttentionNotificationEventId,
   findLatestNeedsYouGroupId,
@@ -16,7 +17,6 @@ import {
   isNeedsYouAttention,
   resolveAssistantInboxContext,
 } from '../lib/assistantContext'
-import type { GoalScope } from '../lib/goalScope'
 import {
   type OptimisticInboxMessage,
   assistantFeedEntriesToMessageFeed,
@@ -28,7 +28,7 @@ import {
   STABLE_QUERY_NOTIFY_PROPS,
 } from '../lib/queryPerformance'
 import { useAssistantFeedStream } from '../lib/useAssistantFeedStream'
-import { cn } from '../lib/utils'
+import { cn, projectDisplayName } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import {
   AppAlert,
@@ -49,7 +49,7 @@ interface AssistantPanelProps {
   focusRequest?: number
   initialReply: AttentionView | null
   isOpen: boolean
-  scope: GoalScope | null
+  scope: AssistantPageScope | null
   snapshot?: AppSnapshot
   onClose: () => void
 }
@@ -96,9 +96,12 @@ export function AssistantPanel({
   const draftImagesRef = useRef<DraftImage[]>([])
   const optimisticMessagesRef = useRef<OptimisticInboxSubmission[]>([])
   const messageFocusSequenceRef = useRef(0)
+  const scopeProjectId = scope?.projectId
+  const scopeProject = snapshot?.projects.find((project) => project.projectId === scopeProjectId)
+  const scopeLabel = scopeProject ? projectDisplayName(scopeProject) : (scopeProjectId ?? 'Home')
   const attentionQuery = useQuery({
-    queryKey: ['assistant-attentions'],
-    queryFn: readAssistantAttentions,
+    queryKey: ['assistant-attentions', scopeProjectId ?? 'home'],
+    queryFn: () => readAssistantAttentions(scopeProjectId),
     enabled: isOpen,
     refetchInterval: isOpen ? CANONICAL_POLL_INTERVAL_MS : false,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
@@ -135,6 +138,7 @@ export function AssistantPanel({
   }, [focusRequest, initialReply])
 
   const assistantStream = useAssistantFeedStream({
+    ...(scopeProjectId ? { projectId: scopeProjectId } : {}),
     enabled: isOpen && !showReflectionDebug,
     refetchInterval:
       isOpen && !showReflectionDebug && !assistantScrolling
@@ -279,7 +283,9 @@ export function AssistantPanel({
       assistantStream.refresh()
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
-        queryClient.invalidateQueries({ queryKey: ['assistant-attentions'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['assistant-attentions', scopeProjectId ?? 'home'],
+        }),
       ])
     },
     onError: (_error, submission) => {
@@ -419,12 +425,13 @@ export function AssistantPanel({
       ) : (
         <>
           <div className="assistant-body">
+            <div className="assistant-scope-title">Assistant · {scopeLabel}</div>
             <UnifiedMessageFeed
-              feedKey="workspace-assistant"
+              feedKey={`assistant-${scopeProjectId ?? 'home'}`}
               items={messages}
               tailActivity={assistantStream.activity?.phase ?? null}
               className="assistant-conversation-feed"
-              ariaLabel="Workspace Assistant conversation"
+              ariaLabel={`Assistant · ${scopeLabel} conversation`}
               isLoading={assistantStream.isLoading}
               hasMoreBefore={assistantStream.hasMoreBefore}
               isLoadingOlder={assistantStream.isLoadingOlder}

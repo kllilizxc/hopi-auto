@@ -32,13 +32,13 @@ test('requests mutable Assistant changes from the independent synchronization cu
   }) as typeof fetch
 
   try {
-    await readAssistantFeedChanges('2026-07-16T12:00:00.000Z')
+    await readAssistantFeedChanges('2026-07-16T12:00:00.000Z', 'P-1')
   } finally {
     globalThis.fetch = originalFetch
   }
 
   expect(observed).toBe(
-    '/api/assistant/feed/changes?cursor=2026-07-16T12%3A00%3A00.000Z',
+    '/api/assistant/feed/changes?cursor=2026-07-16T12%3A00%3A00.000Z&projectId=P-1',
   )
 })
 

@@ -34,6 +34,10 @@ export interface CursorPageRequest {
   limit?: number
 }
 
+export interface AssistantScopeRequest {
+  projectId?: string
+}
+
 export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const formData = options.body instanceof FormData
   const response = await fetch(path, {
@@ -60,17 +64,20 @@ export function readShellState() {
   return apiRequest<AppSnapshot>('/api/state?view=shell')
 }
 
-export function readAssistantAttentions() {
-  return apiRequest<AssistantAttentionState>('/api/assistant/attentions')
+export function readAssistantAttentions(projectId?: string) {
+  return apiRequest<AssistantAttentionState>(
+    withAssistantScope('/api/assistant/attentions', projectId),
+  )
 }
 
-export function readAssistantFeed(input: CursorPageRequest = {}) {
-  return apiRequest<AssistantFeedPage>(withPage('/api/assistant/feed', input))
+export function readAssistantFeed(input: CursorPageRequest & AssistantScopeRequest = {}) {
+  return apiRequest<AssistantFeedPage>(withPage('/api/assistant/feed', input, input.projectId))
 }
 
-export function readAssistantFeedChanges(cursor: string | null) {
+export function readAssistantFeedChanges(cursor: string | null, projectId?: string) {
   const query = new URLSearchParams()
   if (cursor) query.set('cursor', cursor)
+  if (projectId) query.set('projectId', projectId)
   const suffix = query.toString()
   return apiRequest<AssistantFeedChanges>(
     `/api/assistant/feed/changes${suffix ? `?${suffix}` : ''}`,
@@ -298,11 +305,16 @@ function attemptPath(projectId: string, goalId: string, workId: string) {
   return `${goalPath(projectId, goalId)}/works/${encodeURIComponent(workId)}/attempts`
 }
 
-function withPage(path: string, input: CursorPageRequest) {
+function withPage(path: string, input: CursorPageRequest, projectId?: string) {
   const query = new URLSearchParams()
   if (input.before) query.set('before', input.before)
   if (input.after) query.set('after', input.after)
   if (input.limit !== undefined) query.set('limit', String(input.limit))
+  if (projectId) query.set('projectId', projectId)
   const suffix = query.toString()
   return suffix ? `${path}?${suffix}` : path
+}
+
+function withAssistantScope(path: string, projectId?: string) {
+  return projectId ? `${path}?projectId=${encodeURIComponent(projectId)}` : path
 }

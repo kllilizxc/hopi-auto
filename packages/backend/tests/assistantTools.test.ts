@@ -1955,6 +1955,71 @@ describe('Assistant HOPI tools', () => {
     ).toBe('inform')
   })
 
+  test('reads bounded public conversation from exactly one Home or Project scope', async () => {
+    const fixture = await setup()
+    const projectUser = await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-history',
+      content: 'PROJECT_CONVERSATION_MARKER',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-11T00:00:01Z'),
+    })
+    await fixture.workspace.handleEvent(projectUser.attributes.id, {
+      reply: 'Project answer.',
+      disposition: 'answered',
+    })
+    const reflection = await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-project-reflection',
+      content: 'INTERNAL_REFLECTION_BRIEF',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-11T00:00:02Z'),
+    })
+    await fixture.workspace.handleEvent(reflection.attributes.id, {
+      reply: 'Public project update.',
+      disposition: 'notified',
+      expose: true,
+    })
+    const home = await fixture.workspace.receiveEvent({
+      eventId: 'EV-home-history',
+      content: 'HOME_CONVERSATION_MARKER',
+      receivedAt: new Date('2026-07-11T00:00:03Z'),
+    })
+    await fixture.workspace.handleEvent(home.attributes.id, {
+      reply: 'Home answer.',
+      disposition: 'answered',
+    })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-read-conversation',
+      content: 'Read Project history.',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-11T00:00:04Z'),
+    })
+
+    const projectPage = (
+      await fixture.tools.executeForEvent('EV-read-conversation', 'hopi_read_conversation', {
+        projectId: 'P-1',
+        limit: 1,
+      })
+    ).value as {
+      exchanges: Array<{ source: string; user?: string; assistant: string }>
+      nextBefore: string | null
+    }
+    expect(projectPage.exchanges).toEqual([
+      expect.objectContaining({ source: 'reflection', assistant: 'Public project update.' }),
+    ])
+    expect(JSON.stringify(projectPage)).not.toContain('INTERNAL_REFLECTION_BRIEF')
+    expect(JSON.stringify(projectPage)).not.toContain('HOME_CONVERSATION_MARKER')
+    expect(projectPage.nextBefore).not.toBeNull()
+
+    const homePage = (
+      await fixture.tools.executeForEvent('EV-read-conversation', 'hopi_read_conversation', {
+        query: 'HOME_CONVERSATION_MARKER',
+      })
+    ).value as { exchanges: Array<{ user?: string; assistant: string }> }
+    expect(homePage.exchanges).toEqual([
+      expect.objectContaining({ user: 'HOME_CONVERSATION_MARKER\n', assistant: 'Home answer.' }),
+    ])
+  })
+
   test('reads current control state without inlining durable history', async () => {
     const active = new Map<string, Responsibility>()
     const fixture = await setup({ activeRuns: () => active })

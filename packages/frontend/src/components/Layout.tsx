@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { readGoalBoard, readGoalDocs, readShellState, type AttentionView } from '../lib/api'
+import { readAssistantPageScope } from '../lib/assistantContext'
 import {
   buildGoalRoute,
   findNewestUnseenGoal,
@@ -81,6 +82,8 @@ export function Layout() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const routeScope = readGoalRouteState(location.pathname)
+  const assistantScope = readAssistantPageScope(location.pathname)
+  const assistantScopeKey = assistantScope?.projectId ?? 'home'
   const [assistantReply, setAssistantReply] = useState<AttentionView | null>(null)
   const [assistantRequest, setAssistantRequest] = useState(0)
   const [assistantOpen, setAssistantOpen] = useState(false)
@@ -287,10 +290,11 @@ export function Layout() {
               }
             >
               <AssistantPanel
+                key={assistantScopeKey}
                 focusRequest={assistantRequest}
                 initialReply={assistantReply}
                 isOpen={assistantOpen}
-                scope={null}
+                scope={assistantScope}
                 snapshot={snapshot}
                 onClose={() => setAssistantOpen(false)}
               />
@@ -315,6 +319,7 @@ export function Layout() {
             }
           >
             <AssistantPanel
+              key={assistantScopeKey}
               docked={assistantDocked}
               focusRequest={assistantRequest}
               initialReply={assistantReply}

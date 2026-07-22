@@ -45,16 +45,16 @@ export const inboxContextSchema = z
   })
   .strict()
   .superRefine((context, refinement) => {
-    if (Boolean(context.projectId) !== Boolean(context.goalId)) {
+    if (context.goalId && !context.projectId) {
       refinement.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Inbox context projectId and goalId must appear together',
+        message: 'Inbox context goalId requires projectId',
       })
     }
     if (!context.projectId && !context.attentionRefs?.length) {
       refinement.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Inbox context requires a Goal location or canonical Attention reference',
+        message: 'Inbox context requires a Project location or canonical Attention reference',
       })
     }
     if (context.replyTo && !context.attentionRefs?.length) {

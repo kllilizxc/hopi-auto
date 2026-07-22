@@ -1,16 +1,27 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-conversation-store')
-const sessionPath = join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'session.json')
+const legacySessionPath = join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'session.json')
+const homeSessionPath = join(
+  temporaryRoot,
+  '.hopi',
+  'runtime',
+  'assistant',
+  'sessions',
+  'home.json',
+)
+const projectSessionPath = (projectId: string) =>
+  join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'projects', `${projectId}.json`)
 const turnEventsPath = (eventId: string) =>
   join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId, 'events.jsonl')
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
-  await mkdir(join(sessionPath, '..'), { recursive: true })
+  await mkdir(join(legacySessionPath, '..'), { recursive: true })
 })
 
 afterEach(async () => {
@@ -18,9 +29,9 @@ afterEach(async () => {
 })
 
 describe('AssistantConversationStore session cache', () => {
-  test('migrates a legacy Codex thread cache to a vendor-qualified session', async () => {
+  test('discards the legacy mixed-scope session instead of guessing ownership', async () => {
     await Bun.write(
-      sessionPath,
+      legacySessionPath,
       JSON.stringify({
         version: 1,
         threadId: 'legacy-thread',
@@ -29,47 +40,70 @@ describe('AssistantConversationStore session cache', () => {
     )
     const store = createAssistantConversationStore(temporaryRoot)
 
-    expect(await store.readSession()).toEqual({
-      transport: 'codex',
-      sessionId: 'legacy-thread',
-    })
-    expect(await Bun.file(sessionPath).json()).toEqual({
-      version: 3,
-      transport: 'codex',
-      sessionId: 'legacy-thread',
-      contractDigest: null,
-      runtimeDigest: null,
-    })
+    expect(await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toBeNull()
+    expect(await Bun.file(legacySessionPath).exists()).toBe(false)
   })
 
-  test('stores one disposable vendor-qualified session and discards invalid cache data', async () => {
+  test('stores isolated Home and Project sessions and discards invalid scoped cache data', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
     await store.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       { transport: 'opencode', sessionId: 'ses-1' },
       'contract-a',
       'runtime-a',
     )
-    expect(await store.readSession('contract-a', 'runtime-a')).toEqual({
+    await store.writeSession(
+      { kind: 'project', projectId: 'P-A' },
+      { transport: 'codex', sessionId: 'project-a' },
+      'contract-a',
+      'runtime-a',
+    )
+    await store.writeSession(
+      { kind: 'project', projectId: 'P-项目二' },
+      { transport: 'claude', sessionId: 'project-b' },
+      'contract-a',
+      'runtime-a',
+    )
+    expect(
+      await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE, 'contract-a', 'runtime-a'),
+    ).toEqual({
       transport: 'opencode',
       sessionId: 'ses-1',
     })
+    expect(
+      await store.readSession({ kind: 'project', projectId: 'P-A' }, 'contract-a', 'runtime-a'),
+    ).toEqual({ transport: 'codex', sessionId: 'project-a' })
+    expect(
+      await store.readSession(
+        { kind: 'project', projectId: 'P-项目二' },
+        'contract-a',
+        'runtime-a',
+      ),
+    ).toEqual({ transport: 'claude', sessionId: 'project-b' })
 
-    await Bun.write(sessionPath, '{not-json')
-    expect(await store.readSession()).toBeNull()
-    expect(await Bun.file(sessionPath).exists()).toBe(false)
+    await Bun.write(homeSessionPath, '{not-json')
+    expect(await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toBeNull()
+    expect(await Bun.file(homeSessionPath).exists()).toBe(false)
+    expect(await Bun.file(projectSessionPath('P-A')).exists()).toBe(true)
   })
 
   test('invalidates a session created under another Assistant contract', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
-    await store.writeSession({ transport: 'codex', sessionId: 'thread-old' }, 'contract-old')
+    await store.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
+      { transport: 'codex', sessionId: 'thread-old' },
+      'contract-old',
+    )
 
-    expect(await store.readSession('contract-current')).toBeNull()
-    expect(await Bun.file(sessionPath).exists()).toBe(false)
+    expect(
+      await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE, 'contract-current'),
+    ).toBeNull()
+    expect(await Bun.file(homeSessionPath).exists()).toBe(false)
   })
 
   test('invalidates a legacy session without the current runtime affinity', async () => {
     await Bun.write(
-      sessionPath,
+      legacySessionPath,
       JSON.stringify({
         version: 2,
         transport: 'opencode',
@@ -79,8 +113,14 @@ describe('AssistantConversationStore session cache', () => {
     )
     const store = createAssistantConversationStore(temporaryRoot)
 
-    expect(await store.readSession('contract-current', 'runtime-current')).toBeNull()
-    expect(await Bun.file(sessionPath).exists()).toBe(false)
+    expect(
+      await store.readSession(
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
+        'contract-current',
+        'runtime-current',
+      ),
+    ).toBeNull()
+    expect(await Bun.file(legacySessionPath).exists()).toBe(false)
   })
 
   test('ignores only a concurrently appended unterminated event tail', async () => {

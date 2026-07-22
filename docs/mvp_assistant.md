@@ -11,12 +11,12 @@ boundary, turn recovery, and UI behavior. Canonical schemas belong to
 
 ## Mental Model
 
-The Assistant is one normal persistent conversation, executed by a Home-configured model adapter,
-with a small set of HOPI tools. It is not
+The Assistant is one product identity with Home- and Project-scoped persistent conversations,
+executed by one Home-configured model adapter with a small set of HOPI tools. It is not
 an intent parser, a staged-diff protocol, or a special workflow responsibility.
 
 ```text
-User message -> durable conversation turn -> configured vendor session -> ordinary reply
+User message -> explicit page scope -> durable conversation turn -> scoped vendor session -> ordinary reply
                                                                \-> optional HOPI tool calls
                                                         -> canonical documents
                                                         -> Reconciler
@@ -36,11 +36,12 @@ is still available in conversation history, but creates no Goal Input, Planning 
 `Note` state. The model judges the requested effect from meaning; HOPI adds no suggestion classifier
 or trigger vocabulary.
 
-The MVP has one operator-facing, workspace-wide Assistant thread per HOPI Home. The operator may
-submit more messages while a turn is running; durable pending turns wait in receipt order. One
-Assistant turn runs at a time so vendor conversation order remains coherent. Goal responsibility
-Runs and the internal Reflection loop remain independent and may run concurrently. Multiple
-operator-visible Assistant threads are deferred.
+The MVP has one operator-facing Assistant identity with one Home conversation and one conversation
+per linked Project. Goal surfaces in the same Project share its conversation. The page selects the
+scope explicitly; message text is never classified to choose or migrate a session. The operator may
+submit more messages while a turn is running, and durable pending turns wait in one Home-wide receipt
+order. One Assistant turn runs at a time across all scopes. Goal responsibility Runs and the internal
+Reflection loop remain independent and may run concurrently.
 
 ## Operator-Facing Communication
 
@@ -71,9 +72,11 @@ actions.
 
 ## Speaking Thread And Reflection
 
-The persistent Assistant conversation is the **speaking thread**. It is the only model session that
-may call mutating HOPI tools, publish an operator-facing reply, or decide that the operator should be
-interrupted.
+The scoped persistent Assistant conversations form the **speaking thread**. They share one product
+identity, tool authority, Inbox, and global turn queue. The active Home or Project session is the only
+model session that may call mutating HOPI tools, publish an operator-facing reply, or decide that the
+operator should be interrupted. Session scope supplies the default working context but does not
+restrict explicit cross-Project reads or validated HOPI tool targets.
 
 Reflection is a disposable, read-only model Run that lets the Assistant notice progress or trouble
 without waiting for a new user message. It is an internal runtime mechanism, not a second product
@@ -210,6 +213,13 @@ other Evidence remain first-class Project documents and are read from exact path
 This keeps current control facts prominent without introducing pagination, a query language, or a
 second history store.
 
+`hopi_read_conversation` is a separate bounded, read-only view of durable public exchanges. It reads
+Home by default or one explicit Project, supports text filtering and backward cursor pagination, and
+returns user text plus final Assistant replies. Reflection contributes only its public final reply;
+its brief, reasoning, tool stream, and provider-session data remain private. Reading another Project
+does not resume or mutate that Project's provider session and does not change the current turn's
+scope or default write context.
+
 Every speaking-thread prompt names the immutable current Inbox event. Because even a bounded state
 result can be much longer than the operator's message, `hopi_read_state` repeats that event ID,
 body, and page context as the final `currentTurn` field of its result. This is attention anchoring,
@@ -279,13 +289,13 @@ final response publishes them while an empty response leaves them hidden. These 
 mutation authority.
 
 The vendor-qualified session cache and normalized live events are runtime data under
-`.hopi/runtime/assistant/`. `session.json` stores `version`, `transport`, `sessionId`, the digest of
-the durable initial Assistant contract, and the runtime-affinity digest. HOPI resumes that session
-only while the configured transport and both digests match. A legacy bare Codex thread cache migrates to
-`transport: codex`, but a cache without the current contract digest is rebuilt before another turn;
-changing transport or the initial contract likewise invalidates the old cache instead of pretending
-that vendor sessions or stale instructions are compatible. A model change within one transport may
-reuse its session because the next invocation still receives the current configured model.
+`.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses
+`sessions/projects/<projectId>.json`. Each manifest stores `version`, scope, `transport`, `sessionId`,
+the digest of the durable initial Assistant contract, and the runtime-affinity digest. HOPI resumes
+only the session selected by the immutable Inbox context while the configured transport and both
+digests match. The legacy global `session.json` mixed scopes and is discarded rather than assigned
+to a Project by guesswork. A model change within one transport may reuse a compatible scoped session
+because the next invocation still receives the current configured model.
 
 A vendor session must also remain attached to the stable HOPI Assistant workspace and adapter
 runtime contract under which HOPI created it. The session manifest therefore stores a runtime digest
@@ -296,9 +306,11 @@ session storage on every turn.
 
 Losing or invalidating vendor session state does not lose product truth: HOPI starts a new session
 from the durable Home instructions, a fixed character budget of the newest public user-visible
-exchanges, and the oldest pending turn. Internal Reflection turns are not reconstructed as conversation memory;
-their durable effects are revalidated from current canonical state. Long-lived decisions belong in
-Project, Goal, design, or preference documents rather than an unbounded vendor thread transcript.
+exchanges in that same Home or Project scope, and the oldest pending turn in that scope. A Project
+rebuild also receives its current canonical observation. Internal Reflection briefs are not
+reconstructed as conversation memory; only their public final updates belong to the selected scope.
+Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
+rather than an unbounded vendor thread transcript.
 
 For each speaking turn, normalized Assistant messages, tool calls, tool results, status, and errors
 append to runtime `events.jsonl`; raw process output appends to `transcript.log`. Reflection keeps the
@@ -374,9 +386,10 @@ read and handoff authority but no execution responsibility.
 
 The initial session instructions state only durable operating rules and available tool semantics.
 They do not require a fixed response shape or output file. Their digest is derived from those exact
-instructions, so changing the contract transparently rebuilds one session from durable conversation
-history rather than leaving a restarted backend on stale behavior. Subsequent user messages use
-normal compatible vendor session resume. A public turn's final model answer is the operator-facing
+instructions, so changing the contract transparently rebuilds each scoped session on its next use
+from matching durable conversation history rather than leaving a restarted backend on stale
+behavior. Subsequent user messages use normal compatible scoped vendor session resume. A public
+turn's final model answer is the operator-facing
 reply. For an internal turn, a non-empty final answer is likewise the complete informational update;
 an empty answer keeps the turn internal. No notification tool duplicates that native response.
 
@@ -736,9 +749,9 @@ uses a uniform boundary rather than a separate accent rail. Multiple open refere
 message share that presentation and reply context. Resolution removes the decoration and returns the
 message to ordinary conversation styling; it does not append a synthetic resolved row. The composer
 shows reply context as lightweight text with one icon-only dismiss action, not another warning chip.
-Assistant has no title header; a non-zero unresolved count follows the Reflection entry in the same
-compact, top-edge, center-aligned floating control row. Without a count, Reflection remains at the
-right edge. Kanban keeps its Work badge and focus projection but does not repeat Needs-you as a
+The drawer identifies its active conversation as `Assistant · Home` or `Assistant · <Project>`; a
+non-zero unresolved count follows the Reflection entry in the same compact, top-edge floating
+control row. Kanban keeps its Work badge and focus projection but does not repeat Needs-you as a
 separate page banner. Selecting the count focuses the newest unresolved public request in the
 conversation; it does not implicitly enter reply context, which remains the exact message's `Reply`
 action.
@@ -766,7 +779,16 @@ an indefinite loading indicator.
 
 ## UI Behavior
 
-The Assistant drawer shows one chronological conversation:
+The Assistant drawer follows page scope without a manual switcher. Projects is Home; Goal creation is
+its Project; Goal Board and docs are that Project with a Goal observation. Cross-Project navigation
+changes the conversation and discards any unsent draft, while navigation between Goals in one
+Project preserves the shared Project conversation. Feed history, incremental updates, activity,
+completion, Needs-you, and browser cache are projected only for that scope. Home includes Workspace
+Attention and global Reflection activity; a Project includes only its own events and Goal Attention.
+The synchronization cursor still advances across global updates so an unrelated Project cannot trap
+a scoped client on an old cursor.
+
+Within that scope, the drawer shows one chronological conversation:
 
 - submitting snapshots and clears the composer immediately, then appends one memory-only optimistic
   user row without waiting for the Inbox request. The response supplies the canonical event ID; the
@@ -853,7 +875,7 @@ The MVP does not include:
 - staged canonical filesystem diffs as the Assistant command protocol
 - direct Assistant source edits or direct Kanban column mutation
 - parallel turns inside one speaking conversation
-- multiple named or operator-visible Assistant threads, or transparent session resume across vendors
+- operator-created or Goal-scoped Assistant threads, or transparent session resume across vendors
 - a durable Reflection queue, Reflection workflow state, or Reflection-authored canonical mutation
 - a general workflow/tool DSL or user-editable tool schemas
 - treating selected Goal context as permission or proof of a requested side effect

@@ -337,7 +337,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   }
 
   async function updateAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
-    if (await writeAssistantModelSettings(input)) await assistantConversation.clearSession()
+    if (await writeAssistantModelSettings(input)) await assistantConversation.clearSessions()
   }
 
   async function updateAgentRoleModelSettings(

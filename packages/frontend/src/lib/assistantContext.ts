@@ -5,7 +5,20 @@ import {
   normalizeAttentionReferences,
   workspaceAttentionReference,
 } from './attentionReference'
-import type { GoalScope } from './goalScope'
+
+export interface AssistantPageScope {
+  projectId: string
+  goalId?: string
+}
+
+export function readAssistantPageScope(pathname: string): AssistantPageScope | null {
+  const goal = /^\/projects\/([^/]+)\/(?:board|docs)\/([^/]+)$/.exec(pathname)
+  if (goal?.[1] && goal[2]) {
+    return { projectId: decodeURIComponent(goal[1]), goalId: decodeURIComponent(goal[2]) }
+  }
+  const project = /^\/projects\/([^/]+)\/goals\/new$/.exec(pathname)
+  return project?.[1] ? { projectId: decodeURIComponent(project[1]) } : null
+}
 
 export interface AssistantInboxContext {
   projectId?: string
@@ -78,7 +91,7 @@ export function findLatestNeedsYouGroupId(
 }
 
 export function resolveAssistantInboxContext(
-  pageScope: GoalScope | null,
+  pageScope: AssistantPageScope | null,
   replyAttention: AttentionView | AttentionView[] | null,
   _openAttentions: readonly AttentionView[] = [],
   homeId?: string,

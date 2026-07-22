@@ -3,6 +3,7 @@ import { chmod, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
+import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import {
   type AssistantStateReader,
@@ -1022,6 +1023,61 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
   })
 
+  test('keeps Home and Project provider sessions and rebuild history isolated by page scope', async () => {
+    const calls: Array<{
+      eventId: string
+      projectId?: string
+      sessionId: string | null
+      prompt: string
+    }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        calls.push({
+          eventId: input.eventId,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          sessionId: input.session?.sessionId ?? null,
+          prompt: input.prompt,
+        })
+        const session = codexSession(input.projectId ? 'thread-project-1' : 'thread-home')
+        await observer?.onSession?.(session)
+        return { reply: `Handled ${input.eventId}.`, session }
+      },
+    }))
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-first',
+      content: 'PROJECT_ONLY_MARKER',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.assistant.process('EV-project-first')
+    await fixture.workspace.receiveEvent({ eventId: 'EV-home', content: 'HOME_ONLY_MARKER' })
+    await fixture.assistant.process('EV-home')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-resume',
+      content: 'Continue this Project.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.assistant.process('EV-project-resume')
+
+    expect(calls.map(({ sessionId }) => sessionId)).toEqual([null, null, 'thread-project-1'])
+    expect(await fixture.conversation.readSession({ kind: 'project', projectId: 'P-1' })).toEqual(
+      codexSession('thread-project-1'),
+    )
+    expect(await fixture.conversation.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toEqual(
+      codexSession('thread-home'),
+    )
+
+    await fixture.conversation.clearSession({ kind: 'project', projectId: 'P-1' })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-rebuild',
+      content: 'Rebuild this Project.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.assistant.process('EV-project-rebuild')
+
+    expect(calls.at(-1)?.prompt).toContain('PROJECT_ONLY_MARKER')
+    expect(calls.at(-1)?.prompt).not.toContain('HOME_ONLY_MARKER')
+  })
+
   test('rebuilds a persisted session when the initial Assistant contract changes', async () => {
     const calls: Array<{ sessionId: string | null; prompt: string }> = []
     const fixture = await setup(() => ({
@@ -1031,7 +1087,11 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: 'Current contract applied.', session: codexSession('thread-current') }
       },
     }))
-    await fixture.conversation.writeSession(codexSession('thread-old'), 'stale-contract')
+    await fixture.conversation.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
+      codexSession('thread-old'),
+      'stale-contract',
+    )
     await fixture.workspace.receiveEvent({ eventId: 'EV-contract', content: 'Continue.' })
 
     await fixture.assistant.process('EV-contract')
@@ -1042,9 +1102,12 @@ describe('WorkspaceAssistant conversation', () => {
         prompt: expect.stringContaining('# HOPI Workspace Assistant'),
       }),
     ])
-    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
-      codexSession('thread-current'),
-    )
+    expect(
+      await fixture.conversation.readSession(
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
+        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      ),
+    ).toEqual(codexSession('thread-current'))
   })
 
   test('injects current preferences on every turn and rebuilds them from Home', async () => {
@@ -1083,7 +1146,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.workspace.receiveEvent({ eventId: 'EV-next', content: 'What is next?' })
     await fixture.assistant.process('EV-next')
-    await fixture.conversation.clearSession()
+    await fixture.conversation.clearSession(HOME_ASSISTANT_CONVERSATION_SCOPE)
     await fixture.workspace.receiveEvent({ eventId: 'EV-rebuild', content: 'Continue.' })
     await fixture.assistant.process('EV-rebuild')
 
@@ -1142,6 +1205,7 @@ describe('WorkspaceAssistant conversation', () => {
       disposition: 'answered',
     })
     await fixture.conversation.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('missing-thread'),
       WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
@@ -1153,9 +1217,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls.map((call) => call.sessionId)).toEqual(['missing-thread', null])
     expect(calls[1]?.prompt).toContain('User: Old turn')
     expect(calls[1]?.prompt).toContain('Assistant: Old reply')
-    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
-      codexSession('thread-rebuilt'),
-    )
+    expect(
+      await fixture.conversation.readSession(
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
+        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      ),
+    ).toEqual(codexSession('thread-rebuilt'))
   })
 
   test('rebuilds a context-exhausted vendor session once from bounded history', async () => {
@@ -1181,6 +1248,7 @@ describe('WorkspaceAssistant conversation', () => {
       disposition: 'answered',
     })
     await fixture.conversation.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-context-exhausted'),
       WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
@@ -1192,9 +1260,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls.map((call) => call.sessionId)).toEqual(['thread-context-exhausted', null])
     expect(calls[1]?.prompt).toContain('User: Earlier request')
     expect(calls[1]?.prompt).toContain('Assistant: Earlier answer')
-    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
-      codexSession('thread-after-context-rebuild'),
-    )
+    expect(
+      await fixture.conversation.readSession(
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
+        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      ),
+    ).toEqual(codexSession('thread-after-context-rebuild'))
   })
 
   test('does not rebuild a cached session after a terminal provider failure', async () => {
@@ -1206,6 +1277,7 @@ describe('WorkspaceAssistant conversation', () => {
       },
     }))
     await fixture.conversation.writeSession(
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-existing'),
       WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
@@ -1217,9 +1289,12 @@ describe('WorkspaceAssistant conversation', () => {
     )
 
     expect(calls).toEqual(['thread-existing'])
-    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
-      codexSession('thread-existing'),
-    )
+    expect(
+      await fixture.conversation.readSession(
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
+        WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      ),
+    ).toEqual(codexSession('thread-existing'))
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest).toMatchObject({
       status: 'failed',
       attempt: 1,

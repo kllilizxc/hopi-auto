@@ -3,7 +3,12 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
+import { assertStableId } from '../domain/stableId'
 import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/jsonLines'
+import {
+  type AssistantConversationScope,
+  assistantConversationScopeKey,
+} from './assistantConversationScope'
 
 const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'])
 
@@ -22,36 +27,12 @@ const turnManifestSchema = z
 
 const sessionManifestSchema = z
   .object({
-    version: z.literal(3),
+    version: z.literal(4),
+    scope: z.string().min(1),
     transport: z.enum(['codex', 'claude', 'opencode']),
     sessionId: z.string().min(1),
     contractDigest: z.string().min(1).nullable(),
     runtimeDigest: z.string().min(1).nullable(),
-  })
-  .strict()
-
-const versionTwoSessionManifestSchema = z
-  .object({
-    version: z.literal(2),
-    transport: z.enum(['codex', 'claude', 'opencode']),
-    sessionId: z.string().min(1),
-    contractDigest: z.string().min(1).nullable(),
-  })
-  .strict()
-
-const previousSessionManifestSchema = z
-  .object({
-    version: z.literal(1),
-    transport: z.enum(['codex', 'claude', 'opencode']),
-    sessionId: z.string().min(1),
-  })
-  .strict()
-
-const legacySessionManifestSchema = z
-  .object({
-    version: z.literal(1),
-    threadId: z.string().min(1),
-    updatedAt: z.string().datetime({ offset: true }),
   })
   .strict()
 
@@ -80,13 +61,19 @@ export interface AssistantConversationStore {
   complete(eventId: string): Promise<void>
   fail(eventId: string, error: string): Promise<void>
   readTurn(eventId: string): Promise<AssistantTurnRuntime | null>
-  readSession(contractDigest?: string, runtimeDigest?: string): Promise<AssistantSession | null>
+  readSession(
+    scope: AssistantConversationScope,
+    contractDigest?: string,
+    runtimeDigest?: string,
+  ): Promise<AssistantSession | null>
   writeSession(
+    scope: AssistantConversationScope,
     session: AssistantSession,
     contractDigest?: string,
     runtimeDigest?: string,
   ): Promise<void>
-  clearSession(): Promise<void>
+  clearSession(scope: AssistantConversationScope): Promise<void>
+  clearSessions(): Promise<void>
 }
 
 export function createAssistantConversationStore(
@@ -95,7 +82,11 @@ export function createAssistantConversationStore(
 ): AssistantConversationStore {
   const root = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant')
   const turnsRoot = join(root, 'turns')
-  const sessionPath = join(root, 'session.json')
+  const legacySessionPath = join(root, 'session.json')
+  const sessionPath = (scope: AssistantConversationScope) =>
+    scope.kind === 'home'
+      ? join(root, 'sessions', 'home.json')
+      : join(root, 'sessions', 'projects', `${projectSessionId(scope.projectId)}.json`)
   const now = options.now ?? (() => new Date())
 
   const turnRoot = (eventId: string) => join(turnsRoot, assertLocalId(eventId))
@@ -104,6 +95,7 @@ export function createAssistantConversationStore(
 
   return {
     async interruptRunning() {
+      await rm(legacySessionPath, { force: true })
       await mkdir(turnsRoot, { recursive: true })
       const glob = new Bun.Glob('*/turn.json')
       for await (const relative of glob.scan({ cwd: turnsRoot, onlyFiles: true })) {
@@ -179,24 +171,31 @@ export function createAssistantConversationStore(
       return { manifest, events: await readEvents(eventsPath(eventId)) }
     },
 
-    async readSession(contractDigest, runtimeDigest) {
-      const file = Bun.file(sessionPath)
+    async readSession(scope, contractDigest, runtimeDigest) {
+      await rm(legacySessionPath, { force: true })
+      const path = sessionPath(scope)
+      const expectedScope = assistantConversationScopeKey(scope)
+      const file = Bun.file(path)
       if (!(await file.exists())) return null
       let source: unknown
       try {
         source = await file.json()
       } catch {
-        await rm(sessionPath, { force: true })
+        await rm(path, { force: true })
         return null
       }
       const current = sessionManifestSchema.safeParse(source)
       if (current.success) {
+        if (current.data.scope !== expectedScope) {
+          await rm(path, { force: true })
+          return null
+        }
         if (contractDigest && current.data.contractDigest !== contractDigest) {
-          await rm(sessionPath, { force: true })
+          await rm(path, { force: true })
           return null
         }
         if (runtimeDigest && current.data.runtimeDigest !== runtimeDigest) {
-          await rm(sessionPath, { force: true })
+          await rm(path, { force: true })
           return null
         }
         return {
@@ -204,79 +203,31 @@ export function createAssistantConversationStore(
           sessionId: current.data.sessionId,
         }
       }
-      const versionTwo = versionTwoSessionManifestSchema.safeParse(source)
-      if (versionTwo.success) {
-        if (contractDigest || runtimeDigest) {
-          await rm(sessionPath, { force: true })
-          return null
-        }
-        const migrated: AssistantSession = {
-          transport: versionTwo.data.transport,
-          sessionId: versionTwo.data.sessionId,
-        }
-        await writeJson(sessionPath, {
-          version: 3,
-          ...migrated,
-          contractDigest: versionTwo.data.contractDigest,
-          runtimeDigest: null,
-        })
-        return migrated
-      }
-      const previous = previousSessionManifestSchema.safeParse(source)
-      if (previous.success) {
-        if (contractDigest || runtimeDigest) {
-          await rm(sessionPath, { force: true })
-          return null
-        }
-        const migrated: AssistantSession = {
-          transport: previous.data.transport,
-          sessionId: previous.data.sessionId,
-        }
-        await writeJson(sessionPath, {
-          version: 3,
-          ...migrated,
-          contractDigest: null,
-          runtimeDigest: null,
-        })
-        return migrated
-      }
-
-      const legacy = legacySessionManifestSchema.safeParse(source)
-      if (!legacy.success) {
-        await rm(sessionPath, { force: true })
-        return null
-      }
-      if (contractDigest || runtimeDigest) {
-        await rm(sessionPath, { force: true })
-        return null
-      }
-      const migrated: AssistantSession = {
-        transport: 'codex',
-        sessionId: legacy.data.threadId,
-      }
-      await writeJson(sessionPath, {
-        version: 3,
-        ...migrated,
-        contractDigest: null,
-        runtimeDigest: null,
-      })
-      return migrated
+      await rm(path, { force: true })
+      return null
     },
 
-    async writeSession(session, contractDigest, runtimeDigest) {
-      await mkdir(root, { recursive: true })
+    async writeSession(scope, session, contractDigest, runtimeDigest) {
+      const path = sessionPath(scope)
+      await mkdir(dirname(path), { recursive: true })
       const manifest = sessionManifestSchema.parse({
-        version: 3,
+        version: 4,
+        scope: assistantConversationScopeKey(scope),
         transport: session.transport,
         sessionId: session.sessionId.trim(),
         contractDigest: contractDigest?.trim() || null,
         runtimeDigest: runtimeDigest?.trim() || null,
       })
-      await writeJson(sessionPath, manifest)
+      await writeJson(path, manifest)
     },
 
-    async clearSession() {
-      await rm(sessionPath, { force: true })
+    async clearSession(scope) {
+      await rm(sessionPath(scope), { force: true })
+    },
+
+    async clearSessions() {
+      await rm(join(root, 'sessions'), { recursive: true, force: true })
+      await rm(legacySessionPath, { force: true })
     },
   }
 }
@@ -316,5 +267,10 @@ async function writeJson(path: string, value: unknown) {
 
 function assertLocalId(value: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) throw new Error(`Invalid event ID: ${value}`)
+  return value
+}
+
+function projectSessionId(value: string) {
+  assertStableId(value, 'Project ID')
   return value
 }

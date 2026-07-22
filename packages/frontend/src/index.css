@@ -3813,6 +3813,15 @@ button:disabled,
     ), var(--color-neutral-900);
 }
 
+.assistant-scope-title {
+  min-height: 38px;
+  padding: 8px 118px 4px 13px;
+  color: var(--color-neutral-400);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
 .reflection-debug-panel {
   grid-row: 1 / 3;
   display: grid;

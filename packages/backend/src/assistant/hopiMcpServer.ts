@@ -23,6 +23,19 @@ server.registerTool(
   (args) => callTool('hopi_read_state', args),
 )
 
+if (mode !== 'reflection') {
+  server.registerTool(
+    'hopi_read_conversation',
+    {
+      description:
+        "Read a bounded page of durable public Assistant exchanges from Home or one named Project. This does not open, resume, or modify that scope's provider session. Reflection entries expose only their public final reply.",
+      inputSchema: assistantMcpToolSchemas.hopi_read_conversation,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    },
+    (args) => callTool('hopi_read_conversation', args),
+  )
+}
+
 if (mode === 'main') {
   server.registerTool(
     'hopi_manage_project',

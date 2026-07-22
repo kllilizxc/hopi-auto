@@ -47,6 +47,7 @@ const firstWorkSchema = z.discriminatedUnion('kind', [
 
 export const publicAssistantToolNames = [
   'hopi_read_state',
+  'hopi_read_conversation',
   'hopi_manage_project',
   'hopi_write_preferences',
   'hopi_create_goal',
@@ -60,6 +61,7 @@ export const publicAssistantToolNames = [
 
 export const internalAssistantToolNames = [
   'hopi_read_state',
+  'hopi_read_conversation',
   'hopi_create_goal',
   'hopi_create_work',
   'hopi_write_design',
@@ -72,6 +74,7 @@ export const internalAssistantToolNames = [
 
 export const mainAssistantToolNames = [
   'hopi_read_state',
+  'hopi_read_conversation',
   'hopi_manage_project',
   'hopi_write_preferences',
   'hopi_create_goal',
@@ -154,6 +157,16 @@ export const assistantToolSchemas = {
           'Include bounded Evidence bodies and resolved artifacts when preparing a completed Goal update or when the current user question requires an exact deliverable, such as locating a report. Each resolved artifact has an internal inspectionPath and an operatorUrl; only operatorUrl may be linked in a user reply. Defaults to false.',
         )
         .optional(),
+    })
+    .strict(),
+  hopi_read_conversation: z
+    .object({
+      projectId: stableIdSchema
+        .describe('Exact Project ID to read. Omit to read the Home conversation.')
+        .optional(),
+      query: z.string().trim().min(1).max(200).optional(),
+      before: z.string().trim().min(1).max(300).optional(),
+      limit: z.number().int().min(1).max(20).default(10),
     })
     .strict(),
   hopi_manage_project: z
