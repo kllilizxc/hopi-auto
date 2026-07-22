@@ -1604,10 +1604,11 @@ describe('Assistant HOPI tools', () => {
     await fixture.workspace.receiveEvent({
       eventId: 'EV-candidate',
       content: 'Inspect the current candidate.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
     })
 
-    const state = await fixture.tools.executeForEvent('EV-candidate', 'hopi_read_state', {})
+    const state = await fixture.tools.executeForEvent('EV-candidate', 'hopi_read_state', {
+      projectId: 'P-1',
+    })
     expect(state.value).toMatchObject({
       projects: [
         {

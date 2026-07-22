@@ -1446,6 +1446,9 @@ function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
     attributes: value.attributes,
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
     ...(isRecord(value.projection) ? { projection: value.projection } : {}),
+    ...(Array.isArray(value.candidateIntegration)
+      ? { candidateIntegration: value.candidateIntegration }
+      : {}),
     ...(isRecord(value.runtime)
       ? { runtime: compactRuntimeStateIndex(value.runtime, includeSummary) }
       : {}),
