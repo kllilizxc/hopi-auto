@@ -179,7 +179,7 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|public final reply, notify_user, or transfer_attention| HR[Publish complete reply and mark turn handled]
+    CE -->|final reply or staged request_user question| HR[Publish complete reply and mark turn handled]
     HR --> AL{Linked Attention?}
     AL -->|inform| NA[Publish Attention notifiedAt after reply]
     AL -->|request| OR[Publish notifiedAt plus operatorRequest]
@@ -242,9 +242,10 @@ invalidate the current Planner; merely discussing a possible change does not.
 An explicit reply carries `replyTo` and exact Attention references as evidence, not a required
 decision. Assistant reads the current state and applies ordinary tools: direct Work creation,
 design plus Planning, Control, or Attention resolution. Resolving an Attention validates the
-reported condition again; a reply alone does not clear it. Starting Planning settles attached
-Attention by default only when it targets the exact Planning Work being restarted, and may preserve
-it explicitly. Ordinary page-scoped turns carry no inferred Attention references.
+reported condition again; a reply alone does not clear it. Creating Planning never settles
+Attention implicitly; when the accepted instruction makes a reported condition obsolete, Assistant
+resolves that exact reference as a separate effect. Ordinary page-scoped turns carry no inferred
+Attention references.
 If evidence does not establish a safe effect, the Attention remains open for a later Assistant turn
 or an explicit user request.
 
@@ -256,9 +257,10 @@ repair.
 Public user turns are selected before internal Reflection turns, with receipt order preserved within
 each class. Reflection never enters the publication path directly. Its one optional brief is ordinary
 pending Inbox input to the speaking thread, which rereads current truth before choosing any HOPI tool.
-A hidden internal turn remains absent from the conversation projection unless the speaking thread
-supplies an explicit informational message through `notify_user` or an actionable question through
-`transfer_attention`; internal narration is never promoted. Only `transfer_attention` transfers current
+A hidden internal turn remains absent from the conversation projection when its final response is
+empty. A non-empty final response is the one informational public message. Calling `request_user`
+with exact current Attention references stages an actionable question, and that same turn's final
+response is the question published to the operator. Only this staged request transfers current
 Attention ownership to the operator.
 
 ## Reflection Runtime Lifecycle
@@ -651,8 +653,8 @@ outcome. Other state and document changes do not participate in this runtime tra
   only the exact Work blocker as part of that control operation.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
-- An internal Attention handoff records an ordinary Assistant turn. Informational `notify_user`
-  delivery alone does not transfer ownership, and unresolved Attention remains visible as a fact;
+- An internal Attention handoff records an ordinary Assistant turn. An informational final response
+  alone does not transfer ownership, and unresolved Attention remains visible as a fact;
   Coordinator never makes a hidden correction pass to force a decision.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in
   multiple Goals only through explicit successful HOPI tool calls.
@@ -664,8 +666,11 @@ outcome. Other state and document changes do not participate in this runtime tra
   Attention when the linked package is unreadable.
 - Terminal Goal and Work state cannot be overwritten by an old Run.
 - `dependsOn` is permanent and is the only execution-order and conflict-avoidance DAG between
-  Engineering Work. A Planner rewrite may add but never remove an existing edge. Cancelling a
-  prerequisite first cancels every nonterminal dependent.
+  Engineering Work. A Planner rewrite may add but never remove an existing edge. Assistant and
+  Planner cancellation share one closure rule: cancelling a prerequisite first cancels every
+  nonterminal dependent, preserves all history, and never mutates terminal Work. Planner performs
+  that closure inside its existing Planning publication and therefore creates no second Planning
+  Work.
 - `completionAttentionId` is present exactly while Goal lifecycle is `done`. Only final Planner
   success may create the Goal's one open unclaimed targetless completion proposal; Coordinator may
   only claim it after structural guards pass. Completion creates no second document or

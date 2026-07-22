@@ -29,6 +29,18 @@ test('model settings are Home-wide by role and absent from Project cards', async
   expect(source).not.toContain('Project default')
 })
 
+test('Project full agent access uses the visible shared Switch control', async () => {
+  const page = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+  const componentStyles = await Bun.file(new URL('../styles/app.css', import.meta.url)).text()
+  const applicationStyles = await Bun.file(new URL('../index.css', import.meta.url)).text()
+
+  expect(page).toContain('className="project-agent-access"')
+  expect(componentStyles).toContain('@heroui/styles/components/switch.css')
+  expect(applicationStyles).toContain(
+    '.project-agent-access .app-switch__content > span:not(.app-switch__control)',
+  )
+})
+
 test('Project paths display the selected Git subdirectory without changing the Repo root', () => {
   expect(scopedRepoPath('/home/me/Code/mono', 'apps/new-product')).toBe(
     '/home/me/Code/mono/apps/new-product',
@@ -43,6 +55,15 @@ test('Project linking leaves identity generation to the backend', async () => {
   expect(source).not.toContain('setProjectId')
   expect(source).not.toContain('Derived when omitted')
   expect(source).toContain('Its primary folder also names it.')
+})
+
+test('empty Project folders use the same create operation without a confirmation workflow', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+  const api = await Bun.file(new URL('../lib/apiClient.ts', import.meta.url)).text()
+
+  expect(source).toContain("selection.kind === 'empty_directory'")
+  expect(source).not.toContain('repo-init-modal')
+  expect(api).not.toContain('/api/system/initialize-repository')
 })
 
 test('Goal creation leaves readable identity generation to the backend', async () => {

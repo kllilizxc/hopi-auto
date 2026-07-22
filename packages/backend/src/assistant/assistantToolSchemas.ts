@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { parseAttentionReference } from '../domain/attentionReference'
-import { projectCodingDefaultsInputSchema } from '../domain/projectCodingDefaults'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
 
@@ -39,34 +38,50 @@ const directEngineeringWorkSchema = z
   .strict()
 
 const firstWorkSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('planning'),
-      title: z.string().trim().min(1),
-      objective: z.string().trim().min(1),
-      acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
-    })
-    .strict(),
+  z.object({ kind: z.literal('planning') }).strict(),
   directEngineeringWorkSchema
     .omit({ dependsOn: true })
     .extend({ kind: z.literal('engineering') })
     .strict(),
 ])
 
+export const publicAssistantToolNames = [
+  'hopi_read_state',
+  'hopi_manage_project',
+  'hopi_write_preferences',
+  'hopi_create_goal',
+  'hopi_create_work',
+  'hopi_write_design',
+  'hopi_control_goal',
+  'hopi_control_work',
+  'hopi_resolve_attention',
+  'hopi_control_preview',
+] as const
+
+export const internalAssistantToolNames = [
+  'hopi_read_state',
+  'hopi_create_goal',
+  'hopi_create_work',
+  'hopi_write_design',
+  'hopi_control_goal',
+  'hopi_control_work',
+  'hopi_resolve_attention',
+  'hopi_control_preview',
+  'hopi_request_user',
+] as const
+
 export const mainAssistantToolNames = [
   'hopi_read_state',
   'hopi_manage_project',
-  'hopi_configure_model',
   'hopi_write_preferences',
   'hopi_create_goal',
-  'hopi_create_engineering_work',
+  'hopi_create_work',
   'hopi_write_design',
-  'hopi_start_planning',
-  'hopi_control',
+  'hopi_control_goal',
+  'hopi_control_work',
   'hopi_resolve_attention',
   'hopi_control_preview',
-  'hopi_notify_user',
-  'hopi_transfer_attention',
+  'hopi_request_user',
 ] as const
 
 const projectRepoSchema = z
@@ -76,6 +91,41 @@ const projectRepoSchema = z
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
+
+const planningWorkSchema = z
+  .object({
+    kind: z.literal('planning'),
+    mode: z.enum(['same_contract', 'new_contract_revision']),
+  })
+  .strict()
+
+const engineeringWorkSchema = directEngineeringWorkSchema
+  .extend({ kind: z.literal('engineering') })
+  .strict()
+
+const goalActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('pause') }).strict(),
+  z.object({ kind: z.literal('resume') }).strict(),
+  z.object({ kind: z.literal('cancel') }).strict(),
+  z.object({ kind: z.literal('reopen') }).strict(),
+  z.object({ kind: z.literal('set_priority'), priority: z.number().int() }).strict(),
+])
+
+const workActionSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('retry'),
+      notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('defer'),
+      notBefore: z.string().datetime({ offset: true }).nullable(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('cancel') }).strict(),
+])
 
 export const reflectionAssistantToolNames = ['hopi_read_state', 'hopi_handoff_to_main'] as const
 
@@ -106,53 +156,32 @@ export const assistantToolSchemas = {
         .optional(),
     })
     .strict(),
-  hopi_manage_project: z.discriminatedUnion('operation', [
-    z
-      .object({
-        operation: z.literal('initialize_repository'),
-        path: z
-          .string()
-          .trim()
-          .min(1)
-          .describe(
-            'Operator-supplied repository path. The final directory may be empty or missing; when missing, its parent must already exist and HOPI creates the final directory automatically.',
-          ),
-      })
-      .strict(),
-    z
-      .object({
-        operation: z.literal('link_project'),
-        projectId: stableIdSchema.optional(),
-        primaryRepoId: stableIdSchema,
-        repos: z.array(projectRepoSchema).min(1),
-      })
-      .strict(),
-    projectRepoSchema
-      .extend({ operation: z.literal('link_repo'), projectId: stableIdSchema })
-      .strict(),
-    z
-      .object({
-        operation: z.literal('rebind_project'),
-        projectId: stableIdSchema,
-        repoPath: z.string().trim().min(1),
-        projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-      })
-      .strict(),
-    projectRepoSchema
-      .extend({ operation: z.literal('rebind_repo'), projectId: stableIdSchema })
-      .strict(),
-    z
-      .object({
-        operation: z.literal('rebind_repos'),
-        projectId: stableIdSchema,
-        repos: z.array(projectRepoSchema).min(1),
-      })
-      .strict(),
-  ]),
-  hopi_configure_model: z
+  hopi_manage_project: z
     .object({
-      role: z.enum(['assistant', 'planner', 'generator', 'reviewer']),
-      codingDefaults: projectCodingDefaultsInputSchema.nullable(),
+      change: z.discriminatedUnion('kind', [
+        z
+          .object({
+            kind: z.literal('create'),
+            projectId: stableIdSchema.optional(),
+            primaryRepoId: stableIdSchema,
+            repos: z.array(projectRepoSchema).min(1),
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal('add_repo'),
+            projectId: stableIdSchema,
+            repo: projectRepoSchema,
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal('rebind_repos'),
+            projectId: stableIdSchema,
+            repos: z.array(projectRepoSchema).min(1),
+          })
+          .strict(),
+      ]),
     })
     .strict(),
   hopi_write_preferences: z
@@ -178,10 +207,11 @@ export const assistantToolSchemas = {
       references: goalReferences,
     })
     .strict(),
-  hopi_create_engineering_work: directEngineeringWorkSchema
-    .extend({
+  hopi_create_work: z
+    .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
+      work: z.discriminatedUnion('kind', [planningWorkSchema, engineeringWorkSchema]),
       references: goalReferences,
     })
     .strict(),
@@ -189,77 +219,43 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
-      writes: z
+      changes: z
         .array(
-          z
-            .object({
-              path: z.string().min(1),
-              content: z.string(),
-            })
-            .strict(),
+          z.discriminatedUnion('kind', [
+            z
+              .object({
+                kind: z.literal('document'),
+                path: z.string().min(1),
+                content: z.string(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal('attachment'),
+                attachmentRef: z.string().min(1),
+                purpose: z.string().trim().min(1),
+              })
+              .strict(),
+          ]),
         )
-        .default([]),
-      references: goalReferences,
-    })
-    .strict()
-    .superRefine((value, context) => {
-      if (value.writes.length === 0 && value.references.length === 0) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'write_design requires a Markdown write or an adopted image reference',
-        })
-      }
-    }),
-  hopi_start_planning: z
-    .object({
-      projectId: stableIdSchema.describe('Exact canonical Project ID.'),
-      goalId: stableIdSchema.describe('Exact canonical Goal ID.'),
-      mode: z
-        .enum(['same_contract', 'new_contract_revision'])
-        .describe(
-          'Use same_contract when Goal outcome and success remain unchanged; use new_contract_revision only when outcome, scope, constraints, success, or behavior changes.',
-        )
-        .default('same_contract'),
-      references: goalReferences,
+        .min(1),
     })
     .strict(),
-  hopi_control: z
+  hopi_control_goal: z
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema,
-      workId: stableIdSchema.optional(),
-      operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer']),
-      priority: z.number().int().optional(),
-      notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+      action: goalActionSchema,
     })
-    .strict()
-    .superRefine((value, context) => {
-      if (value.operation === 'set_priority' && value.priority === undefined) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_priority requires priority' })
-      }
-      const workOperation = ['retry', 'defer'].includes(value.operation)
-      if (workOperation && !value.workId) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${value.operation} requires workId`,
-        })
-      }
-      if (value.operation === 'defer' && value.notBefore === undefined) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: 'defer requires notBefore' })
-      }
-      if (value.workId && !['retry', 'defer', 'cancel'].includes(value.operation)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${value.operation} is a Goal operation`,
-        })
-      }
-      if (!value.workId && ['retry', 'defer'].includes(value.operation)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${value.operation} is a Work operation`,
-        })
-      }
-    }),
+    .strict(),
+  hopi_control_work: z
+    .object({
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
+      workId: stableIdSchema,
+      action: workActionSchema,
+    })
+    .strict(),
   hopi_resolve_attention: z
     .object({
       attentionRef: z
@@ -279,14 +275,13 @@ export const assistantToolSchemas = {
       operation: z.enum(['start', 'stop']),
     })
     .strict(),
-  hopi_notify_user: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
-  hopi_transfer_attention: z
+  hopi_request_user: z
     .object({
       attentionRefs: z
         .array(canonicalAttentionReferenceSchema)
         .min(1)
-        .refine((values) => new Set(values).size === values.length, 'attentionRefs must be unique'),
-      message: z.string().trim().min(1).max(12_000),
+        .refine((values) => new Set(values).size === values.length, 'attentionRefs must be unique')
+        .describe('Copy complete reference values verbatim from hopi_read_state.'),
     })
     .strict(),
   hopi_handoff_to_main: z
@@ -304,6 +299,9 @@ export const assistantToolSchemas = {
             .refine(
               (values) => new Set(values).size === values.length,
               'attentionRefs must be unique',
+            )
+            .describe(
+              'Copy reference values verbatim from hopi_read_state. Use workspace references without projectId/goalId, or references from exactly the named Goal; never mix scopes.',
             )
             .optional(),
         })
@@ -362,23 +360,121 @@ export const assistantToolRequestSchema = z
 // MCP needs a serializable object schema without Zod effects. Keep cross-field
 // validation in the canonical schemas above, which are parsed again at the
 // mutation boundary.
-const mcpObject = z.object({}).passthrough()
+const mcpProjectRepoSchema = z
+  .object({
+    repoId: z.string().min(1),
+    repoPath: z.string().min(1),
+    projectPath: z.string().optional(),
+  })
+  .strict()
+const mcpManageProjectSchema = z
+  .object({
+    change: z.discriminatedUnion('kind', [
+      z
+        .object({
+          kind: z.literal('create'),
+          projectId: z.string().optional(),
+          primaryRepoId: z.string().min(1),
+          repos: z.array(mcpProjectRepoSchema).min(1),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('add_repo'),
+          projectId: z.string().min(1),
+          repo: mcpProjectRepoSchema,
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('rebind_repos'),
+          projectId: z.string().min(1),
+          repos: z.array(mcpProjectRepoSchema).min(1),
+        })
+        .strict(),
+    ]),
+  })
+  .strict()
+const mcpCreateWorkSchema = z
+  .object({
+    projectId: z.string().min(1),
+    goalId: z.string().min(1),
+    work: z.discriminatedUnion('kind', [
+      z
+        .object({
+          kind: z.literal('planning'),
+          mode: z.enum(['same_contract', 'new_contract_revision']),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('engineering'),
+          title: z.string().min(1),
+          objective: z.string().min(1),
+          acceptanceCriteria: z.array(z.string().min(1)).min(1),
+          repos: z.array(z.string().min(1)).min(1),
+          dependsOn: z.array(z.string().min(1)).optional(),
+        })
+        .strict(),
+    ]),
+    references: goalReferences.optional(),
+  })
+  .strict()
 const mcpWriteDesignSchema = z
   .object({
     projectId: stableIdSchema,
     goalId: stableIdSchema,
-    writes: z.array(z.object({ path: z.string().min(1), content: z.string() }).strict()).optional(),
-    references: goalReferences.optional(),
+    changes: z
+      .array(
+        z.discriminatedUnion('kind', [
+          z
+            .object({ kind: z.literal('document'), path: z.string().min(1), content: z.string() })
+            .strict(),
+          z
+            .object({
+              kind: z.literal('attachment'),
+              attachmentRef: z.string().min(1),
+              purpose: z.string().min(1),
+            })
+            .strict(),
+        ]),
+      )
+      .min(1),
   })
   .strict()
-const mcpControlSchema = z
+const mcpControlGoalSchema = z
   .object({
     projectId: stableIdSchema,
     goalId: stableIdSchema,
-    workId: stableIdSchema.optional(),
-    operation: z.enum(['pause', 'resume', 'cancel', 'reopen', 'set_priority', 'retry', 'defer']),
-    priority: z.number().int().optional(),
-    notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+    action: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('pause') }).strict(),
+      z.object({ kind: z.literal('resume') }).strict(),
+      z.object({ kind: z.literal('cancel') }).strict(),
+      z.object({ kind: z.literal('reopen') }).strict(),
+      z.object({ kind: z.literal('set_priority'), priority: z.number().int() }).strict(),
+    ]),
+  })
+  .strict()
+const mcpControlWorkSchema = z
+  .object({
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    workId: stableIdSchema,
+    action: z.discriminatedUnion('kind', [
+      z
+        .object({
+          kind: z.literal('retry'),
+          notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('defer'),
+          notBefore: z.string().datetime({ offset: true }).nullable(),
+        })
+        .strict(),
+      z.object({ kind: z.literal('cancel') }).strict(),
+    ]),
   })
   .strict()
 const mcpResolveAttentionSchema = z
@@ -386,9 +482,11 @@ const mcpResolveAttentionSchema = z
   .strict()
 export const assistantMcpToolSchemas = {
   ...assistantToolSchemas,
-  hopi_manage_project: mcpObject,
+  hopi_manage_project: mcpManageProjectSchema,
+  hopi_create_work: mcpCreateWorkSchema,
   hopi_write_design: mcpWriteDesignSchema,
-  hopi_control: mcpControlSchema,
+  hopi_control_goal: mcpControlGoalSchema,
+  hopi_control_work: mcpControlWorkSchema,
   hopi_resolve_attention: mcpResolveAttentionSchema,
 } as const
 

@@ -4,7 +4,6 @@ import {
   type ConfigurableAgentRole,
   readAgentRoleCodingDefaults,
   readAndMigrateAgentAdapterConfig,
-  readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
   updateAgentRoleCodingDefaults,
@@ -110,7 +109,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const assistantConversation = createAssistantConversationStore(options.homeRoot)
   await assistantConversation.interruptRunning()
   const topologyChangedEvents = new Set<string>()
-  const assistantSessionResetEvents = new Set<string>()
   const attentions = createWorkspaceAttentionController(workspace)
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
   const readAdapterConfig = () => readAndMigrateAgentAdapterConfig(adapterPath)
@@ -222,7 +220,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     publisher,
     attempts,
     activeRuns: () => readActiveRuns(),
-    readAssistantCodingDefaults: readAssistantModelSettings,
   })
   let restoreProjectEligibility: (projectId: string) => Promise<void> = async () => undefined
   let protectAssistantGoal: (eventId: string, projectId: string, goalId: string) => void = () =>
@@ -235,8 +232,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     publisher,
     preview,
     state: assistantState,
-    readAgentRoleCodingDefaults: readAgentRoleModelSettings,
-    updateAgentRoleCodingDefaultsForTurn: updateAgentRoleModelSettingsForTurn,
     onProjectTopologyChanged: (eventId, linkedProject) => {
       projects.set(linkedProject.projectId, createProjectRuntime(linkedProject))
       topologyChangedEvents.add(eventId)
@@ -256,9 +251,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     resolveToolUrl:
       options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
     onTurnSettled: async (eventId) => {
-      if (assistantSessionResetEvents.delete(eventId)) {
-        await assistantConversation.clearSession()
-      }
       if (topologyChangedEvents.delete(eventId)) options.onProjectTopologyChanged?.()
     },
   })
@@ -345,10 +337,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
   }
 
-  async function readAssistantModelSettings() {
-    return readAssistantCodingDefaults(await readAdapterConfig())
-  }
-
   async function readAgentRoleModelSettings(role: ConfigurableAgentRole) {
     return readAgentRoleCodingDefaults(await readAdapterConfig(), role)
   }
@@ -367,25 +355,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     }
     const current = await readAdapterConfig()
     await writeAgentAdapterConfig(adapterPath, updateAgentRoleCodingDefaults(current, role, input))
-  }
-
-  async function updateAssistantModelSettingsForTurn(
-    eventId: string,
-    input: ProjectCodingDefaultsInput | null,
-  ) {
-    if (await writeAssistantModelSettings(input)) assistantSessionResetEvents.add(eventId)
-  }
-
-  async function updateAgentRoleModelSettingsForTurn(
-    eventId: string,
-    role: ConfigurableAgentRole,
-    input: ProjectCodingDefaultsInput | null,
-  ) {
-    if (role === 'assistant') {
-      await updateAssistantModelSettingsForTurn(eventId, input)
-      return
-    }
-    await updateAgentRoleModelSettings(role, input)
   }
 
   async function writeAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {

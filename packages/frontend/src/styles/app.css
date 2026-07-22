@@ -27,6 +27,7 @@
 @import "@heroui/styles/components/select.css" layer(components);
 @import "@heroui/styles/components/spinner.css" layer(components);
 @import "@heroui/styles/components/surface.css" layer(components);
+@import "@heroui/styles/components/switch.css" layer(components);
 @import "@heroui/styles/components/tabs.css" layer(components);
 @import "@heroui/styles/components/textarea.css" layer(components);
 @import "@heroui/styles/components/textfield.css" layer(components);

@@ -83,33 +83,59 @@ const assistantRunner: AssistantModelRunner = {
   async run(input, observer) {
     const mode = input.toolMode ?? 'main'
     assistantRuns.push({ eventId: input.eventId, mode, action: 'reply' })
+    let attentionRefs = attentionReferences(input.prompt)
+    if (mode === 'reflection') {
+      const state = await callAssistantTool(input, observer, 'hopi_read_state', {
+        projectId: PROJECT_ID,
+        goalId: GOAL_ID,
+      })
+      const attentions = goalAttentions(state)
+      const blocker = attentions.find(
+        (attention) =>
+          attention.attributes.target !== null && attention.attributes.operatorRequest === null,
+      )
+      const completion = attentions.find((attention) => attention.attributes.target === null)
+      if (!blocker && !completion) return assistantResult('', mode)
+      const selected = blocker ?? completion
+      assert.ok(selected)
+      attentionRefs = [selected.reference]
+      await callAssistantTool(input, observer, 'hopi_handoff_to_main', {
+        brief: blocker
+          ? 'Operational recovery is exhausted and needs an operator-facing decision.'
+          : 'The recovered delivery completed and needs one operator-facing summary.',
+        context: { projectId: PROJECT_ID, goalId: GOAL_ID, attentionRefs },
+      })
+      return assistantResult('', mode)
+    }
     if (mode === 'internal') {
+      if (input.prompt.includes('recovered delivery completed')) {
+        return assistantResult(COMPLETION_REPLY, mode)
+      }
       const message = (await Bun.file(repairFlag).exists())
         ? COMPLETION_REPLY
         : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。'
-      await callAssistantTool(input, observer, 'hopi_transfer_attention', {
-        attentionRefs: [
-          ...new Set(
-            input.prompt.match(
-              /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
-            ) ?? [],
-          ),
-        ],
-        message,
+      await callAssistantTool(input, observer, 'hopi_request_user', {
+        attentionRefs,
       })
       return assistantResult(message, mode)
     }
     if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
       const attentionId = attentionToResolve
-      await callAssistantTool(input, observer, 'hopi_answer_attention', {
+      await callAssistantTool(input, observer, 'hopi_resolve_attention', {
         attentionRef: `project:${PROJECT_ID}/goal:${GOAL_ID}/attention:${attentionId}`,
-        decision: 'retry',
+        resolution: USER_REPLY,
+      })
+      await callAssistantTool(input, observer, 'hopi_control_work', {
+        projectId: PROJECT_ID,
+        goalId: GOAL_ID,
+        workId: 'plan-initial',
+        action: { kind: 'retry' },
       })
       attentionToResolve = null
       assistantRuns.push({ eventId: input.eventId, mode, action: `retried:${attentionId}` })
       return assistantResult(ASSISTANT_REPLY, mode)
     }
-    return assistantResult(mode === 'reflection' ? '' : '没有需要执行的操作。', mode)
+    return assistantResult('没有需要执行的操作。', mode)
   },
 }
 
@@ -217,7 +243,7 @@ try {
   )
   assert.ok(
     assistantRuns.some((run) => run.action === `retried:${blocker.id}`),
-    'One Work retry must atomically resolve the exact blocker through its tool boundary',
+    'One explicit resolution and Work retry must recover the exact blocker',
   )
   const checkoutAfter = await assertAcceptedDelivery(repoRoot, checkoutBefore)
 
@@ -369,7 +395,12 @@ async function readFailureEvidence(runs: RoleRunRecord[]) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_transfer_attention' | 'hopi_answer_attention',
+  name:
+    | 'hopi_read_state'
+    | 'hopi_request_user'
+    | 'hopi_resolve_attention'
+    | 'hopi_control_work'
+    | 'hopi_handoff_to_main',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({
@@ -393,6 +424,37 @@ async function callAssistantTool(
     toolName: name,
   })
   if (!response.ok) throw new Error(`${name} failed with ${response.status}: ${body}`)
+  return JSON.parse(body) as unknown
+}
+
+function attentionReferences(source: string) {
+  return [
+    ...new Set(
+      source.match(
+        /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
+      ) ?? [],
+    ),
+  ]
+}
+
+function goalAttentions(value: unknown) {
+  const result = value as {
+    value?: {
+      projects?: Array<{
+        goals?: Array<{
+          attentions?: Array<{
+            reference: string
+            attributes: { target: string | null; operatorRequest: string | null }
+          }>
+        }>
+      }>
+    }
+  }
+  return (
+    result.value?.projects?.flatMap(
+      (project) => project.goals?.flatMap((goal) => goal.attentions ?? []) ?? [],
+    ) ?? []
+  )
 }
 
 function assistantResult(reply: string, mode: string) {
@@ -411,8 +473,10 @@ function createSuccessfulRoles(): RoleRunner {
         await Bun.write(join(input.cwd, 'src', 'recovered.ts'), 'export const recovered = true\n')
         return success('Generator completed after the external condition was repaired.')
       }
+      const sourceRoot = input.sourceRoots?.[0]
+      assert.ok(sourceRoot, 'Reviewer must receive the recovered candidate source root')
       assert.equal(
-        await Bun.file(join(input.cwd, 'src', 'recovered.ts')).text(),
+        await Bun.file(join(sourceRoot, 'src', 'recovered.ts')).text(),
         'export const recovered = true\n',
       )
       return success('Reviewer accepted the recovered delivery.')

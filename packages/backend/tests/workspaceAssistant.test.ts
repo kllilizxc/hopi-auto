@@ -205,6 +205,54 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
+  test('runs bounded Claude without an interactive permission channel', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-bounded-permissions')
+    const argsFile = join(temporaryRoot, 'claude-bounded-permissions-args.json')
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-bounded"}))',
+        'console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-bounded",result:"Bounded."}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const cwd = join(temporaryRoot, 'assistant-claude-bounded')
+    const runner = createConfiguredAssistantModelRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        cwdMode: 'root',
+        binary,
+        permissionMode: 'default',
+      }),
+      resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    })
+
+    await runner.run({
+      eventId: 'EV-claude-bounded',
+      prompt: 'Inspect state.',
+      session: null,
+      cwd,
+      lastMessageFile: join(cwd, 'last-message.txt'),
+      transcriptFile: join(cwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'claude-bounded-token',
+    })
+
+    const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
+    expect(args).toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--permission-mode')
+    expect(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2)).toEqual([
+      '--tools',
+      'Read,Glob,Grep,Bash,WebFetch,WebSearch',
+    ])
+    expect(await Bun.file(join(cwd, 'claude-settings.json')).json()).toMatchObject({
+      sandbox: { enabled: true, failIfUnavailable: true },
+    })
+  })
+
   test('does not persist a session identity reported only by a Claude terminal error', async () => {
     const binary = join(temporaryRoot, 'fake-claude-startup-error')
     const error = 'sandbox required but unavailable'
@@ -408,6 +456,34 @@ describe('WorkspaceAssistant conversation', () => {
     expect(await Bun.file(pwdFile).text()).toBe(cwd)
     expect(await Bun.file(promptFile).text()).toBe('Continue.')
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"text"')
+
+    const boundedCwd = join(temporaryRoot, 'assistant-opencode-bounded')
+    await runner.run({
+      eventId: 'EV-opencode-bounded',
+      projectId: 'P-2',
+      prompt: 'Read state.',
+      session: null,
+      cwd: boundedCwd,
+      lastMessageFile: join(boundedCwd, 'last-message.txt'),
+      transcriptFile: join(boundedCwd, 'transcript.log'),
+      toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      toolToken: 'opencode-bounded-token',
+      readableRoots: [readableRoot],
+    })
+    const boundedConfig = await Bun.file(join(boundedCwd, 'opencode.json')).json()
+    expect(boundedConfig.permission).toEqual({
+      '*': 'deny',
+      'hopi_*': 'allow',
+      read: 'allow',
+      grep: 'allow',
+      glob: 'allow',
+      list: 'allow',
+      external_directory: {
+        '*': 'deny',
+        [`${readableRoot}/**`]: 'allow',
+      },
+    })
+    expect(JSON.stringify(boundedConfig.permission)).not.toContain('ask')
   })
 
   test('does not invoke an OpenCode model without the injected HOPI MCP server', async () => {
@@ -1073,6 +1149,45 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
+  test('rebuilds a context-exhausted vendor session once from bounded history', async () => {
+    const calls: Array<{ sessionId: string | null; prompt: string }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        calls.push({ sessionId: input.session?.sessionId ?? null, prompt: input.prompt })
+        if (input.session) {
+          throw new AssistantSessionUnavailableError(
+            "This model's maximum context length is 1048565 tokens; the request exceeded it.",
+          )
+        }
+        await observer?.onSession?.(codexSession('thread-after-context-rebuild'))
+        return {
+          reply: 'Recovered from bounded history.',
+          session: codexSession('thread-after-context-rebuild'),
+        }
+      },
+    }))
+    await fixture.workspace.receiveEvent({ eventId: 'EV-old', content: 'Earlier request' })
+    await fixture.workspace.handleEvent('EV-old', {
+      reply: 'Earlier answer',
+      disposition: 'answered',
+    })
+    await fixture.conversation.writeSession(
+      codexSession('thread-context-exhausted'),
+      WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
+      workspaceAssistantRuntimeDigest(fixture.homeRoot),
+    )
+    await fixture.workspace.receiveEvent({ eventId: 'EV-context', content: 'Continue' })
+
+    await fixture.assistant.process('EV-context')
+
+    expect(calls.map((call) => call.sessionId)).toEqual(['thread-context-exhausted', null])
+    expect(calls[1]?.prompt).toContain('User: Earlier request')
+    expect(calls[1]?.prompt).toContain('Assistant: Earlier answer')
+    expect(await fixture.conversation.readSession(WORKSPACE_ASSISTANT_CONTRACT_DIGEST)).toEqual(
+      codexSession('thread-after-context-rebuild'),
+    )
+  })
+
   test('does not rebuild a cached session after a terminal provider failure', async () => {
     const calls: Array<string | null> = []
     const fixture = await setup(() => ({
@@ -1174,7 +1289,7 @@ describe('WorkspaceAssistant conversation', () => {
       async run(input, observer) {
         prompts.push(input.prompt)
         await observer?.onSession?.(codexSession('thread-1'))
-        return { reply: 'No operator interruption is needed.', session: codexSession('thread-1') }
+        return { reply: '', session: codexSession('thread-1') }
       },
     }))
     await fixture.workspace.receiveReflectionEvent({
@@ -1200,11 +1315,11 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         calls += 1
-        await tools.execute(input.toolToken, 'hopi_control', {
+        await tools.execute(input.toolToken, 'hopi_control_work', {
           projectId: 'P-1',
           goalId: 'G-1',
           workId: 'plan-initial',
-          operation: 'retry',
+          action: { kind: 'retry' },
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
@@ -1246,12 +1361,11 @@ describe('WorkspaceAssistant conversation', () => {
       async run(input) {
         prompts.push(input.prompt)
         sessions.push(input.session?.sessionId ?? null)
-        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-settlement'],
-          message: 'Choose the release window: today or tomorrow?',
         })
         return {
-          reply: 'Internal narration remains hidden.',
+          reply: 'Choose the release window: today or tomorrow?',
           session: codexSession('thread-settlement'),
         }
       },
@@ -1267,8 +1381,8 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-settlement')
 
     expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('Either message becomes the complete public turn')
-    expect(prompts[0]).toContain('transfers exactly the selected open Attention references')
+    expect(prompts[0]).toContain('Your final response is the only public text')
+    expect(prompts[0]).toContain('call hopi_request_user')
     expect(sessions).toEqual([null])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
       status: 'handled',
@@ -1293,10 +1407,10 @@ describe('WorkspaceAssistant conversation', () => {
           attentionRef: 'project:P-1/goal:G-1/attention:A-revised-notification',
           resolution: 'The represented blocker was verified clear.',
         })
-        await tools.execute(input.toolToken, 'hopi_notify_user', {
-          message: 'The blocker was cleared and internal work has resumed.',
-        })
-        return { reply: '', session: codexSession('thread-revised-notification') }
+        return {
+          reply: 'The blocker was cleared and internal work has resumed.',
+          session: codexSession('thread-revised-notification'),
+        }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-revised-notification')
@@ -1332,11 +1446,13 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         prompts.push(input.prompt)
-        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-informational-owner'],
-          message: 'Choose the release window: today or tomorrow?',
         })
-        return { reply: '', session: codexSession('thread-informational-owner') }
+        return {
+          reply: 'Choose the release window: today or tomorrow?',
+          session: codexSession('thread-informational-owner'),
+        }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-informational-owner')
@@ -1398,12 +1514,11 @@ describe('WorkspaceAssistant conversation', () => {
   test('publishes only the explicit operator request before transferring linked Attention', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-          message: 'Choose the release window: today or tomorrow?',
         })
         return {
-          reply: 'Internal diagnostic narration must remain hidden.',
+          reply: 'Choose the release window: today or tomorrow?',
           session: codexSession('thread-notify'),
         }
       },
@@ -1441,9 +1556,8 @@ describe('WorkspaceAssistant conversation', () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         if (input.eventId === 'EV-notify') {
-          await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+          await tools.execute(input.toolToken, 'hopi_request_user', {
             attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-            message: 'Which release window should I use: today or tomorrow?',
           })
           return {
             reply: 'Which release window should I use: today or tomorrow?',
@@ -1460,10 +1574,10 @@ describe('WorkspaceAssistant conversation', () => {
             session: codexSession('thread-attention'),
           }
         }
-        await tools.execute(input.toolToken, 'hopi_start_planning', {
+        await tools.execute(input.toolToken, 'hopi_create_work', {
           projectId: 'P-1',
           goalId: 'G-1',
-          mode: 'new_contract_revision',
+          work: { kind: 'planning', mode: 'new_contract_revision' },
         })
         await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: 'project:P-1/goal:G-1/attention:A-choice',
@@ -1609,9 +1723,8 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-failed'],
-          message: 'Choose the release window.',
         })
         throw new Error('reply generation failed')
       },
@@ -1643,9 +1756,8 @@ describe('WorkspaceAssistant conversation', () => {
   test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
-        await tools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await tools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: ['project:P-1/goal:G-1/attention:A-retry-ack'],
-          message: 'Choose the release window.',
         })
         return {
           reply: 'Choose the release window.',
@@ -1768,12 +1880,6 @@ async function setup(
     preview,
     projects,
     state,
-    readAgentRoleCodingDefaults: async () => ({
-      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      inherited: true,
-      configurable: true,
-    }),
-    updateAgentRoleCodingDefaultsForTurn: async () => undefined,
   })
   const assistant = createWorkspaceAssistant({
     homeRoot,

@@ -14,7 +14,7 @@ import {
 } from '../agent/runtimeEvents'
 import { codingReasoningEffortSchema } from '../domain/projectCodingDefaults'
 import { stableIdSchema } from '../domain/stableId'
-import { readDurableJsonLines } from '../storage/jsonLines'
+import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
@@ -379,20 +379,25 @@ export function createRunAttemptStore(
         if (!manifest || manifest.status !== 'running') continue
         const endedAt = now().toISOString()
         const summary = 'Coordinator stopped before recording an Attempt outcome.'
-        await appendFile(
-          join(resolve(path, '..'), 'events.jsonl'),
-          `${JSON.stringify(
-            storeEvent(
-              {
-                kind: 'message',
-                level: 'error',
-                role: 'coordinator',
-                content: summary,
-              },
-              new Date(endedAt),
+        const eventsPath = join(resolve(path, '..'), 'events.jsonl')
+        await repairDurableJsonLineTail(eventsPath)
+          .then(() =>
+            appendFile(
+              eventsPath,
+              `${JSON.stringify(
+                storeEvent(
+                  {
+                    kind: 'message',
+                    level: 'error',
+                    role: 'coordinator',
+                    content: summary,
+                  },
+                  new Date(endedAt),
+                ),
+              )}\n`,
             ),
-          )}\n`,
-        ).catch(() => undefined)
+          )
+          .catch(() => undefined)
         await writeManifest(path, {
           ...manifest,
           endedAt,

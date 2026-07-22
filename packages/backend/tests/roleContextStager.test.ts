@@ -73,7 +73,8 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('kind: engineering')
     expect(prompt).toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(prompt).toContain('.hopi/docs/repos.md')
-    expect(prompt).toContain(`Working directory: ${bundle.runRoot}`)
+    expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
+    expect(prompt).not.toContain(bundle.runRoot)
     expect(prompt).toContain('canonical-relative beneath Proposal root')
     expect(prompt).toContain('Use this exact frontmatter')
     expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
@@ -93,6 +94,17 @@ describe('RoleContextStager', () => {
     expect(prompt.length).toBeLessThan(10_000)
     expect(bundle.apiOrigin).toBe('http://127.0.0.1:3000')
     expect(bundle.authorityFiles.find((file) => file.path === 'AGENTS.md')?.hash).toBeNull()
+
+    const next = await stager.prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-1-next',
+      responsibility: 'planner',
+      apiOrigin: 'http://127.0.0.1:3000/internal/path',
+    })
+    expect(await Bun.file(next.promptFile).text()).toBe(prompt)
   })
 
   test('does not bootstrap or expose an existing AGENTS.md as a Planner write', async () => {
@@ -114,7 +126,7 @@ describe('RoleContextStager', () => {
     expect(bundle.extraWritableRoots).not.toContain(fixture.projectRoot)
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
     expect(await Bun.file(bundle.promptFile).text()).toContain(
-      `Repo preparation entrypoints: primary=${join(fixture.projectRoot, 'scripts', 'hopi', 'prepare')}`,
+      'Repo preparation entrypoints: resolve each listed Repo root from $HOPI_REPOS_FILE',
     )
   })
 
@@ -411,7 +423,9 @@ describe('RoleContextStager', () => {
     expect(generator.extraWritableRoots).toContain(fixture.projectRoot)
     expect(reviewer.extraReadableRoots).toContain(fixture.projectRoot)
     expect(reviewer.extraWritableRoots).not.toContain(fixture.projectRoot)
-    expect(reviewerPrompt).toContain(`Working directory: ${reviewer.runRoot}`)
+    expect(reviewerPrompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
+    expect(generatorPrompt).toContain('Working directory: $HOPI_PRIMARY_REPO_ROOT')
+    expect(reviewerPrompt).not.toContain(reviewer.runRoot)
     expect(generatorPrompt).not.toContain('Git writes such as add, commit')
     expect(generatorPrompt).toContain('[Current execution environment observation]')
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')

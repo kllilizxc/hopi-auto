@@ -706,7 +706,7 @@ Pass conditions:
 - The fixed ceiling creates or reuses one ordinary Work-target Attention.
 - Kanban shows a direct blocker rather than an infinite spinner or invented failure stage.
 - Raw stdout/stderr is present for every failed process.
-- One Work retry records the Input and atomically resolves only its exact blocker.
+- One explicit Attention resolution plus Work retry records the Input and affects only its exact blocker.
 - The resolved blocker starts one new episode; success clears the projection without deleting history.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-10`, `INV-14`.
@@ -715,8 +715,8 @@ Current implementation: `packages/backend/tests/browser/operationalRecovery.brow
 (`bun run e2e:browser:014`) uses a real failing child process, restarts the production Server between
 failures, retains raw stdout/stderr, renders and answers the blocker through the browser, and completes
 the same Planning Work in a fresh episode through deterministic Planner, Generator, Reviewer, and C1.
-The Assistant fixture intentionally calls only `hopi_answer_attention: retry`; the test asserts that the
-original Work Attention resolves without a second model tool call.
+The Assistant fixture calls `hopi_resolve_attention` and then `hopi_control_work: retry`; the test
+asserts that the original Work Attention resolves before the same Work starts a fresh episode.
 
 ### HOPI-E2E-015: Pause And Resume During An Active Run
 
@@ -876,10 +876,11 @@ Actions:
 3. Create a real Assistant-owned targeted Attention through product behavior.
 4. While its internal speaking handoff is running, submit a new public user message.
 5. Let the public turn finish, then allow current-state revalidation and Attention notification.
-6. Run one focused configured-provider turn that calls `hopi_notify_user({ message })`; confirm the
-   informational message records delivery but remains **Waiting for Assistant** and receives a
-   correction turn rather than becoming **Needs you**.
-7. Run the actionable variant with `hopi_transfer_attention({ attentionRefs, message })`; confirm its public message is
+6. Run one focused configured-provider turn that returns an informational final response without a
+   delivery tool; confirm the message records delivery but remains **Waiting for Assistant** and
+   receives a correction turn rather than becoming **Needs you**.
+7. Run the actionable variant with `hopi_request_user({ attentionRefs })` followed by the complete
+   question as its final response; confirm its public message is
    independently understandable from the visible conversation, including the material cause,
    blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
    one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
@@ -899,7 +900,7 @@ Pass conditions:
 - The final direct operator message corresponds to current unresolved Attention and appears once.
 - A direct operator request contains enough causal context to decide without exposing the internal
   Reflection brief; it is not only a choice list or bare question.
-- Informational delivery never projects **Needs you**; only `transfer_attention` installs
+- Informational delivery never projects **Needs you**; only `hopi_request_user` installs
   `operatorRequest`.
 - Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
   do not.
@@ -1224,7 +1225,7 @@ Pass conditions:
 
 - Project Attention reason and creation time appear in the banner and Current Focus.
 - Covered Work has `project_ineligible` and `waiting`, never an invented `Needs you` badge.
-- Only a successful `hopi_answer_attention: continue` closes the original Attention, restores eligibility,
+- Only a successful `hopi_resolve_attention` closes the original Attention, restores eligibility,
   and wakes a Planner Attempt.
 - While Planner runs, the Project banner is absent and the Planning card is visibly working.
 - A later execution-boundary failure creates a new Project Attention with a different identity and

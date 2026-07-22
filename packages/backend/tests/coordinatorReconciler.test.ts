@@ -249,6 +249,42 @@ describe('CoordinatorReconciler', () => {
     ).toBe(true)
   })
 
+  test('terminates a failed internal Reflection handoff without recursive Attention', async () => {
+    const fixture = await workspaceFixture()
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-reflection-failed',
+      content: 'Surface one current-state assessment.',
+    })
+    let calls = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process() {
+          calls += 1
+          throw new Error('speaking transport failed')
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    await coordinator.reconcileOnce()
+    await coordinator.waitForIdle()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    const workspace = await fixture.workspace.readWorkspace()
+    const event = workspace.events.get('EV-reflection-failed')
+
+    expect(calls).toBe(1)
+    expect(event?.attributes).toMatchObject({
+      source: 'reflection',
+      visibility: 'internal',
+      status: 'handled',
+      disposition: 'internal-failed',
+    })
+    expect(event?.attributes.reply).toContain('durable turn diagnostics')
+    expect(workspace.attentions.size).toBe(0)
+  })
+
   test('does not let an Attention-blocked public turn suppress Reflection', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-blocked', content: 'Blocked turn.' })

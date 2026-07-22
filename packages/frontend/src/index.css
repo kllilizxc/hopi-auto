@@ -1045,8 +1045,9 @@ button:disabled,
   background: var(--surface-soft);
 }
 
-.project-agent-access > span {
+.project-agent-access .app-switch__content > span:not(.app-switch__control) {
   display: grid;
+  min-width: 0;
   gap: 3px;
 }
 
@@ -5342,102 +5343,6 @@ samp {
   color: var(--color-warning-300);
 }
 
-.repo-init-modal-container {
-  display: flex;
-  width: min(520px, 100%);
-  align-items: center;
-  justify-content: center;
-}
-
-.repo-init-modal {
-  display: grid;
-  width: min(500px, 100%);
-  max-width: none;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 14px 15px;
-  padding: 22px;
-  border: 0;
-  border-radius: 16px;
-  background: linear-gradient(
-      150deg,
-      color-mix(in srgb, var(--color-white) 3%, transparent),
-      transparent 42%
-    ), var(--surface-raised);
-  box-shadow: var(--shadow-lg);
-  animation: modal-in var(--motion-base) var(--motion-ease) both;
-}
-
-.repo-init-modal-icon {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--color-accent-500) 11%, var(--surface-soft));
-  color: var(--color-accent-300);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--color-white) 4%, transparent);
-}
-
-.repo-init-modal-icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-.repo-init-modal-copy {
-  min-width: 0;
-}
-
-.repo-init-modal-copy h2 {
-  margin: 4px 0 8px;
-  color: var(--color-neutral-100);
-  font-size: 16px;
-  line-height: 1.25;
-}
-
-.repo-init-modal-copy p {
-  margin: 0;
-  color: var(--color-neutral-400);
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.repo-init-modal-copy strong {
-  color: var(--color-neutral-200);
-}
-
-.repo-init-modal-copy code {
-  display: block;
-  overflow: hidden;
-  margin-top: 12px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  background: var(--surface-soft);
-  color: var(--color-neutral-300);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-init-error,
-.repo-init-modal-actions {
-  grid-column: 1 / -1;
-}
-
-.repo-init-error {
-  margin: 0;
-}
-
-.repo-init-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 2px;
-}
-
-.repo-init-modal-actions button {
-  min-height: 36px;
-}
-
 .project-list-panel,
 .link-project-panel {
   padding: 24px;
@@ -7087,26 +6992,6 @@ samp {
     display: none;
   }
 
-  .repo-init-modal-container {
-    padding: 14px;
-  }
-
-  .repo-init-modal {
-    grid-template-columns: 36px minmax(0, 1fr);
-    gap: 12px;
-    padding: 18px;
-  }
-
-  .repo-init-modal-icon {
-    width: 36px;
-    height: 36px;
-  }
-
-  .repo-init-modal-actions {
-    align-items: stretch;
-    flex-direction: column-reverse;
-  }
-
   .project-card-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
@@ -7256,7 +7141,6 @@ samp {
 
   .project-card-actions > *,
   .form-actions > *,
-  .repo-init-modal-actions button,
   .project-directory-picker {
     min-height: 44px;
   }

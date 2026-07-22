@@ -123,10 +123,13 @@ distant cards into the first frame.
 
 Workspace selectors are recency-aware. Every visited Project keeps its own last-visit timestamp;
 visited Projects are ordered newest first, while never-visited Projects remain in stable server order
-behind them. Goals compare their durable creation receipt with the operator's last visit, so a newly
-Assistant-created Goal is first until the operator views another Goal more recently. Background Goal
-creation never marks an untouched Project as visited. Project switching opens the same first Goal
-shown by the selector; filesystem or identifier order is never treated as recency.
+behind them. Each Project keeps the visit history of its Goals, so the current Goal is immediately
+first and the remaining Goal tabs follow from most to least recently visited. A Goal's durable
+creation receipt is its initial recency evidence until it is visited, preserving discovery of a newly
+Assistant-created Goal without a second ordering model. Background Goal creation never marks an
+untouched Project as visited. Project switching opens the same first Goal shown by the selector;
+filesystem or identifier order is never treated as recency. Older single-Goal browser preferences
+are migrated into the same visit history.
 
 Frequent Project switching uses that same ordering without introducing a second favorites model.
 The most recent Projects are exposed through the shared HeroUI-backed `AppTabs` rail, limited to

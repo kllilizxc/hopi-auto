@@ -58,16 +58,31 @@ describe('ConfiguredRoleRunner', () => {
     expect(transcript).toContain('stderr: stderr-249')
   })
 
-  test('provides Run-scoped temp and Home-scoped cache environments', async () => {
+  test('provides short disposable process temp and retained Run scratch environments', async () => {
     const fixture = await createFixture()
-    const runner = processRunner(
-      'const scratch=process.env.HOPI_RUN_SCRATCH; const cache=process.env.HOPI_CACHE_DIR; if(!scratch || !cache || process.env.BUN_TMPDIR!==scratch+"/tmp" || process.env.XDG_CACHE_HOME!==cache) throw new Error("missing runtime storage"); await Bun.write(process.env.BUN_TMPDIR+"/probe", "ok"); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"scratch ready",artifacts:[]}))',
+    const longScratchDir = join(
+      fixture.root,
+      `responsibility-${'goal-with-a-long-name-'.repeat(5)}`,
+      `work-${'long-title-'.repeat(5)}`,
     )
+    const observedTempFile = join(fixture.runRoot, 'observed-temp.txt')
+    await mkdir(longScratchDir, { recursive: true })
+    const runner = processRunner(
+      `const scratch=process.env.HOPI_RUN_SCRATCH; const cache=process.env.HOPI_CACHE_DIR; const temp=process.env.TMPDIR; if(!scratch || !cache || !temp || process.env.TMP!==temp || process.env.TEMP!==temp || process.env.BUN_TMPDIR!==temp || temp===scratch+"/tmp" || process.env.XDG_CACHE_HOME!==cache) throw new Error("missing runtime storage"); const listener=Bun.listen({unix:temp+"/bridge.sock",socket:{data(){}}}); listener.stop(true); await Bun.write(temp+"/probe", "ok"); await Bun.write(scratch+"/retained", "ok"); await Bun.write(${JSON.stringify(observedTempFile)}, temp); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"scratch ready",artifacts:[]}))`,
+    )
+    const input = fixture.input('planner', fixture.proposalRoot)
 
-    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+    const result = await runner.run({
+      ...input,
+      context: { ...input.context, runtimeScratchDir: longScratchDir },
+    })
+    const observedTemp = await Bun.file(observedTempFile).text()
 
     expect(result).toMatchObject({ result: 'success', summary: 'scratch ready' })
-    expect(await Bun.file(join(fixture.runtimeScratchDir, 'tmp', 'probe')).text()).toBe('ok')
+    expect(observedTemp).toStartWith('/tmp/hopi-role-')
+    expect(Buffer.byteLength(observedTemp)).toBeLessThan(64)
+    expect(await Bun.file(join(observedTemp, 'probe')).exists()).toBe(false)
+    expect(await Bun.file(join(longScratchDir, 'retained')).text()).toBe('ok')
   })
 
   test('normalizes an invalid responsibility/result combination to fail', async () => {
@@ -401,6 +416,8 @@ describe('ConfiguredRoleRunner', () => {
     const binary = await fakeClaude(
       fixture.root,
       `const resumed = Bun.argv.includes("--resume")
+      const prompt = await Bun.stdin.text()
+      await Bun.write(process.env.HOPI_RUN_SCRATCH + (resumed ? "/resume-prompt.txt" : "/initial-prompt.txt"), prompt)
       console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))
       if (resumed) {
         console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"call-update",name:"TaskUpdate",input:{taskId:"1",status:"completed"}}]}}))
@@ -460,6 +477,15 @@ describe('ConfiguredRoleRunner', () => {
     expect([...firstEvents, ...secondEvents]).not.toContainEqual(
       expect.objectContaining({ entryKind: 'tool_call', toolName: 'TaskUpdate' }),
     )
+    expect(await Bun.file(join(fixture.runtimeScratchDir, 'assignment.snapshot.md')).text()).toBe(
+      '# Prompt\n',
+    )
+    expect(await Bun.file(join(fixture.runtimeScratchDir, 'resume-prompt.txt')).text()).toContain(
+      'No assignment section changed',
+    )
+    expect(
+      await Bun.file(join(fixture.runtimeScratchDir, 'resume-prompt.txt')).text(),
+    ).not.toContain('# Prompt')
   })
 
   test('rebuilds an explicitly invalid saved session once inside the same Attempt', async () => {
@@ -486,7 +512,8 @@ describe('ConfiguredRoleRunner', () => {
         session: {
           transport: 'codex',
           sessionId: 'thread-missing',
-          compatibilityKey: roleSessionCompatibilityKey(config) ?? undefined,
+          compatibilityKey:
+            roleSessionCompatibilityKey(config, false, fixture.proposalRoot) ?? undefined,
         },
       },
       {
@@ -540,7 +567,8 @@ describe('ConfiguredRoleRunner', () => {
         session: {
           transport: 'codex',
           sessionId: 'thread-valid',
-          compatibilityKey: roleSessionCompatibilityKey(config) ?? undefined,
+          compatibilityKey:
+            roleSessionCompatibilityKey(config, false, fixture.proposalRoot) ?? undefined,
         },
       },
       {
@@ -586,6 +614,58 @@ describe('ConfiguredRoleRunner', () => {
 
     expect(result).toMatchObject({ result: 'success', summary: 'fresh boundary' })
     expect(invalidations).toBe(1)
+  })
+
+  test('changes every built-in vendor Session identity across the full-access boundary', () => {
+    const configs = [
+      {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'on-request',
+      },
+      {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'acceptEdits',
+      },
+      {
+        transport: 'opencode',
+        cwdMode: 'worktree',
+      },
+    ] as const
+
+    for (const config of configs) {
+      expect(roleSessionCompatibilityKey(config, false)).not.toBe(
+        roleSessionCompatibilityKey(config, true),
+      )
+    }
+  })
+
+  test('changes every built-in vendor Session identity across process working directories', () => {
+    const configs = [
+      {
+        transport: 'codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      },
+      {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      },
+      {
+        transport: 'opencode',
+        cwdMode: 'worktree',
+      },
+    ] as const
+
+    for (const config of configs) {
+      expect(roleSessionCompatibilityKey(config, false, '/tmp/session-a')).not.toBe(
+        roleSessionCompatibilityKey(config, false, '/tmp/session-b'),
+      )
+    }
   })
 
   test('rejects success and invalidates the Session when tool infrastructure stays unavailable', async () => {
@@ -714,7 +794,10 @@ async function createFixture() {
     runtimeScratchDir,
     runtimeCacheDir,
     contextRoot: join(runRoot, 'context'),
+    authorityRoot: join(runRoot, 'context', 'authority'),
     proposalRoot,
+    attentionProposalDir: join(proposalRoot, 'attention'),
+    primaryRepoRoot: repoRoot,
     resultFile,
     releaseHead: 'a'.repeat(40),
     goalHash: 'a'.repeat(64),

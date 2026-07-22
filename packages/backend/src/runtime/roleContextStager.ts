@@ -60,7 +60,10 @@ export interface RoleRepoRoot {
 export interface RoleContextBundle extends TransportContextBundle {
   runRoot: string
   contextRoot: string
+  authorityRoot: string
   proposalRoot: string
+  attentionProposalDir: string
+  primaryRepoRoot: string
   resultFile: string
   releaseHead: string
   goalHash: string
@@ -302,7 +305,10 @@ export function createRoleContextStager(
         runtimeCacheDir,
         runRoot,
         contextRoot,
+        authorityRoot,
         proposalRoot,
+        attentionProposalDir: join(proposalRoot, ...paths.attentionRoot(input.goalId).split('/')),
+        primaryRepoRoot: requiredPrimaryRepoRoot(repoRoots, primaryRepoId),
         resultFile,
         releaseHead,
         goalHash: requiredHash(goalFile, goalPath),
@@ -368,6 +374,15 @@ function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: s
     throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
   }
   return normalized
+}
+
+function requiredPrimaryRepoRoot(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
+  const primary =
+    repoRoots.find((repo) => repo.primary) ??
+    repoRoots.find((repo) => repo.repoId === primaryRepoId) ??
+    repoRoots[0]
+  if (!primary) throw new RoleContextStagingError('Responsibility Repo workspace must not be empty')
+  return primary.path
 }
 
 function normalizeApiOrigin(value: string) {
@@ -970,28 +985,25 @@ function renderResponsibilityPrompt(
     '[Current execution environment observation]',
     EXECUTION_ENVELOPE_MARKER,
     '',
-    `Working directory: ${input.responsibility === 'generator' ? 'the assigned task Repo root' : paths.runRoot}`,
-    `Authority root: ${paths.authorityRoot}`,
-    `Proposal root: ${paths.proposalRoot}`,
-    `Result file: ${paths.resultFile}`,
-    `Audit manifest: ${paths.contextFile}`,
+    `Working directory: ${input.responsibility === 'generator' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
+    'Authority root: $HOPI_AUTHORITY_ROOT',
+    'Proposal root: $HOPI_PROPOSAL_ROOT',
+    'Result file: $HOPI_OUTCOME_FILE',
+    'Audit manifest: $HOPI_CONTEXT_FILE',
     ...(paths.artifactManifestFile
-      ? [
-          `Evidence artifact manifest: ${paths.artifactManifestFile} (also $HOPI_EVIDENCE_ARTIFACTS_FILE)`,
-        ]
+      ? ['Evidence artifact manifest: $HOPI_EVIDENCE_ARTIFACTS_FILE']
       : []),
-    `Repo manifest: ${paths.reposFile}`,
-    `Attention proposal directory: ${paths.attentionRoot} (relative to Proposal root)`,
+    'Repo manifest: $HOPI_REPOS_FILE',
+    'Attention proposal directory: $HOPI_ATTENTION_PROPOSAL_DIR',
     `Project guidance: ${paths.agentsPath}`,
-    `Repo preparation entrypoints: ${paths.repoRoots.map((repo) => `${repo.repoId}=${join(repo.path, 'scripts', 'hopi', 'prepare')}`).join(', ')}`,
+    'Repo preparation entrypoints: resolve each listed Repo root from $HOPI_REPOS_FILE, then use <root>/scripts/hopi/prepare',
     `Primary Repo: ${paths.primaryRepoId}`,
-    `Source roots: ${paths.repoRoots.map((repo) => `${repo.repoId}=${repo.path}`).join(', ')}`,
+    'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
+    'Source roots: the complete mapping in $HOPI_REPOS_FILE',
     ...(paths.operatorPreferenceFile
-      ? [`Operator preference snapshot: ${paths.operatorPreferenceFile}`]
+      ? ['Operator preference snapshot: $HOPI_OPERATOR_PREFERENCE_FILE']
       : []),
-    ...(paths.apiOrigin
-      ? [`Public Preview API origin: ${paths.apiOrigin} (also $HOPI_API_ORIGIN)`]
-      : []),
+    ...(paths.apiOrigin ? ['Public Preview API origin: $HOPI_API_ORIGIN'] : []),
     '',
     'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
     'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns HOPI-managed task Git metadata, checkpoints, and integration refs.',
@@ -1013,14 +1025,24 @@ function renderResponsibilityPrompt(
       : input.responsibility === 'generator'
         ? generatorPrompt()
         : reviewerPrompt()
+  const current = renderCurrentAssignment(input.responsibility, assignment)
   return [
     '# HOPI Responsibility Run',
     '',
-    ...renderCurrentAssignment(input.responsibility, assignment),
-    ...boundary,
-    ...responsibility,
-    resultInstruction(input.responsibility),
+    ...assignmentSection('primary-task', current.primary),
+    ...assignmentSection('execution-boundary', boundary),
+    ...assignmentSection('responsibility', responsibility),
+    ...assignmentSection('supporting-authority', current.supporting),
+    ...assignmentSection('required-result', resultInstruction(input.responsibility)),
   ].join('\n')
+}
+
+function assignmentSection(id: string, content: readonly string[]) {
+  return [
+    `<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:${id} -->`,
+    ...content,
+    `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
+  ]
 }
 
 function targetedAttentionContract(input: PrepareRoleContextInput) {
@@ -1131,7 +1153,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
     ...renderRepairView(assignment.repairView),
     '',
   ]
-  return [...primary, ...supporting]
+  return { primary, supporting }
 }
 
 function renderRepairView(repairView: RunAssignment['repairView']) {
@@ -1196,6 +1218,7 @@ function plannerPrompt(paths: {
       : []),
     'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, names only required Repos, and depends only on required output, overlapping writers, or exclusive resources.',
     'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
+    'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
     'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. Planner may use it for final integrated proof when the accepted design requires that proof.',
     'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',
     'Goal assets remain durable only through their exact Goal asset paths and documented purpose. Repo responsibilities and shared contracts have one canonical owner.',
@@ -1229,7 +1252,7 @@ function plannerPrompt(paths: {
     'Planner working directory is not a Git checkout. Source and Authority are read-only; sparse proposal paths are canonical-relative beneath Proposal root.',
     ...(paths.bootstrapSourceRoot
       ? [
-          `Project guidance is absent; the read-only source snapshot for deriving a concise AGENTS.md entrypoint is ${paths.bootstrapSourceRoot}.`,
+          'Project guidance is absent; derive a concise AGENTS.md entrypoint from the read-only source snapshot at $HOPI_BOOTSTRAP_SOURCE_ROOT.',
         ]
       : ['Project guidance already exists and is read-only in this responsibility.']),
     'Every selected Repo owns its own scripts/hopi/prepare contract; preparation delivery belongs to the Engineering Work that needs that Repo.',
@@ -1302,7 +1325,7 @@ function resultInstruction(responsibility: Responsibility) {
     'This responsibility is already authorized to execute its assignment. Do not enter a vendor plan-approval mode or ask an interactive user question; use targeted Attention only for authority that cannot be inferred or executed.',
     'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
     '',
-  ].join('\n')
+  ]
 }
 
 async function gitOutput(cwd: string, args: string[]) {

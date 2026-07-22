@@ -26,6 +26,13 @@ export interface GitProjectDirectoryInspection {
   commonDir: string
 }
 
+export interface PreparedProjectRepository {
+  repoPath: string
+  projectPath: string
+  initialized: boolean
+  rollback(): Promise<void>
+}
+
 export type ProjectDirectoryErrorCode =
   | 'not_directory'
   | 'not_git'
@@ -117,6 +124,84 @@ export async function initializeEmptyGitRepository(
     return await initializeExistingEmptyGitRepository(requestedPath)
   } catch (error) {
     if (createdDirectory) await rmdir(requestedPath).catch(() => undefined)
+    throw error
+  }
+}
+
+export async function prepareProjectRepository(
+  repoPath: string,
+  projectPath?: string,
+): Promise<PreparedProjectRepository> {
+  const requestedPath = projectPath ? resolveProjectPath(repoPath, projectPath) : resolve(repoPath)
+  const existedBefore = Boolean(await stat(requestedPath).catch(() => null))
+  const current = await classifyProjectDirectory(requestedPath).catch((error) => {
+    if (error instanceof ProjectDirectoryError && error.code === 'not_directory') return null
+    throw error
+  })
+  if (current?.kind === 'git_repository') {
+    return {
+      repoPath: current.repoPath,
+      projectPath: current.projectPath,
+      initialized: false,
+      rollback: async () => undefined,
+    }
+  }
+  if (current?.kind === 'non_git_directory') {
+    throw new ProjectDirectoryError(
+      'not_empty',
+      `Directory is not empty; HOPI will not commit its existing contents automatically: ${current.path}`,
+    )
+  }
+
+  const selection = await initializeEmptyGitRepository(requestedPath)
+  const bootstrapHead = (await runGit(selection.repoPath, ['rev-parse', 'HEAD'])).stdout
+  return {
+    repoPath: selection.repoPath,
+    projectPath: selection.projectPath,
+    initialized: true,
+    rollback: async () => {
+      const entries = await readdir(selection.repoPath).catch(() => null)
+      if (!entries || entries.some((entry) => entry !== '.git')) return
+      const head = await runGit(selection.repoPath, ['rev-parse', 'HEAD'], true)
+      const status = await runGit(selection.repoPath, ['status', '--porcelain'], true)
+      if (
+        head.exitCode !== 0 ||
+        head.stdout !== bootstrapHead ||
+        status.exitCode !== 0 ||
+        status.stdout
+      ) {
+        return
+      }
+      await rm(resolve(selection.repoPath, '.git'), { recursive: true, force: true })
+      if (!existedBefore) await rmdir(selection.repoPath).catch(() => undefined)
+    },
+  }
+}
+
+export async function withPreparedProjectRepositories<
+  T extends { repoPath: string; projectPath?: string },
+  Result,
+>(
+  repositories: readonly T[],
+  action: (repositories: Array<T & { repoPath: string; projectPath: string }>) => Promise<Result>,
+): Promise<Result> {
+  const prepared: Array<{ source: T; repository: PreparedProjectRepository }> = []
+  try {
+    for (const source of repositories) {
+      prepared.push({
+        source,
+        repository: await prepareProjectRepository(source.repoPath, source.projectPath),
+      })
+    }
+    return await action(
+      prepared.map(({ source, repository }) => ({
+        ...source,
+        repoPath: repository.repoPath,
+        projectPath: repository.projectPath,
+      })),
+    )
+  } catch (error) {
+    for (const item of prepared.toReversed()) await item.repository.rollback()
     throw error
   }
 }

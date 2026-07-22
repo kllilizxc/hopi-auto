@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm } from 'node:fs/promises'
+import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 
@@ -182,6 +182,36 @@ describe('RunAttemptStore', () => {
       endedAt: '2026-07-11T00:01:00.000Z',
       summary: 'Coordinator stopped before recording an Attempt outcome.',
     })
+  })
+
+  test('discards a torn event tail before restart recovery appends its interruption', async () => {
+    const first = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    await first.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-torn',
+      responsibility: 'generator',
+      runRoot: runRoot('R-torn'),
+    })
+    const eventsPath = join(runRoot('R-torn'), 'events.jsonl')
+    await appendFile(eventsPath, '{"eventId":"torn"\0\0')
+
+    const restarted = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+    })
+    expect(await restarted.interruptRunningAttempts()).toBe(1)
+
+    const detail = await restarted.read('P-1', 'G-1', 'W-1', 'R-torn')
+    expect(detail?.events).toHaveLength(2)
+    expect(detail?.events.at(-1)).toMatchObject({
+      kind: 'message',
+      level: 'error',
+      content: 'Coordinator stopped before recording an Attempt outcome.',
+    })
+    expect(await Bun.file(eventsPath).text()).not.toContain('\0')
   })
 
   test('reads an older Attempt manifest without an execution identity', async () => {

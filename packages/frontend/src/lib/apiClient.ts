@@ -163,13 +163,6 @@ export function selectProjectDirectory() {
   })
 }
 
-export function initializeProjectDirectory(path: string) {
-  return apiRequest<{ selection: Extract<ProjectDirectorySelection, { kind: 'git_repository' }> }>(
-    '/api/system/initialize-repository',
-    { method: 'POST', body: { path } },
-  )
-}
-
 export function linkProjectRepo(
   projectId: string,
   input: { repoId: string; repoPath: string; projectPath?: string },

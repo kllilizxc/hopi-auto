@@ -162,9 +162,9 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('targeting home:H-1/event:EV-blocked')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
     expect(prompt).toContain('Operator action means a human decision')
-    expect(prompt).toContain(
-      'Coordinator validates those references but does not infer or expand them',
-    )
+    expect(prompt).toContain('Home and Project reads are compact indexes')
+    expect(prompt).toContain('copy each selected reference verbatim from hopi_read_state')
+    expect(prompt).toContain('never mixed scopes')
     expect(prompt).toContain('No handoff produces no speaking turn')
     expect(prompt).not.toContain('User: Keep public context.')
     expect(prompt).not.toContain('## Recent Public Conversation')
@@ -571,12 +571,6 @@ async function setup(
     publisher,
     preview: createPreviewManager(temporaryRoot),
     state,
-    readAgentRoleCodingDefaults: async () => ({
-      codingDefaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      inherited: true,
-      configurable: true,
-    }),
-    updateAgentRoleCodingDefaultsForTurn: async () => undefined,
   })
   const reflection = createAssistantReflection({
     homeRoot: temporaryRoot,

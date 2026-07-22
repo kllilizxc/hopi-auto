@@ -69,12 +69,7 @@ try {
     goalId: GOAL_ID,
     title: 'Preserve migration state',
     objective: 'Keep the complete portable Project state valid after Home and Repo paths move.',
-    firstWork: {
-      kind: 'planning',
-      title: 'Plan portable Project migration',
-      objective: 'Plan how to preserve Project state when Home and Repo paths move.',
-      acceptanceCriteria: ['The migration plan preserves every portable Project reference.'],
-    },
+    firstWork: { kind: 'planning' },
     references: [
       { attachmentRef, purpose: 'Preserve this exact visual reference across migration.' },
     ],
@@ -91,8 +86,9 @@ try {
   await runtime.assistantTools.executeForEvent(design.attributes.id, 'hopi_write_design', {
     projectId: PROJECT_ID,
     goalId: GOAL_ID,
-    writes: [
+    changes: [
       {
+        kind: 'document',
         path: 'migration.md',
         content:
           '# Migration\n\nPreserve identity, provenance, release refs, and local rebind safety.\n',
@@ -248,7 +244,11 @@ try {
       : null,
     imageBytes,
   )
-  assert.deepEqual(migratedSession, { transport: 'codex', sessionId: 'migration-silent' })
+  assert.deepEqual(
+    migratedSession,
+    { transport: 'codex', sessionId: 'migration-session' },
+    'Disposable Reflection runs must not replace the persistent speaking Session',
+  )
   assert.ok(
     durable.attentions.some(
       (candidate) => candidate.id === attention.attributes.id && candidate.resolvedAt,

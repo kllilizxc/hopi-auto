@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   type RoleTransportConfig,
   appendCodexHttpsOnlyConfig,
@@ -221,6 +223,115 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.stdin).toContain('# current generator assignment')
   })
 
+  test('sends only changed complete assignment sections to an accepted Session', async () => {
+    const root = join('/tmp', `hopi-vendor-context-${crypto.randomUUID()}`)
+    await mkdir(root, { recursive: true })
+    const scopedBundle = {
+      ...bundle,
+      runtimeScratchDir: root,
+      promptFile: join(root, 'prompt.md'),
+      outcomeFile: join(root, 'outcome.json'),
+      canonicalOutcomeFile: join(root, 'outcome.json'),
+    }
+    const section = (id: string, content: string) =>
+      [
+        `<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:${id} -->`,
+        content,
+        `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
+      ].join('\n')
+    const previous = [
+      '# HOPI Responsibility Run',
+      '',
+      section('primary-task', '## Primary Task\n\nStable contract.'),
+      section(
+        'supporting-authority',
+        '## Supporting Authority\n\nOld evidence.\n\n## Nested Evidence Detail\n\nKeep this context.',
+      ),
+      section('required-result', '## Required Result\n\nStable result contract.'),
+    ].join('\n')
+    const current = previous.replace('Old evidence.', 'Current evidence.')
+
+    try {
+      await Bun.write(join(root, 'assignment.snapshot.md'), previous)
+      await Bun.write(scopedBundle.promptFile, current)
+      const changed = await resolveConfiguredTransportCommand({
+        config: {
+          transport: 'codex',
+          cwdMode: 'worktree',
+          sandbox: 'workspace-write',
+          approvalPolicy: 'never',
+        },
+        bundle: scopedBundle,
+        input,
+        session: { transport: 'codex', sessionId: 'thread-generator' },
+      })
+
+      expect(changed.stdin).toContain('## Supporting Authority')
+      expect(changed.stdin).toContain('Current evidence.')
+      expect(changed.stdin).toContain('## Nested Evidence Detail')
+      expect(changed.stdin).toContain('Keep this context.')
+      expect(changed.stdin).not.toContain('Stable contract.')
+      expect(changed.stdin).not.toContain('Stable result contract.')
+      expect(await Bun.file(scopedBundle.promptFile).text()).toBe(current)
+
+      await Bun.write(join(root, 'assignment.snapshot.md'), current)
+      const unchanged = await resolveConfiguredTransportCommand({
+        config: {
+          transport: 'codex',
+          cwdMode: 'worktree',
+          sandbox: 'workspace-write',
+          approvalPolicy: 'never',
+        },
+        bundle: scopedBundle,
+        input,
+        session: { transport: 'codex', sessionId: 'thread-generator' },
+      })
+      expect(unchanged.stdin).toContain('No assignment section changed')
+      expect(unchanged.stdin).not.toContain('## Primary Task')
+      expect((unchanged.stdin ?? '').length).toBeLessThan(700)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test('uses stable aliases in the execution prompt while retaining current Run paths in env', async () => {
+    const runRoot = '/tmp/hopi/runtime/runs/R-current'
+    const scopedBundle = {
+      ...bundle,
+      runRoot,
+      runtimeScratchDir: '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace',
+      authorityRoot: `${runRoot}/context/authority`,
+      proposalRoot: `${runRoot}/proposal`,
+      attentionProposalDir: `${runRoot}/proposal/attention`,
+      primaryRepoRoot: '/tmp/project/worktree',
+      extraReadableRoots: ['/tmp/project/worktree'],
+      extraWritableRoots: [runRoot, '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace'],
+    }
+    await Bun.write(bundle.promptFile, '# assignment\n\n__HOPI_EXECUTION_ENVELOPE__\n')
+
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'claude',
+        cwdMode: 'worktree',
+        permissionMode: 'dontAsk',
+      },
+      bundle: scopedBundle,
+      input: { ...input, role: 'reviewer' },
+      runtimeWorkspace: scopedBundle.runtimeScratchDir,
+    })
+
+    expect(command.stdin).toContain('$HOPI_RUN_DIR')
+    expect(command.stdin).toContain('$HOPI_SESSION_WORKSPACE')
+    expect(command.stdin).not.toContain(runRoot)
+    expect(command.env).toMatchObject({
+      HOPI_RUN_DIR: runRoot,
+      HOPI_AUTHORITY_ROOT: scopedBundle.authorityRoot,
+      HOPI_PROPOSAL_ROOT: scopedBundle.proposalRoot,
+      HOPI_ATTENTION_PROPOSAL_DIR: scopedBundle.attentionProposalDir,
+      HOPI_PRIMARY_REPO_ROOT: scopedBundle.primaryRepoRoot,
+    })
+  })
+
   test('makes Claude image directories accessible to the responsibility', async () => {
     await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
 
@@ -394,8 +505,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '--setting-sources',
       '',
       ...claudeStructuredOutcomeArgs('generator'),
-      '--permission-mode',
-      'dontAsk',
+      '--dangerously-skip-permissions',
       '--model',
       'sonnet',
     ])
@@ -522,7 +632,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.stdin).toContain('# current planner assignment')
   })
 
-  test('uses unrestricted provider permissions only when full access is enabled', async () => {
+  test('keeps vendor approvals non-interactive while full access changes only the sandbox boundary', async () => {
     await Bun.write(bundle.promptFile, '# responsibility\n\n__HOPI_EXECUTION_ENVELOPE__\n')
 
     const boundedCodex = await resolveConfiguredTransportCommand({
@@ -530,21 +640,27 @@ describe('resolveConfiguredTransportCommand', () => {
         transport: 'codex',
         cwdMode: 'worktree',
         sandbox: 'danger-full-access',
-        approvalPolicy: 'never',
+        approvalPolicy: 'on-request',
       },
       bundle,
       input,
     })
     expect(boundedCodex.cmd).toContain('workspace-write')
     expect(boundedCodex.cmd).not.toContain('danger-full-access')
+    expect(
+      boundedCodex.cmd.slice(boundedCodex.cmd.indexOf('-a'), boundedCodex.cmd.indexOf('-a') + 2),
+    ).toEqual(['-a', 'never'])
 
     const boundedClaude = await resolveConfiguredTransportCommand({
       config: { transport: 'claude', cwdMode: 'worktree', permissionMode: 'bypassPermissions' },
       bundle,
       input,
     })
-    expect(boundedClaude.cmd).toContain('acceptEdits')
-    expect(boundedClaude.cmd).not.toContain('--dangerously-skip-permissions')
+    expect(boundedClaude.cmd).toContain('--dangerously-skip-permissions')
+    expect(boundedClaude.cmd).not.toContain('--permission-mode')
+    expect(await Bun.file('/tmp/run/scratch/claude-settings.json').json()).toMatchObject({
+      sandbox: { enabled: true, failIfUnavailable: true },
+    })
 
     const boundedOpencode = await resolveConfiguredTransportCommand({
       config: { transport: 'opencode', cwdMode: 'worktree' },
@@ -569,6 +685,9 @@ describe('resolveConfiguredTransportCommand', () => {
         },
       },
     })
+    expect(JSON.stringify(await Bun.file('/tmp/run/scratch/opencode.json').json())).not.toContain(
+      'ask',
+    )
     expect(boundedOpencode.stdin).toContain('"mode": "bounded"')
 
     const codex = await resolveConfiguredTransportCommand({
@@ -634,6 +753,7 @@ describe('resolveConfiguredTransportCommand', () => {
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       env: {
         HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
+        HOPI_SESSION_WORKSPACE: bundle.runtimeScratchDir,
         HOPI_CACHE_DIR: bundle.runtimeCacheDir,
         HOPI_CONTEXT_FILE: bundle.contextFile,
         HOPI_OUTCOME_FILE: bundle.outcomeFile,

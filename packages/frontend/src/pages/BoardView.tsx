@@ -79,7 +79,7 @@ import {
 import {
   orderGoalsByRecency,
   readGoalViewState,
-  readRecentGoal,
+  readRecentGoals,
   rememberGoalViewState,
   type GoalViewLane,
   type GoalViewState,
@@ -531,7 +531,7 @@ export function BoardView() {
   const goalPeers = orderGoalsByRecency(
     project.goals,
     projectId,
-    readRecentGoal(projectId),
+    readRecentGoals(projectId),
   ).map((item) => ({ id: item.id, label: item.title }))
 
   const runControl = (control: GoalControl) => {

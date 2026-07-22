@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  type EngineeringWorkAttributes,
   parseWorkDocument,
   renderAttentionDocument,
   renderInputDocument,
@@ -50,6 +51,43 @@ describe('PassOutcomeCoordinator', () => {
     expect(await Bun.file(join(fixture.projectRoot, '.hopi', 'docs', 'repos.md')).text()).toContain(
       '`primary`',
     )
+  })
+
+  test('expands one Planner cancellation through all nonterminal dependents', async () => {
+    const fixture = await createFixture()
+    const base = engineeringWork('W-base', 'generate')
+    const dependent = engineeringWork('W-dependent', 'generate')
+    dependent.attributes.dependsOn = ['W-base']
+    const independent = engineeringWork('W-independent', 'generate')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [base, dependent, independent].map((work) => ({
+        path: fixture.store.paths.workDocument('goal-1', work.attributes.id),
+        expectedHash: null,
+        content: renderWorkDocument(work),
+      })),
+    })
+    const context = await fixture.stage('plan-initial', 'run-cancel-closure', 'planner')
+    await Bun.write(
+      join(
+        context.proposalRoot,
+        ...fixture.store.paths.workDocument('goal-1', 'W-base').split('/'),
+      ),
+      renderWorkDocument({
+        ...base,
+        attributes: { ...base.attributes, stage: 'cancelled' },
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-cancel-closure', 'planner', context, 'success'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.works.get('W-base')?.attributes.stage).toBe('cancelled')
+    expect(goalPackage.works.get('W-dependent')?.attributes.stage).toBe('cancelled')
+    expect(goalPackage.works.get('W-independent')?.attributes.stage).toBe('generate')
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
   })
 
   test('rejects Planner attempts to forge Assistant dispatch provenance', async () => {
@@ -797,7 +835,10 @@ async function createFixture() {
   }
 }
 
-function engineeringWork(id: string, stage: 'generate' | 'review') {
+function engineeringWork(
+  id: string,
+  stage: 'generate' | 'review',
+): { attributes: EngineeringWorkAttributes; body: string } {
   return {
     attributes: {
       id,

@@ -20,7 +20,7 @@ import {
   STABLE_QUERY_NOTIFY_PROPS,
 } from '../lib/queryPerformance'
 import { goalDocsQueryKey } from '../lib/queryKeys'
-import { orderGoalsByRecency, readRecentGoal } from '../lib/goalScope'
+import { orderGoalsByRecency, readRecentGoals } from '../lib/goalScope'
 import { cn, formatTime, projectDisplayName } from '../lib/utils'
 
 const CONTRACT_KEY = '__goal_contract__'
@@ -84,7 +84,7 @@ export function GoalDocsPage() {
   const selectedPath = selectedDesign?.path ?? 'goal.md'
   const selectedContent = selectedDesign ? documentQuery.data?.content : goal.goal.body
   const goalPeers = project
-    ? orderGoalsByRecency(project.goals, projectId, readRecentGoal(projectId)).map((item) => ({
+    ? orderGoalsByRecency(project.goals, projectId, readRecentGoals(projectId)).map((item) => ({
         id: item.id,
         label: item.title,
       }))

@@ -201,11 +201,11 @@ function createAssistant(): AssistantModelRunner & { materialRevisionRequests: n
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             token: input.toolToken,
-            name: 'hopi_start_planning',
+            name: 'hopi_create_work',
             arguments: {
               projectId: PROJECT_ID,
               goalId: GOAL_ID,
-              mode: 'new_contract_revision',
+              work: { kind: 'planning', mode: 'new_contract_revision' },
             },
           }),
         })
@@ -283,8 +283,10 @@ function createRoles(): RoleRunner & {
         await Bun.write(join(input.cwd, 'src', 'feature.ts'), 'export const featureRevision = 2\n')
         return success('Fresh Generator completed revision 2.')
       }
+      const sourceRoot = input.sourceRoots?.[0]
+      assert.ok(sourceRoot, 'Reviewer must receive the current candidate source root')
       assert.equal(
-        await Bun.file(join(input.cwd, 'src', 'feature.ts')).text(),
+        await Bun.file(join(sourceRoot, 'src', 'feature.ts')).text(),
         'export const featureRevision = 2\n',
       )
       return success('Reviewer accepted only revision 2.')

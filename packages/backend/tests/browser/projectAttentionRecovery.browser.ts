@@ -76,9 +76,9 @@ const assistantRunner: AssistantModelRunner = {
     const mode = input.toolMode ?? 'main'
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })
-      const response = await callAssistantTool(input, observer, 'hopi_answer_attention', {
+      const response = await callAssistantTool(input, observer, 'hopi_resolve_attention', {
         attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
-        decision: 'continue',
+        resolution: USER_MESSAGE,
       })
       assistantToolResults.push({
         attentionId: attentionToResolve,
@@ -311,7 +311,7 @@ async function stageEngineeringWork(input: RoleRunInput) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_answer_attention',
+  name: 'hopi_resolve_attention',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

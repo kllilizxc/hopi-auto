@@ -1,5 +1,5 @@
-import { appendFile, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaults'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
@@ -93,7 +93,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const fullAccess = await this.fullAccess(input)
     await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
-    const compatibilityKey = roleSessionCompatibilityKey(config)
+    const compatibilityKey = roleSessionCompatibilityKey(config, fullAccess, input.cwd)
     let session =
       transport &&
       input.session?.transport === transport &&
@@ -273,11 +273,22 @@ function resumableTransport(config: RoleTransportConfig): AssistantTransport | n
   return config.transport
 }
 
-export function roleSessionCompatibilityKey(config: RoleTransportConfig): string | null {
+export function roleSessionCompatibilityKey(
+  config: RoleTransportConfig,
+  fullAccess = false,
+  sessionCwd?: string,
+): string | null {
   if ('cmd' in config) return null
+  const executionBoundary = fullAccess ? 'unrestricted' : 'bounded'
+  const sessionNamespace = sessionCwd ? resolve(sessionCwd) : null
   if (config.transport === 'codex') {
+    const sandbox = fullAccess
+      ? 'danger-full-access'
+      : config.sandbox === 'danger-full-access'
+        ? 'workspace-write'
+        : config.sandbox
     return JSON.stringify({
-      version: 1,
+      version: 3,
       transport: config.transport,
       binary: config.binary ?? 'codex',
       cwdMode: config.cwdMode,
@@ -285,23 +296,25 @@ export function roleSessionCompatibilityKey(config: RoleTransportConfig): string
       model: config.model ?? null,
       profile: config.profile ?? null,
       reasoningEffort: config.reasoningEffort ?? null,
-      sandbox: config.sandbox,
-      approvalPolicy: config.approvalPolicy,
+      executionBoundary,
+      sessionNamespace,
+      sandbox,
     })
   }
   if (config.transport === 'claude') {
     return JSON.stringify({
-      version: 1,
+      version: 3,
       transport: config.transport,
       binary: config.binary ?? 'claude',
       cwdMode: config.cwdMode,
       baseRef: config.baseRef ?? null,
       model: config.model ?? null,
-      permissionMode: config.permissionMode,
+      executionBoundary,
+      sessionNamespace,
     })
   }
   return JSON.stringify({
-    version: 1,
+    version: 3,
     transport: config.transport,
     binary: config.binary ?? 'opencode',
     cwdMode: config.cwdMode,
@@ -309,6 +322,8 @@ export function roleSessionCompatibilityKey(config: RoleTransportConfig): string
     model: config.model ?? null,
     agent: config.agent ?? null,
     variant: config.variant ?? null,
+    executionBoundary,
+    sessionNamespace,
   })
 }
 
@@ -562,9 +577,35 @@ async function executeProcess(
   session: VendorSession | null,
   compatibilityKey: string | null,
 ) {
-  const tempDir = join(input.context.runtimeScratchDir, 'tmp')
+  const tempDir = await mkdtemp('/tmp/hopi-role-')
+  try {
+    return await executeProcessWithTempDir(
+      command,
+      input,
+      observer,
+      heartbeatMs,
+      transcriptFile,
+      session,
+      compatibilityKey,
+      tempDir,
+    )
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+async function executeProcessWithTempDir(
+  command: Awaited<ReturnType<typeof resolveConfiguredTransportCommand>>,
+  input: RoleRunInput,
+  observer: RoleRunObserver | undefined,
+  heartbeatMs: number,
+  transcriptFile: string,
+  session: VendorSession | null,
+  compatibilityKey: string | null,
+  tempDir: string,
+) {
   const cacheDir = input.context.runtimeCacheDir
-  await Promise.all([mkdir(tempDir, { recursive: true }), mkdir(cacheDir, { recursive: true })])
+  await mkdir(cacheDir, { recursive: true })
   const normalizerStateFile = join(input.context.runtimeScratchDir, 'transcript-normalizer.json')
   const resumeNormalizerState =
     command.sessionTransport === 'claude' && session?.transport === 'claude'
@@ -670,6 +711,17 @@ async function executeProcess(
           finalText = candidate
         }
       }
+    }
+    if (
+      exitCode === 0 &&
+      !sessionInvalid &&
+      command.sessionTransport &&
+      command.assignmentSnapshotFile &&
+      command.assignmentSnapshot !== undefined
+    ) {
+      await Bun.write(command.assignmentSnapshotFile, command.assignmentSnapshot).catch(
+        () => undefined,
+      )
     }
     return {
       exitCode,

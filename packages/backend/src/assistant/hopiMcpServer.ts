@@ -16,101 +16,91 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read compact current state: active Runs, Work control facts, open Attention, the latest finished Planning outcome, latest diagnostics, and exact paths. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page or Home scope. Otherwise copy exact Project and optional Goal IDs from Project state; never copy the Home ID from a home: reference into projectId.',
+      'Read compact current state. Home and Project scope return a directly consumable control index; name one Goal to expand its current diagnostics. Open Attention includes complete canonical reference values: copy reference verbatim into mutation tools and never construct it from id or target. Default output omits cumulative Evidence arrays. For an exact deliverable, read its Goal with includeEvidence: true; inspect inspectionPath internally and link only operatorUrl to the user. Omit IDs for page or Home scope. Otherwise copy exact Project and optional Goal IDs from Project state; never copy the Home ID from a home: reference into projectId.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   (args) => callTool('hopi_read_state', args),
 )
 
+if (mode === 'main') {
+  server.registerTool(
+    'hopi_manage_project',
+    {
+      description:
+        'Create a Project, add one Repo, or partially rebind moved Repos. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
+      inputSchema: assistantMcpToolSchemas.hopi_manage_project,
+    },
+    (args) => callTool('hopi_manage_project', args),
+  )
+
+  server.registerTool(
+    'hopi_write_preferences',
+    {
+      description:
+        'Replace the complete cross-Project preference Markdown using the exact current expectedDigest. Preserve valid entries; store only reusable defaults, not one-off, current-task, or Project-specific rules. This remembers a default but does not change delivery.',
+      inputSchema: assistantMcpToolSchemas.hopi_write_preferences,
+    },
+    (args) => callTool('hopi_write_preferences', args),
+  )
+}
+
 if (mode !== 'reflection') {
-  if (mode === 'main') {
-    server.registerTool(
-      'hopi_manage_project',
-      {
-        description:
-          'Project topology operations. link_project links or rebinds an existing Git Repo. initialize_repository initializes an explicitly named empty directory or a missing leaf whose parent exists; it creates that leaf. Missing ancestors, non-empty non-Git directories, and nested worktrees are rejected.',
-        inputSchema: assistantMcpToolSchemas.hopi_manage_project,
-      },
-      (args) => callTool('hopi_manage_project', args),
-    )
-
-    server.registerTool(
-      'hopi_configure_model',
-      {
-        description:
-          'Set or inherit one Assistant, Planner, Generator, or Reviewer model on explicit request; never changes Goal delivery.',
-        inputSchema: assistantMcpToolSchemas.hopi_configure_model,
-      },
-      (args) => callTool('hopi_configure_model', args),
-    )
-
-    server.registerTool(
-      'hopi_write_preferences',
-      {
-        description:
-          'Replace the complete cross-Project preference Markdown using the exact current expectedDigest. Preserve valid entries; store only reusable defaults, not one-off, current-task, or Project-specific rules. This remembers a default but does not change delivery.',
-        inputSchema: assistantMcpToolSchemas.hopi_write_preferences,
-      },
-      (args) => callTool('hopi_write_preferences', args),
-    )
-  }
-
   server.registerTool(
     'hopi_create_goal',
     {
       description:
-        'Creates a Goal, records the current Inbox Input, adopts selected image references, and creates exactly one supplied firstWork. A planning firstWork materializes Planning; an engineering firstWork materializes one Engineering Work at generate. The returned value contains the canonical Goal and Work identities.',
+        'Create one Goal from the current instruction and exactly one first Work. Use firstWork.kind planning when clarification or decomposition remains; HOPI supplies its standard Planning contract. Use engineering only for one complete, verifiable Work and provide its full contract.',
       inputSchema: assistantMcpToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
   )
 
   server.registerTool(
-    'hopi_create_engineering_work',
+    'hopi_create_work',
     {
       description:
-        'Records the current Inbox Input and creates one supplied Engineering Work at generate in an active Goal with no nonterminal Planning Work. The Work declares Repos and dependencies. One Inbox Input can directly admit at most one Engineering Work Home-wide.',
-      inputSchema: assistantMcpToolSchemas.hopi_create_engineering_work,
+        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention. Engineering requires a full contract, Repo scope, and dependencies. One Inbox instruction can directly admit at most one Engineering Work.',
+      inputSchema: assistantMcpToolSchemas.hopi_create_work,
     },
-    (args) => callTool('hopi_create_engineering_work', args),
+    (args) => callTool('hopi_create_work', args),
   )
 
   server.registerTool(
     'hopi_write_design',
     {
       description:
-        'Creates or updates Goal-local design Markdown and can adopt selected Inbox images. Paths are relative to the Goal design root. The effect changes documentation only.',
+        'Apply one or more Goal-local design changes. A document change writes Markdown beneath design/. An attachment change adopts one current Inbox image with a stated purpose. This changes documentation only and does not start Planning.',
       inputSchema: assistantMcpToolSchemas.hopi_write_design,
     },
     (args) => callTool('hopi_write_design', args),
   )
 
   server.registerTool(
-    'hopi_start_planning',
+    'hopi_control_goal',
     {
       description:
-        'Records the current Inbox Input and materializes Planning for an active Goal. mode controls whether the contract revision changes. This does not resolve any Attention; use hopi_resolve_attention separately only when its reported condition is already clear.',
-      inputSchema: assistantMcpToolSchemas.hopi_start_planning,
+        'Apply one Goal lifecycle or priority action: pause, resume, cancel, reopen, or set_priority. Reopen advances the Goal contract and materializes Planning.',
+      inputSchema: assistantMcpToolSchemas.hopi_control_goal,
     },
-    (args) => callTool('hopi_start_planning', args),
+    (args) => callTool('hopi_control_goal', args),
   )
 
   server.registerTool(
-    'hopi_control',
+    'hopi_control_work',
     {
       description:
-        'Applies one validated Goal or Work control transition. Reopening a done or cancelled Goal makes it active, increments contractRevision, clears completion, records the current Inbox Input, and materializes Planning. Retry and defer require a Work identity.',
-      inputSchema: assistantMcpToolSchemas.hopi_control,
+        'Retry or defer one Work, or cancel one Engineering Work. Cancellation includes every nonterminal dependent and preserves history. Retry settles only the exact Work blocker.',
+      inputSchema: assistantMcpToolSchemas.hopi_control_work,
     },
-    (args) => callTool('hopi_control', args),
+    (args) => callTool('hopi_control_work', args),
   )
 
   server.registerTool(
     'hopi_resolve_attention',
     {
       description:
-        'Publish resolution of one exact Attention. This immediately removes its scheduling gate and Coordinator may dispatch the affected target; a later operator request does not reopen it or undo dispatch. The resolution is durable audit evidence that the reported condition is already clear.',
+        'Record that one exact reported condition is already clear. This removes that scheduling gate; it does not send a message or transfer ownership. Copy the complete canonical Attention reference from current state.',
       inputSchema: assistantMcpToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),
@@ -127,23 +117,13 @@ if (mode !== 'reflection') {
 
   if (mode === 'internal') {
     server.registerTool(
-      'hopi_notify_user',
+      'hopi_request_user',
       {
         description:
-          'Set or revise the one concise informational update published after this internal Reflection turn completes. A later successful notify_user or transfer_attention call replaces this turn-local final-message slot; only the final slot is shown. This never asks the operator to act and never creates Needs you. For a completed Goal, first read that exact Goal with includeEvidence: true and include a relevant available operatorUrl in Markdown; if no artifact resolves, say that no linked artifact was produced. A linkless completion is rejected while an available Evidence artifact exists. Use only alongside a durable internal continuation or for a completed outcome; omit internal IDs and process unless needed.',
-        inputSchema: assistantMcpToolSchemas.hopi_notify_user,
+          "Stage operator ownership for exactly the selected open Attention references. Then return the complete question as this turn's final response. This call sends no text by itself; an empty final response or stale, resolved, mismatched, targetless, or already operator-owned reference rejects the whole request.",
+        inputSchema: assistantMcpToolSchemas.hopi_request_user,
       },
-      (args) => callTool('hopi_notify_user', args),
-    )
-
-    server.registerTool(
-      'hopi_transfer_attention',
-      {
-        description:
-          'Transfer exactly the selected Reflection Attention references to operator ownership after the public turn is durable. The references must exactly match this handoff context and still be open, Assistant-owned, targeted, and unresolved. They remain unresolved and keep their targets blocked as Needs you. The supplied message is the complete public request.',
-        inputSchema: assistantMcpToolSchemas.hopi_transfer_attention,
-      },
-      (args) => callTool('hopi_transfer_attention', args),
+      (args) => callTool('hopi_request_user', args),
     )
   }
 } else {
@@ -151,7 +131,7 @@ if (mode !== 'reflection') {
     'hopi_handoff_to_main',
     {
       description:
-        'Submit one internal brief to the speaking Assistant. To hand off Attention, select its exact canonical references in context; no scope or references are inferred. With no handoff call, Reflection produces no speaking turn.',
+        'Submit one internal brief to the speaking Assistant. To hand off Attention, copy reference values verbatim from hopi_read_state. Select workspace Attention or Attention from exactly one Goal; never mix scopes. No scope or references are inferred. With no handoff call, Reflection produces no speaking turn.',
       inputSchema: assistantMcpToolSchemas.hopi_handoff_to_main,
     },
     (args) => callTool('hopi_handoff_to_main', args),

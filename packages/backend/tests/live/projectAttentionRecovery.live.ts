@@ -130,15 +130,15 @@ try {
   const reply = event.reply?.trim()
   assert.ok(reply, 'Assistant must publish a visible recovery reply')
   const toolCallIndex = event.runtimeEvents.findIndex(
-    (event) => event.entryKind === 'tool_call' && event.toolName === 'hopi_answer_attention',
+    (event) => event.entryKind === 'tool_call' && event.toolName === 'hopi_resolve_attention',
   )
   const toolResultIndex = event.runtimeEvents.findIndex(
     (event, index) =>
       index > toolCallIndex &&
       event.entryKind === 'tool_result' &&
-      event.toolName === 'hopi_answer_attention',
+      event.toolName === 'hopi_resolve_attention',
   )
-  assert.ok(toolCallIndex >= 0, 'Real Assistant must call hopi_answer_attention')
+  assert.ok(toolCallIndex >= 0, 'Real Assistant must call hopi_resolve_attention')
   assert.ok(toolResultIndex > toolCallIndex, 'Successful resolve result must follow the tool call')
   assert.deepEqual(recorder.violations, [])
   const assistantReplyBrowser = await captureAssistantReply(harness, reply)

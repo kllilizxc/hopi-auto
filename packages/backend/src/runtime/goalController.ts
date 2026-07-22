@@ -15,6 +15,7 @@ import {
 import type { GoalPackage } from '../domain/goalPackage'
 import type { InboxEventReference } from '../domain/inboxEventReference'
 import { deriveReadableId } from '../domain/stableId'
+import { WorkCancellationError, workCancellationOrder } from '../domain/workCancellation'
 import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -858,17 +859,16 @@ export function createGoalController(
         await this.ensurePlanning(goalId, `Reassess the plan after Work ${workId} was cancelled.`)
         return []
       }
-      const cancellationSet = dependentClosure(goalPackage, workId)
+      let cancellationOrder: string[]
+      try {
+        cancellationOrder = workCancellationOrder(goalPackage, [workId])
+      } catch (error) {
+        if (error instanceof WorkCancellationError) throw new GoalControllerError(error.message)
+        throw error
+      }
       const cancelled: WorkDocument[] = []
-      while (cancellationSet.size > 0) {
+      for (const candidateId of cancellationOrder) {
         goalPackage = await store.readPackage(goalId)
-        const candidateId = [...cancellationSet].find(
-          (id) =>
-            ![...cancellationSet].some((dependentId) =>
-              goalPackage.works.get(dependentId)?.attributes.dependsOn.includes(id),
-            ),
-        )
-        if (!candidateId) throw new GoalControllerError('Cannot cancel a cyclic Work graph')
         const candidate = goalPackage.works.get(candidateId)
         if (candidate && !isWorkTerminal(candidate.attributes)) {
           await publishWorkCancellation(store, goalId, candidate)
@@ -877,7 +877,6 @@ export function createGoalController(
             attributes: { ...candidate.attributes, stage: 'cancelled' },
           } as WorkDocument)
         }
-        cancellationSet.delete(candidateId)
       }
       await this.ensurePlanning(goalId, `Reassess the plan after Work ${workId} was cancelled.`)
       return cancelled
@@ -1156,25 +1155,6 @@ async function publishWorkCancellation(
       content: renderWorkDocument(next),
     },
   })
-}
-
-function dependentClosure(goalPackage: GoalPackage, workId: string) {
-  const closure = new Set([workId])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const work of goalPackage.works.values()) {
-      if (
-        !isWorkTerminal(work.attributes) &&
-        work.attributes.dependsOn.some((dependencyId) => closure.has(dependencyId)) &&
-        !closure.has(work.attributes.id)
-      ) {
-        closure.add(work.attributes.id)
-        changed = true
-      }
-    }
-  }
-  return closure
 }
 
 function appendInstruction(body: string, input: { eventId: string; content: string }) {

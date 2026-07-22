@@ -17,6 +17,7 @@ import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { type GoalPackage, GoalPackageValidationError } from '../domain/goalPackage'
 import { MarkdownDocumentError } from '../domain/markdownDocument'
 import { HOPI_RELEASE_REF } from '../domain/project'
+import { WorkCancellationError, workCancellationClosure } from '../domain/workCancellation'
 import { PublicationError, hashBytes } from '../publication/publisher'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationCandidate, PublicationWrite } from '../publication/types'
@@ -73,6 +74,7 @@ export function createPassOutcomeCoordinator(
       let proposal: PassProposal
       try {
         proposal = await readPassProposal(store, publisher, input)
+        proposal = await expandPlannerCancellations(store, input, current, proposal)
         proposal = normalizeNewAttentions(
           store,
           input.goalId,
@@ -272,10 +274,81 @@ function normalizeNewAttentions(
   return { ...proposal, changedWrites, newAttentions }
 }
 
+async function expandPlannerCancellations(
+  store: GoalPackageStore,
+  input: ApplyPassOutcomeInput,
+  current: GoalPackage,
+  proposal: PassProposal,
+): Promise<PassProposal> {
+  if (input.responsibility !== 'planner') return proposal
+  const proposedByPath = new Map(proposal.changedWrites.map((write) => [write.path, write]))
+  const requestedWorkIds: string[] = []
+  for (const write of proposal.changedWrites) {
+    if (!isWorkPath(store, input.goalId, write.path)) continue
+    const proposed = parseWorkDocument(publicationWriteText(write.content))
+    const previous = current.works.get(proposed.attributes.id)
+    if (
+      previous &&
+      isEngineeringWork(previous.attributes) &&
+      proposed.attributes.stage === 'cancelled' &&
+      previous.attributes.stage !== 'cancelled'
+    ) {
+      requestedWorkIds.push(proposed.attributes.id)
+    }
+  }
+  if (requestedWorkIds.length === 0) return proposal
+  if (input.outcome.result !== 'success') {
+    throw new PassProposalError('Planner may cancel Engineering Work only in a success proposal')
+  }
+
+  let closure: ReadonlySet<string>
+  try {
+    closure = workCancellationClosure(current, requestedWorkIds)
+  } catch (error) {
+    if (error instanceof WorkCancellationError) throw new PassProposalError(error.message)
+    throw error
+  }
+  for (const workId of closure) {
+    const previous = current.works.get(workId)
+    if (!previous || isWorkTerminal(previous.attributes)) continue
+    const path = store.paths.workDocument(input.goalId, workId)
+    const explicit = proposedByPath.get(path)
+    const proposed = explicit ? parseWorkDocument(publicationWriteText(explicit.content)) : previous
+    if (!isEngineeringWork(proposed.attributes)) {
+      throw new PassProposalError(
+        `Planner cancellation closure contains non-Engineering Work ${workId}`,
+      )
+    }
+    const currentBytes = explicit ? null : await readCanonicalBytes(store, path)
+    if (!explicit && !currentBytes) {
+      throw new PassProposalError(`Planner cancellation source is missing for Work ${workId}`)
+    }
+    const source = explicit
+      ? explicit
+      : {
+          path,
+          expectedHash: await hashBytes(currentBytes as Uint8Array),
+          content: renderWorkDocument(previous),
+        }
+    proposedByPath.set(path, {
+      ...source,
+      content: renderWorkDocument({
+        ...proposed,
+        attributes: { ...proposed.attributes, stage: 'cancelled' },
+      }),
+    })
+  }
+  return { ...proposal, changedWrites: [...proposedByPath.values()] }
+}
+
 function allocateFreshAttentionId(proposedId: string, reservedIds: ReadonlySet<string>) {
   let suffix = 2
   while (reservedIds.has(`${proposedId}-${suffix}`)) suffix += 1
   return `${proposedId}-${suffix}`
+}
+
+function publicationWriteText(content: PublicationWrite['content']) {
+  return typeof content === 'string' ? content : new TextDecoder().decode(content)
 }
 
 async function readPassProposal(
@@ -694,6 +767,7 @@ function validatePlannerTransition(
   if (!planning.attributes.evidenceRefs.includes(evidenceId)) {
     throw new PassProposalError('Planner gate must consume its Run Evidence')
   }
+  const newlyCancelled: string[] = []
   for (const [workId, work] of after.works) {
     const previous = before.works.get(workId)
     if (!previous) {
@@ -705,7 +779,26 @@ function validatePlannerTransition(
       }
       continue
     }
-    if (workId === input.workId || isWorkTerminal(previous.attributes)) continue
+    if (workId === input.workId) continue
+    if (isWorkTerminal(previous.attributes)) {
+      if (JSON.stringify(previous) !== JSON.stringify(work)) {
+        throw new PassProposalError(`Planner may not rewrite terminal Work ${workId}`)
+      }
+      continue
+    }
+    if (work.attributes.stage === 'cancelled') {
+      const expected = {
+        ...previous,
+        attributes: { ...previous.attributes, stage: 'cancelled' },
+      }
+      if (JSON.stringify(expected) !== JSON.stringify(work)) {
+        throw new PassProposalError(
+          `Planner cancellation may change only the stage of Work ${workId}`,
+        )
+      }
+      newlyCancelled.push(workId)
+      continue
+    }
     if (
       previous.attributes.stage !== work.attributes.stage &&
       work.attributes.stage !== 'generate'
@@ -717,6 +810,25 @@ function validatePlannerTransition(
       work.attributes.attempts !== 0
     ) {
       throw new PassProposalError('Planner may only preserve or reset Work attempts')
+    }
+  }
+  if (newlyCancelled.length > 0) {
+    let closure: ReadonlySet<string>
+    try {
+      closure = workCancellationClosure(before, newlyCancelled)
+    } catch (error) {
+      if (error instanceof WorkCancellationError) throw new PassProposalError(error.message)
+      throw error
+    }
+    for (const workId of closure) {
+      const previous = before.works.get(workId)
+      if (previous && !isWorkTerminal(previous.attributes)) {
+        if (after.works.get(workId)?.attributes.stage !== 'cancelled') {
+          throw new PassProposalError(
+            `Planner cancellation must also cancel dependent Work ${workId}`,
+          )
+        }
+      }
     }
   }
 

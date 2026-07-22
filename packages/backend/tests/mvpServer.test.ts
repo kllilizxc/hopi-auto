@@ -343,11 +343,11 @@ describe('MVP server', () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             token: input.toolToken,
-            name: 'hopi_start_planning',
+            name: 'hopi_create_work',
             arguments: {
               projectId: 'P-1',
               goalId: 'G-1',
-              mode: 'new_contract_revision',
+              work: { kind: 'planning', mode: 'new_contract_revision' },
             },
           }),
         })
@@ -428,10 +428,12 @@ describe('MVP server', () => {
             token: input.toolToken,
             name: 'hopi_manage_project',
             arguments: {
-              operation: 'link_project',
-              projectId: 'P-via-assistant',
-              primaryRepoId: 'primary',
-              repos: [{ repoId: 'primary', repoPath: repoRoot }],
+              change: {
+                kind: 'create',
+                projectId: 'P-via-assistant',
+                primaryRepoId: 'primary',
+                repos: [{ repoId: 'primary', repoPath: repoRoot }],
+              },
             },
           }),
         })
@@ -455,15 +457,7 @@ describe('MVP server', () => {
               goalId: 'G-pixel-sprite-experiment',
               title: 'Generate a right-moving pixel spritesheet',
               objective: 'Create and evaluate the first WAN 2.2 Animate pixel-art character asset.',
-              firstWork: {
-                kind: 'planning',
-                title: 'Plan the WAN 2.2 Animate spritesheet',
-                objective:
-                  'Decide how to create and evaluate the pixel-art spritesheet with WAN 2.2 Animate.',
-                acceptanceCriteria: [
-                  'The plan preserves WAN 2.2 Animate as an explicit implementation constraint.',
-                ],
-              },
+              firstWork: { kind: 'planning' },
             },
           }),
         })
@@ -471,35 +465,17 @@ describe('MVP server', () => {
         expect(await goalResponse.json()).toMatchObject({
           changed: true,
           value: {
-            projectId: 'P-via-assistant',
-            goalId: 'G-pixel-sprite-experiment',
+            effect: {
+              kind: 'goal_created',
+              projectId: 'P-via-assistant',
+              goalId: 'G-pixel-sprite-experiment',
+            },
           },
         })
 
-        const modelResponse = await fetch(input.toolUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            token: input.toolToken,
-            name: 'hopi_configure_model',
-            arguments: {
-              role: 'assistant',
-              codingDefaults: { transport: 'claude', model: 'sonnet' },
-            },
-          }),
-        })
-        expect(modelResponse.status).toBe(200)
-        expect(await modelResponse.json()).toMatchObject({
-          changed: true,
-          value: {
-            role: 'assistant',
-            codingDefaults: { transport: 'claude', model: 'sonnet' },
-          },
-        })
         return {
-          reply:
-            'Linked Project P-via-assistant, created its first Goal, and changed the Assistant model.',
-          session: { transport: 'codex', sessionId: 'session-before-model-change' },
+          reply: 'Linked Project P-via-assistant and created its first Goal.',
+          session: { transport: 'codex', sessionId: 'session-after-project-change' },
         }
       },
     }
@@ -524,7 +500,7 @@ describe('MVP server', () => {
 
     const submitted = await request(base, '/api/inbox', {
       method: 'POST',
-      body: { content: 'Link this repository and use Claude for our conversation.' },
+      body: { content: 'Link this repository and create the first Goal.' },
     })
     let reply: string | null = null
     let topologyVisible = false
@@ -553,31 +529,17 @@ describe('MVP server', () => {
           .find((project) => project.projectId === 'P-via-assistant')
           ?.goals.some((goal) => goal.id === 'G-pixel-sprite-experiment'),
       )
-      if (reply && topologyVisible && goalVisible) {
-        expect(state).toMatchObject({
-          home: {
-            agentRoleCodingDefaults: {
-              assistant: {
-                codingDefaults: { transport: 'claude', model: 'sonnet' },
-                inherited: false,
-              },
-            },
-          },
-        })
-        break
-      }
+      if (reply && topologyVisible && goalVisible) break
       await Bun.sleep(20)
     }
 
-    expect(reply).toBe(
-      'Linked Project P-via-assistant, created its first Goal, and changed the Assistant model.',
-    )
+    expect(reply).toBe('Linked Project P-via-assistant and created its first Goal.')
     expect(topologyVisible).toBe(true)
     expect(goalVisible).toBe(true)
     expect(speakingRuns).toBe(1)
     expect(
-      await Bun.file(join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')).exists(),
-    ).toBe(false)
+      await Bun.file(join(homeRoot, '.hopi', 'runtime', 'assistant', 'session.json')).json(),
+    ).toMatchObject({ transport: 'codex', sessionId: 'session-after-project-change' })
   })
 
   test('shares one host directory chooser across concurrent requests', async () => {
@@ -616,7 +578,7 @@ describe('MVP server', () => {
     }
   })
 
-  test('initializes an explicitly confirmed empty project directory', async () => {
+  test('initializes an empty directory while creating a Project', async () => {
     const selectedPath = join(temporaryRoot, 'empty-project')
     await mkdir(selectedPath)
     const server = createServer({
@@ -627,25 +589,23 @@ describe('MVP server', () => {
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
 
-    const response = await fetch(`${base}/api/system/initialize-repository`, {
+    const state = await request(base, '/api/projects', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: selectedPath }),
-    })
-
-    expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({
-      selection: {
-        kind: 'git_repository',
-        path: await realpath(selectedPath),
-        repoPath: await realpath(selectedPath),
-        projectPath: '.',
+      body: {
+        projectId: 'P-empty',
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: selectedPath }],
       },
     })
+
+    expect(state).toMatchObject({ projects: [{ projectId: 'P-empty' }] })
     expect(await git(selectedPath, ['branch', '--show-current'])).toBe('main')
     expect(await git(selectedPath, ['log', '-1', '--pretty=%s'])).toBe(
       'chore: initialize repository',
     )
+    expect(
+      (await fetch(`${base}/api/system/initialize-repository`, { method: 'POST' })).status,
+    ).toBe(404)
   })
 
   test('projects only the latest Agent plan snapshot without merging revisions', () => {

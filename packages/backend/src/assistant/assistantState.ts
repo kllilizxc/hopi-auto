@@ -1,9 +1,9 @@
 import { stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { type WorkDocument, isPlanningWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
-import type { ProjectCodingDefaults } from '../domain/projectCodingDefaults'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { inspectDeliveryProjection } from '../runtime/c1Integrator'
@@ -58,8 +58,6 @@ export interface AssistantStateSnapshot {
   activeRuns: AssistantStateActiveRun[]
   workspaceAttentions: unknown[]
   projects: unknown[]
-  assistantCodingDefaults?: ProjectCodingDefaults
-  assistantCodingDefaultsInherited?: boolean
 }
 
 export interface AssistantStateActiveRun {
@@ -71,6 +69,7 @@ export interface AssistantStateActiveRun {
 }
 
 interface DigestWorkspaceAttention {
+  reference: string
   id: string
   target: string
   createdAt: string
@@ -108,10 +107,6 @@ export function createAssistantStateReader(options: {
   publisher: PublicationCoordinator
   attempts: RunAttemptStore
   activeRuns?: () => ReadonlyMap<string, Responsibility>
-  readAssistantCodingDefaults?: () => Promise<{
-    codingDefaults: ProjectCodingDefaults
-    inherited: boolean
-  }>
   now?: () => Date
   staleAfterMs?: number
 }): AssistantStateReader {
@@ -122,9 +117,8 @@ export function createAssistantStateReader(options: {
   return {
     async read(input = {}) {
       const observedAt = now()
-      const [workspace, assistantModelSettings, attemptSnapshot] = await Promise.all([
+      const [workspace, attemptSnapshot] = await Promise.all([
         options.workspace.readWorkspace(),
-        options.readAssistantCodingDefaults?.(),
         options.attempts.snapshot(),
       ])
       const activeRuns = options.activeRuns?.() ?? new Map<string, Responsibility>()
@@ -138,7 +132,11 @@ export function createAssistantStateReader(options: {
       const workspaceAttentions = [...workspace.attentions.values()]
         .filter((attention) => attention.attributes.resolvedAt === null)
         .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
-        .map((attention) => ({ ...attention.attributes, body: boundedText(attention.body, 1_200) }))
+        .map((attention) => ({
+          reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+          ...attention.attributes,
+          body: boundedText(attention.body, 1_200),
+        }))
 
       const projects = await Promise.all(
         selected.map(async (project) => {
@@ -300,6 +298,11 @@ export function createAssistantStateReader(options: {
                   .filter((attention) => attention.attributes.resolvedAt === null)
                   .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
                   .map((attention) => ({
+                    reference: goalAttentionReference(
+                      project.projectId,
+                      goalId,
+                      attention.attributes.id,
+                    ),
                     attributes: attention.attributes,
                     body: boundedText(attention.body, input.includeEvidence ? 4_000 : 1_200),
                     path: project.store.paths.absolute(
@@ -361,12 +364,6 @@ export function createAssistantStateReader(options: {
         ),
         workspaceAttentions,
         projects,
-        ...(assistantModelSettings
-          ? {
-              assistantCodingDefaults: assistantModelSettings.codingDefaults,
-              assistantCodingDefaultsInherited: assistantModelSettings.inherited,
-            }
-          : {}),
       }
     },
   }
@@ -613,7 +610,9 @@ async function semanticDigest(
   workspaceAttentions: DigestWorkspaceAttention[],
 ) {
   const semantic = {
-    workspaceAttentions: workspaceAttentions.map(({ body: _body, ...attributes }) => attributes),
+    workspaceAttentions: workspaceAttentions.map(
+      ({ body: _body, reference: _reference, ...attributes }) => attributes,
+    ),
     projects: projects.map((project) => ({
       projectId: project.projectId,
       available: project.available,

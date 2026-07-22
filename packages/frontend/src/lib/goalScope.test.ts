@@ -6,8 +6,8 @@ import {
   orderProjectsByRecency,
   readGoalRouteState,
   readGoalViewState,
-  readRecentGoal,
   readRecentGoalId,
+  readRecentGoals,
   readRecentProjects,
   rememberRecentProject,
   rememberRecentGoal,
@@ -41,7 +41,7 @@ describe('Goal routes', () => {
 })
 
 describe('recent workspace navigation', () => {
-  test('remembers the latest Project and one Goal independently for each Project', () => {
+  test('remembers Project and Goal visit histories independently', () => {
     const values = new Map<string, string>()
     const storage: GoalPreferenceStorage = {
       getItem: (key) => values.get(key) ?? null,
@@ -50,14 +50,20 @@ describe('recent workspace navigation', () => {
 
     rememberRecentProject('P-1', storage, new Date('2026-07-17T09:00:00Z'))
     rememberRecentProject('P-2', storage, new Date('2026-07-17T10:00:00Z'))
+    rememberRecentGoal('P-1', 'G-1', storage, new Date('2026-07-17T09:30:00Z'))
     rememberRecentGoal('P-1', 'G-2', storage, new Date('2026-07-17T10:01:00Z'))
     rememberRecentGoal('P-2', 'G-9', storage, new Date('2026-07-17T10:02:00Z'))
+    rememberRecentGoal('P-1', 'G-1', storage, new Date('2026-07-17T10:03:00Z'))
 
     expect(readRecentProjects(storage)).toEqual([
       { projectId: 'P-2', visitedAt: '2026-07-17T10:00:00.000Z' },
       { projectId: 'P-1', visitedAt: '2026-07-17T09:00:00.000Z' },
     ])
-    expect(readRecentGoalId('P-1', storage)).toBe('G-2')
+    expect(readRecentGoals('P-1', storage)).toEqual([
+      { projectId: 'P-1', goalId: 'G-1', visitedAt: '2026-07-17T10:03:00.000Z' },
+      { projectId: 'P-1', goalId: 'G-2', visitedAt: '2026-07-17T10:01:00.000Z' },
+    ])
+    expect(readRecentGoalId('P-1', storage)).toBe('G-1')
     expect(readRecentGoalId('P-2', storage)).toBe('G-9')
   })
 
@@ -134,32 +140,34 @@ describe('recent workspace navigation', () => {
       { id: 'G-new', createdAt: '2026-07-17T10:20:00Z' },
       { id: 'G-legacy', createdAt: null },
     ]
-    const olderVisit = {
-      projectId: 'P-1',
-      goalId: 'G-old',
-      visitedAt: '2026-07-17T10:10:00Z',
-    }
-    const newerVisit = { ...olderVisit, visitedAt: '2026-07-17T10:30:00Z' }
+    const olderVisits = [
+      { projectId: 'P-1', goalId: 'G-old', visitedAt: '2026-07-17T10:10:00Z' },
+      { projectId: 'P-1', goalId: 'G-legacy', visitedAt: '2026-07-17T10:05:00Z' },
+    ]
+    const newerVisits = [
+      { projectId: 'P-1', goalId: 'G-old', visitedAt: '2026-07-17T10:30:00Z' },
+      { projectId: 'P-1', goalId: 'G-legacy', visitedAt: '2026-07-17T10:25:00Z' },
+    ]
 
-    expect(orderGoalsByRecency(goals, 'P-1', olderVisit).map((goal) => goal.id)).toEqual([
+    expect(orderGoalsByRecency(goals, 'P-1', olderVisits).map((goal) => goal.id)).toEqual([
       'G-new',
       'G-old',
       'G-legacy',
     ])
-    expect(orderGoalsByRecency(goals, 'P-1', newerVisit).map((goal) => goal.id)).toEqual([
+    expect(orderGoalsByRecency(goals, 'P-1', newerVisits).map((goal) => goal.id)).toEqual([
       'G-old',
-      'G-new',
       'G-legacy',
+      'G-new',
     ])
-    expect(resolveProjectGoalId(goals, 'P-1', olderVisit)).toBe('G-new')
-    expect(resolveProjectGoalId(goals, 'P-1', newerVisit)).toBe('G-old')
+    expect(resolveProjectGoalId(goals, 'P-1', olderVisits)).toBe('G-new')
+    expect(resolveProjectGoalId(goals, 'P-1', newerVisits)).toBe('G-old')
   })
 
   test('keeps a stable fallback when no Goal has recency evidence', () => {
     const goals = [{ id: 'G-1' }, { id: 'G-2' }]
 
-    expect(resolveProjectGoalId(goals, 'P-1', null)).toBe('G-1')
-    expect(resolveProjectGoalId([], 'P-1', null)).toBeNull()
+    expect(resolveProjectGoalId(goals, 'P-1', [])).toBe('G-1')
+    expect(resolveProjectGoalId([], 'P-1', [])).toBeNull()
   })
 
   test('detects the newest Goal introduced by an Assistant refresh', () => {
@@ -173,21 +181,31 @@ describe('recent workspace navigation', () => {
     expect(findNewestUnseenGoal(goals, 'P-1', new Set(goals.map((goal) => goal.id)))).toBeNull()
   })
 
-  test('migrates the previous plain Goal ID preference', () => {
-    const values = new Map([['hopi.navigation.recent-goal.P-1', 'G-legacy']])
+  test('migrates previous single-Goal preferences into visit history', () => {
+    const values = new Map([
+      ['hopi.navigation.recent-goal.P-1', 'G-plain'],
+      [
+        'hopi.navigation.recent-goal.P-2',
+        JSON.stringify({
+          projectId: 'P-2',
+          goalId: 'G-object',
+          visitedAt: '2026-07-17T10:00:00Z',
+        }),
+      ],
+    ])
     const storage: GoalPreferenceStorage = {
       getItem: (key) => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
     }
 
-    expect(readRecentGoal('P-1', storage)).toMatchObject({
-      projectId: 'P-1',
-      goalId: 'G-legacy',
-    })
-    expect(JSON.parse(values.get('hopi.navigation.recent-goal.P-1') ?? '{}')).toMatchObject({
-      projectId: 'P-1',
-      goalId: 'G-legacy',
-    })
+    expect(readRecentGoals('P-1', storage)[0]).toMatchObject({ projectId: 'P-1', goalId: 'G-plain' })
+    expect(readRecentGoals('P-2', storage)).toEqual([
+      { projectId: 'P-2', goalId: 'G-object', visitedAt: '2026-07-17T10:00:00Z' },
+    ])
+    expect(JSON.parse(values.get('hopi.navigation.recent-goal.P-1') ?? 'null')).toHaveLength(1)
+    expect(JSON.parse(values.get('hopi.navigation.recent-goal.P-2') ?? 'null')).toEqual([
+      { projectId: 'P-2', goalId: 'G-object', visitedAt: '2026-07-17T10:00:00Z' },
+    ])
   })
 
   test('ignores unavailable browser storage', () => {
@@ -201,6 +219,7 @@ describe('recent workspace navigation', () => {
     }
 
     expect(readRecentGoalId('P-1', unavailableStorage)).toBeNull()
+    expect(readRecentGoals('P-1', unavailableStorage)).toEqual([])
     expect(readRecentProjects(unavailableStorage)).toEqual([])
     expect(() => rememberRecentProject('P-1', unavailableStorage)).not.toThrow()
     expect(() => rememberRecentGoal('P-1', 'G-1', unavailableStorage)).not.toThrow()

@@ -137,6 +137,29 @@ describe('parseVendorAssistantOutput', () => {
     })
   })
 
+  test('marks an exhausted context window as an unusable saved session', () => {
+    const message =
+      "API Error: 400 This model's maximum context length is 1048565 tokens. However, you requested 1404638 tokens."
+    expect(
+      parseVendorAssistantOutput(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          session_id: 'exhausted-session',
+          result: message,
+        }),
+      ),
+    ).toEqual({
+      sessionId: 'exhausted-session',
+      terminalError: {
+        message,
+        sessionInvalid: true,
+      },
+    })
+  })
+
   test('preserves Claude error-list detail and recognizes a missing conversation', () => {
     const message = 'No conversation found with session ID: missing-session'
     expect(

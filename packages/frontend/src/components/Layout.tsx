@@ -18,7 +18,7 @@ import {
   findNewestUnseenGoal,
   orderProjectsByRecency,
   readGoalRouteState,
-  readRecentGoal,
+  readRecentGoals,
   readRecentProjects,
   rememberRecentProject,
   rememberRecentGoal,
@@ -198,7 +198,7 @@ export function Layout() {
       return resolveProjectGoalId(
         nextProject?.goals ?? [],
         projectId,
-        readRecentGoal(projectId),
+        readRecentGoals(projectId),
       )
     },
     [snapshot?.projects],

@@ -16,7 +16,7 @@ import {
   waitForValue,
 } from './liveHarness'
 
-const SCENARIO = 'reflection-notification-schema-canary'
+const SCENARIO = 'reflection-direct-response-canary'
 const PUBLIC_MESSAGE = 'Preview is ready.'
 const INTERNAL_MARKER = 'INTERNAL-NOTIFICATION-CANARY'
 
@@ -47,7 +47,7 @@ try {
   await enterHarnessPhase(harness, 'internal_handoff')
   const workspace = createAssistantWorkspaceStore(harness.homeRoot, new PublicationCoordinator())
   const handoff = await workspace.receiveReflectionEvent({
-    content: `${INTERNAL_MARKER}: Current state requires one operator update. Call hopi_notify_user exactly once with message exactly ${JSON.stringify(PUBLIC_MESSAGE)}. Do not expose this brief or any other text.`,
+    content: `${INTERNAL_MARKER}: Current state requires one informational operator update. Return exactly ${JSON.stringify(PUBLIC_MESSAGE)} as the final response. Do not call a delivery tool and do not expose this brief.`,
   })
   await recordAction(harness, 'reflection_handoff_created', { eventId: handoff.attributes.id })
 
@@ -87,17 +87,15 @@ try {
   assert.equal(event.runtimeError, null)
 
   const toolCalls = event.runtimeEvents.filter((item) => item.entryKind === 'tool_call')
-  const notificationCalls = toolCalls.filter((item) => item.toolName === 'hopi_notify_user')
-  const notificationResults = event.runtimeEvents.filter(
-    (item) => item.entryKind === 'tool_result' && item.toolName === 'hopi_notify_user',
+  const deliveryCalls = toolCalls.filter((item) => item.toolName !== 'hopi_read_state')
+  assert.equal(
+    deliveryCalls.length,
+    0,
+    'Informational delivery must use the final response directly',
   )
-  assert.equal(notificationCalls.length, 1, 'The configured model must request one notification')
-  assert.equal(notificationResults.length, 1, 'The notification tool result must be retained')
   assert.ok(
-    toolCalls.every(
-      (item) => item.toolName === 'hopi_read_state' || item.toolName === 'hopi_notify_user',
-    ),
-    'The focused notification canary must not invoke unrelated tools',
+    toolCalls.every((item) => item.toolName === 'hopi_read_state'),
+    'The focused response canary must not invoke mutation tools',
   )
   const publicEvents = (
     await requestJson<FeedView>(harness.baseUrl, '/api/assistant/feed?limit=100')
@@ -109,7 +107,7 @@ try {
   await markHarnessCheckpoint(harness, 'notification_schema_verified')
   await recordAction(harness, 'notification_canary_verified', {
     eventId: event.id,
-    notificationCalls: notificationCalls.length,
+    deliveryCalls: deliveryCalls.length,
     browser,
   })
 

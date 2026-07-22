@@ -203,6 +203,14 @@ export function createCoordinatorReconciler(
         .then(() => undefined)
         .catch(async (error) => {
           if (controller.signal.aborted) return
+          if (event.attributes.source === 'reflection') {
+            await options.workspace.handleEvent(event.attributes.id, {
+              reply: 'Internal Reflection speaking turn failed; see its durable turn diagnostics.',
+              disposition: 'internal-failed',
+              handledAt: now(),
+            })
+            return
+          }
           await options.attentions.ensureEventAttention(
             event.attributes.id,
             `Assistant could not safely process this message: ${errorMessage(error)}`,

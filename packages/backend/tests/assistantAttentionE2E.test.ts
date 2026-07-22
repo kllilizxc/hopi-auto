@@ -109,14 +109,9 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(
-          input.toolToken,
-          'hopi_transfer_attention',
-          {
-            attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
-            message: 'Choose the release window: today or tomorrow?',
-          },
-        )
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
+          attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
+        })
         return {
           reply: 'Choose the release window: today or tomorrow?',
           session: codexSession('assistant-e2e'),
@@ -185,14 +180,9 @@ describe('Reflection to operator Attention E2E', () => {
           return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
         }
         if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(
-          input.toolToken,
-          'hopi_transfer_attention',
-          {
-            attentionRefs: attentionReferences(input.prompt),
-            message: 'The Project checkout needs to be rebound before work can continue.',
-          },
-        )
+        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
+          attentionRefs: attentionReferences(input.prompt),
+        })
         return {
           reply: 'The Project checkout needs to be rebound before work can continue.',
           session: codexSession('workspace-assistant-e2e'),
@@ -375,13 +365,12 @@ async function verifyPoisonedHistoryIsolation(scenario: {
       if (!runtime) throw new Error('Runtime is not ready')
       internalTurns += 1
       if (internalTurns === 1) {
-        await runtime.assistantTools.execute(input.toolToken, 'hopi_transfer_attention', {
+        await runtime.assistantTools.execute(input.toolToken, 'hopi_request_user', {
           attentionRefs: attentionReferences(input.prompt),
-          message: publicMessage,
         })
       }
       return {
-        reply: internalTurns === 1 ? publicMessage : 'No additional operator update.',
+        reply: internalTurns === 1 ? publicMessage : '',
         session: codexSession(`internal-${scenario.slug}-${internalTurns}`),
       }
     },

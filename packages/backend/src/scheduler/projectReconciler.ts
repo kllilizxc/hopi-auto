@@ -474,8 +474,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               responsibility === 'generator'
                 ? (scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot ??
                   scopedWorktrees[0]?.projectRoot ??
-                  context.runRoot)
-                : context.runRoot,
+                  responsibilitySession.workspaceDir)
+                : responsibilitySession.workspaceDir,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             session: responsibilitySession.session,

@@ -120,9 +120,9 @@ For speaking turns, `answered` means no tool event was observed and `tools-used`
 was observed. Neither value is proof of a side effect; canonical documents and tool results own that
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
-finishes, Coordinator may publish `internal -> public` atomically with its handled reply when that
-Run called `notify_user` or `transfer_attention`. It never moves back and a user-sourced turn can never
-become internal.
+finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
+`request_user` changes that reply from informational delivery to an operator-owned request; no reply
+remains internal. Visibility never moves back and a user-sourced turn can never become internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also
   becomes eligible only after its event document is durable.

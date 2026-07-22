@@ -163,6 +163,12 @@ export function isExplicitSessionFailure(...details: Array<string | undefined>) 
     ) ||
     /\b(no|unknown|missing|invalid|expired|incompatible)\b.{0,80}\b(session|conversation|thread)\b/.test(
       normalized,
+    ) ||
+    /\b(maximum|max)\b.{0,40}\b(context length|context window)\b.{0,120}\b(exceed|requested|too (?:large|long))\b/.test(
+      normalized,
+    ) ||
+    /\b(context length|context window|prompt)\b.{0,80}\b(exceed|too (?:large|long)|maximum|max)\b/.test(
+      normalized,
     )
   )
 }

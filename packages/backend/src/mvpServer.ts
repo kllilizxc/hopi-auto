@@ -57,7 +57,7 @@ import {
 import {
   ProjectDirectoryError,
   classifyProjectDirectory,
-  initializeEmptyGitRepository,
+  withPreparedProjectRepositories,
 } from './runtime/projectDirectory'
 import type { RunAttemptDiagnostics } from './runtime/runAttemptDiagnostics'
 import type { RunAttemptSummary } from './runtime/runAttemptStore'
@@ -95,7 +95,6 @@ const repoPathSchema = z
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
-const initializeRepositorySchema = z.object({ path: z.string().min(1) }).strict()
 const projectSchema = z.union([
   projectIdentitySchema
     .extend({
@@ -283,12 +282,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             throw error
           }
         }
-        if (request.method === 'POST' && url.pathname === '/api/system/initialize-repository') {
-          const body = await parseBody(request, initializeRepositorySchema)
-          return json({
-            selection: await initializeEmptyGitRepository(body.path),
-          })
-        }
         if (request.method === 'GET' && url.pathname === '/api/assistant/feed/changes') {
           return json(await presentAssistantFeedChanges(runtime, readAssistantChangeCursor(url)))
         }
@@ -380,7 +373,13 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'POST' && url.pathname === '/api/projects') {
           const body = await parseBody(request, projectSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
-            await current.home.linkProject(body)
+            await withPreparedProjectRepositories(body.repos, (repos) =>
+              current.home.linkProject({
+                ...(body.projectId ? { projectId: body.projectId } : {}),
+                primaryRepoId: body.primaryRepoId,
+                repos,
+              }),
+            )
           })
           return json(await presentState(await nextRuntime), 201)
         }
@@ -424,7 +423,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, projectRepoSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
-            await current.home.linkRepo({ projectId, ...body })
+            await withPreparedProjectRepositories([body], ([repo]) => {
+              if (!repo) throw new Error('Prepared Repo is missing')
+              return current.home.linkRepo({ projectId, ...repo })
+            })
           })
           return json(await presentState(await nextRuntime), 201)
         }
@@ -464,15 +466,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               title: body.title,
               objective: body.objective,
               priority: body.priority,
-              firstWork: {
-                kind: 'planning',
-                title: `Plan ${body.title}`,
-                objective: `Produce the design and Engineering Work needed to achieve this Goal: ${body.objective}`,
-                acceptanceCriteria: [
-                  'Material ambiguity is resolved or raised through targeted Attention.',
-                  'The design and Engineering Work DAG are sufficient to deliver the Goal.',
-                ],
-              },
+              firstWork: { kind: 'planning' },
             },
             reply: `Created Goal ${goalId}.`,
             disposition: 'tool:create_goal',
@@ -687,11 +681,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Pause Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control',
+            tool: 'hopi_control_goal',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
-              operation: 'pause',
+              action: { kind: 'pause' },
             },
             reply: `Paused Goal ${goalRoute.goalId}.`,
             disposition: 'tool:pause',
@@ -703,11 +697,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Resume Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control',
+            tool: 'hopi_control_goal',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
-              operation: 'resume',
+              action: { kind: 'resume' },
             },
             reply: `Resumed Goal ${goalRoute.goalId}.`,
             disposition: 'tool:resume',
@@ -720,11 +714,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Cancel Goal ${goalRoute.goalId}.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control',
+            tool: 'hopi_control_goal',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
-              operation: 'cancel',
+              action: { kind: 'cancel' },
             },
             reply: `Cancelled Goal ${goalRoute.goalId}.`,
             disposition: 'tool:cancel',
@@ -736,11 +730,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           await executeDirectUserCommand(runtime, {
             content: `Reopen Goal ${goalRoute.goalId} and reassess its current contract.`,
             context: { projectId: project.projectId, goalId: goalRoute.goalId },
-            tool: 'hopi_control',
+            tool: 'hopi_control_goal',
             input: {
               projectId: project.projectId,
               goalId: goalRoute.goalId,
-              operation: 'reopen',
+              action: { kind: 'reopen' },
             },
             reply: `Reopened Goal ${goalRoute.goalId}.`,
             disposition: 'tool:reopen',

@@ -107,10 +107,11 @@ not a product-form decision.
 
 An empty directory outside every Git worktree is an explicit new-project candidate. An explicitly
 named missing leaf directory is the same candidate when its parent already exists; repository
-initialization creates that one leaf without recursively creating ancestors. The UI asks for
-confirmation, then Coordinator revalidates the boundary, initializes `main`, creates one HOPI-owned
-empty bootstrap commit, and returns the new Repo. Failure removes only the `.git` directory created by
-that attempt and, when HOPI created the leaf, removes it only if it is still empty. HOPI never
+initialization creates that one leaf without recursively creating ancestors. Project creation and
+Repo addition revalidate this boundary, initialize `main`, create one HOPI-owned empty bootstrap
+commit, and continue through the same link operation without a separate initialization command or
+confirmation state. If later linking fails, HOPI removes only the `.git` directory created by that
+attempt and, when HOPI created the leaf, removes it only if it is still untouched and empty. HOPI never
 initializes a nested Repo inside an existing worktree. A non-empty non-Git directory is reported
 without mutation because automatically staging its contents could capture secrets or generated
 files. Browser automation injects deterministic chooser results rather than pretending that a text
@@ -131,9 +132,11 @@ HOPI does not manufacture one in every Repo merely because it was linked.
 
 An inconsistent partial link or an unavailable Repo creates one Project Attention and makes the
 Project ineligible. HOPI never guesses a replacement path or silently drops a Repo from a release.
-When several paths move together, rebind accepts the complete existing Repo-ID set in one request,
-repairs every managed-worktree entry, and changes the local binding document only after all targets
-validate. This is the same Project-link publication boundary, not a migration workflow.
+When several paths move together, rebind accepts only the changed Repo bindings in one request.
+Coordinator fills unchanged bindings from current Project truth, validates the resulting complete
+Repo-ID set, repairs every managed-worktree entry, and changes the local binding document only after
+all targets validate. Rebind never initializes a directory. This is the same Project-link
+publication boundary, not a migration workflow.
 
 ## Work Workspace
 
@@ -239,8 +242,9 @@ adapter implements it under the normal approval policy.
 Linked Projects shows one primary Repo and a list of secondary Repos. The MVP supports selecting
 multiple Repos before Project creation, adding a secondary Repo later, and rebinding one or all
 moved Repos. Primary switching after creation and Repo removal are deferred. Model settings remain
-Home-wide by agent role. The speaking Assistant exposes these same Project and Repo operations when
-the operator supplies their paths; the host directory picker remains only a UI input mechanism. A
+Home-wide by agent role and are changed only through UI/API settings, never model tools. The speaking
+Assistant exposes create, add, and partial rebind when the operator supplies paths; the host directory
+picker only selects and classifies paths and has no initialization side effect. A
 topology mutation made during an Assistant turn persists first and schedules one runtime rebuild
 after that turn settles, rather than interrupting the speaking session mid-call.
 

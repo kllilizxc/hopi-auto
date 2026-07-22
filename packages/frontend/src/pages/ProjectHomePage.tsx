@@ -5,7 +5,6 @@ import {
   Cpu,
   FolderGit2,
   FolderPlus,
-  GitBranch,
   Link2,
   Plus,
   Radio,
@@ -21,7 +20,6 @@ import {
   AppCard,
   AppForm,
   AppInput,
-  AppModal,
   AppRouterLink,
   AppScrollShadow,
   AppSpinner,
@@ -41,7 +39,6 @@ import {
   type ProjectDirectorySelection,
   type ProjectSummary,
   createProject,
-  initializeProjectDirectory,
   linkProjectRepo,
   readShellState,
   readProjectAgentAccess,
@@ -59,8 +56,6 @@ import { excerpt, projectDisplayName } from '../lib/utils'
 export function ProjectHomePage() {
   const queryClient = useQueryClient()
   const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
-  const [pendingInitialization, setPendingInitialization] =
-    useState<EmptyProjectDirectorySelection | null>(null)
   const [directoryNotice, setDirectoryNotice] = useState<string | null>(null)
   const pickerRequestActive = useRef(false)
   const snapshotQuery = useQuery({
@@ -94,7 +89,7 @@ export function ProjectHomePage() {
       }
       if (selection.kind === 'empty_directory') {
         setDirectoryNotice(null)
-        setPendingInitialization(selection)
+        setRepoDrafts((current) => addRepoDraft(current, selection))
         return
       }
       setDirectoryNotice(
@@ -103,14 +98,6 @@ export function ProjectHomePage() {
     },
     onSettled: () => {
       pickerRequestActive.current = false
-    },
-  })
-  const initializeMutation = useMutation({
-    mutationFn: initializeProjectDirectory,
-    onSuccess: ({ selection }) => {
-      setRepoDrafts((current) => addRepoDraft(current, selection))
-      setPendingInitialization(null)
-      setDirectoryNotice(null)
     },
   })
   const primaryRepo = repoDrafts.find((repo) => repo.primary)
@@ -253,12 +240,11 @@ export function ProjectHomePage() {
                     className="project-directory-picker"
                     type="button"
                     variant="ghost"
-                    disabled={pickerMutation.isPending || initializeMutation.isPending}
+                    disabled={pickerMutation.isPending}
                     onClick={() => {
                       if (pickerRequestActive.current) return
                       pickerRequestActive.current = true
                       pickerMutation.reset()
-                      initializeMutation.reset()
                       setDirectoryNotice(null)
                       pickerMutation.mutate()
                     }}
@@ -277,8 +263,7 @@ export function ProjectHomePage() {
                   disabled={
                     !canCreate ||
                     createMutation.isPending ||
-                    pickerMutation.isPending ||
-                    initializeMutation.isPending
+                    pickerMutation.isPending
                   }
                 >
                   {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
@@ -290,64 +275,6 @@ export function ProjectHomePage() {
         </div>
       </AppScrollShadow>
 
-      {pendingInitialization && (
-        <AppModal
-          isOpen
-          onOpenChange={(open) => {
-            if (!open && !initializeMutation.isPending) setPendingInitialization(null)
-          }}
-        >
-          <AppModal.Backdrop
-            className="modal-backdrop"
-            isDismissable={!initializeMutation.isPending}
-            variant="blur"
-          >
-            <AppModal.Container className="repo-init-modal-container" placement="center">
-              <AppModal.Dialog className="repo-init-modal" aria-label="Initialize a Git repository">
-                <div className="repo-init-modal-icon">
-                  <GitBranch />
-                </div>
-                <div className="repo-init-modal-copy">
-                  <span className="eyebrow">Empty folder</span>
-                  <AppModal.Heading>Initialize Git here?</AppModal.Heading>
-                  <p>
-                    HOPI will initialize this folder on <strong>main</strong> and create one empty
-                    bootstrap commit. It will not add project files.
-                  </p>
-                  <code title={pendingInitialization.path}>{pendingInitialization.path}</code>
-                </div>
-                {initializeMutation.error && (
-                  <AppAlert className="inline-error repo-init-error">
-                    {initializeMutation.error.message}
-                  </AppAlert>
-                )}
-                <div className="repo-init-modal-actions">
-                  <AppButton
-                    type="button"
-                    variant="ghost"
-                    disabled={initializeMutation.isPending}
-                    onClick={() => {
-                      initializeMutation.reset()
-                      setPendingInitialization(null)
-                    }}
-                  >
-                    Cancel
-                  </AppButton>
-                  <AppButton
-                    className="primary-button"
-                    type="button"
-                    disabled={initializeMutation.isPending}
-                    onClick={() => initializeMutation.mutate(pendingInitialization.path)}
-                  >
-                    {initializeMutation.isPending ? <AppSpinner size="sm" /> : <GitBranch />}
-                    Initialize and use folder
-                  </AppButton>
-                </div>
-              </AppModal.Dialog>
-            </AppModal.Container>
-          </AppModal.Backdrop>
-        </AppModal>
-      )}
     </>
   )
 }
@@ -361,25 +288,25 @@ interface ProjectRepoDraft {
   primary: boolean
 }
 
-type GitProjectDirectorySelection = Extract<ProjectDirectorySelection, { kind: 'git_repository' }>
-
-type EmptyProjectDirectorySelection = Extract<
+type LinkableProjectDirectorySelection = Extract<
   ProjectDirectorySelection,
-  { kind: 'empty_directory' }
+  { kind: 'git_repository' | 'empty_directory' }
 >
 
 function addRepoDraft(
   current: ProjectRepoDraft[],
-  selection: GitProjectDirectorySelection,
+  selection: LinkableProjectDirectorySelection,
 ): ProjectRepoDraft[] {
-  if (current.some((repo) => repo.repoPath === selection.repoPath)) return current
+  const repoPath = selection.kind === 'git_repository' ? selection.repoPath : selection.path
+  const projectPath = selection.kind === 'git_repository' ? selection.projectPath : '.'
+  if (current.some((repo) => repo.repoPath === repoPath)) return current
   return [
     ...current,
     {
       key: crypto.randomUUID(),
       repoId: suggestedRepoId(selection.path, current),
-      repoPath: selection.repoPath,
-      projectPath: selection.projectPath,
+      repoPath,
+      projectPath,
       displayPath: selection.path,
       primary: current.length === 0,
     },

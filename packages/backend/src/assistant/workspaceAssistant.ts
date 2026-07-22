@@ -12,7 +12,12 @@ import {
   parseVendorAssistantOutput,
 } from '../agent/vendorAssistantOutput'
 import { isNonFatalProcessDiagnostic } from '../agent/vendorTranscript'
-import { type RoleTransportConfig, appendCodexHttpsOnlyConfig } from '../agent/vendorTransport'
+import {
+  NON_INTERACTIVE_CODEX_APPROVAL_POLICY,
+  type RoleTransportConfig,
+  appendClaudeNonInteractivePermission,
+  appendCodexHttpsOnlyConfig,
+} from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
@@ -457,27 +462,29 @@ export function createWorkspaceAssistant(input: {
           WORKSPACE_ASSISTANT_CONTRACT_DIGEST,
           runtimeDigest,
         )
-        const notificationMessage = input.tools.notificationMessage(toolToken)
-        const notificationIntent = input.tools.notificationIntent(toolToken)
-        const reply = notificationMessage ?? result.reply.trim()
+        const reply = result.reply.trim()
         if (!reply && event.attributes.source !== 'reflection') {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
+        const internalIntent =
+          event.attributes.source === 'reflection'
+            ? await input.tools.finalizeInternalResponse(toolToken, eventId, reply)
+            : null
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
           disposition:
-            notificationIntent === 'request'
+            internalIntent === 'request'
               ? 'operator-requested'
-              : notificationIntent === 'inform'
+              : internalIntent === 'inform'
                 ? 'notified'
                 : usedTool
                   ? 'tools-used'
                   : 'answered',
           handledAt: now(),
-          expose: notificationMessage !== null,
+          expose: internalIntent !== null && internalIntent !== 'silent',
         })
         await input.conversation.complete(eventId)
-        if (notificationMessage !== null) {
+        if (internalIntent === 'inform' || internalIntent === 'request') {
           try {
             await input.tools.acknowledgeEventAttentions(eventId, now())
           } catch {
@@ -670,14 +677,7 @@ function assistantClaudeCommand(
   input: AssistantModelInput,
 ) {
   const command = [config.binary ?? 'claude']
-  if (input.fullAccess) {
-    command.push('--dangerously-skip-permissions')
-  } else {
-    command.push(
-      '--permission-mode',
-      config.permissionMode === 'bypassPermissions' ? 'dontAsk' : config.permissionMode,
-    )
-  }
+  appendClaudeNonInteractivePermission(command)
   if (config.model) command.push('--model', config.model)
   command.push(
     '--mcp-config',
@@ -699,9 +699,14 @@ function assistantClaudeCommand(
     for (const directory of readableDirectories) command.push('--add-dir', directory)
   }
   if (input.toolMode === 'reflection') {
-    command.push('--allowedTools', 'mcp__hopi__*,Read,Glob,Grep')
+    command.push('--tools', 'Read,Glob,Grep', '--allowedTools', 'mcp__hopi__*,Read,Glob,Grep')
   } else if (!input.fullAccess) {
-    command.push('--allowedTools', 'mcp__hopi__*,Read,Glob,Grep,Bash,WebFetch,WebSearch')
+    command.push(
+      '--tools',
+      'Read,Glob,Grep,Bash,WebFetch,WebSearch',
+      '--allowedTools',
+      'mcp__hopi__*,Read,Glob,Grep,Bash,WebFetch,WebSearch',
+    )
   }
   return command
 }
@@ -773,7 +778,7 @@ function assistantCodexCommand(
       : input.fullAccess
         ? 'danger-full-access'
         : 'workspace-write'
-  command.push('-a', input.fullAccess ? 'never' : config.approvalPolicy)
+  command.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
   if (sandbox === 'workspace-write') {
     command.push('-c', 'sandbox_workspace_write.network_access=true')
   }
@@ -853,6 +858,7 @@ const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'Goal, Work, Planning, Attention, Evidence, and Preview capabilities expose their own preconditions and effects. A named model, tool, workflow, or delivery path remains part of accepted authority.',
   'Attention and Reflection contain reported conditions, consequences, clear conditions, and evidence. Planner observes Goal authority, design, and accepted Input rather than conversational prose.',
   'An open targeted Attention is the scheduling gate for its target. Resolving it removes that gate immediately and may make the target runnable; a later operator request does not restore the gate. Requesting the operator records Needs you ownership on a still-open Attention after the public turn is durable, so scheduling remains blocked while the answer is absent.',
+  'For an internal turn, the final response is the only operator-facing text: non-empty informs, empty stays hidden, and hopi_request_user stages selected Attention ownership before that same final response asks the question.',
 ] as const
 
 function workspaceAssistantDeveloperInstructions() {
@@ -866,7 +872,7 @@ export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
   .update(WORKSPACE_ASSISTANT_CONTRACT_LINES.join('\n'))
   .digest('hex')
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 4
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 5
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -928,8 +934,8 @@ function renderTurn(
       '[Internal Reflection handoff. This is not operator input.]',
       observations,
       'Objective: revalidate the handoff against current state, apply any HOPI effect within Assistant authority, and publish only a useful outcome or a genuinely required operator action.',
-      'hopi_notify_user publishes information without operator ownership. hopi_transfer_attention transfers exactly the selected open Attention references and keeps their targets blocked pending the operator reply. Either message becomes the complete public turn; without either tool this turn remains internal.',
-      'Resolving Attention removes its scheduling gate immediately. Starting Planning does not resolve Attention.',
+      'Your final response is the only public text: return one concise informational update, or return nothing to stay internal. If operator action is required, first call hopi_request_user with exactly the selected open Attention references, then make the final response the complete question.',
+      'Resolving Attention removes its scheduling gate immediately. Creating Planning Work does not resolve Attention.',
       renderPreference(preference, false),
       renderOperatorReplyContract(),
       '[Translate the brief into its useful outcome or required action; omit internal IDs and process unless needed.]',

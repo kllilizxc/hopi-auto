@@ -97,12 +97,6 @@ function createRestartAssistantRunner(
 
       if (input.toolMode === 'internal') {
         const message = 'The recovered delivery completed successfully.'
-        await useTool(
-          'hopi_notify_user',
-          { message },
-          'Publish the recovered delivery completion update.',
-          'The completion update is durable.',
-        )
         return {
           reply: message,
           session: {
@@ -119,8 +113,9 @@ function createRestartAssistantRunner(
         {
           projectId: 'P-process-restart',
           goalId: 'G-assistant-restart',
-          writes: [
+          changes: [
             {
+              kind: 'document',
               path: 'assistant-restart.md',
               content:
                 '# Assistant restart\n\nThe durable tool effect survived the pre-reply process crash.\n',

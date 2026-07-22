@@ -93,4 +93,21 @@ describe('AssistantConversationStore session cache', () => {
     await appendFile(turnEventsPath('EV-live'), '\n')
     await expect(store.readTurn('EV-live')).rejects.toThrow('Invalid durable JSONL record')
   })
+
+  test('discards an interrupted turn tail before recording its resumed attempt', async () => {
+    const store = createAssistantConversationStore(temporaryRoot)
+    await store.begin('EV-resume')
+    await appendFile(turnEventsPath('EV-resume'), '{"kind":"message"\0\0')
+
+    await store.begin('EV-resume')
+
+    const turn = await store.readTurn('EV-resume')
+    expect(turn?.manifest.attempt).toBe(2)
+    expect(turn?.events).toHaveLength(2)
+    expect(turn?.events.at(-1)).toMatchObject({
+      kind: 'message',
+      content: 'Resuming Assistant turn after running.',
+    })
+    expect(await Bun.file(turnEventsPath('EV-resume')).text()).not.toContain('\0')
+  })
 })

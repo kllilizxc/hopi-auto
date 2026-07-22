@@ -1,7 +1,7 @@
 # Multi-Vendor Agent Adapter Contract
 
 Status: implementation reference
-Last updated: 2026-07-13
+Last updated: 2026-07-22
 
 This document records only the vendor boundary. It does not define another workflow, Assistant
 type, or session authority. Product behavior remains owned by
@@ -28,7 +28,11 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
   Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
 - a vendor-session compatibility identity derived from the effective transport, model, reasoning,
-  sandbox, and permission configuration; incompatible or legacy identities are not resumed
+  and execution boundary; incompatible or legacy identities are not resumed
+- no vendor-owned interactive approval channel: Codex always uses `never`, Claude bypasses its
+  prompt layer, and OpenCode receives only deterministic `allow` or `deny` rules. HOPI's resolved
+  sandbox and capability envelope remain the authorization boundary; a denied operation fails
+  immediately instead of waiting for an operator who cannot answer in that process
 - narrowly normalized tool execution failures that distinguish unavailable infrastructure from an
   ordinary command, test, or implementation failure, allowing a later successful use of the same
   capability in the invocation to clear the diagnostic
@@ -62,6 +66,10 @@ The UI accepts free-form model identifiers because valid catalogs are vendor- an
 It preserves compatible advanced fields when changing a model. Switching transport drops
 incompatible fields, installs safe defaults for the new adapter, and invalidates only the disposable
 runtime session cache. Durable Inbox history remains the recovery source.
+
+Legacy Codex approval-policy and Claude permission-mode fields remain readable for configuration
+compatibility but cannot re-enable vendor prompts. They are not product authorization controls.
+Bounded versus unrestricted access is selected only by HOPI's resolved execution envelope.
 
 ## Verification Bar
 

@@ -20,11 +20,20 @@ export interface TransportCommand {
   canonicalOutcomeFile?: string
   browserHarnessArtifactDir?: string
   canonicalBrowserHarnessArtifactDir?: string
+  assignmentSnapshotFile?: string
+  assignmentSnapshot?: string
 }
 
 export interface TransportContextBundle {
+  runRoot?: string
   runtimeScratchDir: string
   runtimeCacheDir: string
+  authorityRoot?: string
+  proposalRoot?: string
+  attentionProposalDir?: string
+  primaryRepoRoot?: string
+  bootstrapSourceRoot?: string
+  operatorPreferenceFile?: string
   goalFile: string
   designFile: string
   extraReadableRoots?: string[]
@@ -98,6 +107,11 @@ export type RoleTransportConfig = z.infer<typeof roleTransportConfigSchema>
 
 const HOPI_CODEX_HTTPS_PROVIDER = 'hopi_chatgpt_https'
 const NON_INTERACTIVE_CLAUDE_TOOLS = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion']
+export const NON_INTERACTIVE_CODEX_APPROVAL_POLICY = 'never'
+
+export function appendClaudeNonInteractivePermission(command: string[]) {
+  command.push('--dangerously-skip-permissions')
+}
 
 export function appendCodexHttpsOnlyConfig(command: string[]) {
   command.push(
@@ -147,6 +161,7 @@ export async function resolveConfiguredTransportCommand(options: {
     executionEnvelope,
   )
   await Bun.write(options.bundle.promptFile, assignment)
+  const assignmentSnapshotFile = join(options.bundle.runtimeScratchDir, 'assignment.snapshot.md')
 
   if ('cmd' in options.config) {
     return {
@@ -167,7 +182,9 @@ export async function resolveConfiguredTransportCommand(options: {
     options.session?.transport === options.config.transport ? options.session : null
   const prompt =
     options.continuationPrompt ??
-    (savedSession ? responsibilityContinuationPrompt(assignment, options.input) : assignment)
+    (savedSession
+      ? await responsibilityContinuationPrompt(assignment, options.input, assignmentSnapshotFile)
+      : assignment)
 
   if (options.config.transport === 'codex') {
     const outcomeSchemaFile = join(options.bundle.runtimeScratchDir, 'role-outcome.schema.json')
@@ -186,7 +203,7 @@ export async function resolveConfiguredTransportCommand(options: {
       : options.config.sandbox === 'danger-full-access'
         ? 'workspace-write'
         : options.config.sandbox
-    cmd.push('-a', options.fullAccess ? 'never' : options.config.approvalPolicy)
+    cmd.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
     }
@@ -242,6 +259,8 @@ export async function resolveConfiguredTransportCommand(options: {
       transcriptFormat: 'codex_jsonl',
       sessionTransport: 'codex',
       structuredOutcomeFile,
+      assignmentSnapshotFile,
+      assignmentSnapshot: assignment,
     }
   }
 
@@ -281,18 +300,7 @@ export async function resolveConfiguredTransportCommand(options: {
       '--json-schema',
       JSON.stringify(roleOutcomeJsonSchema(options.input.role)),
     ]
-    if (options.fullAccess) {
-      cmd.push('--dangerously-skip-permissions')
-    } else {
-      cmd.push(
-        '--permission-mode',
-        options.config.permissionMode === 'bypassPermissions'
-          ? options.config.cwdMode === 'root'
-            ? 'dontAsk'
-            : 'acceptEdits'
-          : options.config.permissionMode,
-      )
-    }
+    appendClaudeNonInteractivePermission(cmd)
     if (!options.fullAccess) {
       const accessibleDirs = new Set([
         ...(options.bundle.extraReadableRoots ?? []),
@@ -318,6 +326,8 @@ export async function resolveConfiguredTransportCommand(options: {
       stdin: prompt,
       transcriptFormat: 'claude_stream_json',
       sessionTransport: 'claude',
+      assignmentSnapshotFile,
+      assignmentSnapshot: assignment,
     }
   }
 
@@ -368,6 +378,8 @@ export async function resolveConfiguredTransportCommand(options: {
     stdin: prompt,
     transcriptFormat: 'opencode_json',
     sessionTransport: 'opencode',
+    assignmentSnapshotFile,
+    assignmentSnapshot: assignment,
   }
 }
 
@@ -387,7 +399,7 @@ function responsibilityExecutionEnvelope(options: {
     return {
       transport,
       mode: 'unrestricted',
-      runtimeWorkspace,
+      runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
       runtimeWorkspaceRole: 'responsibility workspace',
       runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
       readableRoots: ['*'],
@@ -398,15 +410,15 @@ function responsibilityExecutionEnvelope(options: {
       hostEnvironmentMutation: true,
       linkedSourceAccess: 'read-write',
       canonicalMutation: 'coordinator-publication-only',
-      runScratch: options.bundle.runtimeScratchDir,
-      cacheDirectory: options.bundle.runtimeCacheDir,
+      runScratch: '$HOPI_SESSION_WORKSPACE',
+      cacheDirectory: '$HOPI_CACHE_DIR',
     }
   }
   if (transport === 'process') {
     return {
       transport,
       mode: 'provider-managed',
-      runtimeWorkspace,
+      runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
       runtimeWorkspaceRole: 'responsibility workspace',
       runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
       readableRoots: null,
@@ -417,8 +429,8 @@ function responsibilityExecutionEnvelope(options: {
       hostEnvironmentMutation: null,
       linkedSourceAccess: 'provider-managed',
       canonicalMutation: 'coordinator-publication-only',
-      runScratch: options.bundle.runtimeScratchDir,
-      cacheDirectory: options.bundle.runtimeCacheDir,
+      runScratch: '$HOPI_SESSION_WORKSPACE',
+      cacheDirectory: '$HOPI_CACHE_DIR',
     }
   }
   const writableRoots = [runtimeWorkspace, ...(options.bundle.extraWritableRoots ?? [])]
@@ -430,20 +442,36 @@ function responsibilityExecutionEnvelope(options: {
   return {
     transport,
     mode: codexReadOnly ? 'read-only' : 'bounded',
-    runtimeWorkspace,
+    runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
     runtimeWorkspaceRole: 'responsibility workspace',
     runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
-    readableRoots: [...new Set(readableRoots)],
-    writableRoots: codexReadOnly ? [] : [...new Set(writableRoots)],
+    readableRoots: [...new Set(readableRoots)].map((path) =>
+      displayExecutionPath(path, options.bundle),
+    ),
+    writableRoots: codexReadOnly
+      ? []
+      : [...new Set(writableRoots)].map((path) => displayExecutionPath(path, options.bundle)),
     networkAccess: !codexReadOnly,
     subprocessAccess: !codexReadOnly,
     privilegeEscalation: false,
     hostEnvironmentMutation: false,
     linkedSourceAccess: codexReadOnly || !linkedSourceWritable ? 'read-only' : 'read-write',
     canonicalMutation: 'coordinator-publication-only',
-    runScratch: options.bundle.runtimeScratchDir,
-    cacheDirectory: options.bundle.runtimeCacheDir,
+    runScratch: '$HOPI_SESSION_WORKSPACE',
+    cacheDirectory: '$HOPI_CACHE_DIR',
   }
+}
+
+function displayExecutionPath(path: string, bundle: TransportContextBundle) {
+  const aliases = [
+    [bundle.runRoot, '$HOPI_RUN_DIR'],
+    [bundle.runtimeScratchDir, '$HOPI_SESSION_WORKSPACE'],
+    [bundle.runtimeCacheDir, '$HOPI_CACHE_DIR'],
+    [bundle.primaryRepoRoot, '$HOPI_PRIMARY_REPO_ROOT'],
+    [bundle.authorityRoot, '$HOPI_AUTHORITY_ROOT'],
+    [bundle.proposalRoot, '$HOPI_PROPOSAL_ROOT'],
+  ] as const
+  return aliases.find(([candidate]) => candidate === path)?.[1] ?? path
 }
 
 function externalDirectoryPermissions(roots: readonly string[]) {
@@ -455,19 +483,68 @@ function externalDirectoryPermissions(roots: readonly string[]) {
   }
 }
 
-function responsibilityContinuationPrompt(
+async function responsibilityContinuationPrompt(
   assignment: string,
   input: ConfiguredTransportInvocation,
+  snapshotFile: string,
 ) {
+  const previous = await Bun.file(snapshotFile)
+    .text()
+    .catch(() => '')
+  const changes = previous ? changedAssignmentSections(previous, assignment) : [assignment]
   return [
     '# Continue Responsibility Session',
     '',
     `Continue the same ${input.role ?? input.stepId} responsibility for Work ${input.taskRef ?? input.stepId} in a new Attempt.`,
-    'The complete current assignment below is authoritative and supersedes remembered paths or facts.',
-    'Inspect the current workspace and retain valid prior progress instead of repeating completed work.',
+    'Retain valid prior discovery and work instead of repeating it. Unchanged assignment sections in the saved conversation remain authoritative.',
+    previous
+      ? changes.length > 0
+        ? 'Each complete section below replaces the remembered section with the same HOPI section identifier; current facts supersede older facts.'
+        : 'No assignment section changed. Continue from the current workspace and prior evidence.'
+      : 'No accepted assignment snapshot was available, so the complete current assignment follows.',
+    'Use the stable $HOPI_* environment names for current Attempt inputs and outputs; never recover a historical Run path from conversation.',
     '',
-    assignment,
+    ...changes,
   ].join('\n')
+}
+
+function changedAssignmentSections(previous: string, current: string) {
+  if (previous === current) return []
+  const before = assignmentSections(previous)
+  const after = assignmentSections(current)
+  if (!before || !after) return [current]
+  const beforeByKey = new Map(before.map((section) => [section.key, section.content]))
+  const afterKeys = new Set(after.map((section) => section.key))
+  const changed = after
+    .filter((section) => beforeByKey.get(section.key) !== section.content)
+    .map((section) => section.content)
+  const removed = before.map((section) => section.key).filter((key) => !afterKeys.has(key))
+  if (removed.length > 0) {
+    changed.push(
+      [
+        '## Removed Assignment Sections',
+        '',
+        'The following remembered section identifiers are no longer part of the current assignment:',
+        ...removed.map((id) => `- ${id}`),
+      ].join('\n'),
+    )
+  }
+  return changed
+}
+
+function assignmentSections(source: string) {
+  const pattern =
+    /<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:([a-z-]+) -->\n([\s\S]*?)\n<!-- HOPI_ASSIGNMENT_SECTION_END:\1 -->/g
+  const matches = [...source.matchAll(pattern)]
+  if (matches.length === 0) return null
+  const sections: Array<{ key: string; content: string }> = []
+  for (const match of matches) {
+    sections.push({
+      key: match[1] ?? '',
+      content: match[0],
+    })
+  }
+  return sections
 }
 
 function roleOutcomeJsonSchema(role: string | undefined) {
@@ -493,7 +570,21 @@ function roleOutcomeJsonSchema(role: string | undefined) {
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
   return {
     HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
+    HOPI_SESSION_WORKSPACE: bundle.runtimeScratchDir,
     HOPI_CACHE_DIR: bundle.runtimeCacheDir,
+    ...(bundle.runRoot ? { HOPI_RUN_DIR: bundle.runRoot } : {}),
+    ...(bundle.authorityRoot ? { HOPI_AUTHORITY_ROOT: bundle.authorityRoot } : {}),
+    ...(bundle.proposalRoot ? { HOPI_PROPOSAL_ROOT: bundle.proposalRoot } : {}),
+    ...(bundle.attentionProposalDir
+      ? { HOPI_ATTENTION_PROPOSAL_DIR: bundle.attentionProposalDir }
+      : {}),
+    ...(bundle.primaryRepoRoot ? { HOPI_PRIMARY_REPO_ROOT: bundle.primaryRepoRoot } : {}),
+    ...(bundle.bootstrapSourceRoot
+      ? { HOPI_BOOTSTRAP_SOURCE_ROOT: bundle.bootstrapSourceRoot }
+      : {}),
+    ...(bundle.operatorPreferenceFile
+      ? { HOPI_OPERATOR_PREFERENCE_FILE: bundle.operatorPreferenceFile }
+      : {}),
     HOPI_CONTEXT_FILE: bundle.contextFile,
     ...(bundle.artifactManifestFile
       ? { HOPI_EVIDENCE_ARTIFACTS_FILE: bundle.artifactManifestFile }

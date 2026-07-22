@@ -161,12 +161,7 @@ function createAssistant(): AssistantModelRunner & { eventIds: string[]; created
                 goalId: GOAL_B,
                 title: 'Deliver B',
                 objective: 'Deliver feature B.',
-                firstWork: {
-                  kind: 'planning',
-                  title: 'Plan feature B',
-                  objective: 'Plan the work needed to deliver feature B.',
-                  acceptanceCriteria: ['The plan is sufficient to create Engineering Work.'],
-                },
+                firstWork: { kind: 'planning' },
               },
             }),
           })
@@ -209,8 +204,15 @@ function createRoles(): RoleRunner & {
         )
         return success(`Generator completed ${input.projectId}.`)
       }
+      const sourceRoot = input.sourceRoots?.[0]
+      assert.ok(sourceRoot, 'Reviewer must receive the candidate source root separately from cwd')
+      assert.notEqual(
+        sourceRoot,
+        input.cwd,
+        'Reviewer cwd is its persistent Session workspace, not the candidate checkout',
+      )
       assert.equal(
-        await Bun.file(join(input.cwd, 'src', 'feature.ts')).text(),
+        await Bun.file(join(sourceRoot, 'src', 'feature.ts')).text(),
         `export const project = '${input.projectId}'\n`,
       )
       return success(`Reviewer accepted ${input.projectId}.`)

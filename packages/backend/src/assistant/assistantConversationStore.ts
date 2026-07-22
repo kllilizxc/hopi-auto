@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
-import { readDurableJsonLines } from '../storage/jsonLines'
+import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/jsonLines'
 
 const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'])
 
@@ -135,6 +135,7 @@ export function createAssistantConversationStore(
         error: null,
       }
       await mkdir(turnRoot(eventId), { recursive: true })
+      await repairDurableJsonLineTail(eventsPath(eventId))
       await writeJson(manifestPath(eventId), manifest)
       await this.record(eventId, {
         kind: 'message',

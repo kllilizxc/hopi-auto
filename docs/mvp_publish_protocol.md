@@ -196,14 +196,14 @@ Project-target Attention resolves only after deterministic repair validation.
 
 A read-only Reflection may only prepare one handoff brief. Coordinator confirms the observed digest
 is still current before creating one new internal pending speaking Inbox item as its single gate.
-Reflection cannot publish Project state. If the speaking thread decides the operator should see the
-eventual reply, `notify_user` records informational capability-local intent; `transfer_attention` records
-an exact decision or external-action request and must repeat the exact references selected by the
-Reflection handoff. After the model returns, Coordinator first exposes and handles that same turn
-with its complete reply, then acknowledges each selected canonical Goal-local or workspace Attention
-reference from Inbox context in its owning-root publication. Both paths may set
-`notifiedAt`; only the request path also writes the handled event's canonical reference to
-`operatorRequest`. A crash before the handled gate leaves the turn internal and pending; a crash
+Reflection cannot publish Project state. A non-empty final response from the speaking thread is an
+informational reply by default; an empty response remains internal. When an exact decision or
+external action is required, `request_user` stages that intent and must repeat the exact targeted
+Attention references selected by the Reflection handoff. After the model returns, Coordinator first
+exposes and handles that same turn with its complete reply, then acknowledges each selected canonical
+Goal-local or workspace Attention reference from Inbox context in its owning-root publication. Both
+paths may set `notifiedAt`; only the request path also writes the handled event's canonical reference
+to `operatorRequest`. A crash before the handled gate leaves the turn internal and pending; a crash
 after it leaves a handled public turn whose normal recovery finishes any missing acknowledgement.
 Recovery never infers visibility, request intent, or Attention identity from reply prose. An optional
 webhook mirrors only the handled public Inbox reply and records its independent

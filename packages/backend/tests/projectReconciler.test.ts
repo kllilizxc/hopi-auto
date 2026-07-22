@@ -58,8 +58,21 @@ describe('ProjectReconciler', () => {
       'goal_completed',
     ])
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer', 'planner'])
-    expect(fixture.runner.plannerCwds).toEqual(fixture.runner.plannerRunRoots)
-    expect(fixture.runner.reviewerCwds).toEqual(fixture.runner.reviewerRunRoots)
+    expect(fixture.runner.plannerCwds).toEqual(
+      fixture.runner.sessionWorkspacesByRun
+        .filter((run) => run.responsibility === 'planner')
+        .map((run) => run.path),
+    )
+    expect(fixture.runner.reviewerCwds).toEqual(
+      fixture.runner.sessionWorkspacesByRun
+        .filter((run) => run.responsibility === 'reviewer')
+        .map((run) => run.path),
+    )
+    expect(fixture.runner.plannerCwds).not.toEqual(fixture.runner.plannerRunRoots)
+    expect(fixture.runner.reviewerCwds).not.toEqual(fixture.runner.reviewerRunRoots)
+    expect(fixture.runner.generatorCwds[0]).toBe(
+      fixture.runner.repoRootsByRun.find((run) => run.responsibility === 'generator')?.paths[0],
+    )
     expect(goalPackage.goal.attributes.lifecycle).toBe('done')
     expect(goalPackage.goal.attributes.completionAttentionId).not.toBeNull()
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
@@ -227,6 +240,14 @@ describe('ProjectReconciler', () => {
     expect(fixture.runner.sessionWorkspacesByRun[2]?.path).toBe(
       fixture.runner.sessionWorkspacesByRun[4]?.path,
     )
+    expect(new Set(fixture.runner.generatorCwds).size).toBe(1)
+    expect(fixture.runner.reviewerCwds).toEqual(
+      fixture.runner.sessionWorkspacesByRun
+        .filter((run) => run.responsibility === 'reviewer')
+        .map((run) => run.path),
+    )
+    expect(new Set(fixture.runner.reviewerCwds).size).toBe(1)
+    expect(new Set(fixture.runner.reviewerRunRoots).size).toBe(2)
     expect(
       await Bun.file(
         join(fixture.runner.sessionWorkspacesByRun[1]?.path ?? '', 'continuity.txt'),
@@ -823,6 +844,7 @@ class DeliveryScriptRunner implements RoleRunner {
   }> = []
   readonly plannerCwds: string[] = []
   readonly plannerRunRoots: string[] = []
+  readonly generatorCwds: string[] = []
   readonly reviewerCwds: string[] = []
   readonly reviewerRunRoots: string[] = []
   readonly repoRootsByRun: Array<{ responsibility: string; paths: string[] }> = []
@@ -876,6 +898,7 @@ class DeliveryScriptRunner implements RoleRunner {
       this.plannerCwds.push(input.cwd)
       this.plannerRunRoots.push(input.context.runRoot)
     }
+    if (input.responsibility === 'generator') this.generatorCwds.push(input.cwd)
     if (input.responsibility === 'reviewer') {
       this.reviewerCwds.push(input.cwd)
       this.reviewerRunRoots.push(input.context.runRoot)
