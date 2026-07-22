@@ -7,8 +7,32 @@ import {
   attemptStatus,
   compactLaneRenderWindow,
   orderDoneWorks,
+  previewRepairPrompt,
   shouldShowWorkProgress,
 } from './BoardView'
+
+test('Preview repair survives the initiating request through the projected session', () => {
+  expect(
+    previewRepairPrompt({
+      sessionId: 'preview-1',
+      projectId: 'P-1',
+      status: 'failed',
+      endpoint: null,
+      logPath: '/tmp/preview.log',
+      startedAt: '2026-07-22T00:00:00.000Z',
+      endedAt: '2026-07-22T00:01:00.000Z',
+      error: 'Preview preparation failed',
+      stoppedReason: null,
+      repair: {
+        kind: 'repair_required',
+        reason: 'preparation_failed',
+        prompt: 'Repair the reviewed Prepare contract.',
+        logs: 'prepare failed',
+      },
+    }),
+  ).toBe('Repair the reviewed Prepare contract.')
+  expect(previewRepairPrompt(null)).toBeNull()
+})
 
 const attempt: RunAttemptSummary = {
   version: 1,

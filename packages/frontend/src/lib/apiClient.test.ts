@@ -1,5 +1,23 @@
 import { expect, test } from 'bun:test'
-import { readAssistantFeedChanges, requestPreviewRepair, updateAgentRoleSettings } from './apiClient'
+import {
+  readAssistantFeedChanges,
+  readState,
+  requestPreviewRepair,
+  updateAgentRoleSettings,
+} from './apiClient'
+
+test('turns a transport failure into an actionable backend recovery message', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (() => Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch
+
+  try {
+    await expect(readState()).rejects.toThrow(
+      'Cannot reach the HOPI backend. Check that it is running, then retry.',
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
 
 test('sends the viewed Goal context with a Preview repair instruction', async () => {
   const originalFetch = globalThis.fetch

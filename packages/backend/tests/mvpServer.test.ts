@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
@@ -666,10 +666,62 @@ describe('MVP server', () => {
     })
 
     expect(preview).toMatchObject({
-      kind: 'repair_required',
-      reason: 'missing',
+      kind: 'starting',
+      session: { status: 'starting' },
     })
-    expect(preview.prompt).toContain('/apps/web/scripts/hopi/preview')
+    const failed = await waitForPreviewSession(base, 'P-scoped', 'failed')
+    expect(failed.repair).toMatchObject({ reason: 'missing' })
+    expect(failed.repair?.prompt).toContain('/apps/web/scripts/hopi/preview')
+  })
+
+  test('admits slow Preview preparation without holding the HTTP request open', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'slow-preview-repo'))
+    const adapterRoot = join(repoRoot, 'scripts', 'hopi')
+    await mkdir(adapterRoot, { recursive: true })
+    await Bun.write(
+      join(adapterRoot, 'prepare'),
+      '#!/usr/bin/env bun\nawait Bun.sleep(750)\nconsole.log("prepare ok")\n',
+    )
+    await Bun.write(
+      join(adapterRoot, 'preview'),
+      [
+        '#!/usr/bin/env bun',
+        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(adapterRoot, 'prepare'), 0o755)
+    await chmod(join(adapterRoot, 'preview'), 0o755)
+    await git(repoRoot, ['add', '.'])
+    await git(repoRoot, ['commit', '-m', 'add slow Preview adapters'])
+    const server = createServer({
+      rootDir: homeRoot,
+      port: 0,
+      startCoordinator: false,
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    await request(base, '/api/projects', {
+      method: 'POST',
+      body: { projectId: 'P-slow', repoPath: repoRoot },
+    })
+    const preview = await Promise.race([
+      request(base, '/api/projects/P-slow/preview/start', { method: 'POST' }),
+      Bun.sleep(250).then(() => ({ kind: 'request_timeout' })),
+    ])
+
+    expect(preview).toMatchObject({
+      kind: 'starting',
+      session: { status: 'starting', repair: null },
+    })
+    expect(await waitForPreviewSession(base, 'P-slow', 'running')).toMatchObject({
+      endpoint: 'http://127.0.0.1:4321',
+      repair: null,
+    })
   })
 
   test('derives an omitted Project ID from the primary selected folder', async () => {
@@ -1184,13 +1236,15 @@ describe('MVP server', () => {
       method: 'POST',
     })
     expect(preview).toMatchObject({
-      kind: 'repair_required',
-      reason: 'missing',
+      kind: 'starting',
+      session: { status: 'starting' },
     })
+    const failedPreview = await waitForPreviewSession(base, 'P-1', 'failed')
+    expect(failedPreview.repair).toMatchObject({ reason: 'missing' })
     const repair = await request(base, '/api/preview/repair', {
       method: 'POST',
       body: {
-        prompt: preview.prompt,
+        prompt: failedPreview.repair?.prompt,
         context: { projectId: 'P-1', goalId: 'G-1' },
       },
     })
@@ -1978,6 +2032,31 @@ async function request(
   const body = await response.json()
   if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(body)}`)
   return body as Record<string, unknown> & { events?: unknown[] }
+}
+
+interface PreviewSessionView {
+  status: 'starting' | 'running' | 'stopped' | 'failed'
+  endpoint: string | null
+  repair: {
+    reason: string
+    prompt: string
+    logs: string
+  } | null
+}
+
+async function waitForPreviewSession(
+  base: string,
+  projectId: string,
+  status: PreviewSessionView['status'],
+): Promise<PreviewSessionView> {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const view = await request(base, `/api/projects/${projectId}/preview`)
+    const session = view.session as PreviewSessionView | null
+    if (session?.status === status) return session
+    await Bun.sleep(10)
+  }
+  throw new Error(`Preview ${projectId} did not reach ${status}`)
 }
 
 async function createRepo(path: string) {

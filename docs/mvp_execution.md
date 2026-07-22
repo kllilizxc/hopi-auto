@@ -1641,10 +1641,13 @@ directory. Coordinator supplies `HOPI_PROJECT_ROOT` and a disposable
 `HOPI_PREVIEW_RUNTIME_DIR`, stops it with `SIGTERM` (then bounded `SIGKILL`), and captures both
 streams in runtime storage. Exactly one line `HOPI_PREVIEW_URL=<url>` is the required ready signal,
 not an early intention: the adapter emits it only after that endpoint is reachable. Coordinator
-keeps the session at `starting` and the Start request pending until this line, adapter exit, or one
-bounded startup timeout. Only the ready line produces `running`; exit or timeout produces
-`startup_failed` with the captured logs and no extra health state. These are adapter I/O
-conventions, not generic responsibility-Run environment, canonical Project configuration, or
+keeps the session at `starting` until this line, adapter exit, or one bounded startup timeout. The
+public Start request admits that operation and returns the current session immediately; it never
+holds an HTTP connection across Repo preparation or adapter startup. Existing Project-state polling
+observes `starting -> running|failed`. Only the ready line produces `running`; failure records the
+captured logs and ordinary Assistant repair prompt on the same disposable session, so a lost Start
+response cannot lose the diagnosis or leave the UI with only a transport error. These are adapter
+I/O conventions, not generic responsibility-Run environment, canonical Project configuration, or
 workflow state.
 
 One Project has one serialized Preview operation. Concurrent Start calls share the same launch;
@@ -1660,8 +1663,9 @@ or container whose process group or cgroup is terminated with the parent. A hard
 observed on the next Start is treated as an ordinary startup conflict and routed through Preview
 repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
 
-On Start, Coordinator first checks for the reviewed adapter. If it is missing or startup fails, the
-current UI shows the condition and asks whether Assistant should establish or repair Preview. A
+On Start, Coordinator first checks for the reviewed adapter. If it is missing, preparation fails, or
+startup fails, the current UI observes the failed session, shows the condition, and asks whether
+Assistant should establish or repair Preview. A
 positive answer submits an ordinary durable message with the adapter path and available failure
 logs plus the immutable Project/Goal page context from which the operator confirmed repair. Context
 helps Assistant judge reuse, reopen, or creation but does not force that Goal to receive the repair.

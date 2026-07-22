@@ -31,6 +31,13 @@ export interface AgentRoleCodingSettings {
   configurable: boolean
 }
 
+export interface PreviewRepair {
+  kind: 'repair_required'
+  reason: 'missing' | 'not_executable' | 'preparation_failed' | 'startup_failed'
+  prompt: string
+  logs: string
+}
+
 export interface PreviewSession {
   sessionId: string
   projectId: string
@@ -41,6 +48,7 @@ export interface PreviewSession {
   endedAt: string | null
   error: string | null
   stoppedReason: 'release_updated' | null
+  repair: PreviewRepair | null
 }
 
 export interface GoalSummary {
@@ -441,10 +449,5 @@ export interface AssistantAttentionState {
 }
 
 export type PreviewStartResult =
-  | { kind: 'started'; session: PreviewSession }
-  | {
-      kind: 'repair_required'
-      reason: 'missing' | 'not_executable' | 'startup_failed'
-      prompt: string
-      logs: string
-    }
+  | { kind: 'starting' | 'started'; session: PreviewSession }
+  | PreviewRepair

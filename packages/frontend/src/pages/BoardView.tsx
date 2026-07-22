@@ -51,6 +51,7 @@ import {
   type AgentPlanSnapshot,
   type GoalControl,
   type KanbanColumn,
+  type PreviewSession,
   type RunAttemptDetail,
   type RunAttemptDiagnostics,
   type RunAttemptEvent,
@@ -170,6 +171,10 @@ export function shouldShowWorkProgress(input: {
   const terminal = input.stage === 'done' || input.stage === 'cancelled'
   const started = input.running || input.hasAgentPlan || input.runAttemptCount > 0
   return !terminal && started
+}
+
+export function previewRepairPrompt(preview: PreviewSession | null | undefined) {
+  return preview?.repair?.prompt ?? null
 }
 
 const loadUnifiedMessageFeed = () => import('../components/UnifiedMessageFeed')
@@ -472,6 +477,7 @@ export function BoardView() {
       setRepairPrompt(result.kind === 'repair_required' ? result.prompt : null)
       await refresh()
     },
+    onError: refresh,
   })
   const previewStopMutation = useMutation({
     mutationFn: () => stopPreview(projectId ?? ''),
@@ -489,6 +495,22 @@ export function BoardView() {
       openAssistant()
     },
   })
+  const previewSession = projectQuery.data?.preview
+  useEffect(() => {
+    setRepairPrompt(previewRepairPrompt(previewSession))
+    if (
+      previewStartMutation.isError &&
+      (previewSession?.status === 'starting' || previewSession?.status === 'running')
+    ) {
+      previewStartMutation.reset()
+    }
+  }, [
+    previewSession?.repair?.prompt,
+    previewSession?.sessionId,
+    previewSession?.status,
+    previewStartMutation.isError,
+    previewStartMutation.reset,
+  ])
 
   if (!projectId || !goalId) return <Navigate to="/projects" replace />
   const project = projectQuery.data

@@ -121,6 +121,10 @@ describe('PreviewManager', () => {
     expect(result.prompt).toContain('nonterminal Goal or Work')
     expect(result.prompt).toContain('scripts/hopi/preview')
     expect(result.prompt).toContain('clean managed integration worktree')
+    expect(manager.inspect('P-1')).toMatchObject({
+      status: 'failed',
+      repair: { reason: 'missing', prompt: result.prompt },
+    })
   })
 
   test('shares one preparation and adapter launch across concurrent Start calls', async () => {
@@ -268,6 +272,10 @@ describe('PreviewManager', () => {
     if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
     expect(result.logs).toContain('lockfile is stale')
     expect(result.prompt).toContain('scripts/hopi/prepare')
+    expect(manager.inspect('P-1')).toMatchObject({
+      status: 'failed',
+      repair: { reason: 'preparation_failed', logs: expect.stringContaining('lockfile is stale') },
+    })
   })
 
   test('returns startup logs for a failed adapter without creating workflow state', async () => {

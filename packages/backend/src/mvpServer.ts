@@ -775,16 +775,23 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           ) {
             throw new ApiError(409, 'Preview is blocked until Project Attention is resolved')
           }
+          void runtime.preview.start({
+            projectId: project.projectId,
+            projectRoot: project.sourceRoot,
+            primaryRepoId: project.primaryRepoId,
+            repoRoots: project.repos.map((repo) => ({
+              repoId: repo.repoId,
+              path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
+            })),
+          })
+          const session = runtime.preview.inspect(project.projectId)
+          if (!session) throw new Error('Preview operation was not admitted')
           return json(
-            await runtime.preview.start({
-              projectId: project.projectId,
-              projectRoot: project.sourceRoot,
-              primaryRepoId: project.primaryRepoId,
-              repoRoots: project.repos.map((repo) => ({
-                repoId: repo.repoId,
-                path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
-              })),
-            }),
+            {
+              kind: session.status === 'running' ? 'started' : 'starting',
+              session,
+            },
+            session.status === 'starting' ? 202 : 200,
           )
         }
         if (previewRoute && request.method === 'POST' && previewRoute.action === 'stop') {

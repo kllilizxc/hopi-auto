@@ -40,18 +40,23 @@ export interface AssistantScopeRequest {
 
 export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const formData = options.body instanceof FormData
-  const response = await fetch(path, {
-    method: options.method,
-    headers:
-      options.body === undefined || formData ? undefined : { 'content-type': 'application/json' },
-    body:
-      options.body === undefined
-        ? undefined
-        : formData
-          ? (options.body as FormData)
-          : JSON.stringify(options.body),
-  })
-  const payload = (await response.json()) as T & { error?: string }
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: options.method,
+      headers:
+        options.body === undefined || formData ? undefined : { 'content-type': 'application/json' },
+      body:
+        options.body === undefined
+          ? undefined
+          : formData
+            ? (options.body as FormData)
+            : JSON.stringify(options.body),
+    })
+  } catch {
+    throw new Error('Cannot reach the HOPI backend. Check that it is running, then retry.')
+  }
+  const payload = (await response.json().catch(() => ({}))) as T & { error?: string }
   if (!response.ok) throw new Error(payload.error ?? `Request failed (${response.status})`)
   return payload
 }

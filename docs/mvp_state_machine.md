@@ -617,9 +617,12 @@ forcing the repair into the viewed Goal. If the effect lands elsewhere, the repl
 so its scoped Kanban is locatable. Assistant does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
 prerequisites from a clean managed integration worktree and `scripts/hopi/preview` owns startup, so
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
-one readiness transition: `starting -> running` only when the Preview adapter emits
-`HOPI_PREVIEW_URL=<reachable-url>`; exit or bounded timeout before that becomes `failed` and routes
-the captured logs through the same repair prompt. Operator Stop moves `starting|running -> stopped`.
+one readiness transition: the Start command immediately returns the admitted `starting` session,
+then `starting -> running` only when the Preview adapter emits
+`HOPI_PREVIEW_URL=<reachable-url>`; preparation failure, exit, or bounded timeout becomes `failed`
+and retains the captured logs and repair prompt on that same disposable session. Existing Project
+polling observes the transition, so neither slow startup nor a lost command response loses the
+repair path. Operator Stop moves `starting|running -> stopped`.
 A successfully advanced or recovered C1 ref moves `starting|running -> stopped` with runtime reason
 `release_updated` and clears the endpoint; it never auto-restarts Preview or changes the durable C1
 outcome. Other state and document changes do not participate in this runtime transition.

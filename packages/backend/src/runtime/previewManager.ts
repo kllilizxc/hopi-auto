@@ -10,6 +10,18 @@ import { runtimeCacheRoot } from './runPaths'
 
 export type PreviewStatus = 'starting' | 'running' | 'stopped' | 'failed'
 export type PreviewStoppedReason = 'release_updated'
+export type PreviewRepairReason =
+  | 'missing'
+  | 'not_executable'
+  | 'preparation_failed'
+  | 'startup_failed'
+
+export interface PreviewRepair {
+  kind: 'repair_required'
+  reason: PreviewRepairReason
+  prompt: string
+  logs: string
+}
 
 export interface PreviewSession {
   sessionId: string
@@ -21,16 +33,10 @@ export interface PreviewSession {
   endedAt: string | null
   error: string | null
   stoppedReason: PreviewStoppedReason | null
+  repair: PreviewRepair | null
 }
 
-export type PreviewStartResult =
-  | { kind: 'started'; session: PreviewSession }
-  | {
-      kind: 'repair_required'
-      reason: 'missing' | 'not_executable' | 'preparation_failed' | 'startup_failed'
-      prompt: string
-      logs: string
-    }
+export type PreviewStartResult = { kind: 'started'; session: PreviewSession } | PreviewRepair
 
 export interface PreviewManager {
   start(input: {
@@ -91,13 +97,21 @@ export function createPreviewManager(
     const adapterFile = Bun.file(paths.adapter)
     if (!(await adapterFile.exists())) {
       if (isStopped(operation)) return stoppedResult(operation.session, now)
-      removeProvisionalOperation(operation)
-      return repairRequired('missing', paths.adapter, '')
+      return failWithRepair(
+        operation,
+        repairRequired('missing', paths.adapter, ''),
+        `Preview adapter is missing: ${paths.adapter}`,
+        now,
+      )
     }
     if (!(await isExecutable(paths.adapter))) {
       if (isStopped(operation)) return stoppedResult(operation.session, now)
-      removeProvisionalOperation(operation)
-      return repairRequired('not_executable', paths.adapter, '')
+      return failWithRepair(
+        operation,
+        repairRequired('not_executable', paths.adapter, ''),
+        `Preview adapter is not executable: ${paths.adapter}`,
+        now,
+      )
     }
 
     await mkdir(paths.sessionRoot, { recursive: true })
@@ -112,8 +126,12 @@ export function createPreviewManager(
     })
     if (isStopped(operation)) return stoppedResult(operation.session, now)
     if (preparation.kind !== 'ready') {
-      removeProvisionalOperation(operation)
-      return repairRequired('preparation_failed', preparation.adapterPath, preparation.logs)
+      return failWithRepair(
+        operation,
+        repairRequired('preparation_failed', preparation.adapterPath, preparation.logs),
+        `Preview preparation failed through ${preparation.adapterPath}`,
+        now,
+      )
     }
 
     operation.phase = 'startup'
@@ -156,7 +174,9 @@ export function createPreviewManager(
         startup.kind === 'timeout'
           ? `Preview adapter did not become ready within ${startupTimeoutMs}ms`
           : `Preview adapter exited with code ${startup.exitCode}`
-      return repairRequired('startup_failed', paths.adapter, operation.logs.text())
+      const repair = repairRequired('startup_failed', paths.adapter, operation.logs.text())
+      operation.session.repair = repair
+      return repair
     }
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
@@ -170,14 +190,12 @@ export function createPreviewManager(
         exitCode === 0 ? null : `Preview adapter exited with code ${exitCode}`
       operation.session.endedAt = now().toISOString()
       await settlePreviewLogs(operation)
+      operation.session.repair =
+        exitCode === 0
+          ? null
+          : repairRequired('startup_failed', paths.adapter, operation.logs.text())
     })
     return { kind: 'started', session: operation.session }
-  }
-
-  function removeProvisionalOperation(operation: PreviewOperation) {
-    if (operations.get(operation.session.projectId) === operation) {
-      operations.delete(operation.session.projectId)
-    }
   }
 
   async function stopOperation(
@@ -217,10 +235,15 @@ export function createPreviewManager(
     operation.session.endpoint = null
     operation.session.endedAt = now().toISOString()
     operation.session.error = message
-    return repairRequired(
-      operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
-      paths.adapter,
-      operation.logs.text(),
+    return failWithRepair(
+      operation,
+      repairRequired(
+        operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
+        paths.adapter,
+        operation.logs.text(),
+      ),
+      message,
+      now,
     )
   }
 
@@ -253,6 +276,7 @@ export function createPreviewManager(
         endedAt: null,
         error: null,
         stoppedReason: null,
+        repair: null,
       }
       let signalReady: (endpoint: string) => void = () => undefined
       const ready = new Promise<string>((resolveReady) => {
@@ -352,6 +376,20 @@ function stoppedResult(session: PreviewSession, now: () => Date): PreviewStartRe
   return { kind: 'started', session }
 }
 
+function failWithRepair(
+  operation: PreviewOperation,
+  repair: PreviewRepair,
+  error: string,
+  now: () => Date,
+): PreviewRepair {
+  operation.session.status = 'failed'
+  operation.session.endpoint = null
+  operation.session.endedAt ??= now().toISOString()
+  operation.session.error = error
+  operation.session.repair = repair
+  return repair
+}
+
 function isStopped(operation: PreviewOperation) {
   return operation.session.status === 'stopped'
 }
@@ -366,11 +404,7 @@ async function isExecutable(path: string) {
   }
 }
 
-function repairRequired(
-  reason: Extract<PreviewStartResult, { kind: 'repair_required' }>['reason'],
-  adapter: string,
-  logs: string,
-): PreviewStartResult {
+function repairRequired(reason: PreviewRepairReason, adapter: string, logs: string): PreviewRepair {
   const details = logs.trim() ? `\n\nStartup logs:\n\n\`\`\`\n${logs.trim()}\n\`\`\`` : ''
   return {
     kind: 'repair_required',

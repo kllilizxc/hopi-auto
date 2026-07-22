@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import type { AppSnapshot, GoalBoardDetail, GoalDetail } from './apiTypes'
+import type { AppSnapshot, GoalBoardDetail, GoalDetail, PreviewSession } from './apiTypes'
 import {
   boardPollInterval,
   CANONICAL_POLL_INTERVAL_MS,
@@ -44,8 +44,18 @@ test('polling surfaces share stable intervals and notify only visible state', as
 })
 
 test('canonical polling stays responsive only while the projection can change actively', () => {
-  const shell = (activeRuns: AppSnapshot['activeRuns']) =>
-    ({ state: { data: { activeRuns } as AppSnapshot } })
+  const shell = (
+    activeRuns: AppSnapshot['activeRuns'],
+    previewStatus?: PreviewSession['status'],
+  ) =>
+    ({
+      state: {
+        data: {
+          activeRuns,
+          projects: previewStatus ? [{ preview: { status: previewStatus } }] : [],
+        } as AppSnapshot,
+      },
+    })
   const board = (lifecycle: GoalBoardDetail['goal']['lifecycle']) =>
     ({ state: { data: { goal: { lifecycle } } as GoalBoardDetail } })
   const documents = (lifecycle: GoalDetail['goal']['lifecycle']) =>
@@ -56,6 +66,8 @@ test('canonical polling stays responsive only while the projection can change ac
     CANONICAL_POLL_INTERVAL_MS,
   )
   expect(shellPollInterval(shell([]))).toBe(SETTLED_POLL_INTERVAL_MS)
+  expect(shellPollInterval(shell([], 'starting'))).toBe(CANONICAL_POLL_INTERVAL_MS)
+  expect(shellPollInterval(shell([], 'running'))).toBe(SETTLED_POLL_INTERVAL_MS)
   expect(boardPollInterval(board('active'))).toBe(CANONICAL_POLL_INTERVAL_MS)
   expect(boardPollInterval(board('done'))).toBe(SETTLED_POLL_INTERVAL_MS)
   expect(documentPollInterval(documents('active'))).toBe(DOCUMENT_POLL_INTERVAL_MS)

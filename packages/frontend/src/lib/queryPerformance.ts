@@ -27,7 +27,8 @@ interface QueryWithData<T> {
 }
 
 export function shellPollInterval(query: QueryWithData<AppSnapshot>) {
-  return query.state.data?.activeRuns.length
+  return query.state.data?.activeRuns.length ||
+    query.state.data?.projects.some((project) => project.preview?.status === 'starting')
     ? CANONICAL_POLL_INTERVAL_MS
     : SETTLED_POLL_INTERVAL_MS
 }
