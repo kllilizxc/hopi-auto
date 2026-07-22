@@ -200,7 +200,10 @@ temporal boundary structural: live candidate integration appears as `currentCand
 while the immutable Attention body appears as `creationRationale`. These names affect only the model
 view; canonical documents and product APIs retain their domain fields. A `ready` result means the
 current task and release inputs can pass the C1 source merge without Generator source repair; it
-does not mean the Work is schedulable while an unrelated gate remains open.
+does not mean the Work is schedulable while an unrelated gate remains open. HOPI has no separate
+candidate “reprojection” state or Coordinator action outside this preflight. When it is ready and an
+Attention is the only failed readiness predicate, resolving that Attention removes the only gate and
+allows normal reconciliation to choose the next responsibility.
 An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
 artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
 other Evidence remain first-class Project documents and are read from exact paths only when needed.

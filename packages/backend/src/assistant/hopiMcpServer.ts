@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read state at observedAt. Home/Project reads are indexes; name one Goal for diagnostics. currentCandidateIntegration is live C1 source preflight; ready needs no Generator source repair. creationRationale is immutable Attention text from creation; open means unresolved, not still true. Copy canonical Attention references verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page/Reflection scope, or Home when none exists. Otherwise use exact Project/Goal IDs; never use a Home ID as projectId.',
+      'Read state at observedAt. Home/Project reads are indexes; name one Goal for diagnostics. currentCandidateIntegration is the complete C1 source preflight; ready needs no source repair or separate reprojection. creationRationale is Attention text from creation; open means unresolved, not still true. Copy Attention references verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page/Reflection scope, or Home when none exists. Otherwise use exact Project/Goal IDs; never use a Home ID as projectId.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },

@@ -167,6 +167,7 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('Operator action means a human decision')
     expect(prompt).toContain('currentCandidateIntegration is the live C1 source preflight')
     expect(prompt).toContain('creationRationale and latestAttempt are historical records')
+    expect(prompt).toContain('no separate candidate reprojection state')
     expect(prompt).toContain('Home and Project reads are compact indexes')
     expect(prompt).toContain('copy each selected reference verbatim from hopi_read_state')
     expect(prompt).toContain('never mixed scopes')
