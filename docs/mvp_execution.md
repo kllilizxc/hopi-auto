@@ -1039,9 +1039,28 @@ missing operator-controlled browser permission may justify targeted Attention; i
 port solely because HOPI omitted the required Run capability does not.
 
 The Run environment exposes `HOPI_BROWSER_HARNESS_COMMAND` only when a host Browser Harness
-executable is installed, along with a Run-owned artifact directory. Its absence is an environment
-fact rather than a fictitious tool path; project-native browser tooling, package installation,
-network access, local ports, and Run scratch remain available under the ordinary execution envelope.
+executable and a supported local browser are installed, along with a Run-owned artifact directory
+and `HOPI_BROWSER_TARGETS_FILE`. The command is a Home-owned adapter over the host Harness rather
+than a direct executable path. It exposes two browser targets:
+
+- `managed` is the default target. It uses one persistent HOPI-owned browser profile per Assistant
+  Home and a dedicated DevTools endpoint. Browser Harness connections may be recreated without an
+  operator permission prompt, while cookies and browser storage retained by that profile survive
+  Runs and Coordinator restarts.
+- `operator` attaches to the operator's running browser and therefore sees that browser's live login
+  state. Its Harness daemon is Home-scoped and reused rather than restarted by ordinary Runs. Chrome
+  may require operator authorization whenever that browser attachment is genuinely recreated.
+
+These targets describe available environments, not a workflow rule or permission boundary. A role
+chooses the environment whose observable properties fit its accepted task. Existing commands that
+do not name a target use `managed`; `--target operator` selects the current operator browser. HOPI
+does not copy, mutate, or concurrently open the operator's profile directory. The adapter owns only
+the managed browser process and profile; Browser Harness continues to own its connection daemons.
+The speaking Assistant receives the same adapter when its native execution envelope permits
+subprocess effects; read-only Reflection does not.
+The Harness command's absence is an environment fact rather than a fictitious tool path;
+project-native browser tooling, package installation, network access, local ports, and Run scratch
+remain available under the ordinary execution envelope.
 
 Changing, creating, or repairing a browser-facing `scripts/hopi/preview` always makes that client
 boundary material. Reviewer starts the candidate adapter independently and uses an available real

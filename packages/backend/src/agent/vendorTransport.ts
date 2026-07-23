@@ -48,6 +48,9 @@ export interface TransportContextBundle {
   canonicalOutcomeFile: string
   browserHarnessDir: string
   browserHarnessCommand?: string
+  browserHarnessBackendCommand?: string
+  browserHome?: string
+  browserTargetsFile?: string
   browserHarnessArtifactDir: string
   canonicalBrowserHarnessArtifactDir: string
   imageFiles?: string[]
@@ -622,6 +625,11 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     ...(bundle.browserHarnessCommand
       ? { HOPI_BROWSER_HARNESS_COMMAND: bundle.browserHarnessCommand }
       : {}),
+    ...(bundle.browserHarnessBackendCommand
+      ? { HOPI_BROWSER_HARNESS_BACKEND_COMMAND: bundle.browserHarnessBackendCommand }
+      : {}),
+    ...(bundle.browserHome ? { HOPI_BROWSER_HOME: bundle.browserHome } : {}),
+    ...(bundle.browserTargetsFile ? { HOPI_BROWSER_TARGETS_FILE: bundle.browserTargetsFile } : {}),
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
     ...(bundle.formalReleasePreviewFile

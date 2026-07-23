@@ -10,6 +10,13 @@ import {
   normalizeProjectCodingDefaults,
 } from '../../src/domain/projectCodingDefaults'
 import { type MvpServer, createServer } from '../../src/mvpServer'
+import {
+  browserAdapterEnvironment,
+  browserHarnessAdapterCommand,
+  defaultBrowserTestHome,
+  resolveBrowserHarnessBackendCommand,
+  resolveManagedBrowserCommand,
+} from '../../src/runtime/browserEnvironment'
 import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
 import {
   type TestRunClaim,
@@ -101,6 +108,7 @@ export interface BrowserHarnessContext {
   scenario: string
   artifactRoot: string
   baseUrl: string
+  browserHome?: string
 }
 
 interface StateObservation {
@@ -1654,12 +1662,16 @@ async function runBrowserHarness(
   script: string,
 ) {
   await initializeBrowserHarness(harness, logName)
-  const command = resolveBrowserHarnessCommand()
+  const invocation = resolveBrowserHarnessInvocation(harness)
   const auditRoot = join(harness.artifactRoot, 'browser-audit')
   await mkdir(auditRoot, { recursive: true })
   const managedScript = withOwnedBrowserTabs(script)
-  const child = Bun.spawn([command], {
-    env: { ...process.env, BH_AUDIT_DIR: await browserWritablePath(auditRoot) },
+  const child = Bun.spawn([invocation.command, '--target', 'managed'], {
+    env: {
+      ...process.env,
+      ...invocation.env,
+      BH_AUDIT_DIR: await browserWritablePath(auditRoot),
+    },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
@@ -1773,12 +1785,16 @@ function withOwnedBrowserTabs(script: string) {
 
 async function reloadBrowserHarness(context: BrowserHarnessContext, browserLogName: string) {
   const attempts: string[] = []
-  const command = resolveBrowserHarnessCommand()
+  const invocation = resolveBrowserHarnessInvocation(context)
   const auditRoot = join(context.artifactRoot, 'browser-audit')
   await mkdir(auditRoot, { recursive: true })
   const browserAuditRoot = await browserWritablePath(auditRoot)
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const reload = Bun.spawn([command, '--reload'], { stdout: 'pipe', stderr: 'pipe' })
+    const reload = Bun.spawn([invocation.command, '--target', 'managed', '--reload'], {
+      env: { ...process.env, ...invocation.env },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
     const [reloadStdout, reloadStderr, reloadExitCode] = await Promise.all([
       new Response(reload.stdout).text(),
       new Response(reload.stderr).text(),
@@ -1789,8 +1805,8 @@ async function reloadBrowserHarness(context: BrowserHarnessContext, browserLogNa
     let probeStderr = ''
     let probeExitCode = -1
     if (reloadExitCode === 0) {
-      const probe = Bun.spawn([command], {
-        env: { ...process.env, BH_AUDIT_DIR: browserAuditRoot },
+      const probe = Bun.spawn([invocation.command, '--target', 'managed'], {
+        env: { ...process.env, ...invocation.env, BH_AUDIT_DIR: browserAuditRoot },
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
@@ -1809,7 +1825,7 @@ async function reloadBrowserHarness(context: BrowserHarnessContext, browserLogNa
     }
     attempts.push(
       [
-        `attempt ${attempt}: $ ${command} --reload`,
+        `attempt ${attempt}: $ ${invocation.command} --target managed --reload`,
         `exit: ${reloadExitCode}`,
         '',
         '[reload stdout]',
@@ -2059,12 +2075,16 @@ export function liveCodingDefaults() {
   return normalizeProjectCodingDefaults(input)
 }
 
-function resolveBrowserHarnessCommand() {
-  const explicit = process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim()
-  if (explicit) return explicit
-  const command = Bun.which('codex-browser-harness') ?? Bun.which('browser-harness')
-  if (!command) throw new Error('Browser Harness is not installed')
-  return command
+function resolveBrowserHarnessInvocation(context: BrowserHarnessContext) {
+  const backendCommand = resolveBrowserHarnessBackendCommand()
+  if (!backendCommand) throw new Error('Browser Harness is not installed')
+  if (!resolveManagedBrowserCommand()) {
+    throw new Error('A supported managed Chrome, Chromium, Edge, or Brave browser is not installed')
+  }
+  return {
+    command: browserHarnessAdapterCommand(),
+    env: browserAdapterEnvironment(context.browserHome ?? defaultBrowserTestHome(), backendCommand),
+  }
 }
 
 export async function readModelUsage(homeRoot: string) {

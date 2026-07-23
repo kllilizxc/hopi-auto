@@ -23,6 +23,14 @@ import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
+import {
+  browserAdapterEnvironment,
+  browserEnvironmentRoot,
+  browserHarnessAdapterCommand,
+  browserTargetManifest,
+  resolveBrowserHarnessBackendCommand,
+  resolveManagedBrowserCommand,
+} from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import {
@@ -49,6 +57,7 @@ export interface AssistantModelInput {
   fullAccess?: boolean
   signal?: AbortSignal
   executionPlan?: AssistantModelExecutionPlan
+  browserEnvironment?: AssistantBrowserEnvironment
 }
 
 export interface AssistantModelPreparationInput {
@@ -62,6 +71,15 @@ export interface AssistantModelExecutionPlan {
   environment: ExecutionEnvelope
   config?: RoleTransportConfig
   fullAccess?: boolean
+  browserEnvironment?: AssistantBrowserEnvironment
+}
+
+export interface AssistantBrowserEnvironment {
+  command: string
+  backendCommand: string
+  homeRoot: string
+  targetsFile: string
+  writableRoot: string
 }
 
 export interface AssistantModelResult {
@@ -94,6 +112,7 @@ export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
   resolveToolUrl(): string
   fullAccess?(projectId: string): boolean | Promise<boolean>
+  homeRoot?: string
 }): AssistantModelRunner {
   async function prepare(
     input: AssistantModelPreparationInput,
@@ -110,10 +129,22 @@ export function createConfiguredAssistantModelRunner(options: {
       input.toolMode !== 'reflection' && input.projectId
         ? ((await options.fullAccess?.(input.projectId)) ?? false)
         : false
+    const browserEnvironment = resolveAssistantBrowserEnvironment(
+      options.homeRoot,
+      input,
+      config,
+      fullAccess,
+    )
     return {
       config,
       fullAccess,
-      environment: assistantExecutionEnvelope(config, input, fullAccess),
+      browserEnvironment,
+      environment: assistantExecutionEnvelope(
+        config,
+        input,
+        fullAccess,
+        browserEnvironment?.writableRoot,
+      ),
     }
   }
 
@@ -137,12 +168,26 @@ export function createConfiguredAssistantModelRunner(options: {
       const invocation = {
         ...input,
         fullAccess: plan.fullAccess ?? false,
-        prompt: session ? input.prompt : (input.rebuildPrompt ?? input.prompt),
+        prompt: appendBrowserEnvironment(
+          session ? input.prompt : (input.rebuildPrompt ?? input.prompt),
+          plan.browserEnvironment,
+        ),
+        rebuildPrompt: appendBrowserEnvironment(
+          input.rebuildPrompt ?? input.prompt,
+          plan.browserEnvironment,
+        ),
         session,
         toolUrl: options.resolveToolUrl(),
+        browserEnvironment: plan.browserEnvironment,
       }
       await mkdir(input.cwd, { recursive: true })
       await rm(input.lastMessageFile, { force: true })
+      if (invocation.browserEnvironment) {
+        await Bun.write(
+          invocation.browserEnvironment.targetsFile,
+          `${JSON.stringify(browserTargetManifest(), null, 2)}\n`,
+        )
+      }
       await prepareAssistantWorkspace(config, invocation)
       if (transport === 'opencode') await validateOpencodeMcp(config, invocation)
 
@@ -159,6 +204,16 @@ export function createConfiguredAssistantModelRunner(options: {
         env: withNativeCompactionEnabled(transport, {
           ...process.env,
           ...providerEnvironment,
+          ...(invocation.browserEnvironment
+            ? {
+                ...browserAdapterEnvironment(
+                  invocation.browserEnvironment.homeRoot,
+                  invocation.browserEnvironment.backendCommand,
+                ),
+                HOPI_BROWSER_HARNESS_COMMAND: invocation.browserEnvironment.command,
+                HOPI_BROWSER_TARGETS_FILE: invocation.browserEnvironment.targetsFile,
+              }
+            : {}),
           ...(transport === 'opencode'
             ? {
                 OPENCODE_CONFIG: assistantOpencodeConfigPath(input.cwd),
@@ -283,10 +338,50 @@ export function createConfiguredAssistantModelRunner(options: {
   }
 }
 
+function resolveAssistantBrowserEnvironment(
+  homeRoot: string | undefined,
+  input: AssistantModelPreparationInput,
+  config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
+  fullAccess: boolean,
+): AssistantBrowserEnvironment | undefined {
+  if (
+    !homeRoot ||
+    input.toolMode === 'reflection' ||
+    (config.transport === 'opencode' && !fullAccess)
+  ) {
+    return undefined
+  }
+  const backendCommand = resolveBrowserHarnessBackendCommand()
+  if (!backendCommand || !resolveManagedBrowserCommand()) return undefined
+  return {
+    command: browserHarnessAdapterCommand(),
+    backendCommand,
+    homeRoot: resolve(homeRoot),
+    targetsFile: join(input.cwd, 'browser-targets.json'),
+    writableRoot: browserEnvironmentRoot(homeRoot),
+  }
+}
+
+function appendBrowserEnvironment(
+  prompt: string,
+  environment: AssistantBrowserEnvironment | undefined,
+) {
+  if (!environment) return prompt
+  return [
+    prompt,
+    '',
+    '## Browser environment',
+    '',
+    'Browser harness: $HOPI_BROWSER_HARNESS_COMMAND',
+    'Browser targets: $HOPI_BROWSER_TARGETS_FILE',
+  ].join('\n')
+}
+
 function assistantExecutionEnvelope(
   config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
   input: AssistantModelPreparationInput,
   fullAccess: boolean,
+  browserWritableRoot?: string,
 ): ExecutionEnvelope {
   const reflection = input.toolMode === 'reflection'
   const opencodeBounded = config.transport === 'opencode' && !fullAccess
@@ -298,7 +393,11 @@ function assistantExecutionEnvelope(
     runtimeWorkspaceRole: 'provider scratch space',
     runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
     readableRoots: fullAccess ? ['*'] : [...new Set([input.cwd, ...(input.readableRoots ?? [])])],
-    writableRoots: fullAccess ? ['*'] : reflection || opencodeBounded ? [] : [input.cwd],
+    writableRoots: fullAccess
+      ? ['*']
+      : reflection || opencodeBounded
+        ? []
+        : [input.cwd, ...(browserWritableRoot ? [browserWritableRoot] : [])],
     networkAccess: fullAccess || (!reflection && !opencodeBounded),
     subprocessAccess: fullAccess || (!reflection && !opencodeBounded),
     privilegeEscalation: false,
@@ -589,7 +688,15 @@ async function prepareAssistantWorkspace(
                   autoAllowBashIfSandboxed: true,
                   allowUnsandboxedCommands: false,
                   filesystem: {
-                    allowWrite: input.toolMode === 'reflection' ? [] : [input.cwd],
+                    allowWrite:
+                      input.toolMode === 'reflection'
+                        ? []
+                        : [
+                            input.cwd,
+                            ...(input.browserEnvironment
+                              ? [input.browserEnvironment.writableRoot]
+                              : []),
+                          ],
                   },
                 }
               : { enabled: false },
@@ -726,6 +833,9 @@ function assistantClaudeCommand(
   if (input.session) command.push('--resume', input.session.sessionId)
   if (!input.fullAccess) {
     const readableDirectories = new Set(input.readableRoots ?? [])
+    if (input.browserEnvironment) {
+      readableDirectories.add(input.browserEnvironment.writableRoot)
+    }
     for (const imageFile of input.imageFiles ?? []) readableDirectories.add(dirname(imageFile))
     for (const directory of readableDirectories) command.push('--add-dir', directory)
   }
@@ -812,6 +922,9 @@ function assistantCodexCommand(
   command.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
   if (sandbox === 'workspace-write') {
     command.push('-c', 'sandbox_workspace_write.network_access=true')
+    if (input.browserEnvironment) {
+      command.push('--add-dir', input.browserEnvironment.writableRoot)
+    }
   }
   command.push('-s', sandbox)
   if (config.reasoningEffort) {
@@ -903,7 +1016,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 5
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 6
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')

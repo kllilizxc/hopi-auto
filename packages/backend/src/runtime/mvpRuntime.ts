@@ -230,6 +230,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     createConfiguredAssistantModelRunner({
       resolveConfig: async () => resolveAssistantTransportConfig(await readAdapterConfig()),
       fullAccess: (projectId) => options.projectFullAccess?.(projectId) ?? false,
+      homeRoot: options.homeRoot,
       resolveToolUrl:
         options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
     })

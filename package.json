@@ -11,7 +11,7 @@
     "remote:frontend": "cd packages/frontend && bun run remote",
     "dev": "bun run verify:runtime && bun run dev:backend",
     "test:contract": "cd packages/backend && bun test tests/contract",
-    "e2e:contract": "cd packages/backend && bun test tests/contract tests/workspaceAssistant.test.ts tests/assistantAttentionE2E.test.ts tests/coordinatorReconciler.test.ts tests/assistantTools.test.ts tests/projectReconciler.test.ts tests/passOutcomeCoordinator.test.ts tests/runAttemptStore.test.ts tests/coordinatorBootstrap.test.ts tests/multiRepoC1.test.ts tests/assistantReflection.test.ts tests/mvpServer.test.ts tests/adapterConfig.test.ts tests/previewManager.test.ts tests/goalController.test.ts tests/vendorTransport.test.ts tests/attentionDelivery.test.ts tests/roleContextStager.test.ts",
+    "e2e:contract": "cd packages/backend && bun test tests/contract tests/workspaceAssistant.test.ts tests/assistantAttentionE2E.test.ts tests/coordinatorReconciler.test.ts tests/assistantTools.test.ts tests/projectReconciler.test.ts tests/passOutcomeCoordinator.test.ts tests/runAttemptStore.test.ts tests/coordinatorBootstrap.test.ts tests/multiRepoC1.test.ts tests/assistantReflection.test.ts tests/mvpServer.test.ts tests/adapterConfig.test.ts tests/previewManager.test.ts tests/goalController.test.ts tests/vendorTransport.test.ts tests/attentionDelivery.test.ts tests/roleContextStager.test.ts tests/browserEnvironment.test.ts",
     "test:browser": "cd packages/backend && bun run tests/browser/globalAssistant.browser.ts",
     "e2e:browser:014": "cd packages/backend && bun run tests/browser/operationalRecovery.browser.ts",
     "e2e:browser:028": "cd packages/backend && bun run tests/browser/projectAttentionRecovery.browser.ts",

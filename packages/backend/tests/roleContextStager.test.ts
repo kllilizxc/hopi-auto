@@ -13,6 +13,13 @@ import {
 } from '../src/domain/canonicalDocuments'
 import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import {
+  browserEnvironmentRoot,
+  browserHarnessAdapterCommand,
+  browserTargetManifest,
+  resolveBrowserHarnessBackendCommand,
+  resolveManagedBrowserCommand,
+} from '../src/runtime/browserEnvironment'
 import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -99,12 +106,23 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
-    expect(bundle.browserHarnessCommand).toBe(
-      process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim() ||
-        Bun.which('codex-browser-harness') ||
-        Bun.which('browser-harness') ||
-        undefined,
+    const browserHarnessBackend = resolveBrowserHarnessBackendCommand()
+    const browserAvailable = Boolean(browserHarnessBackend && resolveManagedBrowserCommand())
+    expect(bundle.browserHarnessBackendCommand).toBe(
+      browserAvailable ? browserHarnessBackend : undefined,
     )
+    expect(bundle.browserHarnessCommand).toBe(
+      browserAvailable ? browserHarnessAdapterCommand() : undefined,
+    )
+    expect(bundle.browserHome).toBe(browserAvailable ? fixture.homeRoot : undefined)
+    expect(bundle.browserTargetsFile).toBe(
+      browserAvailable ? join(bundle.contextRoot, 'browser-targets.json') : undefined,
+    )
+    if (bundle.browserTargetsFile) {
+      expect(await Bun.file(bundle.browserTargetsFile).json()).toEqual(browserTargetManifest())
+      expect(prompt).toContain('Browser targets: $HOPI_BROWSER_TARGETS_FILE')
+      expect(bundle.extraWritableRoots).toContain(browserEnvironmentRoot(fixture.homeRoot))
+    }
     expect(prompt).toContain('HOPI API: $HOPI_API_ORIGIN')
     expect(prompt).not.toContain('Retry only')
     expect(prompt).not.toContain('choose the available')

@@ -76,11 +76,16 @@ within that Run are issued serially. Product responsibilities may remain concurr
 screenshot collection adds no coverage and can corrupt the evidence chain itself. Keeping the chain
 inside the Test Run also prevents an earlier Run from invalidating later evidence.
 
-The first Browser Harness script in each Test Run reloads the configured named daemon and completes
-one read-only `list_tabs` readiness probe. That idempotent initialization may retry before any browser
-action if the host is still releasing its IPC endpoint or the freshly started daemon is not yet
-reachable. Reload and probe output share one retained log. The shared executor then records the tabs
-that existed before each script and closes every
+Browser Test Runs use the Home-owned `managed` browser target. The first Browser Harness script in
+each Test Run reloads only that Test Run's managed Harness daemon and completes one read-only
+`list_tabs` readiness probe. The persistent managed browser process and profile are not restarted.
+The operator-browser daemon is never part of Test Run cleanup or initialization. This keeps Chrome's
+interactive per-attachment authorization outside unattended regression while preserving exact
+operator login access as a separate host capability.
+
+That idempotent initialization may retry before any browser action if the host is still releasing
+its IPC endpoint or the freshly started daemon is not yet reachable. Reload and probe output share
+one retained log. The shared executor then records the tabs that existed before each script and closes every
 tab the script created, including on failure. This keeps browser-process resources bounded across
 repeated regressions without making scenarios manage infrastructure. A script may contain several
 ordered actions and is never retried after failure because a missing response cannot prove whether a

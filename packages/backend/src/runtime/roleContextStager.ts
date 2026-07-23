@@ -18,6 +18,13 @@ import { STABLE_ID_PATTERN } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
+import {
+  browserEnvironmentRoot,
+  browserHarnessAdapterCommand,
+  browserTargetManifest,
+  resolveBrowserHarnessBackendCommand,
+  resolveManagedBrowserCommand,
+} from './browserEnvironment'
 import type { FormalReleasePreviewContext } from './previewManager'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
@@ -124,7 +131,14 @@ export function createRoleContextStager(
       const proposalCapabilitiesFile = join(contextRoot, 'proposal-capabilities.json')
       const resultSchemaFile = join(contextRoot, 'result-schema.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
-      const browserHarnessCommand = resolveBrowserHarnessCommand()
+      const browserHarnessBackendCommand = resolveBrowserHarnessBackendCommand()
+      const browserHarnessCommand =
+        browserHarnessBackendCommand && resolveManagedBrowserCommand()
+          ? browserHarnessAdapterCommand()
+          : undefined
+      const browserTargetsFile = browserHarnessCommand
+        ? join(contextRoot, 'browser-targets.json')
+        : undefined
       const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
       const runtimeCacheDir = runtimeCacheRoot(absoluteHomeRoot)
 
@@ -134,6 +148,9 @@ export function createRoleContextStager(
       await mkdir(artifactOutputDir, { recursive: true })
       await mkdir(runtimeScratchDir, { recursive: true })
       await mkdir(runtimeCacheDir, { recursive: true })
+      if (browserTargetsFile) {
+        await Bun.write(browserTargetsFile, `${JSON.stringify(browserTargetManifest(), null, 2)}\n`)
+      }
 
       const releaseRef = projectReleaseRef(input.projectId)
       const snapshot = await stableAuthoritySnapshot(publisher, paths.publicationRoot, releaseRef, {
@@ -333,6 +350,7 @@ export function createRoleContextStager(
             apiOrigin,
             formalReleasePreviewFile,
             operatorPreferenceFile,
+            browserTargetsFile,
             hasImages: imageFiles.length > 0,
           },
           assignment,
@@ -380,6 +398,7 @@ export function createRoleContextStager(
             artifactOutputDir,
             runtimeScratchDir,
             runtimeCacheDir,
+            ...(browserHarnessCommand ? [browserEnvironmentRoot(absoluteHomeRoot)] : []),
             ...(input.responsibility === 'generator' ? repoRoots.map((repo) => repo.path) : []),
           ]),
         ],
@@ -390,17 +409,17 @@ export function createRoleContextStager(
         canonicalOutcomeFile: resultFile,
         browserHarnessDir: 'scripts/hopi/browser-harness',
         browserHarnessCommand,
+        browserHarnessBackendCommand: browserHarnessCommand
+          ? browserHarnessBackendCommand
+          : undefined,
+        browserHome: browserHarnessCommand ? absoluteHomeRoot : undefined,
+        browserTargetsFile,
         browserHarnessArtifactDir,
         canonicalBrowserHarnessArtifactDir: browserHarnessArtifactDir,
         imageFiles,
       }
     },
   }
-}
-
-function resolveBrowserHarnessCommand() {
-  const explicit = process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim()
-  return explicit || Bun.which('codex-browser-harness') || Bun.which('browser-harness') || undefined
 }
 
 async function snapshotOperatorPreference(publisher: PublicationCoordinator, homeRoot: string) {
@@ -1198,6 +1217,7 @@ function renderResponsibilityPrompt(
     apiOrigin?: string
     formalReleasePreviewFile?: string
     operatorPreferenceFile?: string
+    browserTargetsFile?: string
     hasImages: boolean
   },
   assignment: RunAssignment,
@@ -1227,6 +1247,7 @@ function renderResponsibilityPrompt(
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
     'Browser harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND',
+    ...(paths.browserTargetsFile ? ['Browser targets: $HOPI_BROWSER_TARGETS_FILE'] : []),
     'Browser artifacts: $HOPI_BROWSER_HARNESS_ARTIFACT_DIR',
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences: $HOPI_OPERATOR_PREFERENCE_FILE']

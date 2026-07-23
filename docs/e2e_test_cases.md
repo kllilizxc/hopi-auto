@@ -64,6 +64,11 @@ installation may be selected explicitly:
 HOPI_BROWSER_HARNESS_COMMAND=/absolute/path/to/browser-harness bun run test:browser
 ```
 
+This selects the backend executable used by HOPI's browser adapter. Browser Test Runs still target
+the persistent managed browser and never attach to or reload the operator-browser daemon. A
+nonstandard managed Chrome/Chromium executable may be selected with
+`HOPI_BROWSER_CHROME_COMMAND=/absolute/path/to/browser`.
+
 Do not replace a missing browser with HTTP requests and still claim browser coverage. On WSL, use an
 isolated automation Chrome rather than the operator's everyday Chrome profile.
 

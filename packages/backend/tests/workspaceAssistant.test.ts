@@ -23,6 +23,10 @@ import {
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
+import {
+  browserEnvironmentRoot,
+  browserHarnessAdapterCommand,
+} from '../src/runtime/browserEnvironment'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -42,6 +46,50 @@ afterEach(async () => {
 })
 
 describe('WorkspaceAssistant conversation', () => {
+  test('exposes browser targets as an Assistant environment without enabling Reflection', async () => {
+    const fakeHarness = join(temporaryRoot, 'fake-browser-harness')
+    const fakeChrome = join(temporaryRoot, 'fake-chrome')
+    await Promise.all([
+      Bun.write(fakeHarness, '#!/bin/sh\nexit 0\n'),
+      Bun.write(fakeChrome, '#!/bin/sh\nexit 0\n'),
+    ])
+    await Promise.all([chmod(fakeHarness, 0o755), chmod(fakeChrome, 0o755)])
+    const previousHarness = process.env.HOPI_BROWSER_HARNESS_COMMAND
+    const previousChrome = process.env.HOPI_BROWSER_CHROME_COMMAND
+    process.env.HOPI_BROWSER_HARNESS_COMMAND = fakeHarness
+    process.env.HOPI_BROWSER_CHROME_COMMAND = fakeChrome
+    try {
+      const homeRoot = join(temporaryRoot, 'home')
+      const cwd = join(temporaryRoot, 'assistant-browser')
+      const runner = createConfiguredAssistantModelRunner({
+        homeRoot,
+        resolveConfig: () => ({
+          transport: 'codex',
+          cwdMode: 'root',
+          sandbox: 'workspace-write',
+          approvalPolicy: 'never',
+        }),
+        resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      })
+      const main = await runner.prepare?.({ cwd, toolMode: 'main' })
+      const reflection = await runner.prepare?.({ cwd, toolMode: 'reflection' })
+
+      expect(main?.browserEnvironment).toEqual({
+        command: browserHarnessAdapterCommand(),
+        backendCommand: fakeHarness,
+        homeRoot,
+        targetsFile: join(cwd, 'browser-targets.json'),
+        writableRoot: browserEnvironmentRoot(homeRoot),
+      })
+      expect(main?.environment.writableRoots).toContain(browserEnvironmentRoot(homeRoot))
+      expect(reflection?.browserEnvironment).toBeUndefined()
+      expect(reflection?.environment.writableRoots).toEqual([])
+    } finally {
+      restoreEnvironment('HOPI_BROWSER_HARNESS_COMMAND', previousHarness)
+      restoreEnvironment('HOPI_BROWSER_CHROME_COMMAND', previousChrome)
+    }
+  })
+
   test('runs Claude with isolated HOPI tools, native resume, and complete final output', async () => {
     const binary = join(temporaryRoot, 'fake-claude')
     const argsFile = join(temporaryRoot, 'claude-args.json')
@@ -2006,6 +2054,11 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
+}
+
+function restoreEnvironment(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
 }
 
 function pngBytes() {
