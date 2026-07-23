@@ -103,12 +103,23 @@ try {
     `/api/projects/${VALID_PROJECT}/preview`,
   )
   assert.equal(firstSession.session?.status, 'running')
-  assert.ok(firstSession.session.endpoint)
-  const previewEndpoint = await captureBrowserPage(browserContext, firstSession.session.endpoint, {
-    evidencePrefix: 'preview-endpoint-ready',
-    visibleText: 'preview-version-1',
-    auditLabel: 'open the ready HOPI Preview endpoint',
-  })
+  assert.deepEqual(
+    firstSession.session.surfaces.map(({ id, label }) => ({ id, label })),
+    [
+      { id: 'sender', label: 'Sender' },
+      { id: 'receiver', label: 'Receiver' },
+    ],
+  )
+  const previewSurfaces = []
+  for (const surface of firstSession.session.surfaces) {
+    previewSurfaces.push(
+      await captureBrowserPage(browserContext, surface.url, {
+        evidencePrefix: `preview-${surface.id}-ready`,
+        visibleText: `${surface.id}-preview-version-1`,
+        auditLabel: `open the ready HOPI Preview ${surface.label} surface`,
+      }),
+    )
+  }
   const manualStop = await controlPreviewInBrowser(
     browserContext,
     VALID_PROJECT,
@@ -135,7 +146,7 @@ try {
     `/api/projects/${VALID_PROJECT}/preview`,
   )
   assert.equal(secondSession.session?.status, 'running')
-  assert.ok(secondSession.session.endpoint)
+  assert.ok(secondSession.session.surfaces[0])
   roles.releasePlanning()
   const released = await waitForValue(
     () => requestJson<StateView>(baseUrl, '/api/state'),
@@ -161,7 +172,7 @@ try {
     await Bun.file(join(validProject.repos[0]?.integrationRoot ?? '', 'src', 'feature.ts')).text(),
     'export const feature = 2\n',
   )
-  assert.match(await Bun.file(validProject.preview.logPath).text(), /HOPI_PREVIEW_URL=/)
+  assert.match(await Bun.file(validProject.preview.logPath).text(), /HOPI_PREVIEW_SURFACES=/)
   const reposManifest = (await Bun.file(
     join(dirname(validProject.preview.logPath), 'project-prepare', 'repos.json'),
   ).json()) as { primaryRepoId?: string; repos?: Record<string, string> }
@@ -234,7 +245,7 @@ try {
         startedAt,
         firstStart,
         firstSession,
-        previewEndpoint,
+        previewSurfaces,
         manualStop,
         manuallyStopped,
         secondStart,
@@ -416,9 +427,11 @@ async function initializeValidRepo(root: string) {
     preview,
     [
       '#!/usr/bin/env bun',
-      "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('preview-version-1') })",
-      'console.log(`HOPI_PREVIEW_URL=http://127.0.0.1:${server.port}`)',
-      'const stop = () => { server.stop(true); process.exit(0) }',
+      "const sender = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('sender-preview-version-1') })",
+      "const receiver = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('receiver-preview-version-1') })",
+      "const surfaces = [{ id: 'sender', label: 'Sender', url: `http://127.0.0.1:${sender.port}` }, { id: 'receiver', label: 'Receiver', url: `http://127.0.0.1:${receiver.port}` }]",
+      'console.log(`HOPI_PREVIEW_SURFACES=${JSON.stringify(surfaces)}`)',
+      'const stop = () => { sender.stop(true); receiver.stop(true); process.exit(0) }',
       "process.on('SIGTERM', stop)",
       "process.on('SIGINT', stop)",
       'await new Promise(() => undefined)',
@@ -460,7 +473,7 @@ interface PreviewSession {
   status: string
   stoppedReason: string | null
   logPath: string
-  endpoint: string | null
+  surfaces: Array<{ id: string; label: string; url: string }>
 }
 
 interface PreviewView {

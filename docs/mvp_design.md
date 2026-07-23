@@ -398,7 +398,9 @@ The authority is split by concern rather than repeated in one large document:
   rather than a model-authored Repo subset, determine which bindings change at C1.
 - Engineering dispatch does not automatically execute every Repo's setup or verification commands;
   Repo-local capabilities are environment knowledge for Generator and Reviewer. Project Preview is
-  the Project-level exception and prepares every managed integration Repo before startup.
+  the Project-level exception and prepares every managed integration Repo before startup. One
+  Project Preview session may expose several named operator-facing surfaces without assigning them
+  to Goals or Repos.
 - Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
   sparse Work DAG, and makes the final semantic completion assessment.
 - Engineering Work moves through Generator, Reviewer, and deterministic C1 integration.

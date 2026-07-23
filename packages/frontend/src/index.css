@@ -1515,6 +1515,11 @@ button:disabled,
   font-weight: 680;
 }
 
+.preview-compact-control > .preview-compact-open:not(:first-child) {
+  margin-left: -1px;
+  border-radius: 0;
+}
+
 .preview-compact-open:hover {
   border-color: var(--color-neutral-650);
   background: var(--color-neutral-800);
@@ -1530,6 +1535,26 @@ button:disabled,
   width: 6px;
   height: 6px;
   box-shadow: none;
+}
+
+.project-preview-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 0 54px;
+}
+
+.project-preview-row > small {
+  color: var(--color-neutral-500);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.project-preview-control {
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .preview-stop-button {

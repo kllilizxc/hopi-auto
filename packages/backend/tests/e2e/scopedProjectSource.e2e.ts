@@ -172,8 +172,9 @@ try {
   )
   const preview = await requestJson<PreviewView>(baseUrl, `/api/projects/${SCOPED_PROJECT}/preview`)
   assert.equal(preview.session?.status, 'running')
-  assert.ok(preview.session.endpoint)
-  const previewCapture = await captureBrowserPage(browserContext, preview.session.endpoint, {
+  const previewSurface = preview.session.surfaces[0]
+  assert.ok(previewSurface)
+  const previewCapture = await captureBrowserPage(browserContext, previewSurface.url, {
     evidencePrefix: '09-scoped-preview-ready',
     visibleText: 'scoped-preview-ready',
     auditLabel: 'open Preview from the reviewed scoped integration',
@@ -553,7 +554,7 @@ interface StateView {
 interface PreviewView {
   session: {
     status: string
-    endpoint: string | null
+    surfaces: Array<{ id: string; label: string; url: string }>
     logPath: string
   } | null
 }

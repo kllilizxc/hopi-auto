@@ -38,11 +38,17 @@ export interface PreviewRepair {
   logs: string
 }
 
+export interface PreviewSurface {
+  id: string
+  label: string
+  url: string
+}
+
 export interface PreviewSession {
   sessionId: string
   projectId: string
   status: 'starting' | 'running' | 'stopped' | 'failed'
-  endpoint: string | null
+  surfaces: PreviewSurface[]
   logPath: string
   startedAt: string
   endedAt: string | null

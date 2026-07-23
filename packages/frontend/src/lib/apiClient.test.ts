@@ -41,6 +41,26 @@ test('sends the viewed Goal context with a Preview repair instruction', async ()
   })
 })
 
+test('can route a Preview repair from the Project surface without inventing a Goal', async () => {
+  const originalFetch = globalThis.fetch
+  let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
+  globalThis.fetch = (async (input, init) => {
+    observed = { input, init }
+    return Response.json({ eventId: 'EV-project-repair' })
+  }) as typeof fetch
+
+  try {
+    await requestPreviewRepair('Repair Project Preview', { projectId: 'P-1' })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  expect(JSON.parse(String(observed?.init?.body))).toEqual({
+    prompt: 'Repair Project Preview',
+    context: { projectId: 'P-1' },
+  })
+})
+
 test('requests mutable Assistant changes from the independent synchronization cursor', async () => {
   const originalFetch = globalThis.fetch
   let observed: RequestInfo | URL | null = null

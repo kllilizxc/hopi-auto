@@ -17,7 +17,7 @@ test('Preview repair survives the initiating request through the projected sessi
       sessionId: 'preview-1',
       projectId: 'P-1',
       status: 'failed',
-      endpoint: null,
+      surfaces: [],
       logPath: '/tmp/preview.log',
       startedAt: '2026-07-22T00:00:00.000Z',
       endedAt: '2026-07-22T00:01:00.000Z',

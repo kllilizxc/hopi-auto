@@ -47,13 +47,15 @@ describe('PreviewManager', () => {
     const result = await manager.start({ projectId: 'P-1', projectRoot })
     expect(result.kind).toBe('started')
     if (result.kind !== 'started') throw new Error('Expected started Preview')
-    expect(result.session.endpoint).toBe('http://127.0.0.1:4321')
+    expect(result.session.surfaces).toEqual([
+      { id: 'default', label: 'Preview', url: 'http://127.0.0.1:4321' },
+    ])
     expect(await Bun.file(join(dirname(result.session.logPath), 'root.txt')).text()).toBe(
       projectRoot,
     )
     expect(await manager.stop('P-1')).toMatchObject({
       status: 'stopped',
-      endpoint: null,
+      surfaces: [],
       stoppedReason: null,
     })
 
@@ -61,8 +63,127 @@ describe('PreviewManager', () => {
     expect(restarted).toMatchObject({ kind: 'started', session: { status: 'running' } })
     expect(await manager.stop('P-1', 'release_updated')).toMatchObject({
       status: 'stopped',
-      endpoint: null,
+      surfaces: [],
       stoppedReason: 'release_updated',
+    })
+  })
+
+  test('publishes one Project Preview session with every declared surface', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    const sender = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: () => new Response('sender ready'),
+    })
+    const receiver = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: () => new Response('receiver ready'),
+    })
+    const surfaces = [
+      { id: 'sender', label: '发件端', url: `http://127.0.0.1:${sender.port}/sender` },
+      { id: 'receiver', label: '收件端', url: `http://127.0.0.1:${receiver.port}/receiver` },
+    ]
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        'process.on("SIGTERM", () => process.exit(0))',
+        `console.log(${JSON.stringify(`HOPI_PREVIEW_SURFACES=${JSON.stringify(surfaces)}`)})`,
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createPreviewManager(join(temporaryRoot, 'home'), {
+      startupTimeoutMs: 2_000,
+      stopGraceMs: 500,
+    })
+
+    try {
+      const result = await manager.start({ projectId: 'P-1', projectRoot })
+
+      expect(result).toMatchObject({
+        kind: 'started',
+        session: { projectId: 'P-1', status: 'running', surfaces },
+      })
+      expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped', surfaces: [] })
+    } finally {
+      await manager.stopAll()
+      sender.stop(true)
+      receiver.stop(true)
+    }
+  })
+
+  test('fails the complete Preview for an invalid declaration or unreachable surface', async () => {
+    const invalidRoot = join(temporaryRoot, 'invalid')
+    const invalidAdapter = join(invalidRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(invalidRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(invalidRoot)
+    await Bun.write(
+      invalidAdapter,
+      [
+        '#!/usr/bin/env bun',
+        'process.on("SIGTERM", () => process.exit(0))',
+        'console.log(\'HOPI_PREVIEW_SURFACES=[{"id":"app","label":"One","url":"http://127.0.0.1:1"},{"id":"app","label":"Two","url":"http://127.0.0.1:2"}]\')',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(invalidAdapter)
+    await initializeGit(invalidRoot)
+    const invalidManager = createTestPreviewManager()
+
+    const invalid = await invalidManager.start({ projectId: 'P-invalid', projectRoot: invalidRoot })
+
+    expect(invalid).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(invalidManager.inspect('P-invalid')).toMatchObject({
+      status: 'failed',
+      surfaces: [],
+      error: 'Preview surface declaration is invalid: surface ids must be unique',
+    })
+
+    const unreachableRoot = join(temporaryRoot, 'unreachable')
+    const unreachableAdapter = join(unreachableRoot, 'scripts', 'hopi', 'preview')
+    const surfaces = [
+      { id: 'sender', label: '发件端', url: 'http://127.0.0.1:4321' },
+      { id: 'receiver', label: '收件端', url: 'http://127.0.0.1:4322' },
+    ]
+    await mkdir(join(unreachableRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(unreachableRoot)
+    await Bun.write(
+      unreachableAdapter,
+      [
+        '#!/usr/bin/env bun',
+        'process.on("SIGTERM", () => process.exit(0))',
+        `console.log(${JSON.stringify(`HOPI_PREVIEW_SURFACES=${JSON.stringify(surfaces)}`)})`,
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(unreachableAdapter)
+    await initializeGit(unreachableRoot)
+    const unreachableManager = createTestPreviewManager({
+      surfaceProbe: async (url) => {
+        if (url.endsWith('4322')) throw new Error('connection refused')
+      },
+    })
+
+    const unreachable = await unreachableManager.start({
+      projectId: 'P-unreachable',
+      projectRoot: unreachableRoot,
+    })
+
+    expect(unreachable).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(unreachableManager.inspect('P-unreachable')).toMatchObject({
+      status: 'failed',
+      surfaces: [],
+      error: expect.stringContaining('surface receiver (收件端)'),
+      repair: { reason: 'startup_failed' },
     })
   })
 
@@ -129,7 +250,7 @@ describe('PreviewManager', () => {
       status: 'failed',
       repair: { reason: 'missing', prompt: result.prompt },
     })
-    expect(result.prompt).toContain('operator-usable ready URL')
+    expect(result.prompt).toContain('operator-usable surfaces')
     expect(result.prompt).toContain('independent candidate browser evidence')
   })
 
@@ -365,12 +486,15 @@ describe('PreviewManager', () => {
     })
 
     const start = manager.start({ projectId: 'P-1', projectRoot })
-    expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', endpoint: null })
+    expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', surfaces: [] })
     const result = await start
 
     expect(result).toMatchObject({
       kind: 'started',
-      session: { status: 'running', endpoint: 'http://127.0.0.1:4321' },
+      session: {
+        status: 'running',
+        surfaces: [{ id: 'default', label: 'Preview', url: 'http://127.0.0.1:4321' }],
+      },
     })
     await manager.stop('P-1')
   })
@@ -417,13 +541,19 @@ describe('PreviewManager', () => {
     try {
       const starting = manager.start({ projectId: 'P-1', projectRoot })
       await probeEntered
-      expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', endpoint: null })
+      expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', surfaces: [] })
       releaseProbe()
       expect(await starting).toMatchObject({
         kind: 'started',
         session: {
           status: 'running',
-          endpoint: `http://127.0.0.1:${endpointServer.port}/app`,
+          surfaces: [
+            {
+              id: 'default',
+              label: 'Preview',
+              url: `http://127.0.0.1:${endpointServer.port}/app`,
+            },
+          ],
         },
       })
       await manager.stop('P-1')
@@ -469,7 +599,7 @@ describe('PreviewManager', () => {
       expect(result.logs).toContain('GET returned HTTP 404')
       expect(manager.inspect('P-1')).toMatchObject({
         status: 'failed',
-        endpoint: null,
+        surfaces: [],
         error: expect.stringContaining('GET returned HTTP 404'),
       })
     } finally {
@@ -503,14 +633,14 @@ describe('PreviewManager', () => {
     const starting = manager.start({ projectId: 'P-1', projectRoot })
     expect(await manager.stop('P-1', 'release_updated')).toMatchObject({
       status: 'stopped',
-      endpoint: null,
+      surfaces: [],
       stoppedReason: 'release_updated',
     })
     expect(await starting).toMatchObject({
       kind: 'started',
       session: {
         status: 'stopped',
-        endpoint: null,
+        surfaces: [],
         stoppedReason: 'release_updated',
       },
     })
@@ -552,7 +682,7 @@ describe('PreviewManager', () => {
 
 function createTestPreviewManager(options: PreviewManagerOptions = {}) {
   return createPreviewManager(join(temporaryRoot, 'home'), {
-    endpointProbe: async () => undefined,
+    surfaceProbe: async () => undefined,
     ...options,
   })
 }

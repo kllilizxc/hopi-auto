@@ -720,7 +720,13 @@ describe('MVP server', () => {
       session: { status: 'starting', repair: null },
     })
     expect(await waitForPreviewSession(base, 'P-slow', 'running')).toMatchObject({
-      endpoint: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
+      surfaces: [
+        {
+          id: 'default',
+          label: 'Preview',
+          url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
+        },
+      ],
       repair: null,
     })
   })
@@ -1246,7 +1252,7 @@ describe('MVP server', () => {
       method: 'POST',
       body: {
         prompt: failedPreview.repair?.prompt,
-        context: { projectId: 'P-1', goalId: 'G-1' },
+        context: { projectId: 'P-1' },
       },
     })
     const repairFeed = await request(base, '/api/assistant/feed?projectId=P-1')
@@ -1260,7 +1266,7 @@ describe('MVP server', () => {
     expect(repairEntries.find((entry) => entry.event?.id === repair.eventId)).toMatchObject({
       event: {
         status: 'pending',
-        context: { projectId: 'P-1', goalId: 'G-1' },
+        context: { projectId: 'P-1' },
       },
     })
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
@@ -2037,7 +2043,7 @@ async function request(
 
 interface PreviewSessionView {
   status: 'starting' | 'running' | 'stopped' | 'failed'
-  endpoint: string | null
+  surfaces: Array<{ id: string; label: string; url: string }>
   repair: {
     reason: string
     prompt: string

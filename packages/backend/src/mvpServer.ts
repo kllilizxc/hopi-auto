@@ -181,7 +181,7 @@ const previewRepairSchema = z
     context: z
       .object({
         projectId: stableIdSchema,
-        goalId: stableIdSchema,
+        goalId: stableIdSchema.optional(),
       })
       .strict(),
   })
@@ -807,7 +807,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         if (request.method === 'POST' && url.pathname === '/api/preview/repair') {
           const body = await parseBody(request, previewRepairSchema)
           const project = requireProject(runtime.projects, body.context.projectId)
-          if (!(await project.store.readGoal(body.context.goalId))) {
+          if (body.context.goalId && !(await project.store.readGoal(body.context.goalId))) {
             throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
           }
           const event = await receiveUserEvent(runtime, {

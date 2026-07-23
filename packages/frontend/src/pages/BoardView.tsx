@@ -604,22 +604,19 @@ export function BoardView() {
               <CirclePlay /> Resume
             </AppButton>
           )}
-          <AppButtonGroup className="preview-compact-control" aria-label="Preview controls">
+          <AppButtonGroup className="preview-compact-control" aria-label="Project Preview controls">
             {project.preview?.status === 'running' &&
-              (project.preview.endpoint ? (
+              project.preview.surfaces.map((surface) => (
                 <AppLink
                   className="preview-compact-open"
-                  href={project.preview.endpoint}
+                  href={surface.url}
+                  key={surface.id}
                   target="_blank"
                   rel="noreferrer"
-                  title="Open Preview"
+                  title={`Open ${surface.label}`}
                 >
-                  <span className="preview-dot running" /> Preview <ExternalLink />
+                  <span className="preview-dot running" /> {surface.label} <ExternalLink />
                 </AppLink>
-              ) : (
-                <span className="preview-compact-open">
-                  <span className="preview-dot running" /> Preview
-                </span>
               ))}
             {project.preview?.status === 'running' ? (
               <IconButton
@@ -638,14 +635,14 @@ export function BoardView() {
                 type="button"
                 onClick={() => previewStartMutation.mutate()}
                 disabled={previewStartMutation.isPending || project.preview?.status === 'starting'}
-                title={project.preview?.error ?? 'Start Preview'}
+                title={project.preview?.error ?? 'Start Project Preview'}
               >
                 {previewStartMutation.isPending || project.preview?.status === 'starting' ? (
                   <AppSpinner size="sm" />
                 ) : (
                   <CirclePlay />
                 )}
-                Preview
+                Project Preview
               </AppButton>
             )}
           </AppButtonGroup>

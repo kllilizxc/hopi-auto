@@ -23,11 +23,17 @@ export interface PreviewRepair {
   logs: string
 }
 
+export interface PreviewSurface {
+  id: string
+  label: string
+  url: string
+}
+
 export interface PreviewSession {
   sessionId: string
   projectId: string
   status: PreviewStatus
-  endpoint: string | null
+  surfaces: PreviewSurface[]
   logPath: string
   startedAt: string
   endedAt: string | null
@@ -54,9 +60,9 @@ interface PreviewOperation {
   session: PreviewSession
   process: ReturnType<typeof Bun.spawn> | null
   logs: BoundedLineTail
-  ready: Promise<string>
-  signalReady(endpoint: string): void
-  reportedEndpoint: string | null
+  ready: Promise<PreviewReadiness>
+  signalReady(readiness: PreviewReadiness): void
+  reportedReadiness: PreviewReadiness | null
   streams: Promise<void>[]
   logWriteTail: Promise<void>
   startPromise: Promise<PreviewStartResult>
@@ -64,13 +70,17 @@ interface PreviewOperation {
   settled: boolean
 }
 
+type PreviewReadiness =
+  | { kind: 'ready'; surfaces: PreviewSurface[] }
+  | { kind: 'invalid'; error: string }
+
 export interface PreviewManagerOptions {
   startupTimeoutMs?: number
   stopGraceMs?: number
   now?: () => Date
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
-  endpointProbe?: (endpoint: string) => Promise<void>
+  surfaceProbe?: (url: string) => Promise<void>
 }
 
 export function createPreviewManager(
@@ -82,9 +92,9 @@ export function createPreviewManager(
   const stopGraceMs = options.stopGraceMs ?? 5_000
   const now = options.now ?? (() => new Date())
   const preparer = options.preparer ?? createProjectPreparer()
-  const endpointProbe =
-    options.endpointProbe ??
-    ((endpoint: string) => probePreviewEndpoint(endpoint, Math.min(startupTimeoutMs, 10_000)))
+  const surfaceProbe =
+    options.surfaceProbe ??
+    ((url: string) => probePreviewSurface(url, Math.min(startupTimeoutMs, 10_000)))
   const operations = new Map<string, PreviewOperation>()
 
   async function runStart(
@@ -161,11 +171,11 @@ export function createPreviewManager(
 
     const startup = await Promise.race([
       child.exited.then((exitCode) => ({ kind: 'exit' as const, exitCode })),
-      operation.ready.then((endpoint) => ({ kind: 'ready' as const, endpoint })),
+      operation.ready,
       Bun.sleep(startupTimeoutMs).then(() => ({ kind: 'timeout' as const })),
     ])
     if (startup.kind !== 'ready') {
-      if (startup.kind === 'timeout') {
+      if (startup.kind === 'timeout' || startup.kind === 'invalid') {
         await terminatePreview(child, stopGraceMs)
       }
       await settlePreviewLogs(operation)
@@ -173,12 +183,14 @@ export function createPreviewManager(
         return stoppedResult(operation.session, now)
       }
       operation.session.status = 'failed'
-      operation.session.endpoint = null
+      operation.session.surfaces = []
       operation.session.endedAt = now().toISOString()
       operation.session.error =
         startup.kind === 'timeout'
           ? `Preview adapter did not become ready within ${startupTimeoutMs}ms`
-          : `Preview adapter exited with code ${startup.exitCode}`
+          : startup.kind === 'invalid'
+            ? `Preview surface declaration is invalid: ${startup.error}`
+            : `Preview adapter exited with code ${startup.exitCode}`
       const repair = repairRequired('startup_failed', paths.adapter, operation.logs.text())
       operation.session.repair = repair
       return repair
@@ -187,9 +199,19 @@ export function createPreviewManager(
       return stoppedResult(operation.session, now)
     }
     try {
-      await endpointProbe(startup.endpoint)
+      await Promise.all(
+        startup.surfaces.map(async (surface) => {
+          try {
+            await surfaceProbe(surface.url)
+          } catch (error) {
+            throw new Error(
+              `surface ${surface.id} (${surface.label}) at ${surface.url}: ${errorMessage(error)}`,
+            )
+          }
+        }),
+      )
     } catch (error) {
-      const message = `Preview endpoint probe failed for ${startup.endpoint}: ${errorMessage(error)}`
+      const message = `Preview surface probe failed: ${errorMessage(error)}`
       operation.logs.push(message)
       operation.logWriteTail = operation.logWriteTail.then(() =>
         appendFile(paths.logPath, `${message}\n`),
@@ -199,21 +221,22 @@ export function createPreviewManager(
       if (isStopped(operation)) {
         return stoppedResult(operation.session, now)
       }
-      operation.session.status = 'failed'
-      operation.session.endpoint = null
-      operation.session.endedAt = now().toISOString()
-      operation.session.error = message
-      return repairRequired('startup_failed', paths.adapter, operation.logs.text())
+      return failWithRepair(
+        operation,
+        repairRequired('startup_failed', paths.adapter, operation.logs.text()),
+        message,
+        now,
+      )
     }
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
     }
-    operation.session.endpoint = startup.endpoint
+    operation.session.surfaces = startup.surfaces
     operation.session.status = 'running'
     void child.exited.then(async (exitCode) => {
       if (operation.session.status === 'stopped') return
       operation.session.status = exitCode === 0 ? 'stopped' : 'failed'
-      operation.session.endpoint = null
+      operation.session.surfaces = []
       operation.session.error =
         exitCode === 0 ? null : `Preview adapter exited with code ${exitCode}`
       operation.session.endedAt = now().toISOString()
@@ -235,7 +258,7 @@ export function createPreviewManager(
     }
     operation.session.status = 'stopped'
     operation.session.stoppedReason = reason ?? null
-    operation.session.endpoint = null
+    operation.session.surfaces = []
     if (operation.process) {
       await terminatePreview(operation.process, stopGraceMs)
       await settlePreviewLogs(operation)
@@ -260,7 +283,7 @@ export function createPreviewManager(
     await mkdir(paths.sessionRoot, { recursive: true }).catch(() => undefined)
     await appendFile(paths.logPath, `${message}\n`).catch(() => undefined)
     operation.session.status = 'failed'
-    operation.session.endpoint = null
+    operation.session.surfaces = []
     operation.session.endedAt = now().toISOString()
     operation.session.error = message
     return failWithRepair(
@@ -298,7 +321,7 @@ export function createPreviewManager(
         sessionId,
         projectId: input.projectId,
         status: 'starting',
-        endpoint: null,
+        surfaces: [],
         logPath,
         startedAt: now().toISOString(),
         endedAt: null,
@@ -306,8 +329,8 @@ export function createPreviewManager(
         stoppedReason: null,
         repair: null,
       }
-      let signalReady: (endpoint: string) => void = () => undefined
-      const ready = new Promise<string>((resolveReady) => {
+      let signalReady: (readiness: PreviewReadiness) => void = () => undefined
+      const ready = new Promise<PreviewReadiness>((resolveReady) => {
         signalReady = resolveReady
       })
       const operation: PreviewOperation = {
@@ -316,7 +339,7 @@ export function createPreviewManager(
         logs: new BoundedLineTail(),
         ready,
         signalReady,
-        reportedEndpoint: null,
+        reportedReadiness: null,
         streams: [],
         logWriteTail: Promise.resolve(),
         startPromise: Promise.resolve({ kind: 'started', session }),
@@ -375,17 +398,71 @@ async function consumePreviewStream(
 function recordLine(operation: PreviewOperation, line: string, logPath: string) {
   operation.logs.push(line)
   operation.logWriteTail = operation.logWriteTail.then(() => appendFile(logPath, `${line}\n`))
-  const endpoint = /^HOPI_PREVIEW_URL=(\S+)$/.exec(line)?.[1]
-  if (endpoint && operation.reportedEndpoint === null) {
-    operation.reportedEndpoint = endpoint
-    operation.signalReady(endpoint)
-  }
+  if (operation.reportedReadiness !== null) return
+  const surfaces = /^HOPI_PREVIEW_SURFACES=(.*)$/.exec(line)?.[1]
+  const legacyUrl = /^HOPI_PREVIEW_URL=(\S+)$/.exec(line)?.[1]
+  const readiness =
+    surfaces !== undefined
+      ? parsePreviewSurfaces(surfaces)
+      : legacyUrl
+        ? parsePreviewSurfaces(
+            JSON.stringify([{ id: 'default', label: 'Preview', url: legacyUrl }]),
+          )
+        : null
+  if (!readiness) return
+  operation.reportedReadiness = readiness
+  operation.signalReady(readiness)
 }
 
-async function probePreviewEndpoint(endpoint: string, timeoutMs: number) {
+function parsePreviewSurfaces(source: string): PreviewReadiness {
+  let value: unknown
+  try {
+    value = JSON.parse(source)
+  } catch (error) {
+    return { kind: 'invalid', error: `invalid JSON: ${errorMessage(error)}` }
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return { kind: 'invalid', error: 'surfaces must be a non-empty JSON array' }
+  }
+  const surfaces: PreviewSurface[] = []
+  for (const [index, entry] of value.entries()) {
+    if (!isRecord(entry)) {
+      return { kind: 'invalid', error: `surface ${index} must be an object` }
+    }
+    const { id, label, url } = entry
+    if (typeof id !== 'string' || id.trim().length === 0) {
+      return { kind: 'invalid', error: `surface ${index} has an invalid id` }
+    }
+    if (typeof label !== 'string' || label.trim().length === 0) {
+      return { kind: 'invalid', error: `surface ${id} has an invalid label` }
+    }
+    if (typeof url !== 'string') {
+      return { kind: 'invalid', error: `surface ${id} has an invalid url` }
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return { kind: 'invalid', error: `surface ${id} has an invalid url` }
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return {
+        kind: 'invalid',
+        error: `surface ${id} uses unsupported protocol ${parsed.protocol}`,
+      }
+    }
+    surfaces.push({ id: id.trim(), label: label.trim(), url })
+  }
+  if (new Set(surfaces.map((surface) => surface.id)).size !== surfaces.length) {
+    return { kind: 'invalid', error: 'surface ids must be unique' }
+  }
+  return { kind: 'ready', surfaces }
+}
+
+async function probePreviewSurface(urlValue: string, timeoutMs: number) {
   let url: URL
   try {
-    url = new URL(endpoint)
+    url = new URL(urlValue)
   } catch {
     throw new Error('ready URL is invalid')
   }
@@ -429,7 +506,7 @@ async function terminatePreview(process: ReturnType<typeof Bun.spawn>, stopGrace
 }
 
 function stoppedResult(session: PreviewSession, now: () => Date): PreviewStartResult {
-  session.endpoint = null
+  session.surfaces = []
   session.endedAt ??= now().toISOString()
   return { kind: 'started', session }
 }
@@ -441,7 +518,7 @@ function failWithRepair(
   now: () => Date,
 ): PreviewRepair {
   operation.session.status = 'failed'
-  operation.session.endpoint = null
+  operation.session.surfaces = []
   operation.session.endedAt ??= now().toISOString()
   operation.session.error = error
   operation.session.repair = repair
@@ -470,7 +547,7 @@ function repairRequired(reason: PreviewRepairReason, adapter: string, logs: stri
     logs,
     prompt: [
       `Preview could not start through ${adapter}.`,
-      "The reviewed contract is every Project Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its operator-usable ready URL.",
+      "The reviewed contract is every Project Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its operator-usable surfaces.",
       'A captured preparation or startup error is diagnosis rather than successful Preview behavior.',
       'For a browser-facing Preview, running state or an HTTP application shell is transport evidence only; accepted user-visible behavior requires independent candidate browser evidence.',
       'First check whether an equivalent nonterminal Goal or Work is already creating or repairing either script and reuse it.',
@@ -482,6 +559,10 @@ function repairRequired(reason: PreviewRepairReason, adapter: string, logs: stri
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export async function makePreviewAdapterExecutable(path: string) {

@@ -497,9 +497,12 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('owning invariant')
     expect(generatorPrompt).toContain('complete owning Engineering Work')
     expect(generatorPrompt).toContain('canonical representation')
-    expect(generatorPrompt).toContain('exactly one HOPI_PREVIEW_URL=<reachable-url> line')
+    expect(generatorPrompt).toContain('HOPI_PREVIEW_SURFACES=<json-array>')
+    expect(generatorPrompt).toContain(
+      'HOPI_PREVIEW_URL=<reachable-url> remains the single-surface shorthand',
+    )
     expect(generatorPrompt).toContain('operator-usable user-visible state')
-    expect(generatorPrompt).toContain('HTTP application shell that cannot reach that state')
+    expect(generatorPrompt).toContain('HTTP application shells that cannot reach that state')
     expect(generatorPrompt).toContain('not this candidate')
     expect(reviewerPrompt).toContain('strongest proportionate evidence')
     expect(reviewerPrompt).toContain('exact command and input or deterministic inspection')

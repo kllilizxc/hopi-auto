@@ -619,19 +619,22 @@ entry; explicit **Pause** and **Resume** remain available on Goal. A separate Di
 deferred beyond MVP.
 
 P2 Preview adds no canonical state. Coordinator starts the reviewed primary Project adapter against
-the complete managed Project release projection and keeps its process, logs, health, and endpoint
-in disposable runtime storage. Unintegrated Work worktrees and user checkouts are not Preview inputs. A
+the complete managed Project release projection and keeps its process, logs, health, and named
+operator-facing surfaces in disposable runtime storage. Unintegrated Work worktrees and user
+checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
-Assistant turn carrying the current Project/Goal page context. Assistant reuses current Preview setup
+Assistant turn carrying Project context and optional current Goal context. Assistant reuses current Preview setup
 Work when it exists or calls its Planning tool for a repair; page context informs that choice without
 forcing the repair into the viewed Goal. If the effect lands elsewhere, the reply names its Goal ID
 so its scoped Kanban is locatable. Assistant does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
 prerequisites from a clean managed integration worktree and `scripts/hopi/preview` owns startup, so
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
 one readiness transition: the Start command immediately returns the admitted `starting` session,
-then `starting -> running` only when the Preview adapter emits
-`HOPI_PREVIEW_URL=<reachable-url>` and Coordinator independently receives a successful response from
-that exact endpoint; exit, failed probing, or bounded timeout before that becomes `failed` and routes
+then `starting -> running` only when the Preview adapter emits one complete
+`HOPI_PREVIEW_SURFACES=<json-array>` declaration and Coordinator independently receives a successful
+response from every declared URL. `HOPI_PREVIEW_URL=<reachable-url>` remains the single-surface
+shorthand. Exit, invalid declaration, failed probing, or bounded timeout before readiness becomes
+`failed` and routes
 the captured logs through the same repair prompt on that disposable session. Existing Project polling
 observes the transition, so neither slow startup nor a lost command response loses the repair path.
 `running` records a transport-ready runtime lease, not semantic product evidence. Browser-facing
@@ -639,7 +642,7 @@ Preview adapters enter the reviewed release only after independent candidate bro
 the user-visible state defined by accepted design. Operator Stop moves
 `starting|running -> stopped`.
 A successfully advanced or recovered C1 ref moves `starting|running -> stopped` with runtime reason
-`release_updated` and clears the endpoint; it never auto-restarts Preview or changes the durable C1
+`release_updated` and clears the active surfaces; it never auto-restarts Preview or changes the durable C1
 outcome. Other state and document changes do not participate in this runtime transition.
 
 ## Core Invariants

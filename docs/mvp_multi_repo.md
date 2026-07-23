@@ -192,6 +192,12 @@ Preview preparation must succeed before the primary Preview adapter starts. Miss
 therefore a Preview capability failure, not a reason to block an unrelated Engineering Run. HOPI
 adds no adapter schema, initialized flag, adapter revision, or primary fallback.
 
+The primary adapter may publish one or several named operator-facing surfaces after starting the
+services it needs from that complete Repo environment. A surface is not assigned to a Repo or Goal:
+one Repo may provide several surfaces, and one surface may depend on several Repos. Preview remains
+one atomic Project runtime session, so readiness, Stop, failure, and release invalidation apply to
+the complete declared surface set.
+
 ## Primary C1 and Component Commits
 
 Reviewer success is integrated as one logical operation:

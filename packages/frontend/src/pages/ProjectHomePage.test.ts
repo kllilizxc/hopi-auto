@@ -48,6 +48,16 @@ test('Project paths display the selected Git subdirectory without changing the R
   expect(scopedRepoPath('/home/me/Code/mono/', '.')).toBe('/home/me/Code/mono/')
 })
 
+test('Project cards control the one Project Preview session and expose every named surface', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+
+  expect(source).toContain('project.preview.surfaces.map')
+  expect(source).toContain('startPreview(project.projectId)')
+  expect(source).toContain('stopPreview(project.projectId)')
+  expect(source).toContain("requestPreviewRepair(project.preview?.repair?.prompt ?? '', {")
+  expect(source).toContain('projectId: project.projectId')
+})
+
 test('Project linking leaves identity generation to the backend', async () => {
   const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
 

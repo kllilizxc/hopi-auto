@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ArrowRight,
+  CirclePlay,
   Cpu,
+  ExternalLink,
   FolderGit2,
   FolderPlus,
   Link2,
@@ -10,16 +12,21 @@ import {
   Radio,
   RefreshCw,
   Settings2,
+  Square,
   Star,
+  Wrench,
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useShell } from '../components/Layout'
 import {
   AppAlert,
   AppButton,
+  AppButtonGroup,
   AppCard,
   AppForm,
   AppInput,
+  AppLink,
   AppRouterLink,
   AppScrollShadow,
   AppSpinner,
@@ -27,6 +34,7 @@ import {
   AppSwitch,
   AppTextField,
   CountBadge,
+  IconButton,
   SelectField,
   StatusChip,
 } from '../components/ui'
@@ -43,7 +51,10 @@ import {
   readShellState,
   readProjectAgentAccess,
   rebindProjectRepo,
+  requestPreviewRepair,
   selectProjectDirectory,
+  startPreview,
+  stopPreview,
   updateAgentRoleSettings,
   updateProjectAgentAccess,
 } from '../lib/api'
@@ -469,6 +480,7 @@ function AgentSettingsPanel({
 
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
+  const { openAssistant } = useShell()
   const projectName = projectDisplayName(project)
   const [showRepoManager, setShowRepoManager] = useState(false)
   const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
@@ -500,6 +512,28 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       setEditingRepoId(null)
       setNextRepoPath('')
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+  const previewStartMutation = useMutation({
+    mutationFn: () => startPreview(project.projectId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+  const previewStopMutation = useMutation({
+    mutationFn: () => stopPreview(project.projectId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+    },
+  })
+  const previewRepairMutation = useMutation({
+    mutationFn: () =>
+      requestPreviewRepair(project.preview?.repair?.prompt ?? '', {
+        projectId: project.projectId,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+      openAssistant()
     },
   })
 
@@ -566,6 +600,69 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <span>
           <strong>{project.openAttentionCount}</strong> Open attention
         </span>
+      </div>
+
+      <div className="project-preview-row">
+        <small>Project Preview</small>
+        <AppButtonGroup
+          className="preview-compact-control project-preview-control"
+          aria-label={`${projectName} Project Preview controls`}
+        >
+          {project.preview?.status === 'running' &&
+            project.preview.surfaces.map((surface) => (
+              <AppLink
+                className="preview-compact-open"
+                href={surface.url}
+                key={surface.id}
+                target="_blank"
+                rel="noreferrer"
+                title={`Open ${surface.label}`}
+              >
+                <span className="preview-dot running" /> {surface.label} <ExternalLink />
+              </AppLink>
+            ))}
+          {project.preview?.status === 'running' ? (
+            <IconButton
+              className="icon-button preview-stop-button"
+              type="button"
+              onClick={() => previewStopMutation.mutate()}
+              disabled={previewStopMutation.isPending}
+              aria-label={`Stop ${projectName} Preview`}
+              title="Stop Project Preview"
+            >
+              {previewStopMutation.isPending ? <AppSpinner size="sm" /> : <Square />}
+            </IconButton>
+          ) : (
+            <AppButton
+              className="secondary-button preview-start-button"
+              type="button"
+              onClick={() => previewStartMutation.mutate()}
+              disabled={
+                previewStartMutation.isPending || project.preview?.status === 'starting'
+              }
+              title={project.preview?.error ?? 'Start Project Preview'}
+            >
+              {previewStartMutation.isPending || project.preview?.status === 'starting' ? (
+                <AppSpinner size="sm" />
+              ) : (
+                <CirclePlay />
+              )}
+              Start
+            </AppButton>
+          )}
+          {project.preview?.repair && project.preview.status === 'failed' && (
+            <AppButton
+              className="text-button"
+              type="button"
+              variant="ghost"
+              onClick={() => previewRepairMutation.mutate()}
+              disabled={previewRepairMutation.isPending}
+            >
+              {previewRepairMutation.isPending ? <AppSpinner size="sm" /> : <Wrench />}
+              Ask Assistant
+            </AppButton>
+          )}
+        </AppButtonGroup>
       </div>
 
       <p className="project-guidance">
@@ -701,9 +798,19 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         )}
       </div>
 
-      {(linkRepoMutation.error || rebindRepoMutation.error || agentAccessError) && (
+      {(linkRepoMutation.error ||
+        rebindRepoMutation.error ||
+        previewStartMutation.error ||
+        previewStopMutation.error ||
+        previewRepairMutation.error ||
+        agentAccessError) && (
         <AppAlert className="inline-error">
-          {linkRepoMutation.error?.message ?? rebindRepoMutation.error?.message ?? agentAccessError}
+          {linkRepoMutation.error?.message ??
+            rebindRepoMutation.error?.message ??
+            previewStartMutation.error?.message ??
+            previewStopMutation.error?.message ??
+            previewRepairMutation.error?.message ??
+            agentAccessError}
         </AppAlert>
       )}
 

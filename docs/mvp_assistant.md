@@ -469,8 +469,8 @@ references it settled. The model does not infer execution success from a retry r
 state from prose. Results omit derived continuation, Kanban predicates, and unrelated open Attention;
 Assistant reads current state only when the next decision actually needs them.
 
-A failed Preview retains its diagnosis on the disposable Preview session. The UI can therefore
-offer an ordinary Assistant turn with Project and Goal context even when preparation or startup
+A failed Preview retains its diagnosis on the disposable Project Preview session. The UI can therefore
+offer an ordinary Assistant turn with Project context and optional Goal context even when preparation or startup
 outlives the initiating HTTP request. Assistant uses the existing design and Create Work
 capabilities when source repair is needed; Preview has no special repair operation or repair
 workflow.

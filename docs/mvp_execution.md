@@ -454,7 +454,7 @@ remain in `transcript.log`.
 Full raw output remains on disk, while process memory retains only bounded diagnostic tails needed
 for an exit summary or Preview startup response. Responsibility and Assistant runners keep the most
 recent unclassified stderr lines rather than every line from a long process. Preview likewise keeps
-a bounded recent startup-log tail and the detected endpoint while continuing to append the complete
+a bounded recent startup-log tail and the active surfaces while continuing to append the complete
 stream to `preview.log`. A verbose child therefore cannot make Coordinator memory proportional to
 its lifetime output, and truncating the in-memory tail never truncates durable diagnostics.
 
@@ -1175,8 +1175,9 @@ claiming readiness. Each process is a bounded process-group leader so descendant
 before failure is reported. Only after all Repo preparation succeeds does the primary Repo's
 `scripts/hopi/preview` start.
 The fixed responsibility prompt exposes the adapter's exact ready signal,
-`HOPI_PREVIEW_URL=<reachable-url>`, whenever an Engineering Work may create, repair, or review the
-script; a merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
+`HOPI_PREVIEW_SURFACES=<json-array>`, whenever an Engineering Work may create, repair, or review the
+script; `HOPI_PREVIEW_URL=<reachable-url>` remains the single-surface shorthand, while a merely
+human-readable bare URL is not enough for HOPI to leave `starting`. There is no
 initialized flag, prepare revision, setup Action, or preparation Kanban state.
 
 The public Project Preview API always starts the current managed integration release. It therefore
@@ -1629,26 +1630,26 @@ only project-specific startup and shutdown behavior. The UI asks Coordinator to 
 directly, so ordinary Start and Stop operations do not invoke a model.
 
 The combined contract is one-click from a clean managed integration worktree. `prepare` may use a
-shared package cache or project-native installation commands; `preview` makes the service reachable
-before advertising its URL. A clear missing-dependency error is useful diagnosis, not successful
+shared package cache or project-native installation commands; `preview` makes every declared
+operator-facing surface reachable before advertising them together. A clear missing-dependency error is useful diagnosis, not successful
 Preview behavior; requiring the operator to enter the managed worktree and install dependencies
 violates the Project contract.
 
-For a browser-facing Project, the advertised URL is an assertion about an operator-usable Preview of
-the release, not merely a transport-ready HTML shell. Any host context, service, fixture, proxy, or
+For a browser-facing Project, each advertised surface is a named operator-usable entry into
+the release, not merely a transport-ready HTML shell. A Project may expose one or several surfaces;
+surface identity is unrelated to Goal and Repo identity. Any host context, service, fixture, proxy, or
 other runtime support required by the accepted user-visible state belongs to the Project adapter
 contract. If that state cannot be produced in the provided environment, the adapter fails with
 diagnosis instead of advertising a blank, fatally unmounted, or otherwise unusable page.
 
 The first version always runs the Project's current integration target. It does not select a task
 worktree, combine unintegrated Work, or construct a speculative Goal checkout. Coordinator owns the
-disposable process, logs, endpoint, and health facts under runtime storage; none is canonical
-workflow truth. A later multi-Repo Project may extend the same adapter input without changing this
-product model, but Preview does not imply cross-Repo delivery support.
+disposable process, logs, surfaces, and health facts under runtime storage; none is canonical
+workflow truth. Preview does not imply cross-Repo delivery support.
 
 A running Preview is a lease on the release materialized when it started, not a hot-reload contract.
 After C1 has durably advanced the Project-qualified release and verified the managed integration projection,
-Coordinator immediately stops any running or starting Preview for that Project, clears its endpoint,
+Coordinator immediately stops any running or starting Preview for that Project, clears its active surfaces,
 and records runtime reason `release_updated`. Recovery that observes the C1 ref already advanced
 performs the same idempotent invalidation. Planning, task-worktree changes, canonical document-only
 publication, and failed or rejected C1 do not invalidate Preview. HOPI does not automatically restart:
@@ -1661,14 +1662,18 @@ been proven safe. Stop remains a direct runtime operation.
 The executable runs as a foreground child with the managed integration root as its working
 directory. Coordinator supplies `HOPI_PROJECT_ROOT` and a disposable
 `HOPI_PREVIEW_RUNTIME_DIR`, stops it with `SIGTERM` (then bounded `SIGKILL`), and captures both
-streams in runtime storage. Exactly one line `HOPI_PREVIEW_URL=<url>` is the required ready signal,
-not an early intention: the adapter emits it only after that endpoint is reachable. Coordinator
-independently probes the exact advertised endpoint and keeps the session at `starting` until both the
-line and successful probe exist, adapter exit occurs, or one bounded startup timeout expires. The
+streams in runtime storage. Exactly one line
+`HOPI_PREVIEW_SURFACES=<json-array>` is the current ready signal. Each array entry contains one
+unique `id`, operator-facing `label`, and HTTP(S) `url`; the adapter emits the complete declaration
+only after every surface is ready. The existing `HOPI_PREVIEW_URL=<url>` signal remains a valid
+single-surface shorthand. Coordinator independently probes every declared surface in parallel and
+keeps the session at `starting` until the complete declaration and all successful probes exist,
+adapter exit occurs, or one bounded startup timeout expires. The
 public Start request admits that operation and returns the current session immediately; it never
 holds an HTTP connection across Repo preparation or adapter startup. Existing Project-state polling
 observes `starting -> running|failed`. Only transport readiness produces `running`; exit, timeout,
-or a failed probe records the captured logs and ordinary Assistant repair prompt on the same
+an invalid declaration, or a failed probe records the named surface, captured logs, and ordinary
+Assistant repair prompt on the same
 disposable session, so a lost Start response cannot lose the diagnosis or leave the UI with only a
 transport error. These are adapter I/O conventions, not generic responsibility-Run environment,
 canonical Project configuration, or workflow state. Ordinary Start does not rerun semantic browser
@@ -1691,8 +1696,8 @@ On Start, Coordinator first checks for the reviewed adapter. If it is missing, p
 startup fails, the current UI observes the failed session, shows the condition, and asks whether
 Assistant should establish or repair Preview. A
 positive answer submits an ordinary durable message with the adapter path and available failure
-logs plus the immutable Project/Goal page context from which the operator confirmed repair. Context
-helps Assistant judge reuse, reopen, or creation but does not force that Goal to receive the repair.
+logs plus immutable Project context and, when invoked from a Goal page, that optional Goal context.
+Context helps Assistant judge reuse, reopen, or creation but does not force that Goal to receive the repair.
 The message tells Assistant to first reuse any current Goal or Work already establishing Preview and,
 only if none exists, call its Planning tool for creation or repair. A terminal setup Work whose
 adapter still fails in a clean managed worktree is evidence to reopen or plan repair, not a reason
