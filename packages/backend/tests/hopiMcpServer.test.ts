@@ -143,6 +143,9 @@ describe('HOPI MCP server', () => {
     ).toMatchObject({
       properties: { action: expect.any(Object) },
     })
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
+      'does not pass this Inbox turn',
+    )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])

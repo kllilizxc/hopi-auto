@@ -814,7 +814,7 @@ describe('Assistant HOPI tools', () => {
   })
 
   test('keeps design writing separate from requesting implementation', async () => {
-    const fixture = await setup()
+    const fixture = await setup({ trackInterrupts: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     await fixture.workspace.receiveEvent({
@@ -834,6 +834,20 @@ describe('Assistant HOPI tools', () => {
         },
       ],
     })
+    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
+
+    await fixture.tools.executeForEvent('EV-1', 'hopi_write_design', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      changes: [
+        {
+          kind: 'document',
+          path: 'theme.md',
+          content: '# Theme\n\nUse ink surfaces.',
+        },
+      ],
+    })
+    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
 
     let goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(

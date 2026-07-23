@@ -1097,6 +1097,7 @@ export function createAssistantTools(options: {
               supportingWrites,
               ...(inputWrite ? { gateWrite: inputWrite } : {}),
             })
+            project.reconciler?.interruptRuns(args.goalId)
           }
           return {
             summary: `Updated ${normalizedWrites.size} design document(s) for ${args.goalId}.`,

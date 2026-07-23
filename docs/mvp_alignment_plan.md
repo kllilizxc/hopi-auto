@@ -110,6 +110,9 @@ Alignment is complete only when:
 - [x] Interrupt same-Goal Runs after a material revision becomes durable, checkpoint safe partial
   Generator source without publishing Evidence, and retain the immutable publication guard as the
   final race boundary.
+- [x] Interrupt same-Goal Runs when canonical Goal design actually changes, and make Work retry
+  explicitly repeat unchanged authority/session rather than silently dropping a corrective Inbox
+  turn; corrections enter design plus Planning before another invocation.
 - [x] Split Preview proof at the existing C1 boundary: Engineering directly proves its candidate
   script; final Planner uses exact public start/status/stop routes only when accepted design
   explicitly requires integrated-release proof.

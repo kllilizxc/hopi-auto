@@ -225,6 +225,19 @@ after a failed invocation. Retry does not copy the current Inbox event into Goal
 `resolutionInput`. Cancellation remains a material decision and retains its accepted Input. Neither
 operation closes Goal, Project, or another Work's Attention.
 
+Consequently, retry is valid only when the current Work already contains the complete instruction and
+an external or operational condition changed. It reuses the same contract and responsibility session;
+it is not a channel for corrections, reviewer-like findings, or new requirements from the current
+Inbox turn. Assistant persists such information in Goal design and requests Planning first, using a
+new contract revision when the accepted outcome or execution contract materially changes. This keeps
+one retry concept while preventing a nominal retry from silently dropping the very information meant
+to repair the Work.
+
+A changed Goal design document is canonical context, so its durable publication immediately
+interrupts same-Goal responsibility Runs. The immutable publication guard remains the final race
+boundary, but it should not be the normal mechanism for discovering that an obsolete Run consumed
+minutes after its authority changed. A no-op design write causes no interruption.
+
 Assistant derives the next ordinary operation from canonical target and Work state: Control retries
 or cancels Work, design plus Planning changes authority, and Resolve Attention clears only a verified
 condition. Creating Planning never resolves Attention, retries Engineering Work, or resets

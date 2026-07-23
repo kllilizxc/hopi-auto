@@ -103,7 +103,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Retry, defer, or cancel one Work. Cancellation includes nonterminal dependents, interrupts their Runs, and preserves history.',
+        'Retry, defer, or cancel one Work. Retry repeats unchanged Work authority and does not pass this Inbox turn to the role. Cancellation includes nonterminal dependents, interrupts their Runs, and preserves history.',
       inputSchema: assistantMcpToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),
