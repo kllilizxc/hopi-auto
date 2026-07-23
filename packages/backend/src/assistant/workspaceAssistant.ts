@@ -422,6 +422,8 @@ export function createWorkspaceAssistant(input: {
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
   const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
   let notificationRecoveryComplete = false
+  let notificationRecoveryFailures = 0
+  let notificationRecoveryRetryAt = 0
 
   return {
     async process(eventId, signal) {
@@ -581,6 +583,7 @@ export function createWorkspaceAssistant(input: {
             await input.tools.acknowledgeEventAttentions(eventId, now())
           } catch {
             notificationRecoveryComplete = false
+            notificationRecoveryRetryAt = 0
           }
         }
         return { kind: 'answered', eventId }
@@ -595,8 +598,11 @@ export function createWorkspaceAssistant(input: {
 
     async finalizeNotifications() {
       if (notificationRecoveryComplete) return 0
-      const workspace = await input.workspace.readWorkspace()
+      const attemptedAt = now().getTime()
+      if (attemptedAt < notificationRecoveryRetryAt) return 0
+      const workspace = await input.workspace.readWorkspaceForControl()
       let acknowledged = 0
+      let failed = false
       for (const event of workspace.events.values()) {
         if (
           event.attributes.source !== 'reflection' ||
@@ -606,14 +612,22 @@ export function createWorkspaceAssistant(input: {
           continue
         }
         try {
-          acknowledged += (await input.tools.acknowledgeEventAttentions(event.attributes.id, now()))
-            .length
+          acknowledged += (
+            await input.tools.acknowledgeEventAttentions(event.attributes.id, now(), workspace)
+          ).length
         } catch {
-          notificationRecoveryComplete = false
-          return acknowledged
+          failed = true
         }
       }
+      if (failed) {
+        notificationRecoveryFailures += 1
+        notificationRecoveryRetryAt =
+          attemptedAt + Math.min(60_000, 1_000 * 2 ** (notificationRecoveryFailures - 1))
+        return acknowledged
+      }
       notificationRecoveryComplete = true
+      notificationRecoveryFailures = 0
+      notificationRecoveryRetryAt = 0
       return acknowledged
     },
   }

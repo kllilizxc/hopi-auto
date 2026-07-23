@@ -1,3 +1,4 @@
+import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import type { InboxContext, InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
@@ -89,7 +90,11 @@ export interface AssistantTools {
     eventId: string,
     message: string,
   ): Promise<'silent' | 'inform' | 'request'>
-  acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
+  acknowledgeEventAttentions(
+    eventId: string,
+    acknowledgedAt?: Date,
+    workspaceSnapshot?: AssistantWorkspace,
+  ): Promise<string[]>
   acceptUserAttentionReply(eventId: string): Promise<string[]>
   execute(token: string, name: AssistantToolName, input: unknown): Promise<AssistantToolResult>
   executeForEvent(
@@ -335,8 +340,13 @@ export function createAssistantTools(options: {
       return 'inform'
     },
 
-    async acknowledgeEventAttentions(eventId, acknowledgedAt = now()) {
-      const event = await options.workspace.readEvent(eventId)
+    async acknowledgeEventAttentions(
+      eventId,
+      acknowledgedAt = now(),
+      workspaceSnapshot = undefined,
+    ) {
+      const event =
+        workspaceSnapshot?.events.get(eventId) ?? (await options.workspace.readEvent(eventId))
       if (
         !event ||
         event.attributes.source !== 'reflection' ||
@@ -347,7 +357,7 @@ export function createAssistantTools(options: {
       }
       const context = event.attributes.context
       if (!context) return []
-      const workspace = await options.workspace.readWorkspace()
+      const workspace = workspaceSnapshot ?? (await options.workspace.readWorkspace())
       const requestReference =
         event.attributes.disposition === 'operator-requested'
           ? inboxEventReference(workspace.homeId, eventId)

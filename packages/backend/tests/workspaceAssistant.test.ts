@@ -1890,6 +1890,43 @@ describe('WorkspaceAssistant conversation', () => {
     ).not.toBeNull()
   })
 
+  test('recovers historical notifications from one snapshot and backs off isolated failures', async () => {
+    const fixture = await setup(() => ({
+      async run() {
+        throw new Error('handled events must not rerun')
+      },
+    }))
+    for (const eventId of ['EV-broken-history', 'EV-valid-history']) {
+      await fixture.workspace.receiveReflectionEvent({ eventId, content: 'Historical update.' })
+      await fixture.workspace.handleEvent(eventId, {
+        reply: 'Published update.',
+        disposition: 'notified',
+        expose: true,
+      })
+    }
+
+    const calls: string[] = []
+    let ordinaryReads = 0
+    const readWorkspace = fixture.workspace.readWorkspace.bind(fixture.workspace)
+    fixture.workspace.readWorkspace = async () => {
+      ordinaryReads += 1
+      return readWorkspace()
+    }
+    fixture.tools.acknowledgeEventAttentions = async (eventId, _acknowledgedAt, snapshot) => {
+      expect(snapshot?.events.has(eventId)).toBe(true)
+      calls.push(eventId)
+      if (eventId === 'EV-broken-history') throw new Error('Missing historical target')
+      return ['goal-attention']
+    }
+
+    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
+    expect(calls).toEqual(['EV-broken-history', 'EV-valid-history'])
+    expect(ordinaryReads).toBe(0)
+
+    expect(await fixture.assistant.finalizeNotifications?.()).toBe(0)
+    expect(calls).toEqual(['EV-broken-history', 'EV-valid-history'])
+  })
+
   test('recovers legacy local-ID Attention context from an already handled public reply', async () => {
     const fixture = await setup(() => ({
       async run() {

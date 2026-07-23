@@ -43,6 +43,10 @@ Canonical documents are not shared model scratch space.
 - Snapshot hashing consumes each immutable byte view directly instead of first duplicating every
   file buffer. Publication still returns the same SHA-256 identity and copied authority snapshot;
   the optimization only removes a second transient allocation from high-frequency validation.
+- Startup notification recovery consumes one validated Assistant-home snapshot for the complete
+  historical scan instead of re-snapshotting Home per event. One invalid historical reference does
+  not prevent independent acknowledgements; unresolved recovery failures retry with bounded
+  process-local backoff rather than on every reconciliation tick.
 
 One `publish(bundle)` call changes exactly one storage root. Under the global mutex, Coordinator
 rereads current documents, validates the proposed final view and semantic authorization, then
