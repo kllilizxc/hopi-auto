@@ -1462,6 +1462,7 @@ function plannerPrompt(paths: {
           'Goal completion evidence comes from the supplied formal release Preview at its listed release heads.',
         ]
       : []),
+    'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),

@@ -104,6 +104,8 @@ describe('RoleContextStager', () => {
         target: 'project:project-1/goal:goal-1/work:plan-initial',
       }),
     )
+    expect(prompt).toContain('cannot predict the checkpoint commit Coordinator creates after the Run')
+    expect(prompt).toContain('Coordinator Evidence owns that commit identity')
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     const browserHarnessBackend = resolveBrowserHarnessBackendCommand()

@@ -814,6 +814,11 @@ prefers a closed accepted representation or another finite verification oracle o
 negative requirement such as an ever-growing list of forbidden field aliases. These deterministic
 contracts constrain persistence and execution edges, not the model's free-form reasoning or prose.
 
+A proof file produced inside a Generator Run can bind content available in that Run, such as source
+and test digests, but cannot name the checkpoint commit Coordinator creates only after the Run
+settles. Coordinator Evidence owns that post-Run commit identity. Planner therefore never requires a
+Run-produced artifact to predict it or duplicates the same binding across both owners.
+
 The Project's Repo bindings are the complete source workspace for every Engineering responsibility.
 HOPI does not ask Planner or Assistant to predict a smaller set before implementation begins. A Repo
 that is only inspected or exercised may produce no source delta; checkpointing and C1 treat its
