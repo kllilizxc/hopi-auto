@@ -1550,13 +1550,12 @@ in its acknowledgement publication. A crash between
 roots leaves a complete public reply and an unacknowledged Attention; ordinary Inbox recovery
 finishes the acknowledgement. HOPI never records delivery before the message exists.
 
-Completion delivery includes the deliverable, not merely a lifecycle announcement. Before
-publishing a completed Goal update, speaking Assistant reads that exact Goal with bounded Evidence
-enabled. When any referenced Evidence artifact resolves, the public message must include at least
-one relevant browser-facing `operatorUrl`; an internal inspection path is never a user link. If no
-artifact resolves, the update says that no linked artifact was produced. The notification boundary
-rejects a linkless completion while an available artifact exists, so this guarantee does not depend
-on the operator asking a second time and adds no completion or delivery state.
+Completion delivery is an Assistant judgment over current Goal authority, Attention, Evidence, and
+conversation. A Goal-scoped Evidence read exposes resolved artifacts and their browser-facing
+`operatorUrl`; an internal inspection path is never a user link. The notification boundary validates
+turn ownership and Attention settlement, but does not prescribe particular prose, links, or a second
+Evidence read. A useful completion response may link a deliverable, identify an external result such
+as a PR, or state the completed outcome directly according to the facts the Assistant has.
 
 The same canonical reference is the UI navigation identity. Opening a **Needs you** projection loads
 conversation history until it finds the handled public Assistant turn carrying that reference, then

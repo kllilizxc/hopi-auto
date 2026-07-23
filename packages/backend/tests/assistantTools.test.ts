@@ -1945,7 +1945,7 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
-  test('requires an available artifact link in every completed Goal notification', async () => {
+  test('accepts a useful completed Goal notification without prescribing an artifact link', async () => {
     const fixture = await setup()
     const completion = await publishCompletedGoalArtifact(fixture)
     const reference = goalAttentionReference('P-1', 'G-1', completion.attentionId)
@@ -1956,21 +1956,11 @@ describe('Assistant HOPI tools', () => {
     })
     const token = fixture.tools.issue(event.attributes.id)
 
-    await expect(
-      fixture.tools.finalizeInternalResponse(token, event.attributes.id, 'The Goal is complete.'),
-    ).rejects.toThrow('Include at least one relevant operatorUrl')
-
-    const state = await fixture.tools.execute(token, 'hopi_read_state', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      includeEvidence: true,
-    })
-    expect(JSON.stringify(state.value)).toContain(completion.operatorUrl)
     expect(
       await fixture.tools.finalizeInternalResponse(
         token,
         event.attributes.id,
-        `The Goal is complete. [Open the deliverable](${completion.operatorUrl})`,
+        'The Goal is complete and the requested PR is ready for review.',
       ),
     ).toBe('inform')
   })

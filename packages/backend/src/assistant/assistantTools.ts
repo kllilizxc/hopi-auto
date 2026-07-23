@@ -339,12 +339,6 @@ export function createAssistantTools(options: {
         await assertSelectedTargetedAttentionsSettled(event.attributes.context)
       }
       if (!reply) return 'silent'
-      await assertCompletionArtifactsLinked({
-        context: event.attributes.context,
-        message: reply,
-        projects: options.projects,
-        state: options.state,
-      })
       return 'inform'
     },
 
@@ -1672,74 +1666,6 @@ function compactRuntimeStateIndex(value: Record<string, unknown>, includeSummary
 
 function boundedStateText(value: string, limit: number) {
   return value.length > limit ? `${value.slice(0, limit)}...` : value
-}
-
-async function assertCompletionArtifactsLinked(input: {
-  context?: InboxContext | null
-  message: string
-  projects: ReadonlyMap<string, AssistantToolProject>
-  state: AssistantStateReader
-}) {
-  if (!input.context) return
-  const assessed = new Set<string>()
-  for (const reference of normalizeInboxAttentionReferences(input.context)) {
-    const parsed = parseAttentionReference(reference)
-    if (!parsed || parsed.scope !== 'goal') continue
-    const scope = `${parsed.projectId}/${parsed.goalId}`
-    if (assessed.has(scope)) continue
-    const project = input.projects.get(parsed.projectId)
-    if (!project) continue
-    const goalPackage = await project.store.readPackage(parsed.goalId)
-    const attention = goalPackage.attentions.get(parsed.attentionId)
-    if (
-      !attention ||
-      attention.attributes.target !== null ||
-      attention.attributes.resolvedAt !== null ||
-      goalPackage.goal.attributes.lifecycle !== 'done' ||
-      goalPackage.goal.attributes.completionAttentionId !== parsed.attentionId
-    ) {
-      continue
-    }
-    assessed.add(scope)
-    const state = await input.state.read({
-      projectId: parsed.projectId,
-      goalId: parsed.goalId,
-      includeEvidence: true,
-    })
-    const operatorUrls = availableArtifactUrls(state)
-    if (operatorUrls.length === 0 || operatorUrls.some((url) => input.message.includes(url))) {
-      continue
-    }
-    throw new AssistantToolRequestError(
-      `Completed Goal ${parsed.goalId} has available Evidence artifacts. Include at least one relevant operatorUrl in the final response after reading the exact Goal with includeEvidence: true. Available operatorUrl values: ${operatorUrls.slice(0, 8).join(', ')}`,
-    )
-  }
-}
-
-function availableArtifactUrls(snapshot: AssistantStateSnapshot) {
-  const urls = new Set<string>()
-  for (const project of snapshot.projects) {
-    if (!isRecord(project) || !Array.isArray(project.goals)) continue
-    for (const goal of project.goals) {
-      if (!isRecord(goal) || !Array.isArray(goal.works)) continue
-      for (const work of goal.works) {
-        if (!isRecord(work) || !Array.isArray(work.evidence)) continue
-        for (const evidence of work.evidence) {
-          if (!isRecord(evidence) || !Array.isArray(evidence.artifacts)) continue
-          for (const artifact of evidence.artifacts) {
-            if (
-              isRecord(artifact) &&
-              artifact.available === true &&
-              typeof artifact.operatorUrl === 'string'
-            ) {
-              urls.add(artifact.operatorUrl)
-            }
-          }
-        }
-      }
-    }
-  }
-  return [...urls].toSorted()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
