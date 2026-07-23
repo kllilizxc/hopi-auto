@@ -598,7 +598,8 @@ integrates deterministically. Final Planning judges the Goal criteria satisfied,
 evidence-backed completion proposal, and finishes. When the Project exposes a reviewed Preview
 capability, that final assessment runs with the formal Project Preview bound to the exact current
 release heads, and direct evidence from its operator-facing surfaces must be newly retained by that
-Planner Run; candidate Preview evidence may finish Engineering Work but cannot finish the Goal.
+Planner Run. The evidence target is the Goal's accepted user-visible outcome, not a generic healthy
+Preview state; candidate Preview evidence may finish Engineering Work but cannot finish the Goal.
 Coordinator checks structural facts, marks the Goal `done`, and delivers that proposal as the
 completion update.
 

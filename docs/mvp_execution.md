@@ -1192,8 +1192,10 @@ A new targetless completion proposal from that Run is valid only while the sessi
 its recorded Repo heads equal the Run's release heads, and the Planner retains direct evidence from
 the formal operator-facing surfaces as a current-Run artifact. Candidate Preview Evidence, an older
 artifact, a ready marker, `running`, or HTTP reachability cannot support Goal completion. The Planner
-judges the accepted user-visible result from the direct evidence and either proposes completion or
-plans the smallest repair.
+judges whether the evidence directly exposes and exercises the user-visible outcome introduced by
+the accepted Goal. A healthy application state that does not demonstrate that outcome proves the
+Preview generally, not the Goal. Planner either proposes completion from the demonstrated outcome
+or plans the smallest repair.
 
 A Project without a Preview capability does not gain a synthetic Preview requirement: its completion
 evidence remains the exact managed release/C1 projection and any other accepted external proof. This

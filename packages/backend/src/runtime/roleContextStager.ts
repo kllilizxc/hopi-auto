@@ -1329,7 +1329,7 @@ function plannerPrompt(paths: {
     'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
     ...(paths.formalReleasePreviewFile
       ? [
-          'The formal release Preview snapshot is the completion evidence environment for this Project release. Candidate Preview evidence remains Engineering evidence only. A completion proposal requires the snapshot session to be running at the listed Repo release heads and direct evidence newly captured from its operator-facing surfaces and retained as this Run artifact; older evidence, readiness, or HTTP reachability alone cannot prove completion.',
+          "The formal release Preview snapshot is the completion evidence environment for this Project release. Candidate Preview evidence remains Engineering evidence only. A completion proposal requires the snapshot session to be running at the listed Repo release heads and direct evidence newly captured from its operator-facing surfaces and retained as this Run artifact. The evidence target is the accepted Goal's user-visible outcome: it must expose and exercise that outcome rather than substitute an older artifact, transport readiness, HTTP reachability, or a generic healthy Preview state that does not demonstrate the Goal.",
         ]
       : [
           'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence.',

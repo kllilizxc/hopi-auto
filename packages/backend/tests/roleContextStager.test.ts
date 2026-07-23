@@ -216,6 +216,8 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).toContain('direct evidence newly captured from its operator-facing surfaces')
     expect(prompt).toContain('retained as this Run artifact')
+    expect(prompt).toContain("The evidence target is the accepted Goal's user-visible outcome")
+    expect(prompt).toContain('a generic healthy Preview state that does not demonstrate the Goal')
     expect(bundle.repoReleaseHeads).toEqual({ primary: baseline.releaseHead })
   })
 

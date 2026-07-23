@@ -356,7 +356,8 @@ summary and links to existing proof; its ID is not derived from a content digest
 declares Preview capability, final Planning receives a formal Preview session whose identity includes
 every current Repo release head. A new completion proposal must retain direct surface evidence from
 that session as a current-Run artifact; candidate evidence, older artifacts, and transport readiness
-remain Engineering evidence only.
+remain Engineering evidence only. The evidence must directly expose and exercise the accepted
+Goal's user-visible outcome rather than substitute a generic healthy Preview state.
 
 Coordinator owns only the lifecycle transition. With that durable proposal, no nonterminal Work,
 no covering targeted Attention, and valid C1 structure, it publishes Goal `lifecycle: done` plus
