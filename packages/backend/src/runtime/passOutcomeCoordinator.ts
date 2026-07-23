@@ -12,6 +12,7 @@ import {
   parseWorkDocument,
   renderAttentionDocument,
   renderEvidenceDocument,
+  renderGoalDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
@@ -37,10 +38,15 @@ export interface ApplyPassOutcomeInput {
 
 export type PassOutcomeApplication =
   | { kind: 'published'; evidenceId: string; result: PassResultKind; summary: string }
-  | { kind: 'attention'; evidenceId: string; attentionId: string }
+  | {
+      kind: 'attention'
+      evidenceId: string
+      attentionIds: readonly string[]
+    }
   | { kind: 'integration_required'; evidence: EvidenceDocument; work: WorkDocument }
   | { kind: 'already_applied'; evidenceId: string }
   | { kind: 'stale'; reason: string }
+  | { kind: 'invalid'; reason: string }
 
 export interface PassOutcomeCoordinator {
   apply(input: ApplyPassOutcomeInput): Promise<PassOutcomeApplication>
@@ -48,6 +54,7 @@ export interface PassOutcomeCoordinator {
 
 export interface PassOutcomeCoordinatorOptions {
   now?: () => Date
+  verifyCompletion?(goalId: string, goalPackage: GoalPackage): Promise<boolean> | boolean
 }
 
 export class PassProposalError extends Error {}
@@ -62,7 +69,7 @@ export function createPassOutcomeCoordinator(
 
   return {
     async apply(initialInput) {
-      let input = initialInput
+      const input = initialInput
       assertInputRole(input)
       const current = await store.readPackage(input.goalId)
       const evidence = createRunEvidence(store, input, now())
@@ -85,9 +92,7 @@ export function createPassOutcomeCoordinator(
       } catch (error) {
         const invalidProposal = asPassProposalError(error)
         if (!invalidProposal) throw error
-        proposal = emptyProposal()
-        input = normalizedProposalFailure(input, invalidProposal)
-        evidence.body = renderEvidenceBody(input)
+        return { kind: 'invalid', reason: invalidProposal.message }
       }
 
       try {
@@ -95,10 +100,8 @@ export function createPassOutcomeCoordinator(
           return await applyValidatedProposal(store, input, evidence, proposal, current)
         } catch (error) {
           const invalidProposal = asPassProposalError(error)
-          if (!invalidProposal || input.outcome.result === 'fail') throw error
-          input = normalizedProposalFailure(input, invalidProposal)
-          evidence.body = renderEvidenceBody(input)
-          return await applyValidatedProposal(store, input, evidence, emptyProposal(), current)
+          if (!invalidProposal) throw error
+          return { kind: 'invalid', reason: invalidProposal.message }
         }
       } catch (error) {
         if (!(error instanceof StalePassResultError)) throw error
@@ -117,58 +120,37 @@ export function createPassOutcomeCoordinator(
     proposal: PassProposal,
     current: GoalPackage,
   ): Promise<PassOutcomeApplication> {
-    const targetedAttentions = proposal.newAttentions.filter(
-      (attention) => attention.document.attributes.target !== null,
-    )
-    if (targetedAttentions.length > 1) {
-      throw new PassProposalError('A pass may propose at most one targeted Attention')
-    }
-    const targetedAttention = targetedAttentions[0]
-    if (targetedAttention) {
+    const targetedAttentions = proposal.newAttentions
+    if (targetedAttentions.length > 0) {
       if (input.outcome.result !== 'attention') {
         throw new PassProposalError(
           `Targeted Attention requires attention, received ${input.outcome.result}`,
         )
-      }
-      const retryPending = [...current.attentions.values()].some(
-        (attention) =>
-          attention.attributes.target ===
-            workAttentionTarget(store.paths.projectId, input.goalId, input.workId) &&
-          attention.attributes.resolvedAt === null &&
-          (attention.attributes.retryRunId ?? null) !== null,
-      )
-      if (retryPending) {
-        const failedInput: ApplyPassOutcomeInput = {
-          ...input,
-          outcome: { ...input.outcome, result: 'fail' },
-        }
-        const application =
-          input.responsibility === 'planner'
-            ? buildPlannerApplication(store, failedInput, evidence, emptyProposal(), current)
-            : buildEngineeringApplication(store, failedInput, evidence, current)
-        return publishWithStaleRecovery(store, failedInput, application, {
-          kind: 'published',
-          evidenceId: evidence.attributes.id,
-          result: 'fail',
-          summary: input.outcome.summary,
-        })
       }
       const application = buildAttentionApplication(
         store,
         input,
         evidence,
         proposal,
-        targetedAttention,
+        targetedAttentions,
+        current,
       )
       return publishWithStaleRecovery(store, input, application, {
         kind: 'attention',
         evidenceId: evidence.attributes.id,
-        attentionId: targetedAttention.document.attributes.id,
+        attentionIds: targetedAttentions.map((attention) => attention.document.attributes.id),
       })
     }
 
     if (input.responsibility === 'planner') {
-      const application = buildPlannerApplication(store, input, evidence, proposal, current)
+      const application = buildPlannerApplication(
+        store,
+        input,
+        evidence,
+        proposal,
+        current,
+        options.verifyCompletion,
+      )
       return publishWithStaleRecovery(store, input, application, {
         kind: 'published',
         evidenceId: evidence.attributes.id,
@@ -202,21 +184,6 @@ function asPassProposalError(error: unknown) {
     return new PassProposalError(error.message)
   }
   return null
-}
-
-function normalizedProposalFailure(
-  input: ApplyPassOutcomeInput,
-  error: PassProposalError,
-): ApplyPassOutcomeInput {
-  return {
-    ...input,
-    outcome: {
-      result: 'fail',
-      summary: `Invalid staged proposal: ${error.message}`,
-      artifacts: [],
-      exitCode: input.outcome.exitCode,
-    },
-  }
 }
 
 interface NewAttentionProposal {
@@ -452,18 +419,23 @@ function buildAttentionApplication(
   input: ApplyPassOutcomeInput,
   evidence: EvidenceDocument,
   proposal: PassProposal,
-  attention: NewAttentionProposal,
+  attentions: readonly NewAttentionProposal[],
+  current: GoalPackage,
 ): PassPublication {
-  const supportingWrites = proposal.changedWrites.filter((write) => write.path !== attention.path)
+  const gateAttention = attentions.at(-1)
+  if (!gateAttention) throw new PassProposalError('Attention result has no targeted Attention')
+  const supportingWrites = proposal.changedWrites.filter(
+    (write) => write.path !== gateAttention.path,
+  )
   supportingWrites.push(evidenceWrite(store, input.goalId, evidence))
   return {
     supportingWrites,
     gateWrite: {
-      path: attention.path,
+      path: gateAttention.path,
       expectedHash: null,
-      content: attention.source,
+      content: gateAttention.source,
     },
-    async validateTransition(current, candidate, currentAuthority) {
+    async validateTransition(_before, candidate, currentAuthority) {
       await validatePassSemanticGuard(store, input, current, supportingWrites, {
         currentAuthority,
       })
@@ -472,7 +444,7 @@ function buildAttentionApplication(
         candidate,
         input,
         evidence.attributes.id,
-        attention,
+        attentions,
       )
     },
   }
@@ -484,6 +456,7 @@ function buildPlannerApplication(
   evidence: EvidenceDocument,
   proposal: PassProposal,
   current: GoalPackage,
+  verifyCompletion: PassOutcomeCoordinatorOptions['verifyCompletion'],
 ): PassPublication {
   const currentWork = requireWork(current, input.workId)
   if (!isPlanningWork(currentWork.attributes) || currentWork.attributes.stage !== 'plan') {
@@ -517,24 +490,70 @@ function buildPlannerApplication(
   completedWork.attributes.stage = 'done'
   const supportingWrites = [...proposal.changedWrites]
   supportingWrites.push(evidenceWrite(store, input.goalId, evidence))
+  const completesGoal = !plannerProposalHasNonterminalEngineering(
+    store,
+    input.goalId,
+    current,
+    proposal,
+  )
+  if (completesGoal) {
+    validateCompletionEvidenceSource(input)
+    supportingWrites.push(workWrite(store, input.goalId, completedWork, input.context.workHash))
+  }
+  const completedGoal = completesGoal
+    ? {
+        ...current.goal,
+        attributes: {
+          ...current.goal.attributes,
+          lifecycle: 'done' as const,
+          completionAttentionId: null,
+        },
+      }
+    : null
 
   return {
     supportingWrites,
     projectContextWrites: proposal.projectContextWrites,
-    gateWrite: workWrite(store, input.goalId, completedWork, input.context.workHash),
-    async validateTransition(before, candidate, currentAuthority) {
+    gateWrite: completedGoal
+      ? {
+          path: store.paths.goalDocument(input.goalId),
+          expectedHash: input.context.goalHash,
+          content: renderGoalDocument(completedGoal),
+        }
+      : workWrite(store, input.goalId, completedWork, input.context.workHash),
+    async validateTransition(_before, candidate, currentAuthority) {
       await validatePassSemanticGuard(
         store,
         input,
-        before,
+        current,
         [...supportingWrites, ...proposal.projectContextWrites],
         {
           currentAuthority,
         },
       )
-      validatePlannerTransition(before, candidate, input, evidence.attributes.id)
+      validatePlannerTransition(current, candidate, input, evidence.attributes.id, completesGoal)
+      if (completesGoal && verifyCompletion && !(await verifyCompletion(input.goalId, candidate))) {
+        throw new PassProposalError('Goal completion structure is not valid')
+      }
     },
   }
+}
+
+function plannerProposalHasNonterminalEngineering(
+  store: GoalPackageStore,
+  goalId: string,
+  current: GoalPackage,
+  proposal: PassProposal,
+) {
+  const works = new Map(
+    [...current.works.entries()].filter(([, work]) => isEngineeringWork(work.attributes)),
+  )
+  for (const write of proposal.changedWrites) {
+    if (!isWorkPath(store, goalId, write.path)) continue
+    const work = parseWorkDocument(publicationWriteText(write.content))
+    if (isEngineeringWork(work.attributes)) works.set(work.attributes.id, work)
+  }
+  return [...works.values()].some((work) => !isWorkTerminal(work.attributes))
 }
 
 function buildEngineeringApplication(
@@ -737,8 +756,23 @@ function validatePlannerTransition(
   after: GoalPackage,
   input: ApplyPassOutcomeInput,
   evidenceId: string,
+  completesGoal: boolean,
 ) {
-  assertGoalUnchanged(before, after)
+  if (completesGoal) {
+    const expectedGoal = {
+      ...before.goal,
+      attributes: {
+        ...before.goal.attributes,
+        lifecycle: 'done' as const,
+        completionAttentionId: null,
+      },
+    }
+    if (JSON.stringify(after.goal) !== JSON.stringify(expectedGoal)) {
+      throw new PassProposalError('Final Planner success may change only Goal lifecycle to done')
+    }
+  } else {
+    assertGoalUnchanged(before, after)
+  }
   assertHistoricalAttentionUnchanged(before, after)
   assertOnlyGeneratedEvidenceAdded(before, after, evidenceId)
   const planning = requireWork(after, input.workId)
@@ -824,25 +858,14 @@ function validatePlannerTransition(
     )
   }
 
-  const newTargetless = [...after.attentions.entries()].filter(
-    ([attentionId, attention]) =>
-      !before.attentions.has(attentionId) && attention.attributes.target === null,
-  )
   const hasNonterminalEngineering = [...after.works.values()].some(
     (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
   )
-  if (newTargetless.length > 0) {
-    if (hasNonterminalEngineering) {
-      throw new PassProposalError('Completion proposal requires no nonterminal Engineering Work')
-    }
-    validateCompletionEvidenceSource(input)
-  }
-  const hasOpenCompletion = [...after.attentions.values()].some(
-    (attention) => attention.attributes.target === null && attention.attributes.resolvedAt === null,
-  )
-  if (!hasNonterminalEngineering && !hasOpenCompletion) {
+  if (completesGoal === hasNonterminalEngineering) {
     throw new PassProposalError(
-      'Planner success without nonterminal Engineering Work requires completion Attention',
+      completesGoal
+        ? 'Goal completion contains nonterminal Engineering Work'
+        : 'Planner result left no Engineering Work without completing the Goal',
     )
   }
 }
@@ -880,14 +903,18 @@ function assertOnlyAllowedAttentionTransition(
   after: GoalPackage,
   input: ApplyPassOutcomeInput,
   evidenceId: string,
-  attention: NewAttentionProposal,
+  attentions: readonly NewAttentionProposal[],
 ) {
   assertGoalUnchanged(before, after)
   assertHistoricalAttentionUnchanged(before, after)
   assertOnlyGeneratedEvidenceAdded(before, after, evidenceId)
-  const addedAttention = after.attentions.get(attention.document.attributes.id)
-  if (!addedAttention || addedAttention.attributes.target === null) {
-    throw new PassProposalError('Attention gate must install the staged targeted Attention')
+  for (const attention of attentions) {
+    const addedAttention = after.attentions.get(attention.document.attributes.id)
+    if (!addedAttention || addedAttention.attributes.target === null) {
+      throw new PassProposalError(
+        'Attention publication must install every staged targeted Attention',
+      )
+    }
   }
   const currentWork = requireWork(before, input.workId)
   const nextWork = requireWork(after, input.workId)
@@ -897,7 +924,7 @@ function assertOnlyAllowedAttentionTransition(
   if (input.responsibility !== 'planner') {
     assertDocumentsEqualExcept(before, after, {
       workIds: [],
-      attentionIds: [attention.document.attributes.id],
+      attentionIds: attentions.map((attention) => attention.document.attributes.id),
       evidenceIds: [evidenceId],
     })
   }
@@ -1042,13 +1069,14 @@ function validateNewAttention(
   ) {
     throw new PassProposalError('New Attention must be open and unnotified')
   }
-  if (document.attributes.target !== null) {
-    const expectedTarget = workRef(store, input.goalId, input.workId)
-    if (document.attributes.target !== expectedTarget) {
-      throw new PassProposalError(
-        `Targeted Attention must use owning Work target: ${expectedTarget}`,
-      )
-    }
+  const expectedTarget = workRef(store, input.goalId, input.workId)
+  if (document.attributes.target === null) {
+    throw new PassProposalError(
+      'New Attention requires an owning target; final Planner success completes the Goal directly',
+    )
+  }
+  if (document.attributes.target !== expectedTarget) {
+    throw new PassProposalError(`Targeted Attention must use owning Work target: ${expectedTarget}`)
   }
 }
 
@@ -1176,14 +1204,6 @@ function assertInputRole(input: ApplyPassOutcomeInput) {
         : new Set<PassResultKind>(['success', 'reject', 'attention', 'fail'])
   if (!allowed.has(input.outcome.result)) {
     throw new PassProposalError(`${input.responsibility} cannot return ${input.outcome.result}`)
-  }
-}
-
-function emptyProposal(): PassProposal {
-  return {
-    changedWrites: [],
-    projectContextWrites: [],
-    newAttentions: [],
   }
 }
 

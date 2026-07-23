@@ -251,11 +251,11 @@ delivery.
 
 Browser evidence is captured at semantic checkpoints rather than inferred from an action log. The
 Assistant ingress keeps page-loaded, panel-open, composer-filled, message-submitted, and handled-reply
-PNGs. Terminal Goal delivery keeps the targetless completion update from the same feed plus default-
-viewport Kanban screenshots at both ends of its real horizontal scroller; test code does not change
-page zoom to manufacture an all-column image. It does not require a second speaking-Assistant
-message that the product contract does not promise. A scenario cannot pass when a required
-checkpoint is absent or its target content was not visible. Screenshots are evidence of
+PNGs. Terminal Goal delivery keeps the completion update derived from final Planning Evidence in the
+same feed plus default-viewport Kanban screenshots at both ends of its real horizontal scroller;
+test code does not change page zoom to manufacture an all-column image. It does not require a second
+speaking-Assistant message that the product contract does not promise. A scenario cannot pass when a
+required checkpoint is absent or its target content was not visible. Screenshots are evidence of
 presentation, not another source of workflow truth.
 
 For a completed speaking turn, the terminal Assistant checkpoint also rejects a visible error

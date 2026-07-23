@@ -26,22 +26,14 @@ describe('decideGoalReconciliation', () => {
     expect(decide(goalPackage)).toMatchObject({ kind: 'dispatch', workId: 'W-1' })
   })
 
-  test('ensures Attention before exhausted Work can be considered again', () => {
-    const exhausted = work('W-1', 'engineering', 'generate')
-    exhausted.attributes.attempts = 3
-    const goalPackage = packageWith([exhausted])
-
+  test('treats attempts as history rather than a dispatch limit', () => {
+    const attempted = work('W-1', 'engineering', 'generate')
+    attempted.attributes.attempts = 30
+    const goalPackage = packageWith([attempted])
     expect(decide(goalPackage)).toEqual({
-      kind: 'ensure_attention',
+      kind: 'dispatch',
       workId: 'W-1',
-      target: 'project:P-1/goal:G-1/work:W-1',
-      reason: 'attempts_exhausted',
-    })
-
-    goalPackage.attentions = new Map([['A-1', attention('A-1', 'project:P-1/goal:G-1/work:W-1')]])
-    expect(decide(goalPackage)).toMatchObject({
-      kind: 'wait',
-      reasons: ['attempts_exhausted', 'attention'],
+      responsibility: 'generator',
     })
   })
 

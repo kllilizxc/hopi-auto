@@ -1,7 +1,7 @@
 # MVP Publish Protocol
 
 Status: accepted implementation ADR
-Last updated: 2026-07-16
+Last updated: 2026-07-23
 
 This ADR defines the small publication kernel beneath [the MVP design](./mvp_design.md). Document
 invariants belong to [the document model](./mvp_document_model.md), and semantic behavior belongs
@@ -137,7 +137,7 @@ proposal validates.
 | Assistant Attention acknowledgement | handled public Inbox turn                              | Attention `notifiedAt` or completion resolution |
 | Planner question            | `AGENTS.md` bootstrap, design, Coordinator Evidence           | targeted Attention                            |
 | Planner plan success        | `AGENTS.md` bootstrap, design, Work DAG, Coordinator Evidence | Planning Work `done`                          |
-| Planner completion proposal | targetless completion Attention, Coordinator Evidence         | Planning Work `done`                          |
+| Final Planner success       | Coordinator Evidence, Planning Work `done`                    | Goal `done`                                   |
 | Generator source savepoint  | task-branch source checkpoint                                 | none                                          |
 | Ordinary pass result        | artifacts, Evidence                                           | Work transition                               |
 | Attention-producing result  | Evidence                                                      | targeted Attention                            |
@@ -152,8 +152,8 @@ Planner success requires no separate design-approval publication; unresolved ope
 represented by targeted Attention instead.
 An Attention-producing result must be `attention`; `success`, `reject`, or `fail` combined with
 targeted Attention is rejected before the Attention gate is publishable. Its target is the exact
-canonical reference of the producing Run's owning Work; a targetless Attention is reserved for the
-final Planner completion proposal.
+canonical reference of the producing Run's owning Work; targetless Attention is legacy completion
+state and is not a writable Run proposal.
 Planner publications require their staged integration target. Engineering publications allow an
 unrelated C1 to advance that target when all selected canonical guard hashes remain current; the
 task branch stays isolated and the later C1 path owns deterministic rebuild or conflict rejection.
@@ -234,21 +234,14 @@ and visibility distinguish it from operator input without adding a second queue 
 - Planning Work at `plan` runs Planner through the same readiness model as other Work. A material
   Goal revision blocks prior Engineering routes through their revision mismatch, not through the
   existence of Planning Work.
-- A targetless completion proposal without its Planning Work gate is unconsumed support. Planner
-  runs again and may reuse it only while its message remains accurate; otherwise Planner resolves
-  it as superseded before creating a replacement.
-- A completion proposal with its Planning Work gate but without the Goal gate needs no repeated
-  semantic model call. Coordinator publishes Goal `done` only if the proposal is unique and every
-  current structural completion guard still passes; otherwise it remains unclaimed until the
-  blocker clears or current planning supersedes it.
+- Final Planner success publishes its Evidence and completed Planning Work as support before the
+  Goal `done` gate. A crash before that gate leaves no false completion; ordinary reconciliation
+  ensures another final Planning Work if needed.
 
-Work stores `attempts` as a top-level field. Readiness requires `attempts < maxAttempts`. A crash
-before the Work gate may therefore undercount one attempt; the MVP accepts that and reruns. Once a
-Work gate reaches the limit, Work cannot dispatch, and Reconciler creates or reuses blocking
-Attention if it is missing.
+Work stores `attempts` as a top-level repair-history field. A crash before the Work gate may
+undercount one reviewed repair outcome; the MVP accepts that. The value is never a dispatch budget.
 
-Completion creates no separate Evidence document or content-digest identity. Its Attention body
-links Evidence and Git facts that Planner already judged sufficient.
+Completion uses final Planning Evidence and creates no Attention or content-digest identity.
 
 ## Attention
 
@@ -256,8 +249,7 @@ Attention has no type discriminator. Its control meaning is:
 
 - `resolvedAt: null` means open
 - a non-null `target` blocks that event, project, Goal, or Work and its defined descendants
-- `target: null` is a non-blocking Goal completion proposal and becomes deliverable only while its
-  Goal is `done` and references it through `completionAttentionId`
+- `target: null` is readable legacy completion state; no new Run creates it
 - `notifiedAt` records acknowledged delivery, not resolution
 - `operatorRequest` is null while Assistant owns the next action and otherwise identifies the exact
   unanswered public Assistant event
@@ -440,10 +432,11 @@ The implementation must cover:
   cancels it
 - Evidence without a Work gate remains unconsumed and a fresh Run may retry
 - Attention or Planning gates never cause an old Work transition to be reconstructed
-- Work at the retry limit cannot dispatch and gains missing blocking Attention
-- only final Planner success can create the one unresolved unclaimed target-null Attention
-- a crash before its Planning Work gate reruns Planner, while a crash after that gate lets
-  Coordinator finish from structural guards without another semantic model call
+- arbitrary `attempts` history does not prevent otherwise-ready Work from dispatching
+- final Planner success with no nonterminal Engineering Work publishes final Planning Evidence and
+  the Goal `done` gate without a targetless Attention
+- a crash before the Goal gate never exposes false completion and remains recoverable by ordinary
+  final Planning
 - C1 object durability and semantic recheck precede guarded ref update
 - successful guarded ref update returns only after C1 ref durability
 - ref-update error rereads old/C1/other and respectively fails safely, treats C1 as integrated, or

@@ -57,61 +57,6 @@ describe('GoalController', () => {
     ).toHaveLength(1)
   })
 
-  test('reuses one open retry Attention and creates a new identity for a later retry cycle', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const planningPath = store.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(store.paths.absolute(planningPath)).text()
-    const planning = parseWorkDocument(source)
-    planning.attributes.attempts = 3
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: planningPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(planning),
-      },
-    })
-
-    const first = await controller.ensureAttemptsAttention('G-1', 'plan-initial')
-    const second = await controller.ensureAttemptsAttention('G-1', 'plan-initial')
-
-    expect(second).toEqual(first)
-    expect(first.attributes).toMatchObject({
-      target: 'project:P-1/goal:G-1/work:plan-initial',
-      resolvedAt: null,
-    })
-    expect(first.attributes.id).toStartWith('attempts-plan-initial-3-')
-
-    const attentionPath = store.paths.attentionDocument('G-1', first.attributes.id)
-    const attentionSource = await Bun.file(store.paths.absolute(attentionPath)).text()
-    first.attributes.resolvedAt = '2026-07-11T00:01:00Z'
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: attentionPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(attentionSource)),
-        content: renderAttentionDocument(first),
-      },
-    })
-    await controller.retryWork('G-1', 'plan-initial', null)
-    const retrySource = await Bun.file(store.paths.absolute(planningPath)).text()
-    const retriedPlanning = parseWorkDocument(retrySource)
-    retriedPlanning.attributes.attempts = 3
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: planningPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(retrySource)),
-        content: renderWorkDocument(retriedPlanning),
-      },
-    })
-
-    const laterCycle = await controller.ensureAttemptsAttention('G-1', 'plan-initial')
-    expect(laterCycle.attributes.id).not.toBe(first.attributes.id)
-    expect(laterCycle.attributes.id).toStartWith('attempts-plan-initial-3-')
-  })
-
   test('resolves a pending retry only after its invocation succeeds', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -145,7 +90,7 @@ describe('GoalController', () => {
     expect(resolved?.body).toContain('Planner invocation completed.')
   })
 
-  test('uses ordinary Work Attention for operational exhaustion', async () => {
+  test('reuses one ordinary Work Attention for observed runtime failure', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
 
@@ -165,7 +110,7 @@ describe('GoalController', () => {
     expect(reused.attributes.id).toBe(first.attributes.id)
     expect(first.attributes.id).toStartWith('A-')
     expect(first.attributes.id).not.toContain('operational')
-    expect(first.body).toContain('3 consecutive operational failures')
+    expect(first.body).toContain('Observed consecutive runtime failures: 3')
     expect(first.body).toContain('configured runtime command exited')
   })
 

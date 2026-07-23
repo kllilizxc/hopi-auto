@@ -414,15 +414,11 @@ function validateAttentions(
   works: Map<string, WorkDocument>,
   attentions: Map<string, AttentionDocument>,
 ) {
-  const openUnclaimedCompletion: string[] = []
   let openTargeted = 0
 
   for (const [attentionId, attention] of attentions) {
     const { target, resolvedAt } = attention.attributes
     if (target === null) {
-      if (resolvedAt === null && attentionId !== goal.attributes.completionAttentionId) {
-        openUnclaimedCompletion.push(attentionId)
-      }
       continue
     }
 
@@ -434,10 +430,6 @@ function validateAttentions(
       throw invalid(goalId, `Attention ${attentionId} targets missing Work`)
     }
     if (resolvedAt === null) openTargeted += 1
-  }
-
-  if (openUnclaimedCompletion.length > 1) {
-    throw invalid(goalId, 'more than one open unclaimed completion Attention exists')
   }
 
   const completionId = goal.attributes.completionAttentionId

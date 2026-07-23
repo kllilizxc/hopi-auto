@@ -85,7 +85,7 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(join(longScratchDir, 'retained')).text()).toBe('ok')
   })
 
-  test('normalizes an invalid responsibility/result combination to fail', async () => {
+  test('reports an invalid responsibility/result combination as an operational failure', async () => {
     const fixture = await createFixture()
     const runner = processRunner(
       'await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"reject",summary:"no",artifacts:[]}))',
@@ -685,7 +685,7 @@ describe('ConfiguredRoleRunner', () => {
     }
   })
 
-  test('rejects success and invalidates the Session when tool infrastructure stays unavailable', async () => {
+  test('keeps the model-owned result when one tool reports unavailable infrastructure', async () => {
     const fixture = await createFixture()
     const binary = await fakeClaude(
       fixture.root,
@@ -711,12 +711,11 @@ describe('ConfiguredRoleRunner', () => {
       },
     })
 
-    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
-    expect(result.summary).toContain('required execution capability remained unavailable')
-    expect(invalidations).toBe(1)
+    expect(result).toMatchObject({ result: 'success', summary: 'implemented' })
+    expect(invalidations).toBe(0)
   })
 
-  test('rejects interactive Generator success without a completed execution verification', async () => {
+  test('does not infer a required execution strategy from Generator transport events', async () => {
     const fixture = await createFixture()
     const binary = await fakeClaude(
       fixture.root,
@@ -740,9 +739,8 @@ describe('ConfiguredRoleRunner', () => {
       },
     })
 
-    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
-    expect(result.summary).toContain('without completing an execution verification')
-    expect(invalidations).toBe(1)
+    expect(result).toMatchObject({ result: 'success', summary: 'implemented by inspection' })
+    expect(invalidations).toBe(0)
   })
 
   test('keeps success when the same execution capability recovers in the invocation', async () => {
@@ -808,10 +806,13 @@ async function createFixture() {
   const resultFile = join(runRoot, 'result.json')
   const context: RoleContextBundle = {
     runRoot,
+    artifactOutputDir: join(runRoot, 'output-artifacts'),
     runtimeScratchDir,
     runtimeCacheDir,
     contextRoot: join(runRoot, 'context'),
     authorityRoot: join(runRoot, 'context', 'authority'),
+    proposalCapabilitiesFile: join(runRoot, 'context', 'proposal-capabilities.json'),
+    resultSchemaFile: join(runRoot, 'context', 'result-schema.json'),
     proposalRoot,
     attentionProposalDir: join(proposalRoot, 'attention'),
     primaryRepoRoot: repoRoot,

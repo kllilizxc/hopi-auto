@@ -145,6 +145,7 @@ export function createPreviewManager(
       timeoutMs: options.preparationTimeoutMs,
       primaryRepoId: input.primaryRepoId,
       repoRoots: input.repoRoots,
+      releaseHeads: input.releaseHeads,
     })
     if (isStopped(operation)) return stoppedResult(operation.session, now)
     if (preparation.kind !== 'ready') {

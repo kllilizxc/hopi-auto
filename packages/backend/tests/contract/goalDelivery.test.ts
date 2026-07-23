@@ -3,11 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { RoleRunInput, RoleRunResult } from '../../src/agent/RoleRunner'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   ScriptedAssistantRunner,
@@ -201,23 +197,6 @@ async function planDelivery(input: RoleRunInput): Promise<RoleRunResult> {
           attempts: 0,
         },
         body: '## Acceptance Criteria\n\n- `src/feature.ts` exports feature with value 2.\n',
-      }),
-    )
-  } else {
-    const attentionId = `A-complete-${input.runId}`
-    const attentionPath = join(goalRoot, 'attention', `${attentionId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: attentionId,
-          target: null,
-          createdAt: '2026-07-13T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nThe deterministic feature is integrated and verified.\n',
       }),
     )
   }

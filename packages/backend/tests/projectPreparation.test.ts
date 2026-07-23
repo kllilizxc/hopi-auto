@@ -138,6 +138,7 @@ describe('ProjectPreparer', () => {
       runtimeDir: fixture.runtime,
       cacheDir: fixture.cache,
       primaryRepoId: 'web',
+      releaseHeads: { web: 'release-web', api: 'release-api' },
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
         { repoId: 'api', path: api },
@@ -147,6 +148,11 @@ describe('ProjectPreparer', () => {
     expect(result.kind).toBe('ready')
     expect(result.repos.map((repo) => repo.repoId)).toEqual(['web', 'api'])
     expect(result.logs).toContain(`api=${api}`)
+    expect(await Bun.file(join(fixture.runtime, 'repos.json')).json()).toMatchObject({
+      primaryRepoId: 'web',
+      repoOrder: ['web', 'api'],
+      releaseHeads: { web: 'release-web', api: 'release-api' },
+    })
     expect(result.logs).toContain(`repo=api root=${api}`)
 
     await writeAdapter(fixture.repo, 'console.error("web failed"); process.exit(2)')
@@ -160,6 +166,7 @@ describe('ProjectPreparer', () => {
       runtimeDir: join(fixture.runtime, 'failed'),
       cacheDir: fixture.cache,
       primaryRepoId: 'web',
+      releaseHeads: { web: 'release-web', api: 'release-api' },
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
         { repoId: 'api', path: api },

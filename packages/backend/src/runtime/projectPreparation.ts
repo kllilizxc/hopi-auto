@@ -44,6 +44,7 @@ export interface ProjectPreparer {
     timeoutMs?: number
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
+    releaseHeads?: Readonly<Record<string, string>>
   }): Promise<ProjectPreparationResult>
 }
 
@@ -63,6 +64,17 @@ export function createProjectPreparer(): ProjectPreparer {
           { repoId: input.primaryRepoId ?? 'primary', path: resolve(input.projectRoot) },
         ],
       )
+      const releaseHeads = input.releaseHeads
+        ? Object.fromEntries(
+            repoRoots.map((repo) => {
+              const releaseHead = input.releaseHeads?.[repo.repoId]
+              if (!releaseHead) {
+                throw new Error(`Missing release head for Repo ${repo.repoId}`)
+              }
+              return [repo.repoId, releaseHead]
+            }),
+          )
+        : undefined
       await Bun.write(
         reposFile,
         `${JSON.stringify(
@@ -70,6 +82,7 @@ export function createProjectPreparer(): ProjectPreparer {
             primaryRepoId: input.primaryRepoId ?? repoRoots[0]?.repoId ?? 'primary',
             repoOrder: repoRoots.map((repo) => repo.repoId),
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
+            ...(releaseHeads ? { releaseHeads } : {}),
           },
           null,
           2,

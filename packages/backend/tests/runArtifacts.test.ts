@@ -86,10 +86,52 @@ describe('Run artifacts', () => {
       runRoot,
       artifacts: ['scripts/preview'],
       sourceRoots: [projectRoot],
+      portableRoots: [projectRoot],
     })
 
     expect(result.references).toEqual(['scripts/preview'])
     expect(result.preserved).toEqual([])
+    expect(await Bun.file(join(runRoot, 'artifacts.json')).exists()).toBe(false)
+  })
+
+  test('retains a relative file from the Run artifact output instead of treating it as source', async () => {
+    const root = await temporaryRoot()
+    const runRoot = join(root, 'R-1')
+    const outputRoot = join(runRoot, 'output-artifacts')
+    await mkdir(outputRoot, { recursive: true })
+    await Bun.write(join(outputRoot, 'proof.json'), '{"passed":true}\n')
+
+    const result = await preserveRunArtifacts({
+      runId: 'R-1',
+      runRoot,
+      artifacts: ['proof.json'],
+      sourceRoots: [outputRoot],
+      portableRoots: [],
+    })
+
+    expect(result.references).toEqual(['artifact:R-1/001-proof.json'])
+    expect(await Bun.file(join(runRoot, 'artifacts', '001-proof.json')).text()).toContain(
+      '"passed":true',
+    )
+  })
+
+  test('keeps Planner proposal paths out of Evidence artifacts', async () => {
+    const root = await temporaryRoot()
+    const runRoot = join(root, 'R-1')
+    const proposalRoot = join(runRoot, 'proposal')
+    const proposalPath = '.hopi/docs/goals/goal-1/work/publish-preview.md'
+    await mkdir(join(proposalRoot, '.hopi/docs/goals/goal-1/work'), { recursive: true })
+    await Bun.write(join(proposalRoot, proposalPath), 'proposal proof')
+
+    const result = await preserveRunArtifacts({
+      runId: 'R-1',
+      runRoot,
+      artifacts: [proposalPath],
+      proposalRoots: [proposalRoot],
+    })
+
+    expect(result.references).toEqual([])
+    expect(result.ignoredProposalPaths).toEqual([proposalPath])
     expect(await Bun.file(join(runRoot, 'artifacts.json')).exists()).toBe(false)
   })
 })

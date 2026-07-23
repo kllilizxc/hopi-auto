@@ -59,14 +59,19 @@ describe('RoleContextStager', () => {
     expect(occurrences(prompt, fixture.store.paths.goalDocument('goal-1'))).toBe(1)
     expect(occurrences(prompt, fixture.store.paths.workDocument('goal-1', 'plan-initial'))).toBe(1)
     expect(prompt).toContain('Goal authority and source are read-only')
-    expect(prompt).toContain('kind: engineering')
     expect(prompt).toContain('Authority and evidence are immutable')
     expect(prompt).toContain('Proposal is a sparse overlay')
     expect(prompt).toContain('an absent path is unchanged')
     expect(prompt).toContain('smallest complete Engineering DAG')
-    expect(prompt).toContain('Goal completion proposal protocol')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
+    const proposalCapabilities = await Bun.file(bundle.proposalCapabilitiesFile).json()
+    expect(
+      proposalCapabilities.writable.map((capability: { type: string }) => capability.type),
+    ).toEqual(expect.arrayContaining(['engineering-work', 'targeted-attention']))
+    expect(await Bun.file(bundle.resultSchemaFile).json()).toMatchObject({
+      properties: { result: { enum: ['success', 'attention', 'fail'] } },
+    })
     const repoManifest = await Bun.file(bundle.reposFile).json()
     expect(repoManifest).toEqual({
       primaryRepoId: 'primary',
@@ -79,14 +84,19 @@ describe('RoleContextStager', () => {
     expect(context).toContain(`Project release ref in each Repo: ${projectReleaseRef('project-1')}`)
     expect(context).toContain(`Release head: ${bundle.releaseHead}`)
     expect(context).not.toContain('Integration target snapshot:')
-    expect(prompt).toContain('Engineering Work document protocol')
-    expect(prompt).toContain('kind: engineering')
     expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
-    expect(prompt).toContain('.hopi/docs/repos.md')
+    expect(proposalCapabilities.writable).toContainEqual({
+      type: 'project-repo-context',
+      path: '.hopi/docs/repos.md',
+    })
     expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
     expect(prompt).not.toContain(bundle.runRoot)
-    expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
-    expect(prompt).toContain('notifiedAt: null')
+    expect(proposalCapabilities.writable).toContainEqual(
+      expect.objectContaining({
+        type: 'targeted-attention',
+        target: 'project:project-1/goal:goal-1/work:plan-initial',
+      }),
+    )
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     expect(bundle.browserHarnessCommand).toBe(
@@ -448,6 +458,31 @@ describe('RoleContextStager', () => {
     ).toBe(true)
   })
 
+  test('exposes the previous application fact without turning it into Evidence', async () => {
+    const fixture = await createFixture(true, true)
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-after-invalid',
+      responsibility: 'planner',
+      previousAttempt: {
+        runId: 'run-invalid',
+        responsibility: 'planner',
+        result: 'success',
+        application: 'invalid',
+        summary: 'Application rejected: Work document is missing YAML front matter.',
+      },
+    })
+
+    const prompt = await Bun.file(bundle.promptFile).text()
+    expect(prompt).toContain('### Previous Application')
+    expect(prompt).toContain('- Application: invalid')
+    expect(prompt).toContain('Work document is missing YAML front matter.')
+    expect(prompt).not.toContain('### Latest Owning Work Evidence')
+  })
+
   test('states the Git, Attention, and Run-scoped runtime boundaries for Engineering passes', async () => {
     const fixture = await createFixture(true)
     await publishEngineeringWork(fixture)
@@ -511,25 +546,29 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).not.toContain(generator.workHash)
     expect(generatorPrompt).toContain('### Latest Owning Work Evidence')
     expect(generatorPrompt).toContain('Repair this first.')
-    expect(generatorPrompt).toContain(
-      'Allowed result for this generator Run: success, attention, or fail',
-    )
+    expect(await Bun.file(generator.resultSchemaFile).json()).toMatchObject({
+      properties: { result: { enum: ['success', 'attention', 'fail'] } },
+    })
     expect(await Bun.file(generator.contextFile).text()).toContain(
       fixture.store.paths.evidenceDocument('goal-1', 'E-latest'),
     )
     for (const prompt of [generatorPrompt, reviewerPrompt]) {
-      expect(prompt).toContain('targeted Attention file whose stem equals its id')
-      expect(prompt).toContain('id: <stable-id>')
-      expect(prompt).toContain('target: project:project-1/goal:goal-1/work:W-1')
-      expect(prompt).toContain('createdAt: 1970-01-01T00:00:00.000Z')
-      expect(prompt).toContain('resolvedAt: null')
-      expect(prompt).toContain('notifiedAt: null')
-      expect(prompt).toContain('The final response is exactly one JSON object')
+      expect(prompt).toContain('Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE')
+      expect(prompt).toContain('Terminal result schema: $HOPI_RESULT_SCHEMA_FILE')
+      expect(prompt).toContain('Run artifact output: $HOPI_ARTIFACT_DIR')
       expect(prompt).not.toContain('Retry only')
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
       expect(prompt.length).toBeLessThan(5_000)
     }
+    expect(await Bun.file(generator.proposalCapabilitiesFile).json()).toMatchObject({
+      writable: [
+        {
+          type: 'targeted-attention',
+          target: 'project:project-1/goal:goal-1/work:W-1',
+        },
+      ],
+    })
     expect(generatorPrompt).toContain('implement the complete Engineering Work')
     expect(generatorPrompt).toContain(
       'Public Preview, when present, observes the integrated release',

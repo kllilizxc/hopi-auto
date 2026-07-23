@@ -253,15 +253,12 @@ export function createCoordinatorReconciler(
           const runtime: WorkRuntimeFacts = {
             projectEligible: true,
             liveRunWorkIds: liveWorkIds,
-            operationallyDeferredWorkIds:
-              project.reconciler.operationallyDeferredWorkIds?.(goalId, now()) ?? new Set(),
             passCapacity: {
               planner: passCounts.planner < options.concurrency.planner,
               generator: passCounts.generator < options.concurrency.generator,
               reviewer: passCounts.reviewer < options.concurrency.reviewer,
             },
             now: now(),
-            maxAttempts: 3,
           }
           candidates.push({
             project,
@@ -296,7 +293,7 @@ export function createCoordinatorReconciler(
     const deterministic = candidates.find(
       (candidate) =>
         !goalDispatchBlocked(candidate.project.projectId, candidate.goalId) &&
-        ['ensure_planning', 'ensure_attention', 'complete_goal', 'finish_cancellation'].includes(
+        ['ensure_planning', 'complete_goal', 'finish_cancellation'].includes(
           candidate.decision.kind,
         ),
     )

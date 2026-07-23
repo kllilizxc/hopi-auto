@@ -33,14 +33,13 @@ import {
   type RoleContextStager,
   createRoleContextStager,
 } from '../runtime/roleContextStager'
-import { preserveRunArtifacts } from '../runtime/runArtifacts'
+import { discoverRunArtifactPaths, preserveRunArtifacts } from '../runtime/runArtifacts'
 import {
   type RunAttemptRecorder,
   type RunAttemptStore,
   type RunAttemptSummary,
   createRunAttemptStore,
 } from '../runtime/runAttemptStore'
-import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -69,8 +68,6 @@ export interface ProjectReconcilerOptions {
   now?: () => Date
   createRunId?: () => string
   checkpointTask?: typeof checkpointTaskWorktree
-  operationalRetryBaseMs?: number
-  maxOperationalFailures?: number
   apiOrigin?: () => string
   prepareFormalReleasePreview?(): Promise<FormalReleasePreviewContext>
   onProjectBlocked?(input: {
@@ -102,7 +99,6 @@ export interface ProjectReconciler {
     runtime?: Partial<WorkRuntimeFacts>,
   ): Promise<ProjectReconcileResult>
   liveWorkIds(): ReadonlySet<string>
-  operationallyDeferredWorkIds?(goalId: string, observedAt?: Date): ReadonlySet<string>
   interruptRuns(goalId?: string, workId?: string): void
 }
 
@@ -137,15 +133,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       primary: repo.primary,
     })),
   }
+  const completion = createCompletionStructureVerifier(options.store, c1Layout)
   const outcomes =
     options.outcomes ??
     createPassOutcomeCoordinator(options.store, options.publisher, {
       now,
+      verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
     })
   const integrator =
     options.integrator ??
     createC1Integrator(options.homeRoot, options.store, options.publisher, now, c1Layout)
-  const completion = createCompletionStructureVerifier(options.store, c1Layout)
   const goalController =
     options.goalController ??
     createGoalController(options.store, {
@@ -158,19 +155,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const goalInterruptionGenerations = new Map<string, number>()
   let workInterruptionSequence = 0
   const workInterruptionGenerations = new Map<string, number>()
-  const operationalRetries = new Map<string, { failures: number; retryAt: number }>()
-  const operationalRetryBaseMs = options.operationalRetryBaseMs ?? 30_000
-  const maxOperationalFailures = options.maxOperationalFailures ?? 3
-  const deferredWorkIds = (goalId: string, observedAt = now()) => {
-    const prefix = `${goalId}/`
-    return new Set(
-      [...operationalRetries.entries()].flatMap(([key, retry]) =>
-        key.startsWith(prefix) && retry.retryAt > observedAt.getTime()
-          ? [key.slice(prefix.length)]
-          : [],
-      ),
-    )
-  }
   const interruptRuns = (goalId?: string, workId?: string) => {
     if (workId) {
       if (!goalId) throw new Error('A Work interruption requires its Goal ID')
@@ -196,16 +180,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     liveWorkIds() {
       return new Set(live)
     },
-    operationallyDeferredWorkIds(goalId, observedAt = now()) {
-      return deferredWorkIds(goalId, observedAt)
-    },
     async reconcileGoal(goalId, runtime = {}) {
       const interruptionGeneration = {
         project: projectInterruptionGeneration,
         goal: goalInterruptionGenerations.get(goalId) ?? 0,
         work: workInterruptionSequence,
       }
-      await readSoftwareDeliveryProfile()
       let goalPackage = await options.store.readPackage(goalId)
       const attemptSnapshot = await attempts.snapshot()
       let recoveredRetry = false
@@ -251,9 +231,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           attemptSnapshot.list(options.projectId, goalId, work.attributes.id),
           latestResolvedWorkAttentionAt(goalPackage, options.projectId, goalId, work.attributes.id),
         )
-        if (episode.count < maxOperationalFailures) continue
+        if (episode.count < 1) continue
         if (hasOpenWorkAttention(goalPackage, options.projectId, goalId, work.attributes.id)) {
-          operationalRetries.delete(`${goalId}/${work.attributes.id}`)
           continue
         }
         const attention = await goalController.ensureOperationalFailureAttention(
@@ -262,7 +241,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           episode.count,
           episode.latestSummary,
         )
-        operationalRetries.delete(`${goalId}/${work.attributes.id}`)
         return { kind: 'attention_ensured', attentionId: attention.attributes.id }
       }
       const livePrefix = `${goalId}/`
@@ -272,15 +250,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const facts: WorkRuntimeFacts = {
         projectEligible: runtime.projectEligible ?? true,
         liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
-        operationallyDeferredWorkIds:
-          runtime.operationallyDeferredWorkIds ?? deferredWorkIds(goalId),
         passCapacity: {
           planner: runtime.passCapacity?.planner ?? true,
           generator: runtime.passCapacity?.generator ?? true,
           reviewer: runtime.passCapacity?.reviewer ?? true,
         },
         now: runtime.now ?? now(),
-        maxAttempts: 3,
       }
       const decision = decideGoalReconciliation({
         projectId: options.projectId,
@@ -297,10 +272,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           'Perform the final semantic assessment or refresh the delivery plan.',
         )
         return { kind: 'planning_ensured', workId: work.attributes.id }
-      }
-      if (decision.kind === 'ensure_attention') {
-        const attention = await goalController.ensureAttemptsAttention(goalId, decision.workId)
-        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
       }
       if (decision.kind === 'complete_goal') {
         await goalController.completeGoal(goalId, decision.attentionId)
@@ -435,6 +406,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           apiOrigin: options.apiOrigin?.(),
           runtimeScratchDir: responsibilitySession.workspaceDir,
           formalReleasePreview,
+          previousAttempt: latestResponsibilityAttempt(
+            attemptSnapshot.list(options.projectId, goalId, workId),
+            responsibility,
+          ),
         })
         attempt = await attempts
           .start({
@@ -466,10 +441,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context,
             session: responsibilitySession.session,
-            refreshAssignment: followsReviewerRejection(
-              attemptSnapshot.list(options.projectId, goalId, workId),
-              responsibility,
-            ),
             signal: runController.signal,
           },
           {
@@ -545,23 +516,15 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             )
           } catch (error) {
             const summary = `Task checkpoint failed: ${errorMessage(error)}`
-            if (!(error instanceof TaskCheckpointError) || error.code === 'infrastructure') {
-              await options.onProjectBlocked?.({
-                projectId: options.projectId,
-                reason: summary,
-              })
-              await attempt?.finish({
-                outcome: {
-                  result: 'fail',
-                  summary,
-                  exitCode: outcome.exitCode,
-                },
-                application: 'project_blocked',
-              })
-              retryResult = retryPending ? { status: 'failed', diagnostic: summary } : null
+            if (error instanceof TaskCheckpointError && error.code !== 'infrastructure') {
+              const invalid: PassOutcomeApplication = { kind: 'invalid', reason: summary }
+              await finishAttempt(attempt, options.store, goalId, outcome, invalid)
               return {
-                kind: 'project_blocked',
-                reason: summary,
+                kind: 'pass_finished',
+                workId,
+                runId,
+                result: outcome.result,
+                application: invalid.kind,
               }
             }
             outcome = {
@@ -569,6 +532,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               summary,
               artifacts: [],
               exitCode: outcome.exitCode,
+              failureKind: 'operational',
             }
           }
         }
@@ -579,10 +543,27 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             context.runRoot,
             context.resultFile,
-            [context.runtimeScratchDir, ...roleRepoRoots.map((repo) => repo.path)],
+            [
+              context.artifactOutputDir,
+              context.runtimeScratchDir,
+              ...roleRepoRoots.map((repo) => repo.path),
+            ],
+            roleRepoRoots.map((repo) => repo.path),
+            [context.proposalRoot],
           )
         } catch (error) {
-          outcome = artifactFailureOutcome(error, outcome.exitCode)
+          const invalid: PassOutcomeApplication = {
+            kind: 'invalid',
+            reason: `Run artifact validation failed: ${errorMessage(error)}`,
+          }
+          await finishAttempt(attempt, options.store, goalId, outcome, invalid)
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: outcome.result,
+            application: invalid.kind,
+          }
         }
 
         if (outcome.failureKind === 'operational') {
@@ -594,36 +575,14 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             currentAttemptSnapshot.list(options.projectId, goalId, workId),
             latestResolvedWorkAttentionAt(currentGoalPackage, options.projectId, goalId, workId),
           )
-          const failureCount = Math.max(
-            persistedEpisode.count,
-            (operationalRetries.get(liveKey)?.failures ?? 0) + 1,
-          )
-          if (failureCount >= maxOperationalFailures) {
-            operationalRetries.delete(liveKey)
-            const attention = await goalController.ensureOperationalFailureAttention(
-              goalId,
-              workId,
-              failureCount,
-              persistedEpisode.latestSummary || outcome.summary,
-            )
-            return { kind: 'attention_ensured', attentionId: attention.attributes.id }
-          }
-          scheduleOperationalRetry(
-            operationalRetries,
-            liveKey,
-            now(),
-            operationalRetryBaseMs,
-            failureCount,
-          )
-          return {
-            kind: 'pass_finished',
+          const attention = await goalController.ensureOperationalFailureAttention(
+            goalId,
             workId,
-            runId,
-            result: outcome.result,
-            application: 'operational_failure',
-          }
+            Math.max(1, persistedEpisode.count),
+            persistedEpisode.latestSummary || outcome.summary,
+          )
+          return { kind: 'attention_ensured', attentionId: attention.attributes.id }
         }
-        operationalRetries.delete(liveKey)
 
         const pass = { goalId, workId, runId, responsibility, context, outcome }
         const beforeApplication =
@@ -787,11 +746,26 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
       } catch (error) {
         retryResult = retryPending ? { status: 'failed', diagnostic: errorMessage(error) } : null
-        await attempt?.interrupt(error)
         if (runController.signal.aborted) {
+          await attempt?.interrupt(error)
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        throw error
+        const summary = `Responsibility runtime failed: ${errorMessage(error)}`
+        await attempt?.finish({
+          outcome: {
+            result: 'fail',
+            summary,
+            exitCode: null,
+          },
+          application: 'operational_failure',
+        })
+        const attention = await goalController.ensureOperationalFailureAttention(
+          goalId,
+          workId,
+          1,
+          summary,
+        )
+        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
       } finally {
         if (retryResult) {
           await goalController.finishWorkRetry(goalId, workId, retryResult)
@@ -828,25 +802,20 @@ async function preserveOutcomeArtifacts(
   runRoot: string,
   resultFile: string,
   sourceRoots: readonly string[],
+  portableRoots: readonly string[],
+  proposalRoots: readonly string[],
 ): Promise<RoleRunResult> {
+  const discovered = await discoverRunArtifactPaths(sourceRoots[0] ?? runRoot)
   const preserved = await preserveRunArtifacts({
     runId,
     runRoot,
-    artifacts: outcome.artifacts,
+    artifacts: [...new Set([...outcome.artifacts, ...discovered])],
     sourceRoots,
+    portableRoots,
+    proposalRoots,
     resultFile,
   })
   return { ...outcome, artifacts: preserved.references }
-}
-
-function artifactFailureOutcome(error: unknown, exitCode: number | null): RoleRunResult {
-  return {
-    result: 'fail',
-    summary: `Run artifact preservation failed: ${errorMessage(error)}`,
-    artifacts: [],
-    exitCode,
-    failureKind: 'operational',
-  }
 }
 
 async function ensureProjectScope(repoRoot: string, projectPath: string) {
@@ -855,17 +824,22 @@ async function ensureProjectScope(repoRoot: string, projectPath: string) {
   return projectRoot
 }
 
-function followsReviewerRejection(
+function latestResponsibilityAttempt(
   history: readonly RunAttemptSummary[],
   responsibility: Responsibility,
 ) {
-  if (responsibility !== 'generator') return false
   const previous = history.find(
-    (attempt) =>
-      attempt.status === 'finished' &&
-      (attempt.application === 'published' || attempt.application === 'attention'),
+    (attempt) => attempt.status === 'finished' && attempt.responsibility === responsibility,
   )
-  return previous?.responsibility === 'reviewer' && previous.result === 'reject'
+  return previous
+    ? {
+        runId: previous.runId,
+        responsibility: previous.responsibility,
+        result: previous.result,
+        application: previous.application,
+        summary: previous.summary,
+      }
+    : undefined
 }
 
 function responsibilityStage(responsibility: Responsibility) {
@@ -885,17 +859,6 @@ function retryAttemptSucceeded(attempt: RunAttemptSummary) {
     'project_blocked',
     'candidate_preparation_failed',
   ].includes(attempt.application ?? '')
-}
-
-function scheduleOperationalRetry(
-  retries: Map<string, { failures: number; retryAt: number }>,
-  key: string,
-  observedAt: Date,
-  baseMs: number,
-  failures: number,
-) {
-  const delay = Math.min(baseMs * 2 ** Math.min(failures - 1, 5), 15 * 60_000)
-  retries.set(key, { failures, retryAt: observedAt.getTime() + delay })
 }
 
 function operationalFailureEpisode(attempts: readonly RunAttemptSummary[], after: string | null) {
@@ -958,6 +921,9 @@ async function finishAttempt(
   }
   if (application.kind === 'stale') {
     appliedSummary = `${appliedSummary} Stale result: ${application.reason}`
+  }
+  if (application.kind === 'invalid') {
+    appliedSummary = `${appliedSummary} Application rejected: ${application.reason}`
   }
   if (application.kind === 'attention') appliedResult = outcome.result
   await recorder.finish({

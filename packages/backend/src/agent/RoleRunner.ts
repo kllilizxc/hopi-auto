@@ -242,25 +242,6 @@ export class ConfiguredRoleRunner implements RoleRunner {
         execution.exitCode,
       )
     }
-    if (parsed.value.result === 'success' && execution.infrastructureFailure) {
-      await observer?.onSessionInvalid?.()
-      return failedResult(
-        `${input.responsibility} reported success while a required execution capability remained unavailable: ${execution.infrastructureFailure}`,
-        execution.exitCode,
-      )
-    }
-    if (
-      parsed.value.result === 'success' &&
-      input.responsibility === 'generator' &&
-      transport !== null &&
-      !execution.completedExecution
-    ) {
-      await observer?.onSessionInvalid?.()
-      return failedResult(
-        'generator reported success without completing an execution verification in this Run',
-        execution.exitCode,
-      )
-    }
     return { ...parsed.value, exitCode: execution.exitCode }
   }
 }

@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-19
+Last updated: 2026-07-23
 
 This document owns the workspace Assistant conversation, its configured vendor session, HOPI tool
 boundary, turn recovery, and UI behavior. Canonical schemas belong to
@@ -640,9 +640,9 @@ that same selection in `request_user`; Coordinator never widens or substitutes i
 contains references only: the model's final response is the complete operator-facing question. It
 rejects an empty, mismatched, stale, resolved, operator-owned, targetless, or
 out-of-context selection.
-Reflection may select a targetless completion Attention for an informational completion handoff;
-the speaking Assistant must not pass that reference to `request_user`. Publishing the resulting
-informational reply acknowledges and resolves that exact completion Attention.
+Legacy targetless completion Attention may still be delivered as an informational compatibility
+update, but it is never a `request_user` target. New completion updates derive from Goal lifecycle
+and final Planning Evidence rather than Attention.
 One handoff selects either workspace Attention or Attention from exactly one Goal. Reflection chooses
 the single coherent condition worth surfacing instead of combining unrelated scopes, and copies each
 selected `reference` directly from `hopi_read_state`.
@@ -658,8 +658,8 @@ response as an internal no-op. When `request_user` was staged, that same final r
 one public request; an empty response is invalid. Coordinator publishes the reply before publishing
 `notifiedAt` for each selected still-current reference. A request additionally records the exact
 handled event in `operatorRequest`. Recovery of an already handled public Reflection turn finishes
-any missing acknowledgement. Targeted Attention remains open; completion Attention is notified and
-resolved. The optional webhook
+any missing acknowledgement. Targeted Attention remains open; legacy completion Attention is
+notified and resolved only for compatibility. The optional webhook
 then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It
 does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
 documents instead of adding a notification ledger or parsing brief text.
@@ -754,7 +754,7 @@ Assistant ambiguity is handled conversationally whenever an ordinary answer is e
 Attention is reserved for a durable condition that blocks unattended progress or for repeated
 Assistant/tool failure that cannot be completed safely.
 
-Needs-you and completion Attention appear in the same Assistant thread as system updates. Replying
+Needs-you and Goal completion updates appear in the same Assistant thread as system updates. Replying
 with that message's explicit `Reply` action sends a normal user turn with `replyTo` and the exact
 Attention references in context. An ordinary composer submission carries only selected Project and
 Goal context and never guesses Attention references from currently open blockers. Assistant may read

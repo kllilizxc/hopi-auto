@@ -29,11 +29,11 @@ export const goalAttributesSchema = z
   })
   .strict()
   .superRefine((goal, context) => {
-    if ((goal.lifecycle === 'done') !== (goal.completionAttentionId !== null)) {
+    if (goal.lifecycle !== 'done' && goal.completionAttentionId !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['completionAttentionId'],
-        message: 'completionAttentionId must be present exactly while lifecycle is done',
+        message: 'legacy completionAttentionId is valid only while lifecycle is done',
       })
     }
   })

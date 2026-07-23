@@ -39,6 +39,13 @@ export interface PrepareRoleContextInput {
   apiOrigin?: string
   runtimeScratchDir?: string
   formalReleasePreview?: FormalReleasePreviewContext
+  previousAttempt?: {
+    runId: string
+    responsibility: Responsibility
+    result: string | null
+    application: string | null
+    summary: string | null
+  }
 }
 
 export interface RoleRepoRoot {
@@ -53,6 +60,9 @@ export interface RoleContextBundle extends TransportContextBundle {
   authorityRoot: string
   proposalRoot: string
   attentionProposalDir: string
+  artifactOutputDir: string
+  proposalCapabilitiesFile: string
+  resultSchemaFile: string
   primaryRepoRoot: string
   resultFile: string
   releaseHead: string
@@ -103,6 +113,7 @@ export function createRoleContextStager(
       const contextRoot = join(runRoot, 'context')
       const authorityRoot = join(contextRoot, 'authority')
       const proposalRoot = join(runRoot, 'proposal')
+      const artifactOutputDir = join(runRoot, 'output-artifacts')
       const resultFile = join(runRoot, 'result.json')
       const contextFile = join(runRoot, 'context.md')
       const promptFile = join(runRoot, 'prompt.md')
@@ -110,6 +121,8 @@ export function createRoleContextStager(
       const formalReleasePreviewFile = input.formalReleasePreview
         ? join(contextRoot, 'formal-release-preview.json')
         : undefined
+      const proposalCapabilitiesFile = join(contextRoot, 'proposal-capabilities.json')
+      const resultSchemaFile = join(contextRoot, 'result-schema.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const browserHarnessCommand = resolveBrowserHarnessCommand()
       const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
@@ -118,6 +131,7 @@ export function createRoleContextStager(
       await rm(runRoot, { recursive: true, force: true })
       await mkdir(authorityRoot, { recursive: true })
       await mkdir(proposalRoot, { recursive: true })
+      await mkdir(artifactOutputDir, { recursive: true })
       await mkdir(runtimeScratchDir, { recursive: true })
       await mkdir(runtimeCacheDir, { recursive: true })
 
@@ -232,6 +246,15 @@ export function createRoleContextStager(
         )
         await chmod(formalReleasePreviewFile, 0o444)
       }
+      await Bun.write(
+        proposalCapabilitiesFile,
+        `${JSON.stringify(proposalCapabilities(input, paths), null, 2)}\n`,
+      )
+      await Bun.write(
+        resultSchemaFile,
+        `${JSON.stringify(resultSchema(input.responsibility), null, 2)}\n`,
+      )
+      await Promise.all([chmod(proposalCapabilitiesFile, 0o444), chmod(resultSchemaFile, 0o444)])
       const imageFiles = [...referencedImages].map((imagePath) =>
         join(authorityRoot, ...imagePath.split('/')),
       )
@@ -262,6 +285,9 @@ export function createRoleContextStager(
         renderContextManifest(input, {
           authorityRoot,
           proposalRoot,
+          artifactOutputDir,
+          proposalCapabilitiesFile,
+          resultSchemaFile,
           runtimeScratchDir,
           runtimeCacheDir,
           releaseHead,
@@ -294,6 +320,9 @@ export function createRoleContextStager(
             artifactManifestFile,
             authorityRoot,
             proposalRoot,
+            artifactOutputDir,
+            proposalCapabilitiesFile,
+            resultSchemaFile,
             resultFile,
             bootstrapSourceRoot,
             agentsPath: paths.agentsPath,
@@ -319,6 +348,9 @@ export function createRoleContextStager(
         authorityRoot,
         proposalRoot,
         attentionProposalDir: join(proposalRoot, ...paths.attentionRoot(input.goalId).split('/')),
+        artifactOutputDir,
+        proposalCapabilitiesFile,
+        resultSchemaFile,
         primaryRepoRoot: requiredPrimaryRepoRoot(repoRoots, primaryRepoId),
         resultFile,
         releaseHead,
@@ -345,6 +377,7 @@ export function createRoleContextStager(
         extraWritableRoots: [
           ...new Set([
             runRoot,
+            artifactOutputDir,
             runtimeScratchDir,
             runtimeCacheDir,
             ...(input.responsibility === 'generator' ? repoRoots.map((repo) => repo.path) : []),
@@ -793,6 +826,7 @@ interface RunAssignment {
   repairView: {
     candidate: CandidateInspection
   } | null
+  previousAttempt: PrepareRoleContextInput['previousAttempt'] | null
 }
 
 function createRunAssignment(
@@ -868,7 +902,94 @@ function createRunAssignment(
     acceptedInputs,
     latestEvidence,
     repairView,
+    previousAttempt: input.previousAttempt ?? null,
   }
+}
+
+function proposalCapabilities(
+  input: PrepareRoleContextInput,
+  paths: ReturnType<typeof createGoalPackagePaths>,
+) {
+  const attention = {
+    directory: paths.attentionRoot(input.goalId),
+    target: workAttentionTarget(input.projectId, input.goalId, input.workId),
+    fields: {
+      id: 'stable-id',
+      target: 'exact target above',
+      createdAt: '1970-01-01T00:00:00.000Z',
+      resolvedAt: null,
+      notifiedAt: null,
+      operatorRequest: null,
+    },
+  }
+  if (input.responsibility !== 'planner') {
+    return {
+      version: 1,
+      proposalRoot: '$HOPI_PROPOSAL_ROOT',
+      writable: [{ type: 'targeted-attention', ...attention }],
+    }
+  }
+  return {
+    version: 1,
+    proposalRoot: '$HOPI_PROPOSAL_ROOT',
+    writable: [
+      { type: 'design', path: `${paths.designRoot(input.goalId)}/**` },
+      {
+        type: 'engineering-work',
+        directory: paths.workRoot(input.goalId),
+        fields: {
+          id: 'stable-id',
+          title: 'string',
+          notBefore: 'ISO timestamp or null',
+          dependsOn: ['stable-id'],
+          contractRevision: 'current Goal contractRevision',
+          evidenceRefs: [],
+          attempts: 0,
+          kind: 'engineering',
+          stage: 'generate',
+        },
+      },
+      { type: 'targeted-attention', ...attention },
+      { type: 'project-repo-context', path: '.hopi/docs/repos.md' },
+      { type: 'missing-project-guidance-bootstrap', path: 'AGENTS.md' },
+    ],
+  }
+}
+
+function resultSchema(responsibility: Responsibility) {
+  const results =
+    responsibility === 'reviewer'
+      ? ['success', 'reject', 'attention', 'fail']
+      : ['success', 'attention', 'fail']
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    additionalProperties: false,
+    required: ['result', 'summary'],
+    properties: {
+      result: { enum: results },
+      summary: { type: 'string', minLength: 1 },
+      artifacts: {
+        type: 'array',
+        items: { type: 'string', minLength: 1 },
+        default: [],
+      },
+    },
+  }
+}
+
+function previousAttemptFacts(previous: RunAssignment['previousAttempt']) {
+  if (!previous) return []
+  return [
+    '### Previous Application',
+    '',
+    `- Run: ${previous.runId}`,
+    `- Responsibility: ${previous.responsibility}`,
+    `- Role outcome: ${previous.result ?? 'none'}`,
+    `- Application: ${previous.application ?? 'none'}`,
+    `- Observed result: ${previous.summary ?? 'No summary recorded.'}`,
+    '',
+  ]
 }
 
 async function stableAuthoritySnapshot(
@@ -950,6 +1071,9 @@ function renderContextManifest(
   context: {
     authorityRoot: string
     proposalRoot: string
+    artifactOutputDir: string
+    proposalCapabilitiesFile: string
+    resultSchemaFile: string
     runtimeScratchDir: string
     runtimeCacheDir: string
     releaseHead: string
@@ -981,6 +1105,9 @@ function renderContextManifest(
     `- Primary authority release snapshot: ${context.releaseHead}`,
     `- Immutable authority root: ${context.authorityRoot}`,
     `- Writable proposal root: ${context.proposalRoot}`,
+    `- Writable Run artifact output: ${context.artifactOutputDir}`,
+    `- Proposal capabilities: ${context.proposalCapabilitiesFile}`,
+    `- Terminal result schema: ${context.resultSchemaFile}`,
     `- Responsibility session workspace: ${context.runtimeScratchDir}`,
     `- Reusable runtime cache: ${context.runtimeCacheDir}`,
     `- Project primary Repo: ${context.primaryRepoId}`,
@@ -1058,6 +1185,9 @@ function renderResponsibilityPrompt(
     artifactManifestFile?: string
     authorityRoot: string
     proposalRoot: string
+    artifactOutputDir: string
+    proposalCapabilitiesFile: string
+    resultSchemaFile: string
     resultFile: string
     bootstrapSourceRoot?: string
     agentsPath: string
@@ -1081,8 +1211,11 @@ function renderResponsibilityPrompt(
     `Working directory: ${input.responsibility === 'generator' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
     'Authority root: $HOPI_AUTHORITY_ROOT',
     'Proposal root: $HOPI_PROPOSAL_ROOT',
+    'Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE',
     'Context manifest: $HOPI_CONTEXT_FILE',
     'Terminal result: $HOPI_OUTCOME_FILE',
+    'Terminal result schema: $HOPI_RESULT_SCHEMA_FILE',
+    'Run artifact output: $HOPI_ARTIFACT_DIR',
     'Repo roots and release heads: $HOPI_REPOS_FILE',
     'Run scratch: $HOPI_RUN_SCRATCH',
     'Shared cache: $HOPI_CACHE_DIR',
@@ -1090,7 +1223,6 @@ function renderResponsibilityPrompt(
     ...(paths.formalReleasePreviewFile
       ? ['Formal release Preview: $HOPI_FORMAL_RELEASE_PREVIEW_FILE']
       : []),
-    'Attention proposal directory: $HOPI_ATTENTION_PROPOSAL_DIR',
     `Project guidance: ${paths.agentsPath}`,
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
@@ -1108,7 +1240,6 @@ function renderResponsibilityPrompt(
       ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),
     'External effects require explicit Work or operator authority.',
-    ...targetedAttentionContract(input),
     '',
   ]
   const responsibility =
@@ -1124,8 +1255,16 @@ function renderResponsibilityPrompt(
     ...assignmentSection('primary-task', current.primary),
     ...assignmentSection('execution-boundary', boundary),
     ...assignmentSection('responsibility', responsibility),
-    ...assignmentSection('supporting-authority', current.supporting),
-    ...assignmentSection('required-result', resultInstruction(input.responsibility)),
+    ...assignmentSection('supporting-authority', [
+      ...current.supporting,
+      ...previousAttemptFacts(assignment.previousAttempt),
+    ]),
+    ...assignmentSection('required-result', [
+      '## Result',
+      '',
+      'Write one object matching $HOPI_RESULT_SCHEMA_FILE to $HOPI_OUTCOME_FILE.',
+      '',
+    ]),
   ].join('\n')
 }
 
@@ -1134,24 +1273,6 @@ function assignmentSection(id: string, content: readonly string[]) {
     `<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:${id} -->`,
     ...content,
     `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
-  ]
-}
-
-function targetedAttentionContract(input: PrepareRoleContextInput) {
-  const target = workAttentionTarget(input.projectId, input.goalId, input.workId)
-  return [
-    'A blocked result owns exactly one targeted Attention file whose stem equals its id:',
-    '```yaml',
-    '---',
-    'id: <stable-id>',
-    `target: ${target}`,
-    'createdAt: 1970-01-01T00:00:00.000Z',
-    'resolvedAt: null',
-    'notifiedAt: null',
-    'operatorRequest: null',
-    '---',
-    '```',
-    'Its body records the observed blocker, evidence, and owner.',
   ]
 }
 
@@ -1310,7 +1431,7 @@ function plannerPrompt(paths: {
     '## Planner',
     '',
     'Owned outcome: the smallest complete Engineering DAG and durable design that deliver the current Goal.',
-    'Writable proposal types: design/**, Engineering Work, Attention, .hopi/docs/repos.md, and the missing AGENTS.md bootstrap exposed by this environment. Goal authority and source are read-only.',
+    'Goal authority and source are read-only.',
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
@@ -1319,31 +1440,6 @@ function plannerPrompt(paths: {
           'Goal completion evidence comes from the supplied formal release Preview at its listed release heads.',
         ]
       : []),
-    'Engineering Work document protocol:',
-    '```yaml',
-    '---',
-    'id: <stable-id>',
-    'title: <title>',
-    'notBefore: null',
-    'dependsOn: []',
-    'contractRevision: <current-positive-integer>',
-    'evidenceRefs: []',
-    'attempts: 0',
-    'kind: engineering',
-    'stage: generate',
-    '---',
-    '```',
-    'Goal completion proposal protocol:',
-    '```yaml',
-    '---',
-    'id: <stable-id>',
-    'target: null',
-    'createdAt: 1970-01-01T00:00:00.000Z',
-    'resolvedAt: null',
-    'notifiedAt: null',
-    'operatorRequest: null',
-    '---',
-    '```',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
@@ -1371,26 +1467,6 @@ function reviewerPrompt(projectId: string) {
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',
-    '',
-  ]
-}
-
-function resultInstruction(responsibility: Responsibility) {
-  const allowed =
-    responsibility === 'planner'
-      ? 'success, attention, or fail'
-      : responsibility === 'generator'
-        ? 'success, attention, or fail'
-        : 'success, reject, attention, or fail'
-  return [
-    '## Required Result',
-    '',
-    'The final response is exactly one JSON object:',
-    '```json',
-    '{"result":"<allowed result>","summary":"<observed outcome>","artifacts":[]}',
-    '```',
-    `Allowed result for this ${responsibility} Run: ${allowed}.`,
-    'attention requires the targeted Attention file. Artifacts contain only Project-relative source paths or retained Run-local proof files.',
     '',
   ]
 }

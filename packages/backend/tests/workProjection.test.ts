@@ -89,7 +89,6 @@ describe('derived Work projection', () => {
         'goal_not_active',
         'project_ineligible',
         'stale_contract_revision',
-        'attempts_exhausted',
         'capacity',
       ]),
     })
@@ -185,22 +184,6 @@ describe('derived Work projection', () => {
     }).find((item) => item.workId === 'P-1')
 
     expect(planning?.failedPredicates).toEqual(['terminal'])
-  })
-
-  test('projects operational retry backoff as waiting without changing Work state', () => {
-    const goalPackage = packageWith([work('W-1', 'engineering', 'review')])
-
-    const projection = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
-      operationallyDeferredWorkIds: new Set(['W-1']),
-    })[0]
-
-    expect(projection).toMatchObject({
-      column: 'Review',
-      ready: false,
-      primaryBadge: 'waiting',
-      failedPredicates: ['operational_backoff'],
-    })
   })
 })
 

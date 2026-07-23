@@ -929,10 +929,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: !projectAttentionOpen,
         liveRunWorkIds: liveWorkIds,
-        operationallyDeferredWorkIds:
-          project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
         passCapacity: { planner: true, generator: true, reviewer: true },
-        maxAttempts: 3,
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
       const openAttentionCount = [...goalPackage.attentions.values()].filter(
@@ -1562,10 +1559,7 @@ async function presentGoal(
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: !projectAttentionOpen,
     liveRunWorkIds: liveWorkIds,
-    operationallyDeferredWorkIds:
-      project.reconciler.operationallyDeferredWorkIds?.(goalId) ?? new Set(),
     passCapacity: { planner: true, generator: true, reviewer: true },
-    maxAttempts: 3,
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
   const [designSnapshot, attemptsByWork] = await Promise.all([
@@ -1706,8 +1700,6 @@ function presentWorkBlocker(
     return dependencies.length > 1 ? `${dependencies.length} dependencies` : 'dependency'
   }
   if (reasons.has('not_before')) return 'schedule'
-  if (reasons.has('attempts_exhausted')) return 'attempt limit'
-  if (reasons.has('operational_backoff')) return 'retry backoff'
   if (reasons.has('capacity')) {
     return projection.responsibility
       ? `${capitalize(projection.responsibility)} capacity`

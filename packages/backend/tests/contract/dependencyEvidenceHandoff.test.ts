@@ -1,12 +1,11 @@
 import { expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import {
   parseEvidenceDocument,
   parseWorkDocument,
-  renderAttentionDocument,
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
@@ -307,22 +306,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
     )
   } else {
     expect(engineering.every((work) => work.attributes.stage === 'done')).toBe(true)
-    const attentionId = `A-complete-${input.runId}`
-    const attentionPath = join(goalRoot, 'attention', `${attentionId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: attentionId,
-          target: null,
-          createdAt: '2026-07-17T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nBoth dependency Works are integrated and verified.\n',
-      }),
-    )
   }
   return success('Planner published the dependency handoff state.')
 }

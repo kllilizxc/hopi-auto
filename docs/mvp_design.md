@@ -1,7 +1,7 @@
 # HOPI MVP Design
 
 Status: forward product and architecture authority
-Last updated: 2026-07-17
+Last updated: 2026-07-23
 
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
@@ -30,8 +30,9 @@ Together they interrupt the operator only when:
 - a product or business decision requires operator authority
 
 Every deviation is detected, recorded, and owned. HOPI repairs safe deviations without
-interruption. A deviation that changes the Goal contract, exhausts bounded recovery, or requires
-authority HOPI does not have becomes Attention and a reliable notification.
+interruption. A deviation that changes the Goal contract or requires authority HOPI does not have
+becomes Attention and a reliable notification. Runtime failure is surfaced immediately as a
+strategy-free Work Attention rather than hidden behind a retry budget.
 
 The MVP proves this loop for software delivery before generalizing responsibilities or workflows.
 
@@ -54,8 +55,9 @@ question and contributes to one non-zero floating Assistant count; Kanban does n
 a page banner. An informational update does not transfer ownership. An exact operator reply returns
 ownership to Assistant through immutable Inbox `replyTo` correlation, and resolution restores
 ordinary message styling. An ordinary message on the same Goal is not inferred to be a reply. Only the speaking
-Assistant decides whether the operator must be asked. Targetless completion Attention appears as a
-normal Assistant and Goal update. There is no separate Attention page.
+Assistant decides whether the operator must be asked. Goal completion appears as a normal Assistant
+and Goal update derived from final Planning Evidence. Legacy targetless completion Attention remains
+readable. There is no separate Attention page.
 
 The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
 reply to complete canonical Goal-local or workspace Attention references, then `notifiedAt` records
@@ -626,14 +628,14 @@ Each completed slice preserved an end-to-end path and added migration or restart
 Assistant receives a bug report, uses its Goal tool to create Goal documents and Planning Work,
 and Reconciler drives Planner,
 Generator, and Reviewer passes through the generic runner. After Reviewer success, Coordinator
-integrates deterministically. Final Planning judges the Goal criteria satisfied, writes one
-evidence-backed completion proposal, and finishes. When the Project exposes a reviewed Preview
+integrates deterministically. Final Planning judges the Goal criteria satisfied and returns success
+with current Evidence. When the Project exposes a reviewed Preview
 capability, that final assessment runs with the formal Project Preview bound to the exact current
 release heads, and direct evidence from its operator-facing surfaces must be newly retained by that
 Planner Run. The evidence target is the Goal's accepted user-visible outcome, not a generic healthy
 Preview state; candidate Preview evidence may finish Engineering Work but cannot finish the Goal.
-Coordinator checks structural facts, marks the Goal `done`, and delivers that proposal as the
-completion update.
+Coordinator checks structural facts, marks the Goal `done`, and exposes final Planning Evidence as
+the completion update.
 
 ### Screenshot-guided Goal
 
@@ -664,10 +666,10 @@ history, without parsing prose into an Action.
 ### Persistent external blocker
 
 A required browser environment remains unavailable after HOPI has provided its normal Run-scoped
-runtime capability. HOPI preserves the task branch and raw diagnostics. A technical failure follows
-bounded recovery and Background Reflection before user escalation. Targeted Attention is created
-only when the remaining next action actually requires the operator, such as enabling a browser,
-supplying a credential, or making a product decision.
+runtime capability. HOPI preserves the task branch and raw diagnostics, then creates a strategy-free
+Work Attention. Assistant inspects the environment and current authority and decides whether to
+retry, change the plan, or request operator authority. Only an explicit operator request transfers
+ownership to the user.
 
 ### Restart recovery
 

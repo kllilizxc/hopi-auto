@@ -25,7 +25,6 @@ describe('software delivery profile', () => {
     expect(profile).toMatchObject({
       version: 1,
       id: 'software-delivery-v1',
-      retry: { maxAttempts: 3, exhausted: 'create_attention' },
       concurrency: { planner: 3, generator: 3, reviewer: 3 },
     })
     expect(responsibilityFor('planning', 'plan')).toBe('planner')
@@ -61,7 +60,6 @@ describe('software delivery profile', () => {
       `version: 1
 id: software-delivery-v1
 dispatch: []
-retry: { maxAttempts: 5, exhausted: create_attention }
 concurrency: { planner: 2, generator: 8, reviewer: 2 }
 `,
     )

@@ -1,7 +1,7 @@
 # HOPI MVP State Machine
 
 Status: accepted derived reference
-Last updated: 2026-07-19
+Last updated: 2026-07-23
 
 This document visualizes the lifecycle rules accepted in [the MVP design](./mvp_design.md). It is
 not a second source of truth. Schemas belong to [the document model](./mvp_document_model.md),
@@ -15,7 +15,8 @@ The operator-facing product has **Assistant**, **Project**, and **Goal**. Projec
 without a workflow lifecycle. Attention is an internal control document. Targeted Attention blocks
 its target and projects as **Waiting for Assistant** or **Needs you** from its explicit current
 operator-request pointer; delivery alone never transfers ownership to the operator. Targetless
-Attention appears as a normal Goal completion update. It is not another product concept.
+Attention is readable legacy completion state. New completion updates derive from final Planning
+Evidence. Attention is not another product concept.
 
 Five internal document types have these minimal durable control fields:
 
@@ -47,8 +48,9 @@ its receipt from `pending` to `handled`. Eligibility ignores that receipt during
 receipt itself has no extra state, and after a crash it is eligible as normal pending input.
 
 Pass results are `success | reject | attention | fail`. Prose explains a result but cannot invent a
-transition. A tool error observed by Coordinator is `fail`. If the Coordinator or runner process
-disappears before a Work gate is published, no result is consumed and `attempts` may remain
+transition. An invalid proposal is an application result, while provider, process, and infrastructure
+failure is a runtime fact; neither is rewritten into semantic `fail`. If the Coordinator or runner
+process disappears before a Work gate is published, no result is consumed and `attempts` may remain
 unchanged.
 
 Stable identity is explicit: event `(homeId, eventId)`, Goal `(projectId, goalId)`, Work
@@ -104,9 +106,9 @@ or written, startup fails closed and an external supervisor alerts the operator.
 
 If a durable C1 ref exists but a managed integration projection is missing, partial, or inconsistent,
 HOPI creates or reuses project-target Attention and keeps the Project unscheduled. Managed ownership
-does not make canonical documents disposable, so the MVP performs no destructive repair. Delivery
-recovery performs only the same verified fast-forward of the linked clean checkout; all other
-checkout states remain untouched and nonblocking because they do not own canonical truth.
+does not make canonical documents disposable, so the MVP performs no destructive repair. Recovery
+repairs only HOPI-managed projections; selected user checkouts remain untouched because they do not
+own canonical truth.
 
 ## Internal Attention
 
@@ -114,15 +116,15 @@ Attention has no `kind`, `status`, or stored scope:
 
 | Field             | Meaning                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------- |
-| `target`          | One canonical reference, or `null` for Goal completion                                      |
+| `target`          | One canonical reference, or legacy `null` completion state                                  |
 | `resolvedAt`      | `null` while open; resolution time otherwise                                                |
 | `notifiedAt`      | Attention-linked complete public Assistant reply acknowledgement, otherwise `null`          |
 | `operatorRequest` | Exact public Assistant event currently awaiting an operator reply, otherwise `null`         |
 | `retryRunId`      | Exact reserved or executing Run for one pending invocation, otherwise `null`                |
 
-Storage path derives scope. Goal-local Attention may target only its owning Goal or Work, or use
-`target: null` for that Goal's completion. Workspace Attention may target an Inbox event or linked
-project. Delivery identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
+Storage path derives scope. Goal-local Attention may target only its owning Goal or Work; legacy
+records may use `target: null`. Workspace Attention may target an Inbox event or linked project.
+Delivery identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
 `(homeId, attentionId)` for workspace Attention. Inbox context stores the complete canonical
 reference; a bare local ID is never written because it can repeat in another Goal or home.
 
@@ -146,10 +148,9 @@ covers only that object. One condition spanning unrelated roots creates one Atte
 Target is immutable; a condition moving to another target resolves the old document and creates a
 new one.
 
-Open Goal-local Attention with `target: null` is a non-blocking completion proposal. It becomes a
-deliverable completion update only when its Goal is `done` and points to it, and resolves when
-delivery is acknowledged. A Goal has at most one open targetless Attention not yet claimed by
-`completionAttentionId`.
+Legacy Goal-local Attention with `target: null` is a non-blocking completion update. It remains
+readable and may resolve when delivery is acknowledged, but no new responsibility Run creates one.
+New Goal completion derives from final Planning Evidence.
 
 `notifiedAt` records speaking-Assistant delivery, not operator ownership or resolution. An
 informational notification may set it while `operatorRequest` remains null. A request for an exact
@@ -193,10 +194,7 @@ flowchart LR
     PUB --> D
 
     E -->|no| G{Active Goal has no nonterminal Work?}
-    G -->|yes| CP{Current final Planner completion proposal?}
-    CP -->|yes| GC[Prepare Goal done pointer gate]
-    CP -->|no| PG[Ensure final Planning Work guard]
-    GC --> PUB
+    G -->|yes| PG[Ensure final Planning Work guard]
     PG --> PUB
 
     G -->|no| W{ready Work exists?}
@@ -206,10 +204,10 @@ flowchart LR
     RUN --> O{Validated pass output}
     O -->|Reviewer success| C1[Independent durable C1 integration]
     O -->|attention plus targeted Attention| TA
-    O -->|Planner completion proposal| PC[Prepare targetless Attention and Planning Work done gate]
-    O -->|operational failure below limit| OB[Record Attempt and bounded runtime backoff]
-    OB --> D
-    O -->|third consecutive operational failure| TA
+    O -->|final Planner success| PC[Prepare Evidence and Planning Work plus Goal done gate]
+    O -->|invalid application| IV[Retain exact Attempt diagnostic]
+    IV --> D
+    O -->|operational failure| TA
     O -->|other accepted result| WG[Prepare Evidence and one Work gate]
     PC --> PUB
     WG --> PUB
@@ -350,22 +348,20 @@ or diagnostics but cannot advance Work. Cancel installs the same guard first, th
 nonterminal Work without reverting integrated history.
 
 Planner owns semantic completion assessment. In a final Planning publication it either creates
-more Engineering Work, requests operator input, or writes the Goal's one open unclaimed targetless
-Attention as support before marking Planning Work `done`. The proposal contains the completion
-summary and links to existing proof; its ID is not derived from a content digest. If the Project
+more Engineering Work, requests operator input, or returns success with no nonterminal Engineering
+Work. Final Planning Evidence records its completion judgment and proof. If the Project
 declares Preview capability, final Planning receives a formal Preview session whose identity includes
-every current Repo release head. A new completion proposal must retain direct surface evidence from
-that session as a current-Run artifact; candidate evidence, older artifacts, and transport readiness
+every current Repo release head. Final success must retain direct surface evidence from that session
+as a current-Run artifact; candidate evidence, older artifacts, and transport readiness
 remain Engineering evidence only. The evidence must directly expose and exercise the accepted
 Goal's user-visible outcome rather than substitute a generic healthy Preview state.
 
-Coordinator owns only the lifecycle transition. With that durable proposal, no nonterminal Work,
-no covering targeted Attention, and valid C1 structure, it publishes Goal `lifecycle: done` plus
-`completionAttentionId` as the single completion gate. An accepted instruction that changes the
-contract or requires new Planning must first resolve the unclaimed proposal as superseded. A
-process stop before the Planning gate causes Planner to reassess; a stop after it lets Coordinator
-finish without another semantic model call. Reopen resolves the referenced completion and clears
-the pointer before new planning.
+Coordinator owns only the lifecycle transition. With final Planner success, no nonterminal Work,
+no covering targeted Attention, and valid C1 structure, it publishes final Planning Evidence,
+Planning Work `done`, and Goal `lifecycle: done` in one guarded publication. A process stop before
+the Goal gate leaves no false completion; Reconciler may ensure a new final Planning Work. Reopen
+creates new Planning without deleting historical Evidence. `completionAttentionId` remains nullable
+only for legacy records.
 
 ## Planning Work And Authority Revisions
 
@@ -378,7 +374,8 @@ admission.
 Planner reads current Goal, Inputs, design, Work, and Evidence to determine why planning is needed;
 the Work stores no separate trigger pointer. Planner publishes prerequisite Engineering Work before
 dependents plus the remaining design and supporting documents. Planning Work `done` is the result
-gate that exposes the accepted plan or final completion proposal to Coordinator.
+gate for an accepted plan. During final Planning, Goal `done` is the gate and the completed Planning
+Work plus Evidence are supporting writes.
 
 A material Goal revision is the global authority boundary. It interrupts admitted Runs for that
 Goal and leaves existing nonterminal Engineering Work on their prior `contractRevision`, making
@@ -407,13 +404,14 @@ Input. A design-file write does not mechanically trigger a revision, Planning Wo
 or code change; the model proposes those effects only when the instruction and current Goal require
 them.
 
-For an Engineering `attention` result, available Evidence and one targeted Attention are published
-without a Work gate. Speaking Assistant decides whether current authority answers it, Planning is
-needed, or the operator must decide. There is no direct responsibility-to-responsibility handoff.
+For an Engineering `attention` result, available Evidence and one or more targeted Attentions are
+published without a Work gate. Speaking Assistant decides whether current authority answers them,
+Planning is needed, or the operator must decide. There is no direct
+responsibility-to-responsibility handoff.
 
 Planning triggers include Goal creation, material contract change, resume, reopen, explicit
-Assistant-requested planning that adopts the current turn, and an active Goal with neither
-nonterminal Work nor a current completion proposal. A stale Run result changes no canonical
+Assistant-requested planning that adopts the current turn, and an active Goal with no nonterminal
+Work. A stale Run result changes no canonical
 authority and therefore does not trigger Planning. An interrupted Planner simply runs again while
 its Planning Work remains at `plan`.
 
@@ -458,7 +456,7 @@ stateDiagram-v2
 
 The `Review -> Generate` transition preserves the Generator responsibility Session and task
 workspace, but the next Attempt receives the complete current assignment. Current Reviewer or
-integration rejection supersedes prior completion claims; ordinary interruption and Pause/Resume
+integration rejection supplies current repair facts; ordinary interruption and Pause/Resume
 continue to use changed-section continuation.
 
 Dispatch never changes stage. Responsibility is a pure function of Work kind and stage:
@@ -472,7 +470,7 @@ Dispatch never changes stage. Responsibility is a pure function of Work kind and
 After every Generator Run, Coordinator may create a task-branch source savepoint. The savepoint has
 no state-machine meaning and may preserve partial output from any result. Artifacts and Evidence are
 supporting writes. One Work-file update is the result gate for ordinary outcomes; `attention`
-instead publishes Evidence plus one targeted Attention without changing Work. Ordinary gates append relevant
+instead publishes Evidence plus targeted Attention without changing Work. Ordinary gates append relevant
 `evidenceRefs`, change stage if required, and increment top-level `attempts` for Reviewer `reject`
 or deterministic pre-C1 rejection. `fail` instead appends its Evidence without changing stage or
 `attempts`, then Coordinator creates or reuses exact Work-target Attention as the next publication.
@@ -537,7 +535,6 @@ ready(work) :=
   and work.contractRevision == goal(work).contractRevision
   and every work.dependsOn item is done
   and (work.notBefore is null or work.notBefore <= now)
-  and work.attempts < profile.maxAttempts
   and no open targeted Attention covers its project, Goal, or Work
   and no active Run owns the Work lease
   and no unsettled Assistant turn has touched the Goal
@@ -546,12 +543,8 @@ ready(work) :=
 
 A false predicate leaves stage unchanged. Planning and Engineering use the same readiness model;
 capacity, leases, time, revision, and project-root eligibility remain runtime concerns. An active
-Goal with no nonterminal Work completes only from a current final Planner proposal; otherwise
-Reconciler ensures Planning Work for semantic assessment.
-
-If `attempts >= maxAttempts`, Work is never ready. Reconciler creates or reuses targeted Attention
-before considering it again, so an incomplete notification publication cannot make exhausted Work
-runnable.
+Goal with no nonterminal Work causes Reconciler to ensure Planning Work for semantic assessment.
+Final Planner success completes the Goal in its own guarded application.
 
 ## Retry and Process Restart
 
@@ -679,22 +672,22 @@ outcome. Other state and document changes do not participate in this runtime tra
   supporting writes and at most one domain gate; multiple gates or roots use ordered publications.
 - Ordinary publication promises process-crash recovery. Input acknowledgement waits for a durable
   Inbox turn, and successful integration waits for a durable `C1` target ref.
-- A Goal has at most one Planning Work at `plan`. While it exists, no Engineering Work in that Goal
-  may dispatch, publish a returning result, or enter `C1`. Planning Work never appears in
-  Engineering `dependsOn`.
+- A Goal has at most one Planning Work at `plan`. Same-revision Planning and Engineering remain
+  independently schedulable; Planning Work never appears in Engineering `dependsOn`.
 - Attention has no kind, status, or stored scope. `resolvedAt: null` alone means open. An open
   non-null target blocks except while its nullable `retryRunId` admits one invocation; during
   that interval it has no attention badge or Assistant handoff. Its nullable exact
   `operatorRequest` pointer otherwise derives whether its badge is **Waiting for Assistant** or
-  **Needs you**. `notifiedAt` is delivery history only. A null target is Goal completion and never
-  blocks.
+  **Needs you**. `notifiedAt` is delivery history only. A null target is readable legacy completion
+  state and never blocks.
 - Attention resolution records Assistant judgment and requests ordinary reconciliation; it never
   overrides an execution precondition. The component that owns a durable or safety boundary checks
   that boundary again before acting and fails closed through ordinary Project Attention when it is
   still unsafe.
-- Operational exhaustion reuses ordinary Work-target Attention and is derived from Attempt history;
-  it adds no Work field, Attention identity convention, or Kanban state. Explicit Work retry marks
-  the exact Work blocker pending; only its later invocation result settles or reopens ownership.
+- The first operational failure creates or reuses ordinary Work-target Attention and is
+  reconstructable from Attempt history. It adds no retry threshold, Work field, Attention identity
+  convention, or Kanban state. Explicit Work retry marks the exact Work blocker pending; only its
+  later invocation result settles or reopens ownership.
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
 - An internal Attention handoff records an ordinary Assistant turn. An informational final response
@@ -717,14 +710,12 @@ outcome. Other state and document changes do not participate in this runtime tra
   nonterminal dependent, preserves all history, and never mutates terminal Work. Planner performs
   that closure inside its existing Planning publication and therefore creates no second Planning
   Work.
-- `completionAttentionId` is present exactly while Goal lifecycle is `done`. Only final Planner
-  success may create the Goal's one open unclaimed targetless completion proposal; Coordinator may
-  only claim it after structural guards pass. Completion creates no second document or
-  content-derived identity.
+- New Goal completion leaves `completionAttentionId` null. A non-null value is legacy compatibility
+  state and is valid only while Goal lifecycle is `done`.
 - A Work result is consumed only by its owning Work gate for ordinary outcomes. An `attention`
   outcome instead publishes Evidence plus the targeted Attention and leaves Work unchanged;
   Evidence without a Work gate remains provenance and permits a new Run after resolution.
-- `work.attempts >= profile.maxAttempts` is never ready and gains targeted Attention.
+- `work.attempts` records reviewed repair history and is never a readiness limit.
 - An Engineering Work's integration commit is the unique reachable durable-ref `C1` carrying its
   qualified Work trailer; the same tree contains Work `done` and its Evidence references.
 - Any post-C1 managed projection anomaly creates project-target Attention and keeps the Project

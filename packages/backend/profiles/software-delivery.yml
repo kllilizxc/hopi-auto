@@ -14,10 +14,6 @@ dispatch:
     pass: reviewer
     on: { success: done, reject: generate }
 
-retry:
-  maxAttempts: 3
-  exhausted: create_attention
-
 concurrency:
   planner: 3
   generator: 3

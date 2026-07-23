@@ -1,5 +1,4 @@
-import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
-import { isAttentionBlocking, isWorkTerminal } from '../domain/canonicalDocuments'
+import { isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { type WorkRuntimeFacts, deriveGoalWorkProjections } from '../domain/workProjection'
 
@@ -10,7 +9,6 @@ export type ReconcileDecision =
       responsibility: 'planner' | 'generator' | 'reviewer'
     }
   | { kind: 'ensure_planning' }
-  | { kind: 'ensure_attention'; workId: string; target: string; reason: 'attempts_exhausted' }
   | { kind: 'complete_goal'; attentionId: string }
   | { kind: 'finish_cancellation' }
   | { kind: 'wait'; reasons: string[] }
@@ -45,20 +43,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
   const nonterminal = [...goalPackage.works.values()].filter(
     (work) => !isWorkTerminal(work.attributes),
   )
-  const exhausted = nonterminal.find(
-    (work) =>
-      work.attributes.attempts >= (runtime.maxAttempts ?? 3) &&
-      !hasCoveringAttention(projectId, goalId, work.attributes.id, goalPackage),
-  )
-  if (exhausted) {
-    return {
-      kind: 'ensure_attention',
-      workId: exhausted.attributes.id,
-      target: workAttentionTarget(projectId, goalId, exhausted.attributes.id),
-      reason: 'attempts_exhausted',
-    }
-  }
-
   if (nonterminal.length === 0) {
     const completion = [...goalPackage.attentions.values()].find(
       (attention) =>
@@ -112,21 +96,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
       ),
     ],
   }
-}
-
-function hasCoveringAttention(
-  projectId: string,
-  goalId: string,
-  workId: string,
-  goalPackage: GoalPackage,
-) {
-  const goalTarget = goalAttentionTarget(projectId, goalId)
-  const workTarget = workAttentionTarget(projectId, goalId, workId)
-  return [...goalPackage.attentions.values()].some(
-    (attention) =>
-      isAttentionBlocking(attention.attributes) &&
-      (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
-  )
 }
 
 function hasAnyOpenTargetedAttention(goalPackage: GoalPackage) {

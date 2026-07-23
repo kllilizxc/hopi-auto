@@ -1076,22 +1076,15 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
-  test('requests exhausted Work retry without resolving its exact Attention early', async () => {
+  test('requests Work retry without resolving its exact Attention early', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const path = fixture.goalStore.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(fixture.goalStore.paths.absolute(path)).text()
-    const work = parseWorkDocument(source)
-    work.attributes.attempts = 3
-    await fixture.goalStore.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(work),
-      },
-    })
-    const attention = await fixture.controller.ensureAttemptsAttention('G-1', 'plan-initial')
+    const attention = await fixture.controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      1,
+      'The runtime invocation ended before producing a result.',
+    )
     await fixture.workspace.receiveEvent({
       eventId: 'EV-1',
       content: 'Retry this Work and clear the blocker.',
@@ -1369,19 +1362,12 @@ describe('Assistant HOPI tools', () => {
   test('answers a blocked Planner with one represented material revision', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const workPath = fixture.goalStore.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(fixture.goalStore.paths.absolute(workPath)).text()
-    const work = parseWorkDocument(source)
-    work.attributes.attempts = 3
-    await fixture.goalStore.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: workPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(work),
-      },
-    })
-    const attention = await fixture.controller.ensureAttemptsAttention('G-1', 'plan-initial')
+    const attention = await fixture.controller.ensureOperationalFailureAttention(
+      'G-1',
+      'plan-initial',
+      1,
+      'The runtime invocation ended before producing a result.',
+    )
     const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
     await fixture.workspace.receiveEvent({
       eventId: 'EV-revise',

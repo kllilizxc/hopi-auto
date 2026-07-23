@@ -83,7 +83,6 @@ export interface GoalController {
       planningSettlement?: PlanningAttentionSettlement
     },
   ): Promise<GoalDocument>
-  ensureAttemptsAttention(goalId: string, workId: string): Promise<AttentionDocument>
   ensureResponsibilityFailureAttention(
     goalId: string,
     workId: string,
@@ -311,7 +310,7 @@ export function createGoalController(
           '## Acceptance Criteria',
           '',
           '- Current Goal criteria and proof are assessed semantically.',
-          '- Additional Work, targeted Attention, or one completion proposal is published.',
+          '- Additional Work or targeted Attention is published, or final success completes the Goal.',
           '',
           ...(acceptedInput ? ['## Accepted Inputs', '', `- ${acceptedInput.path}`, ''] : []),
           ...(context.references?.length
@@ -426,47 +425,6 @@ export function createGoalController(
       })
       return nextGoal
     },
-    async ensureAttemptsAttention(goalId, workId) {
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(
-          `Cannot create retry Attention for missing or terminal Work: ${workId}`,
-        )
-      }
-      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-      const existing = [...goalPackage.attentions.values()].find(
-        (attention) =>
-          attention.attributes.target === target && attention.attributes.resolvedAt === null,
-      )
-      if (existing) return existing
-
-      const attention: AttentionDocument = {
-        attributes: {
-          id: `attempts-${workId}-${work.attributes.attempts}-${crypto.randomUUID()}`,
-          target,
-          createdAt: now().toISOString(),
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        body: [
-          '## Reviewed attempt limit reached',
-          '',
-          `Work ${workId} exhausted its ${work.attributes.attempts} reviewed repair attempts.`,
-          '',
-        ].join('\n'),
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path: store.paths.attentionDocument(goalId, attention.attributes.id),
-          expectedHash: null,
-          content: renderAttentionDocument(attention),
-        },
-      })
-      return attention
-    },
     async ensureResponsibilityFailureAttention(goalId, workId, responsibility, latestFailure) {
       const goalPackage = await store.readPackage(goalId)
       const work = goalPackage.works.get(workId)
@@ -537,12 +495,12 @@ export function createGoalController(
           operatorRequest: null,
         },
         body: [
-          '## Needs attention',
+          '## Runtime failure observed',
           '',
-          `Work ${workId} could not run successfully after ${failures} consecutive operational failures.`,
-          'No published Work recovery attempt was consumed.',
+          `Work ${workId} ended at the execution boundary without publishing a responsibility result.`,
+          `Observed consecutive runtime failures: ${failures}.`,
           '',
-          '## Latest failure',
+          '## Observation',
           '',
           boundedAttentionText(latestFailure),
           '',

@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-18
+Last updated: 2026-07-23
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -352,11 +352,13 @@ written back into Goal, Work, Evidence, or retry state.
 tools and short-lived local services operate inside the existing Run capability without granting
 another source root; it is never source, Evidence, or Preview state. Reusable tool caches live at
 `<hopi-home>/.hopi/cache/`, outside every Run. Before applying a valid result, Coordinator keeps a
-verified Project-relative source path portable as-is; every declared Run-local proof file is copied
-into the Run's `artifacts/`, its original diagnostic location is recorded in `artifacts.json`, and
-the model-supplied path is replaced with `artifact:<runId>/<artifactName>`. Evidence may contain
-either portable form but never an absolute local path. Once the responsibility process is gone and
-its declared proof is preserved, Coordinator
+verified Project-relative source path portable as-is. Every file in the Run artifact output
+directory is retained automatically; an explicitly declared Run-local proof file is handled the
+same way. Retained files are copied into the Run's `artifacts/`, their original diagnostic locations
+are recorded in `artifacts.json`, and their references become
+`artifact:<runId>/<artifactName>`. Proposal files are discovered only from `proposal/` and never
+become Evidence artifacts. Evidence may contain either portable form but never an absolute local
+path. Once the responsibility process is gone and its proof is preserved, Coordinator
 removes `scratch/`; terminal scratch left by a process crash is removed during restart recovery.
 On restart, a manifest still marked `running` becomes `interrupted`; Coordinator never reattaches its
 child. The former `<projectId>/<goalId>/<workId>/<runId>` layout remains read-only compatible during
@@ -406,10 +408,9 @@ Kanban semantics.
 - `contractRevision`
 - objective, constraints, and non-goals
 - success criteria
-- `completionAttentionId`, non-null only while lifecycle is `done`
 
 It does not store current focus, a workflow status, or completion prose. Current focus is derived
-from nonterminal Work and open Attention. Completion detail belongs to completion Attention.
+from nonterminal Work and open Attention. Final Planning Evidence records completion detail.
 
 Material changes to objective, deliverable scope, constraints, non-goals, success criteria, or a
 decision that changes expected behavior increment `contractRevision`. Explicit reopen also
@@ -429,9 +430,8 @@ integration. An interrupted pass may preserve isolated artifacts and Attempt dia
 cannot advance canonical Work while paused. Material instructions may update a paused contract
 without implicitly resuming it.
 
-Resume ensures current Planning Work. Reopen increments the contract revision, resolves an open
-old completion Attention as superseded, clears `completionAttentionId`, ensures Planning Work,
-and never revives terminal Work.
+Resume ensures current Planning Work. Reopen increments the contract revision when required, ensures
+Planning Work, and never revives terminal Work.
 
 Goal cancellation installs the Goal `cancelled` guard first, then cancels nonterminal Work and
 resolves superseded Goal-local Attention. After a process crash, ordinary Reconciler cleanup follows
@@ -581,15 +581,16 @@ Input remain separate first-class documents because normalization and source pro
 different facts.
 
 Triggers include Goal creation with a Planning first Work, material contract change, resume,
-reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with
-neither nonterminal Work nor a current completion proposal. A stale Run result is not a planning
-trigger because it has no authority to change the Goal or Work.
+reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with no
+nonterminal Work. A stale Run result is not a planning trigger because it has no authority to change
+the Goal or Work.
 
 Clarification and final assessment remain model judgment inside the same Planning Work. The
 document model adds no `clarify` or completion stage, approval flag, structured question, or
-criteria-mapping field. A targeted question leaves Planning Work at `plan`; only final Planner
-success may create an unclaimed targetless completion proposal as support before Coordinator changes
-Planning Work to `done`. Detailed Planner behavior belongs to
+criteria-mapping field. A targeted question leaves Planning Work at `plan`; final Planner `success`
+with no nonterminal Engineering Work is the semantic completion judgment. Coordinator atomically
+changes Planning Work to `done` and Goal lifecycle to `done` after structural verification. Detailed
+Planner behavior belongs to
 [the execution design](./mvp_execution.md#planner).
 
 Planning Work is ordinary schedulable Work, not a Goal-wide lock. Same-revision Planning and
@@ -653,20 +654,19 @@ A result whose semantic guard is already stale remains Run-local Attempt history
 canonical Evidence and no planning request. Canonical unconsumed Evidence can still exist when a
 process stops after its supporting write but before its Work gate, and remains provenance only.
 
-#### Bounded recovery
+#### Recovery history
 
-Work has one retry counter:
+Work retains one repair-history counter:
 
 ```yaml
 attempts: 2
 ```
 
-`attempts` is the number of published reviewed implementation-repair outcomes in the current
-recovery episode: Reviewer `reject` and deterministic pre-C1 integration rejection. They increment
-the same counter regardless of the current engineering stage. `attention` publishes no owning-Work
-outcome and does not increment attempts. A responsibility `fail` appends its Evidence but likewise
-does not consume the repair counter; Coordinator then creates Work-target Attention so speaking
-Assistant can decide whether Planning, retry, cancellation, or operator input is needed. The ordered
+`attempts` counts published reviewed implementation-repair outcomes in the current recovery episode:
+Reviewer `reject` and deterministic pre-C1 integration rejection. It is history, not a dispatch
+budget. `attention` publishes no owning-Work outcome and does not increment attempts. A
+responsibility `fail` appends its Evidence and creates Work-target Attention so speaking Assistant
+can decide whether Planning, retry, cancellation, or operator input is needed. The ordered
 `evidenceRefs` retains consumed Evidence, from which models derive repair context.
 
 Ordinary pass success never clears recovery. The counter clears only when a material contract
@@ -674,17 +674,17 @@ revision invalidates the episode, Planning publishes a materially changed plan, 
 the explicit retry control. Retry is audited by the durable Assistant turn, exact Work effect, and
 settled Work Attention; it does not create Goal Input.
 
-A timed autonomous retry uses Work `notBefore`. Conditions HOPI cannot resolve create targeted
-Attention. When `attempts == maxAttempts`, targeted Attention is ensured before another attempt can
-dispatch. A process crash before the Work gate may leave Evidence without incrementing `attempts`
-and a new Run may retry it. An Attention-producing outcome intentionally leaves Work unchanged and
-starts a new Run only after Attention resolves. HOPI never reconstructs either old transition.
-Restart, a new Run, pass success, or a task branch commit never resets a published count. Terminal
-Work remains in `work/`.
+A timed Assistant-selected retry uses Work `notBefore`. Conditions the current responsibility cannot
+resolve create targeted Attention. A process crash before the Work gate may leave Evidence without
+incrementing `attempts`. Runtime failure creates one strategy-free Work Attention rather than a
+hidden retry episode. An Attention-producing outcome intentionally leaves Work unchanged and starts
+a new Run only after Attention resolves. HOPI never reconstructs either old transition. Restart, a
+new Run, pass success, or a task branch commit never resets a published count. Terminal Work remains
+in `work/`.
 
 ### `attention/<attentionId>.md`
 
-Attention is the only durable model for a blocker or completion that Assistant may need to surface.
+Attention is the durable model for a condition that pauses Work or requires Assistant ownership.
 There is no separate decision entity or blocker entity. One nullable event reference records the
 only wait relation that affects ownership.
 
@@ -700,7 +700,8 @@ retryRunId: null
 ---
 ```
 
-`target` is exactly one canonical event, project, Goal, or Work reference, or null for completion.
+`target` is exactly one canonical event, project, Goal, or Work reference. Legacy targetless
+completion Attention remains readable but no new Run creates it.
 An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` and
 `retryRunId` are null, has no ownership badge while its one requested invocation is pending,
 and projects as **Needs you** only while `operatorRequest` contains the exact
@@ -710,10 +711,10 @@ delivery history and may be non-null in either projection.
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
 
 `createdAt` is the Coordinator's publication timestamp, not model-authored time. Responsibility
-proposals carry the fixed parseable placeholder `1970-01-01T00:00:00.000Z`; Coordinator replaces it
-while publishing every new targeted or completion Attention. The body and identity remain model
-output. This keeps time in the deterministic persistence boundary without adding another field or
-clock protocol.
+proposals carry the parseable placeholder declared by the proposal capability schema; Coordinator
+replaces it while publishing every new targeted Attention. The body and identity remain model output.
+This keeps time in the deterministic persistence boundary without adding another field or clock
+protocol.
 
 Storage location derives ownership:
 
@@ -739,24 +740,12 @@ unchanged notification; after resolution, a later recurrence creates a new ID.
 
 Targeted Attention has exactly one immutable target. A Goal or project target covers its contained
 nonterminal Work. A problem affecting unrelated roots creates one Attention per root; their bodies
-may link each other, but that correlation owns no control state. Targetless Attention is a
-completion proposal and update, and never blocks. Only final Planner success may create it as
-support for the Planning Work `done` gate. Each Goal has at most one open targetless Attention not
-yet claimed by `completionAttentionId`; Planner reuses it while its message remains accurate or
-resolves it as superseded before creating another. Any accepted instruction that changes the
-contract or requires new Planning must first resolve an unclaimed proposal, so no revision field
-is needed on Attention. Work and inbox events do not copy a blocking field.
+may link each other, but that correlation owns no control state. One responsibility Run may publish
+several independent targeted Attentions atomically. Work and inbox events do not copy a blocking
+field.
 
-The body is free Markdown. The following headings are a writing convention for models, not a
-schema or parser contract:
-
-- Assistant clarification: exact question or condition, context, recommendation, trade-offs,
-  consequence of delay, owner, retry condition, and Evidence. For Work-targeted problems, Work
-  `attempts` remains authoritative; Attention may include only a creation-time summary.
-- completion notification: delivered outcome, commits, checks, Evidence, limitations, and
-  deferred follow-up
-- resolution: references to the answering Input, blocker-clearing Evidence, completion delivery,
-  or supersede reason
+The body is free Markdown. It contains the observed condition and enough context for Assistant to
+judge the next action; Coordinator neither requires headings nor parses strategy from the prose.
 
 The canonical identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
 `(homeId, attentionId)` for workspace Attention. Inbox correlation always stores the complete

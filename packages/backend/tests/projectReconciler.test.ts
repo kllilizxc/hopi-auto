@@ -8,11 +8,7 @@ import type {
   RoleRunResult,
   RoleRunner,
 } from '../src/agent/RoleRunner'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { projectReleaseRef } from '../src/domain/project'
 import { resolveProjectPath } from '../src/domain/projectPath'
 import { PublicationCoordinator } from '../src/publication/publisher'
@@ -46,7 +42,7 @@ describe('ProjectReconciler', () => {
     })
 
     const results = []
-    for (let cycle = 0; cycle < 6; cycle += 1) {
+    for (let cycle = 0; cycle < 5; cycle += 1) {
       results.push(await fixture.reconciler.reconcileGoal('goal-1'))
     }
     const goalPackage = await fixture.store.readPackage('goal-1')
@@ -57,7 +53,6 @@ describe('ProjectReconciler', () => {
       'pass_finished',
       'planning_ensured',
       'pass_finished',
-      'goal_completed',
     ])
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer', 'planner'])
     expect(fixture.runner.plannerCwds).toEqual(
@@ -76,7 +71,7 @@ describe('ProjectReconciler', () => {
       fixture.runner.repoRootsByRun.find((run) => run.responsibility === 'generator')?.paths[0],
     )
     expect(goalPackage.goal.attributes.lifecycle).toBe('done')
-    expect(goalPackage.goal.attributes.completionAttentionId).not.toBeNull()
+    expect(goalPackage.goal.attributes.completionAttentionId).toBeNull()
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
@@ -105,7 +100,7 @@ describe('ProjectReconciler', () => {
     const fixture = await createFixture({ directInitialWork: true })
 
     const results = []
-    for (let cycle = 0; cycle < 5; cycle += 1) {
+    for (let cycle = 0; cycle < 4; cycle += 1) {
       results.push(await fixture.reconciler.reconcileGoal('goal-1'))
     }
     const goalPackage = await fixture.store.readPackage('goal-1')
@@ -115,7 +110,6 @@ describe('ProjectReconciler', () => {
       'pass_finished',
       'planning_ensured',
       'pass_finished',
-      'goal_completed',
     ])
     expect(fixture.runner.responsibilities).toEqual(['generator', 'reviewer', 'planner'])
     expect(goalPackage.goal.attributes.lifecycle).toBe('done')
@@ -128,7 +122,7 @@ describe('ProjectReconciler', () => {
   test('completes a Preview-capable Project only from the current formal release session', async () => {
     const fixture = await createFixture({ formalReleasePreview: true })
 
-    for (let cycle = 0; cycle < 6; cycle += 1) {
+    for (let cycle = 0; cycle < 5; cycle += 1) {
       await fixture.reconciler.reconcileGoal('goal-1')
     }
     const goalPackage = await fixture.store.readPackage('goal-1')
@@ -230,7 +224,7 @@ describe('ProjectReconciler', () => {
       fixture.runner.refreshAssignmentsByRun
         .filter((run) => run.responsibility === 'generator')
         .map((run) => run.refreshAssignment),
-    ).toEqual([false, true])
+    ).toEqual([false, false])
     expect(
       fixture.runner.sessionsByRun
         .filter((run) => run.responsibility === 'reviewer')
@@ -583,7 +577,7 @@ describe('ProjectReconciler', () => {
     })
   })
 
-  test('does not consume a Work attempt when Coordinator checkpoint infrastructure fails', async () => {
+  test('contains Coordinator checkpoint infrastructure failure in Work Attention', async () => {
     const blocked: string[] = []
     const fixture = await createFixture({
       checkpointTask: async () => {
@@ -599,8 +593,8 @@ describe('ProjectReconciler', () => {
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
-    expect(result).toMatchObject({ kind: 'project_blocked' })
-    expect(blocked).toEqual([expect.stringContaining('git index is unavailable')])
+    expect(result).toMatchObject({ kind: 'attention_ensured' })
+    expect(blocked).toEqual([])
     expect(work?.attributes).toMatchObject({
       stage: 'generate',
       attempts: 0,
@@ -609,7 +603,7 @@ describe('ProjectReconciler', () => {
     expect(attempts.at(-1)).toMatchObject({
       status: 'finished',
       result: 'fail',
-      application: 'project_blocked',
+      application: 'operational_failure',
     })
   })
 
@@ -826,26 +820,19 @@ describe('ProjectReconciler', () => {
     expect(current?.body).toContain('Coordinator restarted')
   })
 
-  test('keeps operational process failure out of Work attempts and backs off redispatch', async () => {
-    const fixture = await createFixture({
-      generatorOperationalFailure: true,
-      operationalRetryBaseMs: 60_000,
-    })
+  test('keeps runtime process failure out of Work attempts and exposes it immediately', async () => {
+    const fixture = await createFixture({ generatorOperationalFailure: true })
 
     await fixture.reconciler.reconcileGoal('goal-1')
     const failed = await fixture.reconciler.reconcileGoal('goal-1')
-    const deferred = await fixture.reconciler.reconcileGoal('goal-1')
+    const blocked = await fixture.reconciler.reconcileGoal('goal-1')
     const goalPackage = await fixture.store.readPackage('goal-1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
-    expect(failed).toMatchObject({
-      kind: 'pass_finished',
-      result: 'fail',
-      application: 'operational_failure',
-    })
-    expect(deferred).toMatchObject({
+    expect(failed).toMatchObject({ kind: 'attention_ensured' })
+    expect(blocked).toMatchObject({
       kind: 'wait',
-      decision: { reasons: ['operational_backoff'] },
+      decision: { reasons: ['attention'] },
     })
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
@@ -855,8 +842,8 @@ describe('ProjectReconciler', () => {
     expect(attempts[0]).toMatchObject({ application: 'operational_failure' })
   })
 
-  test('reconstructs operational exhaustion from Attempt logs after restart', async () => {
-    const fixture = await createFixture({ operationalRetryBaseMs: 0 })
+  test('reconstructs a runtime failure Attention from Attempt logs after restart', async () => {
+    const fixture = await createFixture()
     await fixture.reconciler.reconcileGoal('goal-1')
     for (let index = 1; index <= 3; index += 1) {
       const runId = `persisted-${index}`
@@ -888,7 +875,7 @@ describe('ProjectReconciler', () => {
     expect(exhausted).toMatchObject({ kind: 'attention_ensured' })
     expect(attention?.attributes.id).toStartWith('A-')
     expect(attention?.attributes.id).not.toContain('operational')
-    expect(attention?.body).toContain('3 consecutive operational failures')
+    expect(attention?.body).toContain('Observed consecutive runtime failures: 3')
     expect(attention?.body).toContain('Runtime launch failed 3.')
     expect(goalPackage.works.get('W-1')?.attributes.attempts).toBe(0)
     expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
@@ -900,12 +887,25 @@ describe('ProjectReconciler', () => {
   test('cleans Reviewer residue and retries Reviewer without a Generator recovery', async () => {
     const fixture = await createFixture({
       reviewerOperationalWriteOnce: true,
-      operationalRetryBaseMs: 0,
     })
 
-    for (let cycle = 0; cycle < 4; cycle += 1) {
+    for (let cycle = 0; cycle < 3; cycle += 1) {
       await fixture.reconciler.reconcileGoal('goal-1')
     }
+    const attention = [...(await fixture.store.readPackage('goal-1')).attentions.values()].find(
+      (candidate) =>
+        candidate.attributes.target === 'project:project-1/goal:goal-1/work:W-1' &&
+        candidate.attributes.resolvedAt === null,
+    )
+    if (!attention) throw new Error('Expected Reviewer runtime Attention')
+    const controller = createGoalController(fixture.store, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      verifyCompletion: () => false,
+    })
+    await controller.retryWork('goal-1', 'W-1', null, {
+      resolution: 'Request another Reviewer invocation.',
+    })
+    await fixture.reconciler.reconcileGoal('goal-1')
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
     const worktree = join(
       fixture.homeRoot,
@@ -1015,7 +1015,7 @@ class DeliveryScriptRunner implements RoleRunner {
       if (this.options.plannerWaitForAbort) await waitForAbort(input.signal)
       else if (this.options.plannerResult === 'success') await this.plan(input)
       if (input.context.formalReleasePreview?.kind === 'session') {
-        const proof = join(input.context.browserHarnessArtifactDir, 'formal-release-proof.json')
+        const proof = join(input.context.artifactOutputDir, 'formal-release-proof.json')
         await mkdir(dirname(proof), { recursive: true })
         await Bun.write(
           proof,
@@ -1144,22 +1144,6 @@ class DeliveryScriptRunner implements RoleRunner {
         }),
       )
       await Bun.write(join(input.context.proposalRoot, 'AGENTS.md'), '# Test project\n')
-    } else {
-      const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-      await mkdir(dirname(attentionPath), { recursive: true })
-      await Bun.write(
-        attentionPath,
-        renderAttentionDocument({
-          attributes: {
-            id: `A-complete-${input.runId}`,
-            target: null,
-            createdAt: '2026-07-11T00:00:00Z',
-            resolvedAt: null,
-            notifiedAt: null,
-          },
-          body: '## Complete\n\nFeature 2 is integrated and verified.\n',
-        }),
-      )
     }
   }
 }
@@ -1176,7 +1160,6 @@ async function createFixture(
     reviewerRejectOnce?: boolean
     includeSecondaryRepo?: boolean
     projectPath?: string
-    operationalRetryBaseMs?: number
     worktrees?: StableWorktreeManager
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
@@ -1282,7 +1265,6 @@ async function createFixture(
       attempts,
       worktrees: options.worktrees,
       checkpointTask: options.checkpointTask,
-      operationalRetryBaseMs: options.operationalRetryBaseMs,
       onProjectBlocked: options.onProjectBlocked,
       onReleaseUpdated: options.onReleaseUpdated,
       prepareFormalReleasePreview: options.formalReleasePreview

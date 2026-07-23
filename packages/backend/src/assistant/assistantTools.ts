@@ -38,7 +38,6 @@ import type {
 } from '../runtime/goalController'
 import { type PreviewManager, readProjectReleaseHeads } from '../runtime/previewManager'
 import { withPreparedProjectRepositories } from '../runtime/projectDirectory'
-import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -1947,7 +1946,6 @@ async function resolveGoalAttention(
   const source = await file.text()
   const attention = parseAttentionDocument(source)
   if (attention.attributes.resolvedAt !== null) return false
-  await assertAttentionBlockerChanged(store, goalId, attention.attributes.target)
   attention.attributes.operatorRequest = null
   attention.attributes.retryRunId = null
   attention.attributes.resolvedAt = resolvedAt.toISOString()
@@ -1971,26 +1969,6 @@ async function resolveGoalAttention(
     },
   })
   return true
-}
-
-async function assertAttentionBlockerChanged(
-  store: GoalPackageStore,
-  goalId: string,
-  target: string | null,
-) {
-  const match = target ? parseWorkAttentionTarget(target) : null
-  if (!match) return
-  if (match.projectId !== store.paths.projectId || match.goalId !== goalId) {
-    throw new AssistantToolRequestError(`Goal Attention has an invalid Work target: ${target}`)
-  }
-  const work = (await store.readPackage(goalId)).works.get(match.workId)
-  if (!work || isWorkTerminal(work.attributes)) return
-  const profile = await readSoftwareDeliveryProfile()
-  if (work.attributes.attempts >= profile.retry.maxAttempts) {
-    throw new AssistantToolRequestError(
-      `Work ${match.workId} is still exhausted; retry, cancel, or revise it before resolving Attention`,
-    )
-  }
 }
 
 function requireProject(projects: ReadonlyMap<string, AssistantToolProject>, projectId: string) {

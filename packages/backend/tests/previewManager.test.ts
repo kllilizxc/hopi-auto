@@ -261,7 +261,14 @@ describe('PreviewManager', () => {
         'import { appendFile } from "node:fs/promises"',
         `await appendFile(${JSON.stringify(orderFile)}, ${JSON.stringify(`${repoId}\n`)})`,
       ].join('\n')
-    await writePrepareAdapter(projectRoot, appendOrder('web'))
+    await writePrepareAdapter(
+      projectRoot,
+      [
+        appendOrder('web'),
+        'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE).json()',
+        'if (manifest.releaseHeads?.web !== "release-web" || manifest.releaseHeads?.api !== "release-api") process.exit(3)',
+      ].join('\n'),
+    )
     await writePrepareAdapter(apiRoot, appendOrder('api'))
     await Bun.write(
       adapter,
@@ -286,6 +293,7 @@ describe('PreviewManager', () => {
       projectId: 'P-1',
       projectRoot,
       primaryRepoId: 'web',
+      releaseHeads: { web: 'release-web', api: 'release-api' },
       repoRoots: [
         { repoId: 'web', path: projectRoot },
         { repoId: 'api', path: apiRoot },

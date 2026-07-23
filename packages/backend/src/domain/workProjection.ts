@@ -19,10 +19,8 @@ export type WorkReadinessReason =
   | 'stale_contract_revision'
   | 'dependency_incomplete'
   | 'not_before'
-  | 'attempts_exhausted'
   | 'attention'
   | 'live_run'
-  | 'operational_backoff'
   | 'capacity'
   | 'no_profile_pass'
 
@@ -30,9 +28,7 @@ export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
   passCapacity: Partial<Record<'planner' | 'generator' | 'reviewer', boolean>>
-  operationallyDeferredWorkIds?: ReadonlySet<string>
   now?: Date
-  maxAttempts?: number
 }
 
 export interface WorkProjection {
@@ -64,7 +60,6 @@ export function deriveWorkProjection(
   runtime: WorkRuntimeFacts,
 ): WorkProjection {
   const goal = goalPackage.goal.attributes
-  const maxAttempts = runtime.maxAttempts ?? 3
   const now = runtime.now ?? new Date()
   const responsibility = responsibilityFor(work.kind, work.stage)
   const failedPredicates: WorkReadinessReason[] = []
@@ -86,16 +81,12 @@ export function deriveWorkProjection(
   }
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
-  if (work.attempts >= maxAttempts) failedPredicates.push('attempts_exhausted')
   const coveringAttention = findCoveringAttention(projectId, goalId, work.id, goalPackage)
   const needsAttention = Boolean(coveringAttention)
   const waitingForOperator = Boolean(coveringAttention?.attributes.operatorRequest)
   if (needsAttention) failedPredicates.push('attention')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
-  if (runtime.operationallyDeferredWorkIds?.has(work.id)) {
-    failedPredicates.push('operational_backoff')
-  }
   if (responsibility && runtime.passCapacity[responsibility] === false) {
     failedPredicates.push('capacity')
   }

@@ -111,11 +111,8 @@ describe('PassOutcomeCoordinator', () => {
       fixture.input('plan-initial', 'run-forged-dispatch', 'planner', context, 'success'),
     )
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary: expect.stringContaining(
-        'Planner may not create Assistant-dispatched Engineering Work',
-      ),
+      kind: 'invalid',
+      reason: 'Planner may not create Assistant-dispatched Engineering Work',
     })
     expect((await fixture.store.readPackage('goal-1')).works.has('W-forged')).toBe(false)
   })
@@ -256,7 +253,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(result).toEqual({
       kind: 'attention',
       evidenceId: 'E-run-attention',
-      attentionId: 'A-storage',
+      attentionIds: ['A-storage'],
     })
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
@@ -269,7 +266,43 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-attention')).toBe(true)
   })
 
-  test('returns retry Attention output to the pending retry instead of creating a duplicate', async () => {
+  test('publishes multiple independent targeted Attentions from one result', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const context = await fixture.stage('W-1', 'run-multi-attention', 'generator')
+    for (const id of ['A-storage', 'A-credential']) {
+      const attentionPath = fixture.store.paths.attentionDocument('goal-1', id)
+      const stagedPath = join(context.proposalRoot, ...attentionPath.split('/'))
+      await mkdir(dirname(stagedPath), { recursive: true })
+      await Bun.write(
+        stagedPath,
+        renderAttentionDocument({
+          attributes: {
+            id,
+            target: 'project:project-1/goal:goal-1/work:W-1',
+            createdAt: '1970-01-01T00:00:00.000Z',
+            resolvedAt: null,
+            notifiedAt: null,
+          },
+          body: `## Observed condition\n\n${id} requires separate Assistant judgment.\n`,
+        }),
+      )
+    }
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-multi-attention', 'generator', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({
+      kind: 'attention',
+      attentionIds: ['A-credential', 'A-storage'],
+    })
+    expect(goalPackage.attentions.has('A-storage')).toBe(true)
+    expect(goalPackage.attentions.has('A-credential')).toBe(true)
+    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
+  })
+
+  test('publishes a new represented blocker without semantically merging an existing one', async () => {
     const fixture = await createEngineeringFixture('generate')
     const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
     const original = await controller.ensureOperationalFailureAttention(
@@ -304,11 +337,14 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
-    expect(goalPackage.attentions.size).toBe(1)
+    expect(result).toMatchObject({
+      kind: 'attention',
+      attentionIds: ['A-duplicate'],
+    })
+    expect(goalPackage.attentions.size).toBe(2)
     expect(goalPackage.attentions.has(original.attributes.id)).toBe(true)
-    expect(goalPackage.attentions.has('A-duplicate')).toBe(false)
-    expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual(['E-run-retry-attention'])
+    expect(goalPackage.attentions.has('A-duplicate')).toBe(true)
+    expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
   })
 
   test('rejects a Planner document path target with the exact owning Work target', async () => {
@@ -337,16 +373,13 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary:
-        'Invalid staged proposal: Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
+      kind: 'invalid',
+      reason:
+        'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
     })
     expect(goalPackage.attentions.has('A-choice')).toBe(false)
     expect(goalPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
-    expect(goalPackage.evidence.get('E-run-planner-path-target')?.body).toContain(
-      'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
-    )
+    expect(goalPackage.evidence.has('E-run-planner-path-target')).toBe(false)
   })
 
   test('rejects targeted Attention combined with Generator success', async () => {
@@ -375,9 +408,8 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary: 'Invalid staged proposal: Targeted Attention requires attention, received success',
+      kind: 'invalid',
+      reason: 'Targeted Attention requires attention, received success',
     })
     expect(goalPackage.attentions.has('A-invalid-success')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
@@ -386,7 +418,7 @@ describe('PassOutcomeCoordinator', () => {
     })
   })
 
-  test('normalizes Engineering Attention targeting outside its owning Work to failure', async () => {
+  test('rejects Engineering Attention targeting outside its owning Work as invalid', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-wrong-attention-target', 'generator')
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-wrong-target')
@@ -411,18 +443,20 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'invalid',
+      reason:
+        'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:W-1',
+    })
     expect(goalPackage.attentions.has('A-wrong-target')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       attempts: 0,
     })
-    expect(goalPackage.evidence.get('E-run-wrong-attention-target')?.body).toContain(
-      'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:W-1',
-    )
+    expect(goalPackage.evidence.has('E-run-wrong-attention-target')).toBe(false)
   })
 
-  test('normalizes malformed Generator Attention to semantic failure', async () => {
+  test('rejects malformed Generator Attention as invalid', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-malformed-attention', 'generator')
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-malformed')
@@ -436,21 +470,18 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary: 'Invalid staged proposal: Attention document is missing YAML front matter',
+      kind: 'invalid',
+      reason: 'Attention document is missing YAML front matter',
     })
     expect(goalPackage.attentions.has('A-malformed')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       attempts: 0,
     })
-    expect(goalPackage.evidence.get('E-run-malformed-attention')?.body).toContain(
-      'Invalid staged proposal: Attention document is missing YAML front matter',
-    )
+    expect(goalPackage.evidence.has('E-run-malformed-attention')).toBe(false)
   })
 
-  test('normalizes malformed Planner Work to semantic failure', async () => {
+  test('rejects malformed Planner Work as invalid', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-malformed-work', 'planner')
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
@@ -464,9 +495,8 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary: 'Invalid staged proposal: Work document is missing YAML front matter',
+      kind: 'invalid',
+      reason: 'Work document is missing YAML front matter',
     })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
@@ -533,10 +563,11 @@ describe('PassOutcomeCoordinator', () => {
     )
     goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(incomplete).toMatchObject({ kind: 'published', result: 'fail' })
-    expect(goalPackage.evidence.get('E-run-stale-work-incomplete')?.body).toContain(
-      'Planner must retain or cancel stale Engineering Work W-1',
-    )
+    expect(incomplete).toMatchObject({
+      kind: 'invalid',
+      reason: 'Planner must retain or cancel stale Engineering Work W-1',
+    })
+    expect(goalPackage.evidence.has('E-run-stale-work-incomplete')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'review',
       contractRevision: 1,
@@ -636,7 +667,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
   })
 
-  test('rejects a new completion proposal without current-Run formal release Preview evidence', async () => {
+  test('rejects final Planning without current-Run formal release Preview evidence', async () => {
     const fixture = await createFixture()
     const baseline = await fixture.stage('plan-initial', 'run-preview-baseline', 'planner')
     const context = await fixture.stage(
@@ -645,8 +676,6 @@ describe('PassOutcomeCoordinator', () => {
       'planner',
       formalPreview(baseline.releaseHead),
     )
-    await stageCompletionAttention(fixture, context, 'A-preview-without-evidence')
-
     const result = await fixture.outcomes.apply(
       fixture.input('plan-initial', 'run-preview-without-evidence', 'planner', context, 'success', [
         'README.md',
@@ -656,13 +685,11 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'published',
-      result: 'fail',
-      summary: expect.stringContaining(
+      kind: 'invalid',
+      reason: expect.stringContaining(
         'Goal completion requires direct formal release Preview evidence retained by the current Planner Run',
       ),
     })
-    expect(goalPackage.attentions.has('A-preview-without-evidence')).toBe(false)
     expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
   })
 
@@ -675,8 +702,6 @@ describe('PassOutcomeCoordinator', () => {
       'planner',
       formalPreview(baseline.releaseHead),
     )
-    await stageCompletionAttention(fixture, context, 'A-preview-complete')
-
     const result = await fixture.outcomes.apply(
       fixture.input('plan-initial', 'run-preview-complete', 'planner', context, 'success', [
         'artifact:run-preview-complete/formal-browser-proof.json',
@@ -686,7 +711,10 @@ describe('PassOutcomeCoordinator', () => {
     const evidence = goalPackage.evidence.get('E-run-preview-complete')
 
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
-    expect(goalPackage.attentions.has('A-preview-complete')).toBe(true)
+    expect(goalPackage.goal.attributes).toMatchObject({
+      lifecycle: 'done',
+      completionAttentionId: null,
+    })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'done',
       evidenceRefs: ['E-run-preview-complete'],
@@ -698,7 +726,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(evidence?.body).toContain('Surface default (Preview): http://127.0.0.1:4311/app')
   })
 
-  test('publishes a fresh completion Attention when resolved history occupies the proposed ID', async () => {
+  test('preserves legacy completion Attention history while final Planning completes directly', async () => {
     const fixture = await createFixture()
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-completion')
     await fixture.store.publishGoal('goal-1', {
@@ -720,21 +748,6 @@ describe('PassOutcomeCoordinator', () => {
       ],
     })
     const context = await fixture.stage('plan-initial', 'run-reused-completion-id', 'planner')
-    const stagedPath = join(context.proposalRoot, ...attentionPath.split('/'))
-    await mkdir(dirname(stagedPath), { recursive: true })
-    await Bun.write(
-      stagedPath,
-      renderAttentionDocument({
-        attributes: {
-          id: 'A-completion',
-          target: null,
-          createdAt: '2099-12-31T23:59:59Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nThe revised Goal is complete.\n',
-      }),
-    )
 
     const result = await fixture.outcomes.apply(
       fixture.input('plan-initial', 'run-reused-completion-id', 'planner', context, 'success'),
@@ -743,15 +756,10 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
     expect(goalPackage.attentions.get('A-completion')?.attributes.resolvedAt).not.toBeNull()
-    expect(goalPackage.attentions.get('A-completion-2')).toMatchObject({
-      attributes: {
-        id: 'A-completion-2',
-        target: null,
-        createdAt: '2026-07-11T00:00:00.000Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Completion\n\nThe revised Goal is complete.\n',
+    expect(goalPackage.attentions.has('A-completion-2')).toBe(false)
+    expect(goalPackage.goal.attributes).toMatchObject({
+      lifecycle: 'done',
+      completionAttentionId: null,
     })
     expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
   })
@@ -784,7 +792,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.works.get('W-existing')).toEqual(before)
   })
 
-  test('rejects Planner success with neither Engineering Work nor completion Attention', async () => {
+  test('completes the Goal directly when final Planning finds no remaining Engineering Work', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-empty-incomplete', 'planner')
 
@@ -793,17 +801,19 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.goal.attributes).toMatchObject({
+      lifecycle: 'done',
+      completionAttentionId: null,
+    })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       attempts: 0,
-      stage: 'plan',
+      stage: 'done',
+      evidenceRefs: ['E-run-empty-incomplete'],
     })
-    expect(goalPackage.evidence.get('E-run-empty-incomplete')?.body).toContain(
-      'Planner success without nonterminal Engineering Work requires completion Attention',
-    )
   })
 
-  test('rejects Planner writes to Planning Work and preserves failure Evidence on retry', async () => {
+  test('rejects Planner writes to Planning Work without converting invalid output to Evidence', async () => {
     const fixture = await createFixture()
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
     const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
@@ -824,9 +834,12 @@ describe('PassOutcomeCoordinator', () => {
     )
     const failedPlanning = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
 
-    expect(invalidResult).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(invalidResult).toMatchObject({
+      kind: 'invalid',
+      reason: 'Planner may propose Engineering Work but may not write Planning Work',
+    })
     expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan', attempts: 0 })
-    expect(failedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work'])
+    expect(failedPlanning?.attributes.evidenceRefs).toEqual([])
 
     const retryContext = await fixture.stage('plan-initial', 'run-retry', 'planner')
     await Bun.write(
@@ -844,15 +857,13 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(retryResult).toMatchObject({ kind: 'published', result: 'success' })
     expect(completedPlanning?.attributes).toMatchObject({ stage: 'done', attempts: 0 })
-    expect(completedPlanning?.attributes.evidenceRefs).toEqual(['E-run-owning-work', 'E-run-retry'])
+    expect(completedPlanning?.attributes.evidenceRefs).toEqual(['E-run-retry'])
     expect(completedPlanning?.body).toBe(planningBody)
     expect(goalPackage.works.get('W-retry')?.attributes.stage).toBe('generate')
-    expect(goalPackage.evidence.get('E-run-owning-work')?.body).toContain(
-      'Planner may propose Engineering Work but may not write Planning Work',
-    )
+    expect(goalPackage.evidence.has('E-run-owning-work')).toBe(false)
   })
 
-  test('rejects completion Attention while nonterminal Engineering Work remains', async () => {
+  test('rejects new targetless Attention instead of treating it as completion state', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-premature-completion', 'planner')
     const engineeringPath = fixture.store.paths.workDocument('goal-1', 'W-pending')
@@ -883,16 +894,18 @@ describe('PassOutcomeCoordinator', () => {
     )
     const goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({
+      kind: 'invalid',
+      reason:
+        'New Attention requires an owning target; final Planner success completes the Goal directly',
+    })
     expect(goalPackage.works.has('W-pending')).toBe(false)
     expect(goalPackage.attentions.has('A-premature')).toBe(false)
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
       attempts: 0,
     })
-    expect(goalPackage.evidence.get('E-run-premature-completion')?.body).toContain(
-      'Completion proposal requires no nonterminal Engineering Work',
-    )
+    expect(goalPackage.evidence.has('E-run-premature-completion')).toBe(false)
   })
 
   test('rejects Planner output that leaks an Assistant-home attachment into Work', async () => {
@@ -913,7 +926,7 @@ describe('PassOutcomeCoordinator', () => {
       fixture.input('plan-initial', 'run-home-image', 'planner', context, 'success'),
     )
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({ kind: 'invalid' })
     expect((await fixture.store.readPackage('goal-1')).works.has('W-image')).toBe(false)
   })
 
@@ -935,7 +948,7 @@ describe('PassOutcomeCoordinator', () => {
       fixture.input('plan-initial', 'run-local-image', 'planner', context, 'success'),
     )
 
-    expect(result).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(result).toMatchObject({ kind: 'invalid' })
     expect((await fixture.store.readPackage('goal-1')).works.has('W-local-image')).toBe(false)
   })
 })
@@ -1045,29 +1058,6 @@ function formalPreview(releaseHead: string): FormalReleasePreviewContext {
       repair: null,
     },
   }
-}
-
-async function stageCompletionAttention(
-  fixture: Awaited<ReturnType<typeof createFixture>>,
-  context: { proposalRoot: string },
-  attentionId: string,
-) {
-  const attentionPath = fixture.store.paths.attentionDocument('goal-1', attentionId)
-  const stagedPath = join(context.proposalRoot, ...attentionPath.split('/'))
-  await mkdir(dirname(stagedPath), { recursive: true })
-  await Bun.write(
-    stagedPath,
-    renderAttentionDocument({
-      attributes: {
-        id: attentionId,
-        target: null,
-        createdAt: '2026-07-23T00:00:00.000Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Complete\n\nThe formal release Preview satisfies the Goal.\n',
-    }),
-  )
 }
 
 function engineeringWork(

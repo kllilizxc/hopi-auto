@@ -29,12 +29,6 @@ const profileSchema = z
         })
         .strict(),
     ]),
-    retry: z
-      .object({
-        maxAttempts: z.literal(3),
-        exhausted: z.literal('create_attention'),
-      })
-      .strict(),
     concurrency: z
       .object({
         planner: z.number().int().positive(),

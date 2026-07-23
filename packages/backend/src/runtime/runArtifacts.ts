@@ -16,6 +16,7 @@ export interface PreserveRunArtifactsResult {
   references: readonly string[]
   preserved: readonly PreservedRunArtifact[]
   replacements: ReadonlyMap<string, string>
+  ignoredProposalPaths: readonly string[]
 }
 
 export class RunArtifactError extends Error {}
@@ -25,6 +26,8 @@ export async function preserveRunArtifacts(input: {
   runRoot: string
   artifacts: readonly string[]
   sourceRoots?: readonly string[]
+  portableRoots?: readonly string[]
+  proposalRoots?: readonly string[]
   legacyRunRoot?: string
   resultFile?: string
 }): Promise<PreserveRunArtifactsResult> {
@@ -36,6 +39,7 @@ export async function preserveRunArtifacts(input: {
   const preserved: PreservedRunArtifact[] = []
   const replacements = new Map<string, string>()
   const preservedSources = new Map<string, string>()
+  const ignoredProposalPaths: string[] = []
 
   for (const [index, artifact] of input.artifacts.entries()) {
     const portable = parsePortableArtifactReference(artifact)
@@ -43,7 +47,11 @@ export async function preserveRunArtifacts(input: {
       references.push(artifact)
       continue
     }
-    if (await isPortableProjectArtifact(artifact, runRoot, input.sourceRoots)) {
+    if (await isProposalPath(artifact, input.proposalRoots)) {
+      ignoredProposalPaths.push(artifact)
+      continue
+    }
+    if (await isPortableProjectArtifact(artifact, runRoot, input.portableRoots)) {
       references.push(artifact)
       continue
     }
@@ -89,7 +97,20 @@ export async function preserveRunArtifacts(input: {
     )
   }
   if (input.resultFile) await rewriteResultArtifacts(input.resultFile, references)
-  return { references, preserved, replacements }
+  return { references, preserved, replacements, ignoredProposalPaths }
+}
+
+export async function discoverRunArtifactPaths(root: string) {
+  const absoluteRoot = resolve(root)
+  const paths: string[] = []
+  for await (const path of new Bun.Glob('**/*').scan({
+    cwd: absoluteRoot,
+    absolute: true,
+    onlyFiles: true,
+  })) {
+    paths.push(path)
+  }
+  return paths.sort()
 }
 
 export async function cleanupRunScratch(runtimeScratchDir: string) {
@@ -143,13 +164,33 @@ async function resolveArtifactSource(
 async function isPortableProjectArtifact(
   artifact: string,
   runRoot: string,
-  sourceRoots: readonly string[] | undefined,
+  portableRoots: readonly string[] | undefined,
 ) {
   if (!isSafeRelativePath(artifact)) return false
   if ((await stat(resolve(runRoot, artifact)).catch(() => null))?.isFile()) return false
-  if (!sourceRoots) return true
-  for (const sourceRoot of sourceRoots) {
-    if ((await stat(resolve(sourceRoot, artifact)).catch(() => null))?.isFile()) return true
+  for (const portableRoot of portableRoots ?? []) {
+    if ((await stat(resolve(portableRoot, artifact)).catch(() => null))?.isFile()) return true
+  }
+  return false
+}
+
+async function isProposalPath(artifact: string, proposalRoots: readonly string[] | undefined) {
+  for (const root of proposalRoots ?? []) {
+    if (isAbsolute(artifact)) {
+      if (
+        containedRelativePath(root, artifact) !== null &&
+        (await stat(resolve(artifact)).catch(() => null))?.isFile()
+      ) {
+        return true
+      }
+      continue
+    }
+    if (
+      isSafeRelativePath(artifact) &&
+      (await stat(resolve(root, artifact)).catch(() => null))?.isFile()
+    ) {
+      return true
+    }
   }
   return false
 }

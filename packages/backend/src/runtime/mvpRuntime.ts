@@ -241,6 +241,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     publisher,
     attempts,
     activeRuns: () => readActiveRuns(),
+    concurrency: profile.concurrency,
   })
   let restoreProjectEligibility: (projectId: string) => Promise<void> = async () => undefined
   let protectAssistantGoal: (eventId: string, projectId: string, goalId: string) => void = () =>

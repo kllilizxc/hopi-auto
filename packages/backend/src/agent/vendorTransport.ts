@@ -31,6 +31,9 @@ export interface TransportContextBundle {
   authorityRoot?: string
   proposalRoot?: string
   attentionProposalDir?: string
+  artifactOutputDir?: string
+  proposalCapabilitiesFile?: string
+  resultSchemaFile?: string
   primaryRepoRoot?: string
   bootstrapSourceRoot?: string
   operatorPreferenceFile?: string
@@ -477,6 +480,7 @@ function displayExecutionPath(path: string, bundle: TransportContextBundle) {
     [bundle.primaryRepoRoot, '$HOPI_PRIMARY_REPO_ROOT'],
     [bundle.authorityRoot, '$HOPI_AUTHORITY_ROOT'],
     [bundle.proposalRoot, '$HOPI_PROPOSAL_ROOT'],
+    [bundle.artifactOutputDir, '$HOPI_ARTIFACT_DIR'],
   ] as const
   return aliases.find(([candidate]) => candidate === path)?.[1] ?? path
 }
@@ -594,6 +598,11 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     ...(bundle.attentionProposalDir
       ? { HOPI_ATTENTION_PROPOSAL_DIR: bundle.attentionProposalDir }
       : {}),
+    ...(bundle.artifactOutputDir ? { HOPI_ARTIFACT_DIR: bundle.artifactOutputDir } : {}),
+    ...(bundle.proposalCapabilitiesFile
+      ? { HOPI_PROPOSAL_CAPABILITIES_FILE: bundle.proposalCapabilitiesFile }
+      : {}),
+    ...(bundle.resultSchemaFile ? { HOPI_RESULT_SCHEMA_FILE: bundle.resultSchemaFile } : {}),
     ...(bundle.primaryRepoRoot ? { HOPI_PRIMARY_REPO_ROOT: bundle.primaryRepoRoot } : {}),
     ...(bundle.bootstrapSourceRoot
       ? { HOPI_BOOTSTRAP_SOURCE_ROOT: bundle.bootstrapSourceRoot }

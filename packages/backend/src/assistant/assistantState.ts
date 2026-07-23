@@ -46,9 +46,6 @@ export interface AssistantStateProject {
     primary?: boolean
   }[]
   store: GoalPackageStore
-  reconciler?: {
-    operationallyDeferredWorkIds?(goalId: string, observedAt?: Date): ReadonlySet<string>
-  }
 }
 
 export interface AssistantStateReader {
@@ -115,6 +112,7 @@ export function createAssistantStateReader(options: {
   publisher: PublicationCoordinator
   attempts: RunAttemptStore
   activeRuns?: () => ReadonlyMap<string, Responsibility>
+  concurrency?: Readonly<Record<Responsibility, number>>
   now?: () => Date
   staleAfterMs?: number
 }): AssistantStateReader {
@@ -175,16 +173,18 @@ export function createAssistantStateReader(options: {
                 {
                   projectEligible: !projectAttentionOpen,
                   liveRunWorkIds: liveWorkIds,
-                  operationallyDeferredWorkIds:
-                    project.reconciler?.operationallyDeferredWorkIds?.(goalId, observedAt) ??
-                    new Set(),
                   passCapacity: {
-                    planner: activeCounts.planner < 1,
-                    generator: activeCounts.generator < 3,
-                    reviewer: activeCounts.reviewer < 1,
+                    planner:
+                      activeCounts.planner <
+                      (options.concurrency?.planner ?? Number.POSITIVE_INFINITY),
+                    generator:
+                      activeCounts.generator <
+                      (options.concurrency?.generator ?? Number.POSITIVE_INFINITY),
+                    reviewer:
+                      activeCounts.reviewer <
+                      (options.concurrency?.reviewer ?? Number.POSITIVE_INFINITY),
                   },
                   now: observedAt,
-                  maxAttempts: 3,
                 },
               )
               const projectionByWork = new Map(
