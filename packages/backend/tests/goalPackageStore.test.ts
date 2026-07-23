@@ -224,7 +224,7 @@ describe('createGoalPackageStore', () => {
     expect(await Bun.file(store.paths.absolute(secondPlanningPath)).exists()).toBe(false)
   })
 
-  test('rejects nonterminal Work more than one revision ahead of its Planning guard', async () => {
+  test('rejects Planning Work more than one revision ahead of its Goal', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

@@ -199,7 +199,7 @@ describe('GoalController', () => {
     expect(planning?.attributes.attempts).toBe(0)
   })
 
-  test('installs Planning before a material revision and invalidates nonterminal Work', async () => {
+  test('installs current Planning and leaves prior Engineering authority stale', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await markPlanningDone(store, 'G-1', 'plan-initial')
@@ -219,9 +219,9 @@ describe('GoalController', () => {
     expect(revised.attributes.contractRevision).toBe(2)
     expect(revised.body).toContain('## Accepted Inbox Instruction EV-revise')
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
-      stage: 'generate',
-      attempts: 0,
-      contractRevision: 2,
+      stage: 'review',
+      attempts: 2,
+      contractRevision: 1,
     })
     expect(
       [...goalPackage.works.values()].find(
@@ -294,7 +294,7 @@ describe('GoalController', () => {
     })
   })
 
-  test('cancels one Engineering dependency subtree and guards replanning', async () => {
+  test('cancels one Engineering dependency subtree without changing Goal planning', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await markPlanningDone(store, 'G-1', 'plan-initial')
@@ -322,10 +322,10 @@ describe('GoalController', () => {
       [...goalPackage.works.values()].filter(
         (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
       ),
-    ).toHaveLength(1)
+    ).toHaveLength(0)
   })
 
-  test('finishes Planning recovery when Work cancellation landed before its guard', async () => {
+  test('repeats an already durable Work cancellation without creating Planning', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await markPlanningDone(store, 'G-1', 'plan-initial')
@@ -355,7 +355,7 @@ describe('GoalController', () => {
         (candidate) =>
           candidate.attributes.kind === 'planning' && candidate.attributes.stage === 'plan',
       ),
-    ).toHaveLength(1)
+    ).toHaveLength(0)
   })
 
   test('commits Goal done only from a final Planner proposal and structural verification', async () => {

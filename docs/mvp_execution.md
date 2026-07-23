@@ -121,8 +121,10 @@ current truth, and requires:
 - the complete protected authority selection still has the same paths and content, except for the
   writes in the result being validated
 
-If the guard fails, the result cannot advance state. Source and Evidence are preserved when
-useful. Stale contract output goes through Planning; terminal output remains Evidence only.
+If the guard fails, the result cannot advance state. Source and diagnostics remain useful inside
+the Run Attempt. A result that is already stale at publication writes neither canonical Evidence
+nor Planning. Canonical Evidence can remain unconsumed only when its supporting write became
+durable before a process stop prevented the Work gate.
 A Work reference to Evidence with the same qualified `producerRun` is the durable
 consumed-result marker. Ordinary outcomes reference it from the owning Work gate; an `attention`
 result preserves it beside the Attention without claiming Work progress. Unreferenced Evidence is provenance only and does not suppress a
@@ -238,11 +240,12 @@ another represented effect instead of using retry as a fictional repair. Direct 
 the atomic settlement shortcut above because the operator instruction itself is accepted authority
 to try the same lineage again.
 
-`notBefore` only defers dispatch. Setting it never makes Work terminal, cancels it, resolves its
-Attention, or removes the Planning guard imposed by a nonterminal Planning Work. Work cancellation
-is reserved for an explicit decision to abandon that Work and is not an operational or worktree-sync
-recovery command. After every Work control operation, the control API reads canonical state again
-and returns the Work's `stage`, `notBefore`, terminal fact, and failed readiness predicates; Assistant
+`notBefore` only defers dispatch. Setting it never makes Work terminal, cancels it, or resolves its
+Attention. Work cancellation is reserved for an explicit decision to abandon that execution route
+and is not an operational or worktree-sync recovery command. It durably cancels the dependent
+closure and then interrupts its live Runs, but it does not change the Goal contract or request
+Planning. After every Work control operation, the control API reads canonical state again and
+returns the Work's `stage`, `notBefore`, terminal fact, and failed readiness predicates; Assistant
 must base its claim on that returned state rather than infer an effect from the requested command.
 
 Project-target Workspace Attention cannot be closed by a model assertion. Explicit repair such as
@@ -345,9 +348,10 @@ summary recorded in Evidence, never an earlier optimistic model summary.
 
 Semantic invalidation is expected concurrency control, not pass failure or Project failure. A stale
 guard detected before a gate, during publication, or immediately before C1 produces the same
-`stale` application: preserve any complete Run Evidence as unconsumed provenance, do not advance
-Work, and let current canonical state determine the next reconciliation. It never creates Project
-Attention merely because Goal lifecycle, revision, Work ownership, dependency truth, or another
+`stale` application: retain the complete result in the Attempt, publish no canonical Evidence, do
+not advance Work, and let current canonical state determine the next reconciliation. It never
+creates Planning or Project Attention merely because Goal lifecycle, revision, Work ownership,
+dependency truth, or another
 guard changed while the Run was active.
 
 When a durable mutation changes the immutable authority staged for a live Run, Coordinator interrupts
@@ -427,11 +431,10 @@ across execution context and publication without advancing Work, refs, or manage
 context staging.
 
 A newly published Planning Work also does not retroactively stale an already-running Engineering
-pass. It is an admission guard: the Planner Run waits for same-Goal Engineering Runs that were
-already admitted to drain, then runs before any new Engineering pass. If Planning changes Goal
-design, the owning Work, dependencies, Attention, or another selected authority file before an
-Engineering result publishes, the precise content guards still reject that result. The mere
-existence of the queued Planning Work is not a semantic change.
+pass or block a new one. Same-revision Planning and Engineering hold independent Work leases. If
+Planning changes Goal design, the owning Work, dependencies, Attention, or another selected
+authority file before an Engineering result publishes, the precise content guards still reject
+that result. The mere existence of Planning Work is not a semantic change.
 
 RoleRunner normalizes Codex, Claude, OpenCode, or process output into one runtime event shape.
 Coordinator appends those events to the owning Run directory and exposes them through the selected
@@ -874,8 +877,8 @@ the next responsibility Run owns a fresh result. Planner may preserve Engineerin
 Coordinator expands each proposed cancellation to every nonterminal dependent, validates the whole
 closure against current authority, and publishes it atomically with the accepted proposal. Terminal
 Work is immutable, and new or retained nonterminal Work may not depend on cancelled Work. Assistant
-Work cancellation uses the same closure primitive and ensures one Planning Work afterward; Planner
-cancellation during an already active Planning pass does not create another Planning Work.
+Work cancellation uses the same closure primitive, interrupts every affected live Run after the
+durable gate, and does not create Planning.
 
 Planner owns requirement and design clarification after Assistant requests Planning. Assistant
 does not ask a second set of delivery questions for an already-accepted Goal instruction.
@@ -906,7 +909,7 @@ canonical context bundle; changes source and normal project docs; runs proportio
 Evidence. It returns `success`, `attention`, or `fail`: attention means Assistant management is
 required, while fail means this Run did not complete valid implementation proof. A published fail
 keeps the Engineering Work, does not consume a Reviewer-repair attempt, and creates Work Attention
-instead of redispatching Generator unchanged or inventing a Goal-wide Planning guard. Speaking
+instead of redispatching Generator unchanged or creating unrelated Planning. Speaking
 Assistant decides whether the exact recovery is retry, Planning, cancellation, or operator action.
 
 The current assignment presents one bounded repair view after the stable Work authority: changed
@@ -1124,7 +1127,7 @@ If the clean task branch is behind or divergent, Coordinator fast-forwards it or
 it with hooks and signing disabled, preserving the task delta and then verifying a clean checkout and
 release ancestry. A failed merge is aborted back to the exact prior task HEAD and creates or reuses a
 Work-target Attention with the bounded conflict diagnostic; no responsibility Run starts, unrelated
-Engineering Work remains eligible, and no global Planning guard is invented. A dirty Generator
+Engineering Work remains eligible, and no unrelated Planning is created. A dirty Generator
 checkout is preserved behind the same Work Attention when synchronization is required, because
 silently resetting or merging uncheckpointed source would guess ownership. If a successful release
 merge itself exposes a dirty checkout, Coordinator likewise preserves the synchronized branch and
@@ -1306,13 +1309,12 @@ Concurrency rules:
 - independent writers require separate Work and worktrees
 - independent same-Goal Generator Runs may execute in parallel within profile capacity; Coordinator
   may admit them on successive reconciliation ticks
-- a same-Goal Planning trigger queues immediately but its Planner Run waits for admitted Engineering
-  Runs to drain; once queued, it blocks admission of new Engineering Runs
+- same-revision Planning and Engineering use independent Work leases and may run concurrently;
+  changed selected authority makes the losing result stale
 - a material contract revision interrupts already admitted Runs for that Goal after the revision is
-  durable
+  durable and keeps older Work ineligible by revision
 - a same-revision request that changes an existing Planning Work interrupts only that Work's active
-  Planner after publication; creating a new Planning guard does not interrupt already admitted
-  Engineering Runs
+  Planner after publication
 - causal publication needs, possible writer overlap, and exclusive external-resource contention are
   serialized with `dependsOn`
 - deterministic source integration is idempotent by the qualified project/Goal/Work trailer
@@ -1385,13 +1387,14 @@ runtime record and terminates the internal Inbox event without creating event-ta
 handoff is an advisory projection of already-canonical state, so recursively blocking it cannot
 preserve additional user intent. Public user turns keep the ordinary targeted-Attention failure path.
 
-Messages remain writable while passes run. A material instruction first ensures Planning Work as
-the Goal-wide guard, then increments `contractRevision` and publishes its effects. Once that
-revision is durable, Coordinator interrupts the Goal's admitted Runs to avoid spending more work on
-obsolete authority. The immutable-context publication guard remains the correctness boundary if a
-result races that interrupt. Before completing an interrupted Generator Attempt, Coordinator makes
-one safe task-branch checkpoint of partial source; it publishes no Evidence and advances no Work.
-Older Runs may therefore preserve useful source but cannot publish state.
+Messages remain writable while passes run. A material instruction ensures Planning Work, advances
+that Work and the Goal to the new `contractRevision`, and leaves existing nonterminal Engineering
+Work on the revision that authorized it. Once the Goal revision is durable, Coordinator interrupts
+the Goal's admitted Runs. The ordinary revision readiness predicate then keeps old routes
+ineligible until Planner retains them at the current revision or cancels them. The immutable-context
+publication guard remains the correctness boundary if a result races that interrupt. Before
+completing an interrupted Generator Attempt, Coordinator makes one safe task-branch checkpoint of
+partial source; it publishes no Evidence and advances no Work.
 
 ### State read and Reflection
 
@@ -1516,7 +1519,6 @@ Each cycle:
 - Goal lifecycle is `active`
 - Work kind and stage match one profile rule
 - Work `contractRevision` is current
-- Engineering Work has no nonterminal Planning Work in its Goal
 - every `dependsOn` Work is `done`
 - `notBefore` is null or elapsed
 - Reviewer/C1 repair `attempts < maxAttempts`

@@ -177,27 +177,28 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       ),
     )
   }
+  const interruptRuns = (goalId?: string, workId?: string) => {
+    if (workId) {
+      if (!goalId) throw new Error('A Work interruption requires its Goal ID')
+      const liveKey = `${goalId}/${workId}`
+      workInterruptionSequence += 1
+      workInterruptionGenerations.set(liveKey, workInterruptionSequence)
+      runControllers.get(liveKey)?.abort()
+      return
+    }
+    const goalPrefix = goalId ? `${goalId}/` : null
+    if (goalId) {
+      goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
+    } else {
+      projectInterruptionGeneration += 1
+    }
+    for (const [key, controller] of runControllers) {
+      if (!goalPrefix || key.startsWith(goalPrefix)) controller.abort()
+    }
+  }
 
   return {
-    interruptRuns(goalId, workId) {
-      if (workId) {
-        if (!goalId) throw new Error('A Work interruption requires its Goal ID')
-        const liveKey = `${goalId}/${workId}`
-        workInterruptionSequence += 1
-        workInterruptionGenerations.set(liveKey, workInterruptionSequence)
-        runControllers.get(liveKey)?.abort()
-        return
-      }
-      const goalPrefix = goalId ? `${goalId}/` : null
-      if (goalId) {
-        goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
-      } else {
-        projectInterruptionGeneration += 1
-      }
-      for (const [key, controller] of runControllers) {
-        if (!goalPrefix || key.startsWith(goalPrefix)) controller.abort()
-      }
-    },
+    interruptRuns,
     liveWorkIds() {
       return new Set(live)
     },
@@ -682,15 +683,28 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         operationalRetries.delete(liveKey)
 
         const pass = { goalId, workId, runId, responsibility, context, outcome }
+        const beforeApplication =
+          responsibility === 'planner' ? await options.store.readPackage(goalId) : null
         const application = await outcomes.apply(pass)
+        if (
+          beforeApplication &&
+          application.kind === 'published' &&
+          application.result === 'success'
+        ) {
+          const afterApplication = await options.store.readPackage(goalId)
+          for (const [candidateId, beforeWork] of beforeApplication.works) {
+            const afterWork = afterApplication.works.get(candidateId)
+            if (
+              !isWorkTerminal(beforeWork.attributes) &&
+              afterWork?.attributes.stage === 'cancelled'
+            ) {
+              interruptRuns(goalId, candidateId)
+            }
+          }
+        }
         if (application.kind !== 'integration_required') {
           await finishAttempt(attempt, options.store, goalId, outcome, application)
-          if (application.kind === 'stale') {
-            await goalController.ensurePlanning(
-              goalId,
-              `Reassess stale ${responsibility} output for Work ${workId}.`,
-            )
-          } else if (application.kind === 'published' && application.result === 'fail') {
+          if (application.kind === 'published' && application.result === 'fail') {
             await goalController.ensureResponsibilityFailureAttention(
               goalId,
               workId,

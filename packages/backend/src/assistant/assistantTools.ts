@@ -188,6 +188,9 @@ export function createAssistantTools(options: {
     if (work.attributes.stage !== 'cancelled') {
       await project.controller.cancelWork(goalId, workId)
     }
+    for (const affectedWorkId of affectedWorkIds) {
+      project.reconciler?.interruptRuns(goalId, affectedWorkId)
+    }
     const cancelledPackage = await project.store.readPackage(goalId)
     const settledRefs: string[] = []
     let inputWrite = admission.write

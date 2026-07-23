@@ -18,16 +18,11 @@ describe('decideGoalReconciliation', () => {
     })
   })
 
-  test('uses permanent dependency order and the Planning guard', () => {
-    const plan = work('plan', 'planning', 'plan')
+  test('uses permanent Engineering dependency order', () => {
     const first = work('W-1', 'engineering', 'generate')
     const second = work('W-2', 'engineering', 'generate', ['W-1'])
-    let goalPackage = packageWith([first, second, plan])
+    const goalPackage = packageWith([second, first])
 
-    expect(decide(goalPackage)).toMatchObject({ kind: 'dispatch', workId: 'plan' })
-
-    plan.attributes.stage = 'done'
-    goalPackage = packageWith([second, first, plan])
     expect(decide(goalPackage)).toMatchObject({ kind: 'dispatch', workId: 'W-1' })
   })
 

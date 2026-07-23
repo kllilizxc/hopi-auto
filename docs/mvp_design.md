@@ -207,8 +207,8 @@ with the current Repo release while preserving its checkpointed Work delta. An a
 branch is reused unchanged; a clean release advance is incorporated mechanically. A dirty or
 conflicting branch that cannot be synchronized without guessing is preserved behind Work-target
 Attention before a model pass starts. Speaking Assistant may retry after a concrete repair or
-request Planning when the contract or DAG actually needs to change; the sync fault itself does not
-invent a Goal-wide Planning guard. This is maintenance of the existing Work projection, not another
+request Planning when the contract or DAG actually needs to change; the sync fault itself creates no
+unrelated Planning. This is maintenance of the existing Work projection, not another
 workflow state.
 
 Work identity also bounds what may be preserved. When accepted Planning requires the old task delta
@@ -601,8 +601,8 @@ Instructions arriving during active Runs or another Assistant turn become durabl
 Assistant turns remain FIFO within one speaking conversation; pass Runs continue in parallel while their
 final publications enter one short global queue. A same-Goal material change accepted through a
 HOPI tool
-increments `contractRevision`; stale output cannot advance state. Other Goals schedule
-independently.
+increments `contractRevision`; old Work remains on its prior revision, admitted Runs are
+interrupted, and stale output remains Attempt-only. Other Goals schedule independently.
 
 ### Decision and automatic resume
 
@@ -624,9 +624,10 @@ supplying a credential, or making a product decision.
 
 The server exits during a Run, publication, integration, or notification. On restart HOPI first
 validates every root, never reattaches the old child, and preserves the task branch and every
-published attempt count. Its runtime Attempt is marked interrupted for UI history. Evidence without
-a Work gate remains unconsumed and a later attempt uses a new Run, so a process crash may undercount
-one canonical recovery attempt. An Attention-producing outcome leaves Work
+published attempt count. Its runtime Attempt is marked interrupted for UI history. Evidence already
+written without a Work gate remains unconsumed and a later attempt uses a new Run, so a process
+crash may undercount one canonical recovery attempt. A result detected stale before publication
+remains Attempt-only. An Attention-producing outcome leaves Work
 unchanged by design until a new Run follows resolution. Any managed-projection inconsistency after
 the C1 ref boundary creates workspace project Attention. Delivery recovery may reattempt the one
 recorded clean fast-forward, but delivery drift is nonblocking and it never repairs checkout content

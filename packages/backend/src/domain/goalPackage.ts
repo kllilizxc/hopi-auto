@@ -343,11 +343,15 @@ function validateWorkGraph(
       !isWorkTerminal(attributes) &&
       attributes.contractRevision !== goal.attributes.contractRevision
     ) {
-      const isGuardedFutureSupport =
+      const isStaleEngineeringWork =
+        isEngineeringWork(attributes) &&
+        attributes.contractRevision < goal.attributes.contractRevision
+      const isStagedPlanningWork =
+        isPlanningWork(attributes) &&
         openPlanning.length === 1 &&
         (goal.attributes.lifecycle === 'active' || goal.attributes.lifecycle === 'paused') &&
         attributes.contractRevision === goal.attributes.contractRevision + 1
-      if (!isGuardedFutureSupport) {
+      if (!isStaleEngineeringWork && !isStagedPlanningWork) {
         throw invalid(goalId, `nonterminal Work ${workId} uses an invalid contractRevision`)
       }
     }

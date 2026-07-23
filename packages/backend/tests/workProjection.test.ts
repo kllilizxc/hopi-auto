@@ -89,7 +89,6 @@ describe('derived Work projection', () => {
         'goal_not_active',
         'project_ineligible',
         'stale_contract_revision',
-        'planning_guard',
         'attempts_exhausted',
         'capacity',
       ]),
@@ -149,7 +148,7 @@ describe('derived Work projection', () => {
     })
   })
 
-  test('queues Planning behind already admitted same-Goal Engineering', () => {
+  test('gives Planning and Engineering independent Work leases', () => {
     const goalPackage = packageWith([
       work('P-1', 'planning', 'plan'),
       work('W-1', 'engineering', 'review'),
@@ -163,18 +162,18 @@ describe('derived Work projection', () => {
     const engineering = projections.find((item) => item.workId === 'W-1')
 
     expect(planning).toMatchObject({
-      ready: false,
-      primaryBadge: 'waiting',
-      failedPredicates: expect.arrayContaining(['planning_guard']),
+      ready: true,
+      primaryBadge: 'queued',
+      failedPredicates: [],
     })
     expect(engineering).toMatchObject({
       ready: false,
       primaryBadge: 'working',
-      failedPredicates: expect.arrayContaining(['planning_guard', 'live_run']),
+      failedPredicates: ['live_run'],
     })
   })
 
-  test('does not attach the admission guard to historical Planning', () => {
+  test('projects historical Planning only as terminal', () => {
     const goalPackage = packageWith([
       work('P-1', 'planning', 'done'),
       work('W-1', 'engineering', 'review'),

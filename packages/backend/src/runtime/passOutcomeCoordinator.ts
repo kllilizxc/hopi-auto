@@ -39,7 +39,7 @@ export type PassOutcomeApplication =
   | { kind: 'attention'; evidenceId: string; attentionId: string }
   | { kind: 'integration_required'; evidence: EvidenceDocument; work: WorkDocument }
   | { kind: 'already_applied'; evidenceId: string }
-  | { kind: 'stale'; evidenceId: string; reason: string }
+  | { kind: 'stale'; reason: string }
 
 export interface PassOutcomeCoordinator {
   apply(input: ApplyPassOutcomeInput): Promise<PassOutcomeApplication>
@@ -101,10 +101,8 @@ export function createPassOutcomeCoordinator(
         }
       } catch (error) {
         if (!(error instanceof StalePassResultError)) throw error
-        await preserveUnconsumedEvidence(store, input.goalId, evidence)
         return {
           kind: 'stale',
-          evidenceId: evidence.attributes.id,
           reason: error.message,
         }
       }
@@ -145,15 +143,9 @@ export function createPassOutcomeCoordinator(
         }
         const application =
           input.responsibility === 'planner'
-            ? buildPlannerApplication(
-                store,
-                failedInput,
-                evidence,
-                emptyProposal(),
-                current,
-              )
+            ? buildPlannerApplication(store, failedInput, evidence, emptyProposal(), current)
             : buildEngineeringApplication(store, failedInput, evidence, current)
-        return publishWithStaleRecovery(store, failedInput, evidence, application, {
+        return publishWithStaleRecovery(store, failedInput, application, {
           kind: 'published',
           evidenceId: evidence.attributes.id,
           result: 'fail',
@@ -167,7 +159,7 @@ export function createPassOutcomeCoordinator(
         proposal,
         targetedAttention,
       )
-      return publishWithStaleRecovery(store, input, evidence, application, {
+      return publishWithStaleRecovery(store, input, application, {
         kind: 'attention',
         evidenceId: evidence.attributes.id,
         attentionId: targetedAttention.document.attributes.id,
@@ -176,7 +168,7 @@ export function createPassOutcomeCoordinator(
 
     if (input.responsibility === 'planner') {
       const application = buildPlannerApplication(store, input, evidence, proposal, current)
-      return publishWithStaleRecovery(store, input, evidence, application, {
+      return publishWithStaleRecovery(store, input, application, {
         kind: 'published',
         evidenceId: evidence.attributes.id,
         result: input.outcome.result,
@@ -194,7 +186,7 @@ export function createPassOutcomeCoordinator(
     }
 
     const application = buildEngineeringApplication(store, input, evidence, current)
-    return publishWithStaleRecovery(store, input, evidence, application, {
+    return publishWithStaleRecovery(store, input, application, {
       kind: 'published',
       evidenceId: evidence.attributes.id,
       result: input.outcome.result,
@@ -590,7 +582,6 @@ function buildEngineeringApplication(
 async function publishWithStaleRecovery<T extends PassOutcomeApplication>(
   store: GoalPackageStore,
   input: ApplyPassOutcomeInput,
-  evidence: EvidenceDocument,
   publication: PassPublication,
   success: T,
 ): Promise<T | Extract<PassOutcomeApplication, { kind: 'stale' }>> {
@@ -609,10 +600,8 @@ async function publishWithStaleRecovery<T extends PassOutcomeApplication>(
     ) {
       throw error
     }
-    await preserveUnconsumedEvidence(store, input.goalId, evidence)
     return {
       kind: 'stale',
-      evidenceId: evidence.attributes.id,
       reason: error.message,
     }
   }
@@ -633,16 +622,6 @@ async function plannerBootstrapWrite(input: ApplyPassOutcomeInput) {
     expectedHash: null,
     content: new Uint8Array(await file.arrayBuffer()),
   }
-}
-
-async function preserveUnconsumedEvidence(
-  store: GoalPackageStore,
-  goalId: string,
-  evidence: EvidenceDocument,
-) {
-  await store.publishGoal(goalId, {
-    supportingWrites: [evidenceWrite(store, goalId, evidence)],
-  })
 }
 
 export async function validatePassSemanticGuard(
@@ -831,6 +810,17 @@ function validatePlannerTransition(
         }
       }
     }
+  }
+  const staleEngineering = [...after.works.values()].find(
+    (work) =>
+      isEngineeringWork(work.attributes) &&
+      !isWorkTerminal(work.attributes) &&
+      work.attributes.contractRevision !== after.goal.attributes.contractRevision,
+  )
+  if (staleEngineering) {
+    throw new PassProposalError(
+      `Planner must retain or cancel stale Engineering Work ${staleEngineering.attributes.id}`,
+    )
   }
 
   const newTargetless = [...after.attentions.entries()].filter(

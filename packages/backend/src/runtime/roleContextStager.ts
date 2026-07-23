@@ -1251,6 +1251,7 @@ function plannerPrompt(paths: {
       : []),
     'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, and depends only on required output, overlapping writers, or exclusive resources.',
     'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
+    'Engineering Work from an older Goal contract revision is not executable authority. A successful proposal must either update each retained nonterminal Work to the current revision or cancel it; reset its stage to generate when the accepted change invalidates implementation.',
     'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
     'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. When accepted design requires final proof of a browser-facing Preview, direct browser evidence of its user-visible state is required; running or HTTP reachability alone is transport evidence.',
     'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',

@@ -36,7 +36,7 @@ Alignment is complete only when:
 | --- | --- | --- | --- |
 | Project | user checkout locator | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, Project-qualified managed release worktrees | migration, dirty checkout, shared binding, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
-| Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn` plus singleton Planning guard | graph and readiness tests |
+| Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn`, exact Work authority, and Goal contract revisions | graph and readiness tests |
 | Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, vendor-qualified persistent session, read-only Reflection, and validated HOPI tools | direct conversation, per-vendor session resume, Reflection, tool, and recovery tests |
 | Workflow | manual controls and hard-coded task lanes | one code-owned profile through generic `RoleRunner` | profile parity and end-to-end reconcile tests |
 | Publication | direct writes and nested locks | OS instance lock, global mutex, one-gate `publish`, durable receipt and C1 ref | concurrency and fault-injection tests |

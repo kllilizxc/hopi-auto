@@ -1686,24 +1686,6 @@ function presentWorkBlocker(
   }
   if (reasons.has('project_ineligible')) return 'Project'
   if (reasons.has('goal_not_active')) return 'Goal'
-  if (reasons.has('planning_guard')) {
-    if (work.attributes.kind === 'engineering') return 'Planner'
-    const activeResponsibilities = new Set(
-      [...goalPackage.works.values()]
-        .filter((candidate) => candidate.attributes.kind === 'engineering')
-        .map((candidate) => projections.get(candidate.attributes.id))
-        .filter(
-          (candidate): candidate is WorkProjection =>
-            candidate?.primaryBadge === 'working' && candidate.responsibility !== null,
-        )
-        .map((candidate) => candidate.responsibility),
-    )
-    if (activeResponsibilities.size === 1) {
-      const responsibility = [...activeResponsibilities][0]
-      return responsibility ? capitalize(responsibility) : null
-    }
-    return 'active Work'
-  }
   if (reasons.has('stale_contract_revision')) return 'Planner'
   if (reasons.has('dependency_incomplete')) {
     const dependencies = work.attributes.dependsOn

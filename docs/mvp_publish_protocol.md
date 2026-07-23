@@ -145,9 +145,9 @@ proposal validates.
 | Goal completion             | none                                                          | Goal `done` and pointer                       |
 | Answer resolution           | verified effects and receipts                                 | Attention `resolvedAt`                        |
 
-Creating a dependency target and adding the edge are separate publications when necessary. A
-nonterminal Planning Work is itself the Goal-wide Engineering guard, so it is published before
-other replanning effects and changed to `done` only after Planner outputs validate.
+Creating a dependency target and adding the edge are separate publications when necessary.
+Planning Work is published before related replanning effects and changed to `done` only after
+Planner outputs validate; its existence alone does not block Engineering.
 Planner success requires no separate design-approval publication; unresolved operator authority is
 represented by targeted Attention instead.
 An Attention-producing result must be `attention`; `success`, `reject`, or `fail` combined with
@@ -157,20 +157,21 @@ final Planner completion proposal.
 Planner publications require their staged integration target. Engineering publications allow an
 unrelated C1 to advance that target when all selected canonical guard hashes remain current; the
 task branch stays isolated and the later C1 path owns deterministic rebuild or conflict rejection.
-A Planning Work published after an Engineering Run was admitted is likewise not an independent
-stale condition. Coordinator delays that Planner Run until admitted same-Goal Engineering Runs
-drain and blocks new Engineering dispatch in the meantime; exact canonical hashes still reject a
-result when Planning actually changes its semantic inputs.
+A Planning Work published after an Engineering Run was admitted is not an independent stale
+condition or scheduling lock. Exact canonical hashes reject the result only when Planning actually
+changes its selected semantic inputs.
 Canonical snapshot guards compare the complete protected selection, including path membership and
 content hashes. A selected file created after staging therefore stales the result just like a
 selected file changed or removed. Result-owned supporting writes are the only allowed delta while
 that result's gate is being validated.
-Every semantic-guard rejection has one outcome regardless of where it is detected: unconsumed
-Evidence may be preserved, the application is `stale`, and no Project Attention is created. This
-includes the pre-C1 Reviewer-success check and a lifecycle change racing Run termination.
+Every semantic-guard rejection has one outcome regardless of where it is detected: the application
+is `stale`, its diagnostics remain in the Run Attempt, and no canonical Evidence, Planning Work, or
+Project Attention is created. This includes the pre-C1 Reviewer-success check and a lifecycle change
+racing Run termination. Evidence already written before a process stop remains unconsumed
+provenance; it is not reconstructed from the stale result.
 Writing a HOPI design document has no gate semantics by path alone. Any Goal revision, Planning
-guard, or Work change is an explicit HOPI tool request validated and published through its existing
-gate.
+request, or Work change is an explicit HOPI tool request validated and published through its
+existing gate.
 
 Adopting an Inbox image adds no gate of its own. Its immutable Goal-local bytes and
 `design/references.md` entry are supporting writes in the same Goal publication whose existing Input
@@ -178,15 +179,12 @@ or Planning Work gate accepts the instruction. The owning Planning Work includes
 so no responsibility can dispatch from a publication that claims the instruction but lacks its
 visual context.
 
-A material revision is the only case where an existing mutable document must be staged ahead of
-its gate. While the current Planning guard is open, a nonterminal Work document may therefore
-carry exactly `Goal.contractRevision + 1` as unconsumed support. Mixed current/next Work revisions
-are valid only during this guarded publication window. Eligibility still requires exact equality
-with the Goal's current revision, so neither next-revision support nor current-revision Engineering
-Work can dispatch while the Planning guard exists. The Goal revision write is the single gate that
-consumes the staged Work. This narrow recovery state replaces a WAL or multi-file filesystem
-transaction; the pending Assistant turn and idempotent HOPI tool deterministically retry from
-current documents after a crash.
+A material revision is the only case where Planning Work may be staged ahead of its Goal gate. The
+one open Planning Work may carry exactly `Goal.contractRevision + 1` as unconsumed support. The Goal
+revision write is the single gate that consumes it. Existing nonterminal Engineering Work remains
+on its prior revision and is ineligible until Planner republishes or cancels it. This narrow
+recovery state replaces a WAL or multi-file filesystem transaction; the pending Assistant turn and
+idempotent HOPI tool deterministically retry from current documents after a crash.
 
 Inbox turn handling and Attention resolution are separate gates. A Goal-local answer completes its
 project Input gate, then its Attention resolution gate, then Assistant continues toward the final home
@@ -233,8 +231,9 @@ and visibility distinguish it from operator input without adding a second queue 
 - Replan stops after the Planning Work gate, which references its Evidence as the consumed-result
   marker. Planner owns the next step and updates affected Engineering Work. Reconciler does not
   apply an old pass transition afterward.
-- Planning Work at `plan` runs Planner and blocks every Engineering dispatch and returning result
-  in its Goal.
+- Planning Work at `plan` runs Planner through the same readiness model as other Work. A material
+  Goal revision blocks prior Engineering routes through their revision mismatch, not through the
+  existence of Planning Work.
 - A targetless completion proposal without its Planning Work gate is unconsumed support. Planner
   runs again and may reuse it only while its message remains accurate; otherwise Planner resolves
   it as superseded before creating a replacement.
@@ -437,7 +436,8 @@ The implementation must cover:
 - Inbox transport acknowledgement occurs only after its turn receipt is durable
 - direct reply, tool success, process stop before Goal Input, and process stop between Input and
   final home handling
-- Planning Work blocks Engineering dispatch and returning results until `done`
+- a material Goal revision leaves prior Engineering Work ineligible until Planner republishes or
+  cancels it
 - Evidence without a Work gate remains unconsumed and a fresh Run may retry
 - Attention or Planning gates never cause an old Work transition to be reconstructed
 - Work at the retry limit cannot dispatch and gains missing blocking Attention

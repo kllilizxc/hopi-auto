@@ -500,7 +500,6 @@ id: W-12
 title: Harden expedition scene re-entry
 kind: engineering
 stage: generate
-repos: [web, api]
 notBefore: null
 dependsOn: [W-11]
 contractRevision: 4
@@ -581,10 +580,10 @@ and success-criteria sections instead of storing placeholder text. The Goal cont
 Input remain separate first-class documents because normalization and source provenance are
 different facts.
 
-Triggers include Goal creation with a Planning first Work, material contract
-change, resume, reopen, stale output, an explicit
-speaking-Assistant planning request after Attention, and an active Goal with neither nonterminal
-Work nor a current completion proposal.
+Triggers include Goal creation with a Planning first Work, material contract change, resume,
+reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with
+neither nonterminal Work nor a current completion proposal. A stale Run result is not a planning
+trigger because it has no authority to change the Goal or Work.
 
 Clarification and final assessment remain model judgment inside the same Planning Work. The
 document model adds no `clarify` or completion stage, approval flag, structured question, or
@@ -593,17 +592,17 @@ success may create an unclaimed targetless completion proposal as support before
 Planning Work to `done`. Detailed Planner behavior belongs to
 [the execution design](./mvp_execution.md#planner).
 
-Any nonterminal Planning Work is a Goal-wide planning guard: no Engineering Work in that Goal may
-dispatch while it exists. Planner publication updates it to the current contract revision and adds
-only real engineering prerequisite edges. A completed or cancelled Planning Work is historical
-and never reopened.
+Planning Work is ordinary schedulable Work, not a Goal-wide lock. Same-revision Planning and
+Engineering may coexist; each Run is admitted only from its own current Work authority and exact
+selected hashes. If Planner changes authority used by an admitted Run, that Run is interrupted when
+possible and its racing result still fails the semantic publication guard.
 
-The guard controls admission rather than retroactive validity. If a trigger creates or updates the
-Planning Work while Generator or Reviewer Runs for the same Goal are already active, those Runs are
-allowed to finish and publish against their staged semantic guards. The Planner Run waits until
-those admitted Engineering Runs drain, then runs before any new Engineering Run. A concurrently
-changed design, Work, dependency, or Attention is still caught by its exact guard hash; the new
-Planning Work document alone does not stale an Engineering result.
+A material Goal revision is the global authority boundary. Existing nonterminal Engineering Work
+keeps the revision it was planned against and therefore becomes ineligible without changing its
+stage, branch, or history. Planner must either bring each retained Work to the current revision,
+reset it to `generate` when its implementation is invalidated, or cancel it. Planner success cannot
+leave stale nonterminal Engineering Work. A completed or cancelled Planning Work is historical and
+never reopened.
 
 If another trigger arrives during Planner execution, the same Planning Work is updated. The old
 Run may preserve artifacts but fails its semantic guard.
@@ -612,8 +611,7 @@ Run may preserve artifacts but fails its semantic guard.
 
 `dependsOn` is the only causal-order and conflict-avoidance graph between Engineering Work. Only a
 dependency at `done` satisfies an edge. References must exist in the same Goal, edges remain after
-completion, and cycles are invalid. The Goal-wide Planning guard is a reconciliation gate, not a
-second dependency graph.
+completion, and cycles are invalid. Planning Work is not a second dependency graph.
 
 If Planner cannot establish that two writers are independent, it orders them. Missed overlap is
 contained by task branches and handled by deterministic integration rejection and repair or
@@ -630,24 +628,30 @@ Cancelling Work with nonterminal dependents first cancels those dependents trans
 cancels the selected Work. If that cascade is not clearly intended, cancellation is not published
 and HOPI creates targeted Attention. Planner may later create replacement Work, but it never
 rewrites the historical edges. Nonterminal Work may not depend on cancelled Work.
-If a process stops after the final cancellation gate but before Planning is ensured, repeating the
-same cancellation is idempotent and installs the missing Planning guard.
+After the durable cancellation, Coordinator interrupts every affected live Run. Repeating the same
+cancellation is idempotent. Cancellation changes only an execution route: it neither changes the
+Goal contract nor requests Planning. If the Goal still requires the cancelled outcome, later
+Planning may legitimately create a different Work identity. Removing that outcome from scope is a
+material Goal revision instead.
 
 #### Time and revision
 
 `notBefore` is the MVP's only durable time gate. Null means eligible now; a future instant delays
 dispatch. There are no Goal schedules, recurring schedules, or time-wait documents.
 
-Each Work records the Goal contract revision it was planned against. Output from an older
-revision is never applied directly. HOPI preserves its Evidence and task branch, sets affected
-engineering Work to `generate` and ensures Planning Work. Planner decides what is reusable.
+Each Work records the Goal contract revision it was planned against. Output from an older revision
+is never applied. A material Goal revision leaves existing nonterminal Engineering Work at the old
+revision so readiness exposes the real authority mismatch; Planner decides whether to retain,
+reset, or cancel each route.
 
-The publication protocol permits one non-semantic intermediate form: under an open Planning guard,
-a nonterminal Work may be staged at exactly the next Goal revision before the Goal revision gate is
-written. Consumers treat it as unconsumed support and never as eligible Work. Outside that bounded
-support-first recovery window, every nonterminal Work revision equals its Goal revision.
+The publication protocol permits one non-semantic intermediate form: the open Planning Work may be
+staged at exactly the next Goal revision before the Goal revision gate is written. Consumers treat
+it as unconsumed support and never as eligible Work. Existing Engineering Work remains at its prior
+revision across the Goal gate until Planner republishes or cancels it.
 
-Output for terminal Goal or Work state is Evidence only.
+A result whose semantic guard is already stale remains Run-local Attempt history; it creates no
+canonical Evidence and no planning request. Canonical unconsumed Evidence can still exist when a
+process stops after its supporting write but before its Work gate, and remains provenance only.
 
 #### Bounded recovery
 

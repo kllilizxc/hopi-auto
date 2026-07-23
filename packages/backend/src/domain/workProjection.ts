@@ -1,11 +1,6 @@
 import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
 import { goalAttentionTarget, workAttentionTarget } from './attentionTarget'
-import {
-  type WorkAttributes,
-  isAttentionBlocking,
-  isPlanningWork,
-  isWorkTerminal,
-} from './canonicalDocuments'
+import { type WorkAttributes, isAttentionBlocking, isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
@@ -22,7 +17,6 @@ export type WorkReadinessReason =
   | 'goal_not_active'
   | 'project_ineligible'
   | 'stale_contract_revision'
-  | 'planning_guard'
   | 'dependency_incomplete'
   | 'not_before'
   | 'attempts_exhausted'
@@ -82,25 +76,6 @@ export function deriveWorkProjection(
   if (!runtime.projectEligible) failedPredicates.push('project_ineligible')
   if (work.contractRevision !== goal.contractRevision) {
     failedPredicates.push('stale_contract_revision')
-  }
-  if (
-    work.kind === 'engineering' &&
-    [...goalPackage.works.values()].some(
-      (candidate) => isPlanningWork(candidate.attributes) && candidate.attributes.stage === 'plan',
-    )
-  ) {
-    failedPredicates.push('planning_guard')
-  }
-  if (
-    work.kind === 'planning' &&
-    work.stage === 'plan' &&
-    [...goalPackage.works.values()].some(
-      (candidate) =>
-        candidate.attributes.kind === 'engineering' &&
-        runtime.liveRunWorkIds.has(candidate.attributes.id),
-    )
-  ) {
-    failedPredicates.push('planning_guard')
   }
   if (
     work.dependsOn.some(

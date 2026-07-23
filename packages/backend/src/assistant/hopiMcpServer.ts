@@ -73,7 +73,7 @@ if (mode !== 'reflection') {
     'hopi_create_work',
     {
       description:
-        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention. Engineering requires a full contract and dependencies; every Project Repo is available to it. One Inbox instruction can directly admit at most one Engineering Work.',
+        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention; a new revision changes Goal authority and invalidates older Work, while same_contract only requests assessment. Engineering requires a full contract and dependencies; every Project Repo is available to it. One Inbox instruction can directly admit at most one Engineering Work.',
       inputSchema: assistantMcpToolSchemas.hopi_create_work,
     },
     (args) => callTool('hopi_create_work', args),
@@ -103,7 +103,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Request one new invocation for a Work, defer it, or cancel one Engineering Work. Cancellation includes every nonterminal dependent and preserves history. Retry is pending until that invocation succeeds or fails; it never claims immediate success.',
+        'Request one new invocation for a Work, defer it, or cancel one Engineering execution route. Cancellation includes every nonterminal dependent, interrupts their live Runs, and preserves history. It does not change the Goal or request Planning, so the unchanged Goal may later require replacement Work. Retry is pending until that invocation succeeds or fails.',
       inputSchema: assistantMcpToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),

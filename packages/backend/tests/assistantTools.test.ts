@@ -525,24 +525,28 @@ describe('Assistant HOPI tools', () => {
     ).toHaveLength(1)
   })
 
-  test('rejects direct admission while Planning owns the Goal', async () => {
+  test('admits an exact Engineering Work independently from current Planning', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
     await fixture.workspace.receiveEvent({ eventId: 'EV-guarded', content: 'Add one change.' })
 
-    await expect(
-      fixture.tools.executeForEvent('EV-guarded', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: {
-          kind: 'engineering',
-          title: 'Add one change',
-          objective: 'Apply the bounded change.',
-          acceptanceCriteria: ['The change works as requested.'],
-        },
-      }),
-    ).rejects.toThrow('cannot bypass current Planning Work')
-    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
+    await fixture.tools.executeForEvent('EV-guarded', 'hopi_create_work', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      work: {
+        kind: 'engineering',
+        title: 'Add one change',
+        objective: 'Apply the bounded change.',
+        acceptanceCriteria: ['The change works as requested.'],
+      },
+    })
+
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.inputs).toHaveLength(1)
+    expect([...goalPackage.works.values()].map((work) => work.attributes.kind).toSorted()).toEqual([
+      'engineering',
+      'planning',
+    ])
   })
 
   test('rejects direct admission for inactive Goals and ignores legacy Repo subsets', async () => {
@@ -955,18 +959,6 @@ describe('Assistant HOPI tools', () => {
         (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
       ),
     ).toHaveLength(1)
-    await expect(
-      fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: {
-          kind: 'engineering',
-          title: 'Bypass reopened planning',
-          objective: 'Attempt a direct delivery while Planning owns the Goal.',
-          acceptanceCriteria: ['The delivery is complete.'],
-        },
-      }),
-    ).rejects.toThrow('cannot bypass current Planning Work')
     const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
       projectId: 'P-1',
       goalId: 'G-1',
@@ -1204,10 +1196,11 @@ describe('Assistant HOPI tools', () => {
   })
 
   test('settles exact Work Attention when cancellation makes the Work terminal', async () => {
-    const fixture = await setup()
+    const fixture = await setup({ trackInterrupts: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-cancel')
+    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-dependent', ['W-cancel'])
     const attention = await fixture.controller.ensureResponsibilityFailureAttention(
       'G-1',
       'W-cancel',
@@ -1237,6 +1230,16 @@ describe('Assistant HOPI tools', () => {
     })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
     expect(goalPackage.works.get('W-cancel')?.attributes.stage).toBe('cancelled')
+    expect(goalPackage.works.get('W-dependent')?.attributes.stage).toBe('cancelled')
+    expect(
+      [...goalPackage.works.values()].filter(
+        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+      ),
+    ).toHaveLength(0)
+    expect(fixture.interruptedWorkTargets).toEqual([
+      { goalId: 'G-1', workId: 'W-cancel' },
+      { goalId: 'G-1', workId: 'W-dependent' },
+    ])
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: expect.any(String),
       resolutionInput: expect.stringContaining('/EV-cancel-work.md'),
@@ -2609,6 +2612,7 @@ async function publishEngineeringWork(
   store: ReturnType<typeof createGoalPackageStore>,
   goalId: string,
   workId: string,
+  dependsOn: string[] = [],
 ) {
   await store.publishGoal(goalId, {
     supportingWrites: [],
@@ -2622,7 +2626,7 @@ async function publishEngineeringWork(
           kind: 'engineering',
           stage: 'generate',
           notBefore: null,
-          dependsOn: [],
+          dependsOn,
           contractRevision: 1,
           evidenceRefs: [],
           attempts: 0,

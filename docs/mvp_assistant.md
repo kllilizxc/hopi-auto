@@ -515,8 +515,8 @@ infers omission as "no Work" or silently chooses a responsibility.
 
 `Create Work` provides the same bounded admission for an existing active Goal. Its `planning` branch
 selects same-contract or new-contract-revision Planning. Its `engineering` branch supplies one
-complete, proportionate Work contract with Repos and dependencies and requires that no nonterminal
-Planning Work exists. HOPI owns structural facts such as ID, initial stage, revision, and dispatch
+complete, proportionate Work contract with Repos and dependencies. Planning and Engineering Work use
+independent authority and readiness. HOPI owns structural facts such as ID, initial stage, revision, and dispatch
 provenance. Goal creation and Create Work each accept one Work rather than an array.
 
 Planning and Engineering first Work have distinct domain effects and preconditions. A named model,

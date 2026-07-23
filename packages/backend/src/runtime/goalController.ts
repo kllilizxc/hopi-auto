@@ -173,14 +173,6 @@ export function createGoalController(
       if (goalPackage.goal.attributes.lifecycle !== 'active') {
         throw new GoalControllerError('Direct Engineering Work requires an active Goal')
       }
-      if (
-        [...goalPackage.works.values()].some(
-          (candidate) =>
-            isPlanningWork(candidate.attributes) && candidate.attributes.stage === 'plan',
-        )
-      ) {
-        throw new GoalControllerError('Direct Engineering Work cannot bypass current Planning Work')
-      }
       for (const dependencyId of input.dependsOn) {
         const dependency = goalPackage.works.get(dependencyId)
         if (!dependency || !isEngineeringWork(dependency.attributes)) {
@@ -394,28 +386,18 @@ export function createGoalController(
       const supportingWrites: Parameters<GoalPackageStore['publishGoal']>[1]['supportingWrites'] =
         []
       for (const work of goalPackage.works.values()) {
-        if (isWorkTerminal(work.attributes)) continue
+        if (isWorkTerminal(work.attributes) || !isPlanningWork(work.attributes)) continue
         const path = store.paths.workDocument(goalId, work.attributes.id)
         const source = await Bun.file(store.paths.absolute(path)).text()
-        const next: WorkDocument = isPlanningWork(work.attributes)
-          ? {
-              ...work,
-              attributes: {
-                ...work.attributes,
-                stage: 'plan',
-                contractRevision: revision,
-                attempts: 0,
-              },
-            }
-          : {
-              ...work,
-              attributes: {
-                ...work.attributes,
-                stage: 'generate',
-                contractRevision: revision,
-                attempts: 0,
-              },
-            }
+        const next: WorkDocument = {
+          ...work,
+          attributes: {
+            ...work.attributes,
+            stage: 'plan',
+            contractRevision: revision,
+            attempts: 0,
+          },
+        }
         supportingWrites.push({
           path,
           expectedHash: await hashBytes(new TextEncoder().encode(source)),
@@ -905,10 +887,7 @@ export function createGoalController(
       if (target.attributes.stage === 'done') {
         throw new GoalControllerError(`Cannot cancel completed Work: ${workId}`)
       }
-      if (target.attributes.stage === 'cancelled') {
-        await this.ensurePlanning(goalId, `Reassess the plan after Work ${workId} was cancelled.`)
-        return []
-      }
+      if (target.attributes.stage === 'cancelled') return []
       let cancellationOrder: string[]
       try {
         cancellationOrder = workCancellationOrder(goalPackage, [workId])
@@ -928,7 +907,6 @@ export function createGoalController(
           } as WorkDocument)
         }
       }
-      await this.ensurePlanning(goalId, `Reassess the plan after Work ${workId} was cancelled.`)
       return cancelled
     },
     async cancelGoal(goalId) {

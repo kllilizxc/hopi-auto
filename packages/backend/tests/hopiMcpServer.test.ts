@@ -108,6 +108,9 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.description).toContain(
       'Goal lifecycle or priority action',
     )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
+      'does not change the Goal or request Planning',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
     ).toContain('removes that scheduling gate')

@@ -615,7 +615,7 @@ Actions:
 1. Ask the Assistant to create and implement the initial feature.
 2. Wait until Engineering is active.
 3. In the same Assistant thread, instruct a material design change and request implementation.
-4. Observe Input, design, revision, Planning guard, stale/interrupted Attempt, and replacement Work.
+4. Observe Input, design, revision mismatch, stale/interrupted Attempt, and replacement Work.
 5. Verify the final release against only the revised acceptance behavior.
 
 Pass conditions:
@@ -744,7 +744,8 @@ Pass conditions:
   cannot install a Run after Pause or Coordinator shutdown.
 - An admitted obsolete result cannot publish a Work transition after the Pause guard.
 - A paused contract edit remains durable and is included in Resume planning.
-- Resume ensures a valid Planning guard before Engineering proceeds.
+- Resume ensures current Planning Work; any materially stale Engineering route remains blocked by
+  its contract revision until Planner retains or cancels it.
 - The resumed Generator uses the same Work-revision responsibility session and retained workspace
   while producing a distinct Attempt; a file written before Pause remains readable afterward.
 - The selected user checkout remains unchanged while paused and after completion; only the managed

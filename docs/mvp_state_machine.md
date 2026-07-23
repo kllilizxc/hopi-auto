@@ -321,10 +321,10 @@ stateDiagram-v2
     state "cancelled" as Cancelled
 
     [*] --> Active : create Goal and one initial Work
-    Active --> Active : material contract change and planning guard
+    Active --> Active : material contract revision
     Active --> Paused : explicit Pause
     Paused --> Paused : instruction may edit contract
-    Paused --> Active : explicit Resume and planning guard
+    Paused --> Active : explicit Resume and Planning
     Active --> Done : Planner proposal then Goal pointer gate
     Active --> Cancelled : explicit cancel
     Paused --> Cancelled : explicit cancel
@@ -362,18 +362,24 @@ process stop before the Planning gate causes Planner to reassess; a stop after i
 finish without another semantic model call. Reopen resolves the referenced completion and clears
 the pointer before new planning.
 
-## Planning Guard
+## Planning Work And Authority Revisions
 
 Each Goal has at most one nonterminal Planning Work (`kind: planning`, `stage: plan`). A planning
-trigger creates or reuses that Work as a single Goal-wide guard. No Engineering Work in the Goal may
-dispatch, publish a returning result, or enter `C1` while the guard exists. Planning Work is never
-added to Engineering `dependsOn`.
+trigger creates or reuses that Work. Planning Work is never added to Engineering `dependsOn` and is
+not a Goal-wide scheduling lock. Same-revision Planning and Engineering can be eligible
+independently; exact Work authority, dependencies, targeted Attention, leases, and capacity decide
+admission.
 
 Planner reads current Goal, Inputs, design, Work, and Evidence to determine why planning is needed;
-the Work stores no separate trigger pointer. While Planning Work remains the guard, Planner
-publishes prerequisite Engineering Work before dependents plus the remaining design and supporting
-documents. Planning Work `done` is the final gate that removes the Goal-wide guard and exposes
-either the validated engineering plan to readiness or a final completion proposal to Coordinator.
+the Work stores no separate trigger pointer. Planner publishes prerequisite Engineering Work before
+dependents plus the remaining design and supporting documents. Planning Work `done` is the result
+gate that exposes the accepted plan or final completion proposal to Coordinator.
+
+A material Goal revision is the global authority boundary. It interrupts admitted Runs for that
+Goal and leaves existing nonterminal Engineering Work on their prior `contractRevision`, making
+them ineligible through the ordinary revision predicate. Planner success must update every retained
+nonterminal Engineering Work to the current revision or cancel it. This represents invalidation in
+the documents that own it instead of inferring it from the mere presence of Planning Work.
 
 Before interpreting the requirement, Planner reads root `AGENTS.md`. If it is absent, Planner
 silently explores the Repo and includes a concise bootstrap `AGENTS.md` among its supporting writes.
@@ -400,11 +406,11 @@ For an Engineering `attention` result, available Evidence and one targeted Atten
 without a Work gate. Speaking Assistant decides whether current authority answers it, Planning is
 needed, or the operator must decide. There is no direct responsibility-to-responsibility handoff.
 
-Planning triggers include Goal creation, material contract change, resume, reopen, stale output,
-explicit Assistant-requested planning that adopts the current turn and an active Goal with neither
-nonterminal Work nor a
-current completion proposal. An interrupted Planner simply runs again while its Planning Work
-remains at `plan`.
+Planning triggers include Goal creation, material contract change, resume, reopen, explicit
+Assistant-requested planning that adopts the current turn, and an active Goal with neither
+nonterminal Work nor a current completion proposal. A stale Run result changes no canonical
+authority and therefore does not trigger Planning. An interrupted Planner simply runs again while
+its Planning Work remains at `plan`.
 
 ## Work Lifecycle
 
@@ -485,9 +491,9 @@ the MVP accepts instead of adding a result ledger.
 
 Every returning result must still pass Goal lifecycle, Work stage, contract revision, permanent
 dependencies, targeted Attention, selected canonical guard hashes, and current integration checks.
-Stale output may remain Evidence but cannot advance Work. A Planning Work created after an
-Engineering Run started is an admission barrier, not by itself a stale condition: its Planner Run
-waits for admitted same-Goal Engineering Runs to drain, while new Engineering dispatch is blocked.
+A result already stale at publication remains only in its Attempt and cannot advance Work or create
+canonical Evidence. Creating Planning Work alone does not invalidate an admitted Engineering Run;
+an actual change to its selected authority does.
 
 An unrelated C1 target advance alone does not stale an Engineering result. Planner remains tied to
 its staged target snapshot; Generator and Reviewer remain valid while their selected semantic guards
@@ -510,8 +516,9 @@ normal pre-boundary rejection. Neither case adds a stale-target state.
 
 Cancellation is publishable only if every nonterminal dependent is cancelled transitively before
 its prerequisite. If that cascade is not clearly intended, targeted Attention requests operator
-input. Planner may create replacement Work but never removes or rewrites historical dependency
-edges.
+input. Durable cancellation interrupts the affected Runs but does not revise the Goal or request
+Planning. Planner may create replacement Work when the unchanged Goal still requires the outcome,
+but never removes or rewrites historical dependency edges.
 
 ## Readiness
 
@@ -523,7 +530,6 @@ ready(work) :=
   and goal(work).lifecycle == active
   and the Goal package and permanent dependency DAG are valid
   and work.contractRevision == goal(work).contractRevision
-  and (work.kind == planning or goal(work) has no nonterminal Planning Work)
   and every work.dependsOn item is done
   and (work.notBefore is null or work.notBefore <= now)
   and work.attempts < profile.maxAttempts
@@ -533,10 +539,10 @@ ready(work) :=
   and capacity exists for pass(work.kind, work.stage)
 ```
 
-A false predicate leaves stage unchanged. A nonterminal Planning Work keeps all Engineering Work in
-that Goal ineligible. Capacity, leases, time, and project-root eligibility remain runtime concerns.
-An active Goal with no nonterminal Work completes only from a current final Planner proposal;
-otherwise Reconciler ensures Planning Work for semantic assessment.
+A false predicate leaves stage unchanged. Planning and Engineering use the same readiness model;
+capacity, leases, time, revision, and project-root eligibility remain runtime concerns. An active
+Goal with no nonterminal Work completes only from a current final Planner proposal; otherwise
+Reconciler ensures Planning Work for semantic assessment.
 
 If `attempts >= maxAttempts`, Work is never ready. Reconciler creates or reuses targeted Attention
 before considering it again, so an incomplete notification publication cannot make exhausted Work

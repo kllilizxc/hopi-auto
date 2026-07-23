@@ -152,7 +152,7 @@ describe('PassOutcomeCoordinator', () => {
       reason: expect.stringContaining(inputPath),
     })
     expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
-    expect(goalPackage.evidence.has('E-run-new-input')).toBe(true)
+    expect(goalPackage.evidence.has('E-run-new-input')).toBe(false)
   })
 
   test('applies Generator success as Evidence plus one Work gate', async () => {
@@ -224,7 +224,7 @@ describe('PassOutcomeCoordinator', () => {
       reason: expect.stringContaining(designPath),
     })
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
-    expect(goalPackage.evidence.has('E-run-new-design')).toBe(true)
+    expect(goalPackage.evidence.has('E-run-new-design')).toBe(false)
   })
 
   test('publishes targeted Attention without advancing Work or consuming the Run', async () => {
@@ -473,7 +473,7 @@ describe('PassOutcomeCoordinator', () => {
     })
   })
 
-  test('preserves stale Evidence without applying an old Work transition', async () => {
+  test('keeps a stale result out of canonical Evidence and Work', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-stale', 'generator')
     const goalPath = fixture.store.paths.goalDocument('goal-1')
@@ -500,7 +500,88 @@ describe('PassOutcomeCoordinator', () => {
     expect(result.kind).toBe('stale')
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
     expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
-    expect(goalPackage.evidence.has('E-run-stale')).toBe(true)
+    expect(goalPackage.evidence.has('E-run-stale')).toBe(false)
+  })
+
+  test('requires Planner to retain or cancel every stale Engineering route', async () => {
+    const fixture = await createEngineeringFixture('review')
+    const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
+    await goals.applyMaterialInstruction('goal-1', {
+      eventId: 'EV-revise',
+      content: 'Change the required behavior.',
+    })
+    let goalPackage = await fixture.store.readPackage('goal-1')
+    const planning = [...goalPackage.works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+    if (!planning) throw new Error('Expected current Planning Work')
+
+    const incompleteContext = await fixture.stage(
+      planning.attributes.id,
+      'run-stale-work-incomplete',
+      'planner',
+    )
+    const incomplete = await fixture.outcomes.apply(
+      fixture.input(
+        planning.attributes.id,
+        'run-stale-work-incomplete',
+        'planner',
+        incompleteContext,
+        'success',
+      ),
+    )
+    goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(incomplete).toMatchObject({ kind: 'published', result: 'fail' })
+    expect(goalPackage.evidence.get('E-run-stale-work-incomplete')?.body).toContain(
+      'Planner must retain or cancel stale Engineering Work W-1',
+    )
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'review',
+      contractRevision: 1,
+    })
+
+    const retryContext = await fixture.stage(
+      planning.attributes.id,
+      'run-stale-work-retained',
+      'planner',
+    )
+    const retained = goalPackage.works.get('W-1')
+    if (!retained || retained.attributes.kind !== 'engineering') {
+      throw new Error('Expected stale Engineering Work')
+    }
+    await Bun.write(
+      join(
+        retryContext.proposalRoot,
+        ...fixture.store.paths.workDocument('goal-1', 'W-1').split('/'),
+      ),
+      renderWorkDocument({
+        ...retained,
+        attributes: {
+          ...retained.attributes,
+          stage: 'generate',
+          attempts: 0,
+          contractRevision: 2,
+        },
+      }),
+    )
+    const completed = await fixture.outcomes.apply(
+      fixture.input(
+        planning.attributes.id,
+        'run-stale-work-retained',
+        'planner',
+        retryContext,
+        'success',
+      ),
+    )
+    goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(completed).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      attempts: 0,
+      contractRevision: 2,
+    })
   })
 
   test('normalizes paused Reviewer success before C1 to stale', async () => {
@@ -517,7 +598,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(result).toMatchObject({ kind: 'stale', reason: 'Goal is paused' })
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('review')
     expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
-    expect(goalPackage.evidence.has('E-run-review-paused')).toBe(true)
+    expect(goalPackage.evidence.has('E-run-review-paused')).toBe(false)
   })
 
   test('allows empty sparse recovery when completion support already exists', async () => {

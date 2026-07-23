@@ -711,7 +711,7 @@ describe('CoordinatorReconciler', () => {
     await coordinator.waitForIdle()
   })
 
-  test('drains admitted same-Goal Engineering before dispatching queued Planning', async () => {
+  test('admits same-revision Planning independently from live Engineering', async () => {
     const fixture = await workspaceFixture()
     const goalPackage = engineeringPackage('G-1')
     let finishEngineering: (() => void) | undefined
@@ -783,12 +783,12 @@ describe('CoordinatorReconciler', () => {
       body: 'Plan the concurrent instruction.\n',
     })
 
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect(dispatchCount).toBe(1)
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    expect(dispatchCount).toBe(2)
+    expect([...coordinator.activeRuns().values()].toSorted()).toEqual(['generator', 'planner'])
 
     finishEngineering?.()
     await Bun.sleep(0)
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
     expect([...coordinator.activeRuns().values()]).toEqual(['planner'])
 
     finishPlanning?.()
