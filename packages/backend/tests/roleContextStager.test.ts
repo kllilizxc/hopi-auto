@@ -104,6 +104,8 @@ describe('RoleContextStager', () => {
         target: 'project:project-1/goal:goal-1/work:plan-initial',
       }),
     )
+    expect(prompt).toContain('Reviewer success is terminal for the complete Engineering Work')
+    expect(prompt).toContain('use targeted Attention rather than success')
     expect(prompt).toContain('cannot predict the checkpoint commit Coordinator creates after the Run')
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
     expect(prompt).toContain('Browser harness, when installed')
@@ -600,6 +602,8 @@ describe('RoleContextStager', () => {
       'independently determine whether the Engineering Work satisfies',
     )
     expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
+    expect(reviewerPrompt).toContain('Success is terminal for the complete Work')
+    expect(reviewerPrompt).toContain('remaining required action or proof returns targeted Attention')
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)

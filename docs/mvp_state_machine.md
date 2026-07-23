@@ -467,6 +467,12 @@ Dispatch never changes stage. Responsibility is a pure function of Work kind and
 | Generator | `generate` | `success -> review`; `attention/fail -> Assistant`                       |
 | Reviewer  | `review`   | success -> C1; reject -> generate; attention/fail -> Assistant            |
 
+Reviewer `success` is terminal for the complete Engineering Work, not an approval of an
+intermediate phase or checkpoint. When verified work remains after a prerequisite gate passes,
+Reviewer uses the existing targeted `attention` transition to preserve that proof and hand the
+remaining action to its real owner; the Work stays at `review`. This keeps one Work lineage without
+adding phase states and prevents incomplete dependencies from being released.
+
 After every Generator Run, Coordinator may create a task-branch source savepoint. The savepoint has
 no state-machine meaning and may preserve partial output from any result. Artifacts and Evidence are
 supporting writes. One Work-file update is the result gate for ordinary outcomes; `attention`
@@ -503,10 +509,12 @@ its staged target snapshot; Generator and Reviewer remain valid while their sele
 are unchanged, and C1 owns deterministic rebuild or source conflict handling.
 
 Reviewer is the last model pass. On success, Coordinator performs independent deterministic `C1`
-integration. `C1` contains source and ordinary document changes, integration Evidence, and the Work
-at `done` with its Evidence references. A guarded ref move observed at C1 is the irreversible
-completion gate on the HOPI-owned Project-qualified release ref; success is reported only after durability is
-confirmed. Work stores no integration-commit field. An update error may return Work to `generate`
+integration. Reviewer may emit success only after checking the whole Work contract and confirming
+that no required user action, Assistant action, long-running operation, publication, or later
+acceptance remains. `C1` contains source and ordinary document changes, integration Evidence, and
+the Work at `done` with its Evidence references. A guarded ref move observed at C1 is the
+irreversible completion gate on the HOPI-owned Project-qualified release ref; success is reported
+only after durability is confirmed. Work stores no integration-commit field. An update error may return Work to `generate`
 or increment `attempts` only when the ref is verified at its old value. A ref at C1 means Work is
 done and never retries. A missing or inconsistent managed integration worktree blocks the Project;
 the MVP does not reconstruct newer canonical content or repair individual paths automatically.

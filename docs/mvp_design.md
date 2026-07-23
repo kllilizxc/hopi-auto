@@ -151,6 +151,13 @@ Planning Work:    Planner -> done
 Engineering Work: Generator -> Reviewer -> Coordinator integration -> done
 ```
 
+This profile has no intermediate success. Reviewer `success` closes the complete Work and releases
+its dependents. A verified checkpoint followed by a still-required user decision, Assistant action,
+durable external run, or later proof uses the existing targeted Attention while the Work remains in
+`review`. Planner normally splits independently schedulable outcomes into separate Work; when one
+lineage must span the external action, Attention is the pause and no additional phase state is
+introduced.
+
 The Reconciler reads one built-in versioned profile. Planner, Generator, and Reviewer are fixed
 responsibility passes executed by one generic `RoleRunner`; they are not durable actor types.
 Coordinator integration is deterministic kernel behavior, not another responsibility pass or Work

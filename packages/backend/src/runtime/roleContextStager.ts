@@ -1462,6 +1462,7 @@ function plannerPrompt(paths: {
           'Goal completion evidence comes from the supplied formal release Preview at its listed release heads.',
         ]
       : []),
+    'Reviewer success is terminal for the complete Engineering Work; plan separate Work for independent outcomes, and use targeted Attention rather than success while required action or proof remains.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
@@ -1488,6 +1489,7 @@ function reviewerPrompt(projectId: string) {
     '## Reviewer',
     '',
     'Owned outcome: independently determine whether the Engineering Work satisfies its accepted contract and material integrity and safety obligations.',
+    'Success is terminal for the complete Work, not a phase or checkpoint; remaining required action or proof returns targeted Attention.',
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',

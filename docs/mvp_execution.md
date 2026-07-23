@@ -1041,9 +1041,15 @@ bypass its stable worktree. Project Preview alone owns that variable.
 
 Reviewer independently checks acceptance criteria, diff, tests, and material runtime behavior.
 It normally reads without editing source. Implementation rejection records findings and returns
-the same Work to `generate`; invalid design returns `attention` for Assistant management. Reviewer success keeps the durable
-stage at `review` while Coordinator immediately attempts deterministic integration under the same
-Work lease.
+the same Work to `generate`; invalid design returns `attention` for Assistant management. `success`
+means the complete owning Work, including every required external effect and final acceptance
+criterion, is finished. It never means that only the current candidate, phase, checkpoint, or
+prerequisite gate is acceptable. If an accepted intermediate checkpoint must be preserved while a
+user, Assistant, durable runner, or other resource performs remaining required work, Reviewer
+returns targeted `attention`, records the accepted proof in its Evidence, and leaves the same Work
+at `review`. This is the existing Attention pause, not a new phase or Work state. Reviewer success
+keeps the durable stage at `review` only while Coordinator immediately attempts deterministic
+integration under the same Work lease.
 
 Before every Reviewer Run, Coordinator discards and rematerializes the HOPI-managed task checkout
 from its stable task-branch checkpoint, even when `git status` reports clean. Git clean status does
