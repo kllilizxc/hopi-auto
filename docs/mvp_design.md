@@ -595,8 +595,12 @@ Assistant receives a bug report, uses its Goal tool to create Goal documents and
 and Reconciler drives Planner,
 Generator, and Reviewer passes through the generic runner. After Reviewer success, Coordinator
 integrates deterministically. Final Planning judges the Goal criteria satisfied, writes one
-evidence-backed completion proposal, and finishes; Coordinator checks structural facts, marks the
-Goal `done`, and delivers that proposal as the completion update.
+evidence-backed completion proposal, and finishes. When the Project exposes a reviewed Preview
+capability, that final assessment runs with the formal Project Preview bound to the exact current
+release heads, and direct evidence from its operator-facing surfaces must be newly retained by that
+Planner Run; candidate Preview evidence may finish Engineering Work but cannot finish the Goal.
+Coordinator checks structural facts, marks the Goal `done`, and delivers that proposal as the
+completion update.
 
 ### Screenshot-guided Goal
 

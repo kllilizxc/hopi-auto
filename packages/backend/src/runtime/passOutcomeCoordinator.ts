@@ -24,6 +24,7 @@ import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationCandidate, PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { Responsibility, RoleContextBundle } from './roleContextStager'
+import { parsePortableArtifactReference } from './runArtifacts'
 
 export interface ApplyPassOutcomeInput {
   goalId: string
@@ -834,6 +835,7 @@ function validatePlannerTransition(
     if (hasNonterminalEngineering) {
       throw new PassProposalError('Completion proposal requires no nonterminal Engineering Work')
     }
+    validateCompletionEvidenceSource(input)
   }
   const hasOpenCompletion = [...after.attentions.values()].some(
     (attention) => attention.attributes.target === null && attention.attributes.resolvedAt === null,
@@ -841,6 +843,34 @@ function validatePlannerTransition(
   if (!hasNonterminalEngineering && !hasOpenCompletion) {
     throw new PassProposalError(
       'Planner success without nonterminal Engineering Work requires completion Attention',
+    )
+  }
+}
+
+function validateCompletionEvidenceSource(input: ApplyPassOutcomeInput) {
+  const preview = input.context.formalReleasePreview
+  if (!preview || preview.kind === 'not_configured') return
+  if (preview.session.status !== 'running' || preview.session.surfaces.length === 0) {
+    throw new PassProposalError(
+      'Goal completion requires a running formal release Preview with operator-facing surfaces',
+    )
+  }
+  const expectedHeads = input.context.repoReleaseHeads
+  const previewHeads = preview.session.releaseHeads
+  if (
+    Object.keys(previewHeads).length !== Object.keys(expectedHeads).length ||
+    Object.entries(expectedHeads).some(([repoId, commit]) => previewHeads[repoId] !== commit)
+  ) {
+    throw new PassProposalError(
+      'Goal completion Preview does not match the current Project release heads',
+    )
+  }
+  const hasCurrentRunEvidence = input.outcome.artifacts.some(
+    (artifact) => parsePortableArtifactReference(artifact)?.runId === input.runId,
+  )
+  if (!hasCurrentRunEvidence) {
+    throw new PassProposalError(
+      'Goal completion requires direct formal release Preview evidence retained by the current Planner Run',
     )
   }
 }
@@ -1041,6 +1071,24 @@ function createRunEvidence(
 }
 
 function renderEvidenceBody(input: ApplyPassOutcomeInput) {
+  const preview = input.context.formalReleasePreview
+  const previewLines = !preview
+    ? []
+    : preview.kind === 'not_configured'
+      ? ['', '## Formal Release Preview', '', '- Project Preview capability: not configured']
+      : [
+          '',
+          '## Formal Release Preview',
+          '',
+          `- Session: ${preview.session.sessionId}`,
+          `- Status: ${preview.session.status}`,
+          ...Object.entries(preview.session.releaseHeads).map(
+            ([repoId, commit]) => `- Release ${repoId}: ${commit}`,
+          ),
+          ...preview.session.surfaces.map(
+            (surface) => `- Surface ${surface.id} (${surface.label}): ${surface.url}`,
+          ),
+        ]
   return [
     '## Responsibility Result',
     '',
@@ -1051,6 +1099,7 @@ function renderEvidenceBody(input: ApplyPassOutcomeInput) {
     '## Summary',
     '',
     input.outcome.summary.trim(),
+    ...previewLines,
     '',
   ].join('\n')
 }

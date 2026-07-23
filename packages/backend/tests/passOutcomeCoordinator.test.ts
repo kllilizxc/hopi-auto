@@ -12,6 +12,7 @@ import {
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPassOutcomeCoordinator } from '../src/runtime/passOutcomeCoordinator'
+import type { FormalReleasePreviewContext } from '../src/runtime/previewManager'
 import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -635,6 +636,68 @@ describe('PassOutcomeCoordinator', () => {
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
   })
 
+  test('rejects a new completion proposal without current-Run formal release Preview evidence', async () => {
+    const fixture = await createFixture()
+    const baseline = await fixture.stage('plan-initial', 'run-preview-baseline', 'planner')
+    const context = await fixture.stage(
+      'plan-initial',
+      'run-preview-without-evidence',
+      'planner',
+      formalPreview(baseline.releaseHead),
+    )
+    await stageCompletionAttention(fixture, context, 'A-preview-without-evidence')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-preview-without-evidence', 'planner', context, 'success', [
+        'README.md',
+        'artifact:older-preview-run/old-browser-proof.png',
+      ]),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({
+      kind: 'published',
+      result: 'fail',
+      summary: expect.stringContaining(
+        'Goal completion requires direct formal release Preview evidence retained by the current Planner Run',
+      ),
+    })
+    expect(goalPackage.attentions.has('A-preview-without-evidence')).toBe(false)
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
+  })
+
+  test('publishes completion with direct evidence from the matching formal release Preview', async () => {
+    const fixture = await createFixture()
+    const baseline = await fixture.stage('plan-initial', 'run-preview-baseline-ok', 'planner')
+    const context = await fixture.stage(
+      'plan-initial',
+      'run-preview-complete',
+      'planner',
+      formalPreview(baseline.releaseHead),
+    )
+    await stageCompletionAttention(fixture, context, 'A-preview-complete')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-preview-complete', 'planner', context, 'success', [
+        'artifact:run-preview-complete/formal-browser-proof.json',
+      ]),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const evidence = goalPackage.evidence.get('E-run-preview-complete')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.attentions.has('A-preview-complete')).toBe(true)
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'done',
+      evidenceRefs: ['E-run-preview-complete'],
+    })
+    expect(evidence?.attributes.artifacts).toEqual([
+      'artifact:run-preview-complete/formal-browser-proof.json',
+    ])
+    expect(evidence?.body).toContain('Session: preview-formal')
+    expect(evidence?.body).toContain('Surface default (Preview): http://127.0.0.1:4311/app')
+  })
+
   test('publishes a fresh completion Attention when resolved history occupies the proposed ID', async () => {
     const fixture = await createFixture()
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-completion')
@@ -929,7 +992,12 @@ async function createFixture() {
     projectRoot: linked.integrationRoot,
     store,
     outcomes,
-    stage(workId: string, runId: string, responsibility: 'planner' | 'generator' | 'reviewer') {
+    stage(
+      workId: string,
+      runId: string,
+      responsibility: 'planner' | 'generator' | 'reviewer',
+      formalReleasePreview?: FormalReleasePreviewContext,
+    ) {
       return stager.prepare({
         projectRoot: linked.integrationRoot,
         projectId: 'project-1',
@@ -937,6 +1005,7 @@ async function createFixture() {
         workId,
         runId,
         responsibility,
+        formalReleasePreview,
       })
     },
     input(
@@ -945,6 +1014,7 @@ async function createFixture() {
       responsibility: 'planner' | 'generator' | 'reviewer',
       context: Awaited<ReturnType<typeof stager.prepare>>,
       result: 'success' | 'reject' | 'attention' | 'fail',
+      artifacts: readonly string[] = [],
     ) {
       return {
         goalId: 'goal-1',
@@ -952,10 +1022,52 @@ async function createFixture() {
         runId,
         responsibility,
         context,
-        outcome: { result, summary: `${responsibility} ${result}`, artifacts: [], exitCode: 0 },
+        outcome: { result, summary: `${responsibility} ${result}`, artifacts, exitCode: 0 },
       }
     },
   }
+}
+
+function formalPreview(releaseHead: string): FormalReleasePreviewContext {
+  return {
+    kind: 'session',
+    session: {
+      sessionId: 'preview-formal',
+      projectId: 'project-1',
+      releaseHeads: { primary: releaseHead },
+      status: 'running',
+      surfaces: [{ id: 'default', label: 'Preview', url: 'http://127.0.0.1:4311/app' }],
+      logPath: '/tmp/preview-formal.log',
+      startedAt: '2026-07-23T00:00:00.000Z',
+      endedAt: null,
+      error: null,
+      stoppedReason: null,
+      repair: null,
+    },
+  }
+}
+
+async function stageCompletionAttention(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  context: { proposalRoot: string },
+  attentionId: string,
+) {
+  const attentionPath = fixture.store.paths.attentionDocument('goal-1', attentionId)
+  const stagedPath = join(context.proposalRoot, ...attentionPath.split('/'))
+  await mkdir(dirname(stagedPath), { recursive: true })
+  await Bun.write(
+    stagedPath,
+    renderAttentionDocument({
+      attributes: {
+        id: attentionId,
+        target: null,
+        createdAt: '2026-07-23T00:00:00.000Z',
+        resolvedAt: null,
+        notifiedAt: null,
+      },
+      body: '## Complete\n\nThe formal release Preview satisfies the Goal.\n',
+    }),
+  )
 }
 
 function engineeringWork(

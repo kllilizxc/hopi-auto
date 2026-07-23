@@ -352,7 +352,11 @@ nonterminal Work without reverting integrated history.
 Planner owns semantic completion assessment. In a final Planning publication it either creates
 more Engineering Work, requests operator input, or writes the Goal's one open unclaimed targetless
 Attention as support before marking Planning Work `done`. The proposal contains the completion
-summary and links to existing proof; its ID is not derived from a content digest.
+summary and links to existing proof; its ID is not derived from a content digest. If the Project
+declares Preview capability, final Planning receives a formal Preview session whose identity includes
+every current Repo release head. A new completion proposal must retain direct surface evidence from
+that session as a current-Run artifact; candidate evidence, older artifacts, and transport readiness
+remain Engineering evidence only.
 
 Coordinator owns only the lifecycle transition. With that durable proposal, no nonterminal Work,
 no covering targeted Attention, and valid C1 structure, it publishes Goal `lifecycle: done` plus

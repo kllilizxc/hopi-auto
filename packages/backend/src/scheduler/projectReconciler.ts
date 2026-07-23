@@ -23,6 +23,7 @@ import {
   type PassOutcomeCoordinator,
   createPassOutcomeCoordinator,
 } from '../runtime/passOutcomeCoordinator'
+import type { FormalReleasePreviewContext } from '../runtime/previewManager'
 import {
   type ResponsibilitySessionStore,
   createResponsibilitySessionStore,
@@ -71,6 +72,7 @@ export interface ProjectReconcilerOptions {
   operationalRetryBaseMs?: number
   maxOperationalFailures?: number
   apiOrigin?: () => string
+  prepareFormalReleasePreview?(): Promise<FormalReleasePreviewContext>
   onProjectBlocked?(input: {
     projectId: string
     reason: string
@@ -413,6 +415,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           sessionKey,
           owningWork.attributes.contractRevision,
         )
+        const formalReleasePreview =
+          responsibility === 'planner' &&
+          ![...goalPackage.works.values()].some(
+            (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
+          )
+            ? await options.prepareFormalReleasePreview?.()
+            : undefined
         const context = await contextStager.prepare({
           projectRoot: options.projectRoot,
           projectPath: primaryProjectRepo.projectPath,
@@ -425,6 +434,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
           runtimeScratchDir: responsibilitySession.workspaceDir,
+          formalReleasePreview,
         })
         attempt = await attempts
           .start({

@@ -59,6 +59,7 @@ import {
   createMvpRuntime,
   requireProject,
 } from './runtime/mvpRuntime'
+import { readProjectReleaseHeads } from './runtime/previewManager'
 import {
   ProjectDirectoryError,
   classifyProjectDirectory,
@@ -775,14 +776,19 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           ) {
             throw new ApiError(409, 'Preview is blocked until Project Attention is resolved')
           }
+          const repoRoots = project.repos.map((repo) => ({
+            repoId: repo.repoId,
+            path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
+          }))
           void runtime.preview.start({
             projectId: project.projectId,
             projectRoot: project.sourceRoot,
+            releaseHeads: await readProjectReleaseHeads(
+              project.projectId,
+              project.repos.map((repo) => ({ repoId: repo.repoId, path: repo.integrationRoot })),
+            ),
             primaryRepoId: project.primaryRepoId,
-            repoRoots: project.repos.map((repo) => ({
-              repoId: repo.repoId,
-              path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
-            })),
+            repoRoots,
           })
           const session = runtime.preview.inspect(project.projectId)
           if (!session) throw new Error('Preview operation was not admitted')

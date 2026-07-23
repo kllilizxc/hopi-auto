@@ -109,8 +109,6 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Planner working directory is not a Git checkout')
     expect(prompt).toContain('A Work ID owns one cumulative source lineage')
     expect(prompt).toContain('Public Preview observes only the integrated release')
-    expect(prompt).toContain('direct browser evidence of its user-visible state')
-    expect(prompt).toContain('running or HTTP reachability alone is transport evidence')
     expect(prompt).toContain('Host Browser Harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     expect(bundle.browserHarnessCommand).toBe(
@@ -157,6 +155,68 @@ describe('RoleContextStager', () => {
     expect(await Bun.file(bundle.promptFile).text()).toContain(
       'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
     )
+  })
+
+  test('stages the formal release Preview as immutable Planner completion context', async () => {
+    const fixture = await createFixture(true)
+    const stager = createRoleContextStager(fixture.homeRoot, fixture.publisher)
+    const baseline = await stager.prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-preview-baseline',
+      responsibility: 'planner',
+    })
+    const bundle = await stager.prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-formal-preview',
+      responsibility: 'planner',
+      formalReleasePreview: {
+        kind: 'session',
+        session: {
+          sessionId: 'preview-release-1',
+          projectId: 'project-1',
+          releaseHeads: { primary: baseline.releaseHead },
+          status: 'running',
+          surfaces: [
+            { id: 'sender', label: 'Sender', url: 'http://127.0.0.1:4311/sender' },
+            { id: 'receiver', label: 'Receiver', url: 'http://127.0.0.1:4312/receiver' },
+          ],
+          logPath: '/tmp/preview-release-1.log',
+          startedAt: '2026-07-23T00:00:00.000Z',
+          endedAt: null,
+          error: null,
+          stoppedReason: null,
+          repair: null,
+        },
+      },
+    })
+
+    expect(bundle.formalReleasePreviewFile).toBeDefined()
+    expect(await Bun.file(bundle.formalReleasePreviewFile ?? '').json()).toMatchObject({
+      kind: 'session',
+      session: {
+        sessionId: 'preview-release-1',
+        releaseHeads: { primary: baseline.releaseHead },
+        status: 'running',
+      },
+    })
+    expect((await stat(bundle.formalReleasePreviewFile ?? '')).mode & 0o222).toBe(0)
+    expect(await Bun.file(bundle.contextFile).text()).toContain(
+      'Surface receiver (Receiver): http://127.0.0.1:4312/receiver',
+    )
+    const prompt = await Bun.file(bundle.promptFile).text()
+    expect(prompt).toContain('Formal release Preview snapshot: $HOPI_FORMAL_RELEASE_PREVIEW_FILE')
+    expect(prompt).toContain(
+      'A completion proposal requires the snapshot session to be running at the listed Repo release heads',
+    )
+    expect(prompt).toContain('direct evidence newly captured from its operator-facing surfaces')
+    expect(prompt).toContain('retained as this Run artifact')
+    expect(bundle.repoReleaseHeads).toEqual({ primary: baseline.releaseHead })
   })
 
   test('stages Home preferences only for Planner without adding them to semantic guards', async () => {

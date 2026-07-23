@@ -47,6 +47,7 @@ export interface PreviewSurface {
 export interface PreviewSession {
   sessionId: string
   projectId: string
+  releaseHeads: Record<string, string>
   status: 'starting' | 'running' | 'stopped' | 'failed'
   surfaces: PreviewSurface[]
   logPath: string

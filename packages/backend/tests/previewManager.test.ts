@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  type PreviewManager,
   type PreviewManagerOptions,
   createPreviewManager,
   makePreviewAdapterExecutable,
@@ -44,12 +45,14 @@ describe('PreviewManager', () => {
       now: () => new Date('2026-07-11T00:00:00Z'),
     })
 
-    const result = await manager.start({ projectId: 'P-1', projectRoot })
+    const releaseHeads = { primary: await readGitHead(projectRoot) }
+    const result = await manager.start({ projectId: 'P-1', projectRoot, releaseHeads })
     expect(result.kind).toBe('started')
     if (result.kind !== 'started') throw new Error('Expected started Preview')
     expect(result.session.surfaces).toEqual([
       { id: 'default', label: 'Preview', url: 'http://127.0.0.1:4321' },
     ])
+    expect(result.session.releaseHeads).toEqual({ primary: await readGitHead(projectRoot) })
     expect(await Bun.file(join(dirname(result.session.logPath), 'root.txt')).text()).toBe(
       projectRoot,
     )
@@ -59,13 +62,70 @@ describe('PreviewManager', () => {
       stoppedReason: null,
     })
 
-    const restarted = await manager.start({ projectId: 'P-1', projectRoot })
+    const restarted = await manager.start({ projectId: 'P-1', projectRoot, releaseHeads })
     expect(restarted).toMatchObject({ kind: 'started', session: { status: 'running' } })
     expect(await manager.stop('P-1', 'release_updated')).toMatchObject({
       status: 'stopped',
       surfaces: [],
       stoppedReason: 'release_updated',
     })
+  })
+
+  test('never reuses a Preview session after the managed release head changes', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    const launches = join(temporaryRoot, 'release-launches.txt')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        'import { appendFile } from "node:fs/promises"',
+        `await appendFile(${JSON.stringify(launches)}, "started\\n")`,
+        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createTestPreviewManager()
+
+    const first = await manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      releaseHeads: { primary: await readGitHead(projectRoot) },
+    })
+    if (first.kind !== 'started') throw new Error('Expected first Preview')
+    const firstSessionId = first.session.sessionId
+    const firstHead = first.session.releaseHeads.primary
+    await Bun.write(join(projectRoot, 'release-change.txt'), 'next release\n')
+    await commitAll(projectRoot, 'next release')
+    const second = await manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      releaseHeads: { primary: await readGitHead(projectRoot) },
+    })
+
+    expect(second).toMatchObject({
+      kind: 'started',
+      session: {
+        status: 'running',
+        releaseHeads: { primary: await readGitHead(projectRoot) },
+      },
+    })
+    if (second.kind !== 'started') throw new Error('Expected second Preview')
+    expect(second.session.sessionId).not.toBe(firstSessionId)
+    expect(second.session.releaseHeads.primary).not.toBe(firstHead)
+    expect(first.session).toMatchObject({
+      status: 'stopped',
+      stoppedReason: 'release_updated',
+      surfaces: [],
+    })
+    expect(await Bun.file(launches).text()).toBe('started\nstarted\n')
+    await manager.stop('P-1')
   })
 
   test('publishes one Project Preview session with every declared surface', async () => {
@@ -105,7 +165,11 @@ describe('PreviewManager', () => {
     })
 
     try {
-      const result = await manager.start({ projectId: 'P-1', projectRoot })
+      const result = await manager.start({
+        projectId: 'P-1',
+        projectRoot,
+        releaseHeads: { primary: 'release-1' },
+      })
 
       expect(result).toMatchObject({
         kind: 'started',
@@ -235,10 +299,13 @@ describe('PreviewManager', () => {
 
   test('returns an ordinary Assistant repair prompt when the adapter is missing', async () => {
     const manager = createTestPreviewManager()
+    const projectRoot = join(temporaryRoot, 'integration')
+    await mkdir(projectRoot, { recursive: true })
+    await initializeGit(projectRoot)
 
     const result = await manager.start({
       projectId: 'P-1',
-      projectRoot: join(temporaryRoot, 'integration'),
+      projectRoot,
     })
 
     expect(result).toMatchObject({ kind: 'repair_required', reason: 'missing' })
@@ -543,7 +610,11 @@ describe('PreviewManager', () => {
     })
 
     try {
-      const starting = manager.start({ projectId: 'P-1', projectRoot })
+      const starting = manager.start({
+        projectId: 'P-1',
+        projectRoot,
+        releaseHeads: { primary: 'release-1' },
+      })
       await probeEntered
       expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', surfaces: [] })
       releaseProbe()
@@ -597,7 +668,11 @@ describe('PreviewManager', () => {
     })
 
     try {
-      const result = await manager.start({ projectId: 'P-1', projectRoot })
+      const result = await manager.start({
+        projectId: 'P-1',
+        projectRoot,
+        releaseHeads: { primary: 'release-1' },
+      })
       expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
       if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
       expect(result.logs).toContain('GET returned HTTP 404')
@@ -684,11 +759,30 @@ describe('PreviewManager', () => {
   })
 })
 
+type TestPreviewStartInput = Omit<Parameters<PreviewManager['start']>[0], 'releaseHeads'> & {
+  releaseHeads?: Readonly<Record<string, string>>
+}
+
 function createTestPreviewManager(options: PreviewManagerOptions = {}) {
-  return createPreviewManager(join(temporaryRoot, 'home'), {
+  const manager = createPreviewManager(join(temporaryRoot, 'home'), {
     surfaceProbe: async () => undefined,
     ...options,
   })
+  return {
+    ...manager,
+    start(input: TestPreviewStartInput) {
+      const repos =
+        input.repoRoots && input.repoRoots.length > 0
+          ? input.repoRoots
+          : [{ repoId: input.primaryRepoId ?? 'primary' }]
+      return manager.start({
+        ...input,
+        releaseHeads:
+          input.releaseHeads ??
+          Object.fromEntries(repos.map((repo) => [repo.repoId, `release-${repo.repoId}`])),
+      })
+    },
+  }
 }
 
 function dirname(path: string) {
@@ -763,6 +857,7 @@ async function writeCountingFailureAdapter(projectRoot: string) {
     ].join('\n'),
   )
   await makePreviewAdapterExecutable(adapter)
+  await initializeGit(projectRoot)
   return launchLog
 }
 
@@ -784,5 +879,38 @@ async function initializeGit(projectRoot: string) {
   await run(['config', 'user.name', 'HOPI Test'])
   await run(['config', 'user.email', 'hopi@example.test'])
   await run(['add', '.'])
-  await run(['commit', '-m', 'initial'])
+  await run(['commit', '--allow-empty', '-m', 'initial'])
+}
+
+async function commitAll(projectRoot: string, message: string) {
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(['git', ...args], {
+      cwd: projectRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    if (exitCode !== 0) throw new Error(stderr || stdout)
+  }
+  await run(['add', '.'])
+  await run(['commit', '-m', message])
+}
+
+async function readGitHead(projectRoot: string) {
+  const child = Bun.spawn(['git', 'rev-parse', 'HEAD'], {
+    cwd: projectRoot,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr || stdout)
+  return stdout.trim()
 }

@@ -49,6 +49,7 @@ export interface TransportContextBundle {
   canonicalBrowserHarnessArtifactDir: string
   imageFiles?: string[]
   reposFile?: string
+  formalReleasePreviewFile?: string
   apiOrigin?: string
 }
 
@@ -618,6 +619,9 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
       : {}),
     HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
     ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
+    ...(bundle.formalReleasePreviewFile
+      ? { HOPI_FORMAL_RELEASE_PREVIEW_FILE: bundle.formalReleasePreviewFile }
+      : {}),
     ...(bundle.apiOrigin ? { HOPI_API_ORIGIN: bundle.apiOrigin } : {}),
     HOPI_GOAL_KEY: input.goalKey,
     HOPI_GOAL_ID: input.goalKey,

@@ -36,7 +36,7 @@ import type {
   PlanningContext,
   PlanningInputAdmission,
 } from '../runtime/goalController'
-import type { PreviewManager } from '../runtime/previewManager'
+import { type PreviewManager, readProjectReleaseHeads } from '../runtime/previewManager'
 import { withPreparedProjectRepositories } from '../runtime/projectDirectory'
 import { readSoftwareDeliveryProfile } from '../runtime/softwareDeliveryProfile'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
@@ -1297,14 +1297,27 @@ export function createAssistantTools(options: {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
           if (args.operation === 'start') {
+            const repoRoots = project.repos?.map((repo) => ({
+              repoId: repo.repoId,
+              path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
+            })) ?? [
+              {
+                repoId: project.primaryRepoId ?? 'primary',
+                path: project.sourceRoot ?? project.projectRoot,
+              },
+            ]
             const result = await options.preview.start({
               projectId: project.projectId,
               projectRoot: project.sourceRoot ?? project.projectRoot,
+              releaseHeads: await readProjectReleaseHeads(
+                project.projectId,
+                project.repos?.map((repo) => ({
+                  repoId: repo.repoId,
+                  path: repo.integrationRoot,
+                })) ?? repoRoots,
+              ),
               primaryRepoId: project.primaryRepoId,
-              repoRoots: project.repos?.map((repo) => ({
-                repoId: repo.repoId,
-                path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
-              })),
+              repoRoots,
             })
             return {
               summary: `Preview start requested for ${project.projectId}.`,

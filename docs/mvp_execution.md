@@ -1180,16 +1180,26 @@ script; `HOPI_PREVIEW_URL=<reachable-url>` remains the single-surface shorthand,
 human-readable bare URL is not enough for HOPI to leave `starting`. There is no
 initialized flag, prepare revision, setup Action, or preparation Kanban state.
 
-The public Project Preview API always starts the current managed integration release. It therefore
-cannot prove a pre-C1 task candidate. Engineering Work contains only acceptance criteria that
-Generator and Reviewer can prove by executing the candidate script directly with that Run's Repo
-manifest. When accepted design explicitly requires public Preview proof, the final semantic Planner
-uses the injected `HOPI_API_ORIGIN` after the relevant Engineering Work has integrated. For a
-browser-facing Preview, direct browser evidence of the accepted user-visible state is required;
-`running` and HTTP reachability alone prove only the runtime lease. Planner proposes completion only
-after the required integrated proof, and otherwise plans the smallest repair.
-Planner does not start Preview for Goals that do not require this proof. This reuses final Planning
-instead of adding a post-C1 stage, candidate-Preview mode, or automatic Preview on every release.
+The public Project Preview API always starts the current managed integration release. Every Preview
+session records the exact release head of every Project Repo, and a Start request never reuses a
+session whose recorded heads differ from the managed integration roots. It therefore cannot prove a
+pre-C1 task candidate. Engineering Work contains only acceptance criteria that Generator and
+Reviewer can prove by executing the candidate script directly with that Run's Repo manifest.
+
+When the Project exposes `scripts/hopi/preview`, a Planning Run admitted with no nonterminal
+Engineering Work receives the formal release Preview session as immutable environment context.
+A new targetless completion proposal from that Run is valid only while the session is `running`,
+its recorded Repo heads equal the Run's release heads, and the Planner retains direct evidence from
+the formal operator-facing surfaces as a current-Run artifact. Candidate Preview Evidence, an older
+artifact, a ready marker, `running`, or HTTP reachability cannot support Goal completion. The Planner
+judges the accepted user-visible result from the direct evidence and either proposes completion or
+plans the smallest repair.
+
+A Project without a Preview capability does not gain a synthetic Preview requirement: its completion
+evidence remains the exact managed release/C1 projection and any other accepted external proof. This
+keeps the invariant capability-based rather than turning Preview into a mandatory UI concept for
+backend-only or documentation-only Projects. Final Planning remains the semantic completion pass;
+there is no post-C1 role, candidate-Preview mode, or automatic completion heuristic.
 The fixed API paths are `POST /api/projects/:projectId/preview/start`,
 `GET /api/projects/:projectId/preview`, and `POST /api/projects/:projectId/preview/stop`; Planner
 does not discover variants from Project source.

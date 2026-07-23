@@ -18,6 +18,7 @@ import { STABLE_ID_PATTERN } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationSnapshot, PublicationSnapshotFile } from '../publication/types'
 import { createGoalPackagePaths } from '../storage/goalPackagePaths'
+import type { FormalReleasePreviewContext } from './previewManager'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
 import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
@@ -37,6 +38,7 @@ export interface PrepareRoleContextInput {
   repoRoots?: readonly RoleRepoRoot[]
   apiOrigin?: string
   runtimeScratchDir?: string
+  formalReleasePreview?: FormalReleasePreviewContext
 }
 
 export interface RoleRepoRoot {
@@ -54,6 +56,7 @@ export interface RoleContextBundle extends TransportContextBundle {
   primaryRepoRoot: string
   resultFile: string
   releaseHead: string
+  repoReleaseHeads: Readonly<Record<string, string>>
   goalHash: string
   workHash: string
   authorityFiles: readonly Pick<PublicationSnapshotFile, 'path' | 'hash'>[]
@@ -64,6 +67,8 @@ export interface RoleContextBundle extends TransportContextBundle {
   operatorPreferenceFile?: string
   repoRoots: readonly RoleRepoRoot[]
   reposFile: string
+  formalReleasePreview?: FormalReleasePreviewContext
+  formalReleasePreviewFile?: string
 }
 
 export interface RoleContextStager {
@@ -102,6 +107,9 @@ export function createRoleContextStager(
       const contextFile = join(runRoot, 'context.md')
       const promptFile = join(runRoot, 'prompt.md')
       const reposFile = join(runRoot, 'repos.json')
+      const formalReleasePreviewFile = input.formalReleasePreview
+        ? join(contextRoot, 'formal-release-preview.json')
+        : undefined
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const browserHarnessCommand = resolveBrowserHarnessCommand()
       const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
@@ -133,6 +141,7 @@ export function createRoleContextStager(
           ]),
         ),
       )
+      validateFormalReleasePreview(input.formalReleasePreview, repoReleaseHeads)
       const goalPath = paths.goalDocument(input.goalId)
       const workPath = paths.workDocument(input.goalId, input.workId)
       const goalFile = requiredSnapshotFile(snapshot.files, goalPath)
@@ -216,6 +225,13 @@ export function createRoleContextStager(
         )
         await chmod(artifactManifestFile, 0o444)
       }
+      if (formalReleasePreviewFile && input.formalReleasePreview) {
+        await Bun.write(
+          formalReleasePreviewFile,
+          `${JSON.stringify(input.formalReleasePreview, null, 2)}\n`,
+        )
+        await chmod(formalReleasePreviewFile, 0o444)
+      }
       const imageFiles = [...referencedImages].map((imagePath) =>
         join(authorityRoot, ...imagePath.split('/')),
       )
@@ -261,6 +277,8 @@ export function createRoleContextStager(
           reposFile,
           projectPath: paths.projectPath,
           apiOrigin,
+          formalReleasePreview: input.formalReleasePreview,
+          formalReleasePreviewFile,
           operatorPreference: operatorPreferenceFile
             ? { path: operatorPreferenceFile, digest: operatorPreference?.digest ?? '' }
             : undefined,
@@ -284,6 +302,7 @@ export function createRoleContextStager(
             repoRoots,
             reposFile,
             apiOrigin,
+            formalReleasePreviewFile,
             operatorPreferenceFile,
             hasImages: imageFiles.length > 0,
           },
@@ -303,6 +322,7 @@ export function createRoleContextStager(
         primaryRepoRoot: requiredPrimaryRepoRoot(repoRoots, primaryRepoId),
         resultFile,
         releaseHead,
+        repoReleaseHeads,
         goalHash: requiredHash(goalFile, goalPath),
         workHash: requiredHash(workFile, workPath),
         authorityFiles: authorityFiles.map(({ path, hash }) => ({
@@ -316,6 +336,8 @@ export function createRoleContextStager(
         operatorPreferenceFile,
         repoRoots,
         reposFile,
+        formalReleasePreview: input.formalReleasePreview,
+        formalReleasePreviewFile,
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
@@ -372,6 +394,23 @@ function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: s
     throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
   }
   return normalized
+}
+
+function validateFormalReleasePreview(
+  preview: FormalReleasePreviewContext | undefined,
+  repoReleaseHeads: Readonly<Record<string, string>>,
+) {
+  if (!preview || preview.kind === 'not_configured') return
+  const previewHeads = preview.session.releaseHeads
+  const expectedEntries = Object.entries(repoReleaseHeads)
+  if (
+    Object.keys(previewHeads).length !== expectedEntries.length ||
+    expectedEntries.some(([repoId, commit]) => previewHeads[repoId] !== commit)
+  ) {
+    throw new RoleContextStagingError(
+      'Formal release Preview does not match the current Project release heads',
+    )
+  }
 }
 
 function requiredPrimaryRepoRoot(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
@@ -926,6 +965,8 @@ function renderContextManifest(
     reposFile: string
     projectPath: string
     apiOrigin?: string
+    formalReleasePreview?: FormalReleasePreviewContext
+    formalReleasePreviewFile?: string
     operatorPreference?: { path: string; digest: string }
   },
 ) {
@@ -955,6 +996,9 @@ function renderContextManifest(
         ]
       : []),
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
+    ...(context.formalReleasePreviewFile
+      ? [`- Formal release Preview snapshot: ${context.formalReleasePreviewFile}`]
+      : []),
     ...context.repoRoots.map((repo) =>
       [
         `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
@@ -964,6 +1008,7 @@ function renderContextManifest(
     ...(context.bootstrapSourceRoot
       ? [`- Read-only bootstrap source snapshot: ${context.bootstrapSourceRoot}`]
       : []),
+    ...formalReleasePreviewContextLines(context.formalReleasePreview),
     '',
     '## Authority Files',
     '',
@@ -979,6 +1024,30 @@ function renderContextManifest(
     'The proposal root is an initially empty sparse overlay. Copy in only a document you intend to add or replace; an absent authority path means unchanged, never deleted.',
     '',
   ].join('\n')
+}
+
+function formalReleasePreviewContextLines(preview: FormalReleasePreviewContext | undefined) {
+  if (!preview) return []
+  if (preview.kind === 'not_configured') {
+    return ['', '## Formal Release Preview', '', '- Project Preview capability: not configured']
+  }
+  return [
+    '',
+    '## Formal Release Preview',
+    '',
+    `- Session: ${preview.session.sessionId}`,
+    `- Status: ${preview.session.status}`,
+    `- Log: ${preview.session.logPath}`,
+    ...Object.entries(preview.session.releaseHeads).map(
+      ([repoId, commit]) => `- Release ${repoId}: ${commit}`,
+    ),
+    ...(preview.session.surfaces.length > 0
+      ? preview.session.surfaces.map(
+          (surface) => `- Surface ${surface.id} (${surface.label}): ${surface.url}`,
+        )
+      : ['- Surfaces: none']),
+    ...(preview.session.error ? [`- Error: ${preview.session.error}`] : []),
+  ]
 }
 
 function renderResponsibilityPrompt(
@@ -997,6 +1066,7 @@ function renderResponsibilityPrompt(
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
     apiOrigin?: string
+    formalReleasePreviewFile?: string
     operatorPreferenceFile?: string
     hasImages: boolean
   },
@@ -1017,6 +1087,9 @@ function renderResponsibilityPrompt(
       ? ['Evidence artifact manifest: $HOPI_EVIDENCE_ARTIFACTS_FILE']
       : []),
     'Repo manifest: $HOPI_REPOS_FILE',
+    ...(paths.formalReleasePreviewFile
+      ? ['Formal release Preview snapshot: $HOPI_FORMAL_RELEASE_PREVIEW_FILE']
+      : []),
     'Attention proposal directory: $HOPI_ATTENTION_PROPOSAL_DIR',
     `Project guidance: ${paths.agentsPath}`,
     'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
@@ -1237,6 +1310,7 @@ function plannerPrompt(paths: {
   agentsPath: string
   attentionRoot: string
   apiOrigin?: string
+  formalReleasePreviewFile?: string
   operatorPreferenceFile?: string
 }) {
   return [
@@ -1253,7 +1327,13 @@ function plannerPrompt(paths: {
     'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
     'Engineering Work from an older Goal contract revision is not executable authority. A successful proposal must either update each retained nonterminal Work to the current revision or cancel it; reset its stage to generate when the accepted change invalidates implementation.',
     'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
-    'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence. When accepted design requires final proof of a browser-facing Preview, direct browser evidence of its user-visible state is required; running or HTTP reachability alone is transport evidence.',
+    ...(paths.formalReleasePreviewFile
+      ? [
+          'The formal release Preview snapshot is the completion evidence environment for this Project release. Candidate Preview evidence remains Engineering evidence only. A completion proposal requires the snapshot session to be running at the listed Repo release heads and direct evidence newly captured from its operator-facing surfaces and retained as this Run artifact; older evidence, readiness, or HTTP reachability alone cannot prove completion.',
+        ]
+      : [
+          'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence.',
+        ]),
     'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',
     'Goal assets remain durable only through their exact Goal asset paths and documented purpose. Repo responsibilities and shared contracts have one canonical owner.',
     'New Engineering Work frontmatter (Markdown bodies remain free-form):',

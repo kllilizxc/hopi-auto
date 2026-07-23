@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { ConfiguredRoleRunner, type RoleRunner } from '../agent/RoleRunner'
 import {
   type AgentRoleCodingSettings,
@@ -35,7 +36,7 @@ import { migrateLegacyAttentionOwnership } from './attentionOwnershipMigration'
 import { createCompletionStructureVerifier } from './completionVerifier'
 import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
-import { createPreviewManager } from './previewManager'
+import { createPreviewManager, readProjectReleaseHeads } from './previewManager'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
 import type { Responsibility } from './roleContextStager'
 import { createRunAttemptStore } from './runAttemptStore'
@@ -126,6 +127,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const assistantToolUrl = options.assistantToolUrl
 
   const createProjectRuntime = (linked: LinkedProject): MvpProjectRuntime => {
+    const sourceRoot = resolveProjectPath(linked.integrationRoot, linked.projectPath)
     const store = createGoalPackageStore(
       linked.integrationRoot,
       linked.projectId,
@@ -159,6 +161,28 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       responsibilitySessions,
       goalController: controller,
       apiOrigin: assistantToolUrl ? () => new URL(assistantToolUrl()).origin : undefined,
+      prepareFormalReleasePreview: async () => {
+        if (!(await Bun.file(join(sourceRoot, 'scripts', 'hopi', 'preview')).exists())) {
+          return { kind: 'not_configured' }
+        }
+        const repoRoots = linked.repos.map((repo) => ({
+          repoId: repo.repoId,
+          path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
+        }))
+        await preview.start({
+          projectId: linked.projectId,
+          projectRoot: sourceRoot,
+          releaseHeads: await readProjectReleaseHeads(
+            linked.projectId,
+            linked.repos.map((repo) => ({ repoId: repo.repoId, path: repo.integrationRoot })),
+          ),
+          primaryRepoId: linked.primaryRepoId,
+          repoRoots,
+        })
+        const session = preview.inspect(linked.projectId)
+        if (!session) throw new Error('Formal release Preview operation was not admitted')
+        return { kind: 'session', session: structuredClone(session) }
+      },
       onProjectBlocked: async ({ projectId, reason }) => {
         await attentions.ensureProjectAttention(projectId, reason)
       },
@@ -173,7 +197,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       repoPath: linked.repoPath,
       projectPath: linked.projectPath,
       projectRoot: linked.integrationRoot,
-      sourceRoot: resolveProjectPath(linked.integrationRoot, linked.projectPath),
+      sourceRoot,
       store,
       controller,
       reconciler,

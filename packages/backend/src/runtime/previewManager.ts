@@ -1,5 +1,6 @@
 import { appendFile, chmod, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { projectReleaseRef } from '../domain/project'
 import { BoundedLineTail } from './boundedLineTail'
 import {
   type ProjectPreparationRepoRoot,
@@ -32,6 +33,7 @@ export interface PreviewSurface {
 export interface PreviewSession {
   sessionId: string
   projectId: string
+  releaseHeads: Readonly<Record<string, string>>
   status: PreviewStatus
   surfaces: PreviewSurface[]
   logPath: string
@@ -42,12 +44,17 @@ export interface PreviewSession {
   repair: PreviewRepair | null
 }
 
+export type FormalReleasePreviewContext =
+  | { kind: 'not_configured' }
+  | { kind: 'session'; session: PreviewSession }
+
 export type PreviewStartResult = { kind: 'started'; session: PreviewSession } | PreviewRepair
 
 export interface PreviewManager {
   start(input: {
     projectId: string
     projectRoot: string
+    releaseHeads: Readonly<Record<string, string>>
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
   }): Promise<PreviewStartResult>
@@ -303,9 +310,21 @@ export function createPreviewManager(
       return operations.get(projectId)?.session ?? null
     },
     start(input) {
+      const releaseHeads = Object.freeze({ ...input.releaseHeads })
+      if (
+        Object.keys(releaseHeads).length === 0 ||
+        Object.values(releaseHeads).some((commit) => !commit)
+      ) {
+        throw new Error('Preview requires the exact release head of every Project Repo')
+      }
       const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
-        return current.startPromise
+        if (sameReleaseHeads(current.session.releaseHeads, releaseHeads)) {
+          return current.startPromise
+        }
+        return stopOperation(current, 'release_updated')
+          .then(() => current.startPromise)
+          .then(() => manager.start(input))
       }
       if (current && !current.settled) {
         return current.startPromise.then(() => manager.start(input))
@@ -320,6 +339,7 @@ export function createPreviewManager(
       const session: PreviewSession = {
         sessionId,
         projectId: input.projectId,
+        releaseHeads,
         status: 'starting',
         surfaces: [],
         logPath,
@@ -373,6 +393,44 @@ export function createPreviewManager(
     },
   }
   return manager
+}
+
+export async function readProjectReleaseHeads(
+  projectId: string,
+  repos: readonly ProjectPreparationRepoRoot[],
+) {
+  const releaseRef = projectReleaseRef(projectId)
+  return Object.fromEntries(
+    await Promise.all(
+      repos.map(async (repo) => [
+        repo.repoId,
+        await gitOutput(repo.path, ['rev-parse', releaseRef]),
+      ]),
+    ),
+  )
+}
+
+function sameReleaseHeads(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+) {
+  const leftEntries = Object.entries(left)
+  const rightEntries = Object.entries(right)
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(([repoId, commit]) => right[repoId] === commit)
+  )
+}
+
+async function gitOutput(cwd: string, args: string[]) {
+  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr.trim() || stdout.trim())
+  return stdout.trim()
 }
 
 async function consumePreviewStream(

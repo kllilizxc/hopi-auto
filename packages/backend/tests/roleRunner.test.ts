@@ -814,6 +814,7 @@ async function createFixture() {
     primaryRepoRoot: repoRoot,
     resultFile,
     releaseHead: 'a'.repeat(40),
+    repoReleaseHeads: { primary: 'a'.repeat(40) },
     goalHash: 'a'.repeat(64),
     workHash: 'b'.repeat(64),
     authorityFiles: [],

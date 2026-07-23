@@ -16,6 +16,7 @@ test('Preview repair survives the initiating request through the projected sessi
     previewRepairPrompt({
       sessionId: 'preview-1',
       projectId: 'P-1',
+      releaseHeads: { primary: 'a'.repeat(40) },
       status: 'failed',
       surfaces: [],
       logPath: '/tmp/preview.log',

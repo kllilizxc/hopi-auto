@@ -13,6 +13,8 @@ import {
   renderAttentionDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
+import { projectReleaseRef } from '../src/domain/project'
+import { resolveProjectPath } from '../src/domain/projectPath'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -121,6 +123,29 @@ describe('ProjectReconciler', () => {
       stage: 'done',
       assistantDispatch: 'home:H-1/event:EV-1',
     })
+  })
+
+  test('completes a Preview-capable Project only from the current formal release session', async () => {
+    const fixture = await createFixture({ formalReleasePreview: true })
+
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const completionEvidence = [...goalPackage.evidence.values()].find(
+      (evidence) =>
+        evidence.body.includes('## Formal Release Preview') &&
+        evidence.body.includes('preview-formal-2'),
+    )
+
+    expect(goalPackage.goal.attributes.lifecycle).toBe('done')
+    expect(completionEvidence?.body).toContain(
+      `Release primary: ${await git(fixture.projectRoot, ['rev-parse', projectReleaseRef('project-1')])}`,
+    )
+    expect(completionEvidence?.body).toContain(
+      'Surface default (Preview): http://127.0.0.1:4311/app',
+    )
+    expect(completionEvidence?.attributes.artifacts).toHaveLength(1)
   })
 
   test('runs one Engineering Work across two Repos and publishes one primary C1', async () => {
@@ -938,6 +963,7 @@ class DeliveryScriptRunner implements RoleRunner {
   ) {}
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
+    const artifacts: string[] = []
     this.responsibilities.push(input.responsibility)
     await observer?.onExecution?.({
       transport: 'codex',
@@ -988,6 +1014,18 @@ class DeliveryScriptRunner implements RoleRunner {
     if (input.responsibility === 'planner') {
       if (this.options.plannerWaitForAbort) await waitForAbort(input.signal)
       else if (this.options.plannerResult === 'success') await this.plan(input)
+      if (input.context.formalReleasePreview?.kind === 'session') {
+        const proof = join(input.context.browserHarnessArtifactDir, 'formal-release-proof.json')
+        await mkdir(dirname(proof), { recursive: true })
+        await Bun.write(
+          proof,
+          `${JSON.stringify({
+            sessionId: input.context.formalReleasePreview.session.sessionId,
+            surfaces: input.context.formalReleasePreview.session.surfaces,
+          })}\n`,
+        )
+        artifacts.push(proof)
+      }
     }
     if (input.responsibility === 'generator') {
       await observer?.onEvent?.({
@@ -1059,7 +1097,7 @@ class DeliveryScriptRunner implements RoleRunner {
             ? this.options.plannerResult
             : 'success',
       summary: `${input.responsibility} completed its fixed responsibility.`,
-      artifacts: [],
+      artifacts,
       exitCode: 0,
     }
   }
@@ -1144,6 +1182,7 @@ async function createFixture(
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
     onReleaseUpdated?: Parameters<typeof createProjectReconciler>[0]['onReleaseUpdated']
     directInitialWork?: boolean
+    formalReleasePreview?: boolean
   } = {},
 ) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
@@ -1227,6 +1266,7 @@ async function createFixture(
     plannerResult: options.plannerResult ?? 'success',
   })
   let runSequence = 0
+  let previewSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')
   const attempts = createRunAttemptStore(homeRoot, { now })
   const createReconciler = () =>
@@ -1245,6 +1285,34 @@ async function createFixture(
       operationalRetryBaseMs: options.operationalRetryBaseMs,
       onProjectBlocked: options.onProjectBlocked,
       onReleaseUpdated: options.onReleaseUpdated,
+      prepareFormalReleasePreview: options.formalReleasePreview
+        ? async () => ({
+            kind: 'session' as const,
+            session: {
+              sessionId: `preview-formal-${++previewSequence}`,
+              projectId: 'project-1',
+              releaseHeads: Object.fromEntries(
+                await Promise.all(
+                  linked.repos.map(async (repo) => [
+                    repo.repoId,
+                    await git(resolveProjectPath(repo.integrationRoot, repo.projectPath), [
+                      'rev-parse',
+                      projectReleaseRef('project-1'),
+                    ]),
+                  ]),
+                ),
+              ),
+              status: 'running' as const,
+              surfaces: [{ id: 'default', label: 'Preview', url: 'http://127.0.0.1:4311/app' }],
+              logPath: '/tmp/formal-preview.log',
+              startedAt: '2026-07-11T00:00:00.000Z',
+              endedAt: null,
+              error: null,
+              stoppedReason: null,
+              repair: null,
+            },
+          })
+        : undefined,
       now,
       createRunId: () => `run-${++runSequence}`,
     })
