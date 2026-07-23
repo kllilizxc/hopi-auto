@@ -92,6 +92,16 @@ export class PublicationCoordinator {
     return this.withPublicationMutex(() => snapshotSelectionSerialized(root, selection))
   }
 
+  snapshotSelectionAtGeneration(
+    root: PublicationRoot,
+    selection: PublicationSnapshotSelection,
+  ): Promise<VersionedPublicationSnapshot> {
+    return this.withPublicationMutex(async () => ({
+      ...(await snapshotSelectionSerialized(root, selection)),
+      generation: this.currentGeneration(root),
+    }))
+  }
+
   runExclusive<T>(operation: (session: PublicationExclusiveSession) => Promise<T>): Promise<T> {
     return this.withPublicationMutex(async () => {
       const roots = new Map<string, PublicationRoot>()
@@ -505,10 +515,9 @@ function validateExpectedHash(hash: string | null) {
 }
 
 export async function hashBytes(content: Uint8Array) {
-  const copied = new Uint8Array(content.byteLength)
-  copied.set(content)
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', copied.buffer))
-  return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+  const hasher = new Bun.CryptoHasher('sha256')
+  hasher.update(content)
+  return hasher.digest('hex')
 }
 
 function publicationResult(

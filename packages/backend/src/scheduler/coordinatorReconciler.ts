@@ -150,7 +150,7 @@ export function createCoordinatorReconciler(
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
-            const workspace = await options.workspace.readWorkspace()
+            const workspace = await options.workspace.readWorkspaceForControl()
             const pendingEvents = eligiblePendingEvents(workspace, assistantActive)
             const publicPending = pendingEvents.some((event) => event.attributes.source === 'user')
             const internalHandoffPending = pendingEvents.some(
@@ -186,7 +186,7 @@ export function createCoordinatorReconciler(
     if (finalizedNotifications > 0) {
       return { kind: 'deterministic_action', count: finalizedNotifications }
     }
-    const workspace = await options.workspace.readWorkspace()
+    const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const event =
       directAssistantCommands === 0 && assistantActive.size === 0
@@ -229,7 +229,7 @@ export function createCoordinatorReconciler(
       return { kind: 'assistant_started', count: 1 }
     }
 
-    const refreshedWorkspace = await options.workspace.readWorkspace()
+    const refreshedWorkspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const projectBlocks = blockedProjects(refreshedWorkspace)
     const passCounts = activePassCounts(active)

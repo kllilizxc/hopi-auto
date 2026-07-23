@@ -17,6 +17,21 @@ afterEach(async () => {
 })
 
 describe('AssistantWorkspaceStore', () => {
+  test('reuses the validated control snapshot until publication advances', async () => {
+    const fixture = await setup(false)
+
+    const first = await fixture.store.readWorkspaceForControl()
+    expect(await fixture.store.readWorkspaceForControl()).toBe(first)
+
+    await fixture.store.receiveEvent({ eventId: 'EV-control-cache', content: 'New work.' })
+    const advanced = await fixture.store.readWorkspaceForControl()
+    expect(advanced).not.toBe(first)
+    expect(advanced.events.has('EV-control-cache')).toBe(true)
+
+    // Ordinary reads remain fresh and never expose the control-poll cache object.
+    expect(await fixture.store.readWorkspace()).not.toBe(advanced)
+  })
+
   test('publishes the complete preference document with optimistic concurrency', async () => {
     const fixture = await setup(false)
     const initial = (await fixture.store.readWorkspace()).preference

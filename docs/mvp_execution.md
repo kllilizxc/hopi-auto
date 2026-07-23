@@ -36,9 +36,13 @@ Canonical documents are not shared model scratch space.
 - PublicationCoordinator maintains one process-local generation per storage root. A successful
   publication, uncertain failed publication, or C1 critical section advances that generation.
   Coordinator's high-frequency reconciliation poll may reuse one Goal-ID plus validated
-  Goal-package snapshot only while it is unchanged; ordinary Assistant, API, control, and recovery
-  reads remain fresh. Restart begins from an empty cache and validates storage again. This is a read
+  Goal-package snapshot and one validated Assistant-home workspace snapshot only while their
+  publication generations are unchanged; ordinary Assistant, API, control, and recovery reads
+  remain fresh. Restart begins from an empty cache and validates storage again. This is a read
   optimization, never a durable version, workflow fact, or substitute for publication validation.
+- Snapshot hashing consumes each immutable byte view directly instead of first duplicating every
+  file buffer. Publication still returns the same SHA-256 identity and copied authority snapshot;
+  the optimization only removes a second transient allocation from high-frequency validation.
 
 One `publish(bundle)` call changes exactly one storage root. Under the global mutex, Coordinator
 rereads current documents, validates the proposed final view and semantic authorization, then

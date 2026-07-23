@@ -47,6 +47,7 @@ export interface AssistantWorkspaceStore {
   root: PublicationRoot
   paths: AssistantWorkspacePaths
   readWorkspace(): Promise<AssistantWorkspace>
+  readWorkspaceForControl(): Promise<AssistantWorkspace>
   writePreference(
     content: string,
     expectedDigest: string,
@@ -86,16 +87,33 @@ export function createAssistantWorkspaceStore(
 ): AssistantWorkspaceStore {
   const paths = createAssistantWorkspacePaths()
   const root: PublicationRoot = { id: 'assistant-home', path: homeRoot }
+  let controlSnapshot: { generation: number; workspace: AssistantWorkspace } | null = null
+
+  async function readWorkspace() {
+    const snapshot = await publisher.snapshotSelection(root, {
+      paths: [paths.homeDocument, paths.projectLinks, paths.preference],
+      prefixes: [paths.inboxRoot, paths.attentionRoot],
+    })
+    return readAndValidateAssistantWorkspace(publicationCandidateFromSnapshot(snapshot), paths)
+  }
 
   return {
     root,
     paths,
-    async readWorkspace() {
-      const snapshot = await publisher.snapshotSelection(root, {
+    readWorkspace,
+    async readWorkspaceForControl() {
+      const generation = await publisher.generation(root)
+      if (controlSnapshot?.generation === generation) return controlSnapshot.workspace
+      const snapshot = await publisher.snapshotSelectionAtGeneration(root, {
         paths: [paths.homeDocument, paths.projectLinks, paths.preference],
         prefixes: [paths.inboxRoot, paths.attentionRoot],
       })
-      return readAndValidateAssistantWorkspace(publicationCandidateFromSnapshot(snapshot), paths)
+      const workspace = await readAndValidateAssistantWorkspace(
+        publicationCandidateFromSnapshot(snapshot),
+        paths,
+      )
+      controlSnapshot = { generation: snapshot.generation, workspace }
+      return workspace
     },
     async writePreference(content, expectedDigest) {
       const snapshot = await publisher.snapshot(root, [paths.preference])
