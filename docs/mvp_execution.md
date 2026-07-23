@@ -964,8 +964,11 @@ Generator `success`, even when the Work acceptance criteria require independent 
 A started long-running command remains active until it completes, fails, or is explicitly
 cancelled. The responsibility transport presents each shell invocation as one blocking operation,
 so delayed output cannot create a second model turn that starts an equivalent validation while the
-first is still running. The Codex responsibility adapter therefore disables its asynchronous unified
-exec facility; other vendor adapters must provide the same observable command boundary. Independent
+first is still running. A responsibility gives any command that may outlive the shell tool's default
+wait an explicit timeout sufficient for that command; it never splits or restarts valid work merely
+to fit a transport timeout. If a transport instead returns a live command session, the responsibility
+waits on that same session. The Codex responsibility adapter disables its asynchronous unified exec
+facility; other vendor adapters must provide the same observable command boundary. Independent
 responsibility Runs remain concurrent under the ordinary scheduler capacities. This is an adapter
 execution property, not another durable Run state, command classifier, lock, or scheduler concept.
 

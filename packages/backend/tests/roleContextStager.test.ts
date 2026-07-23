@@ -579,6 +579,8 @@ describe('RoleContextStager', () => {
       expect(prompt).not.toContain('Retry only')
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
+      expect(prompt).toContain('Give a potentially long command sufficient wait time')
+      expect(prompt).toContain('wait on that same session')
       expect(prompt).toContain('must not trigger an equivalent concurrent command')
       expect(prompt.length).toBeLessThan(5_000)
     }
