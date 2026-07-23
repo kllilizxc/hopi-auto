@@ -1133,10 +1133,10 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
     ]),
   )
   const workspaceEvents = [...workspace.events.values()]
-  const allPublicEvents = workspaceEvents.filter(
-    (event) => event.attributes.visibility === 'public',
+  const publicEvents = workspaceEvents.filter(
+    (event) =>
+      event.attributes.visibility === 'public' && assistantEventBelongsToScope(event, scope),
   )
-  const publicEvents = allPublicEvents.filter((event) => assistantEventBelongsToScope(event, scope))
   const internalSpeakingEvents = workspaceEvents.filter(
     (event) =>
       event.attributes.source === 'reflection' &&
@@ -1144,9 +1144,9 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       event.attributes.status === 'pending' &&
       assistantEventBelongsToScope(event, scope),
   )
-  const [allEventStates, internalSpeakingTurns] = await Promise.all([
+  const [eventStates, internalSpeakingTurns] = await Promise.all([
     Promise.all(
-      allPublicEvents.map(async (event) => {
+      publicEvents.map(async (event) => {
         if (event.attributes.status === 'handled') {
           return {
             event,
@@ -1174,9 +1174,6 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       ),
     ),
   ])
-  const eventStates = allEventStates.filter(({ event }) =>
-    assistantEventBelongsToScope(event, scope),
-  )
   const linkedCompletionReferences = new Set<string>()
   const eventCompletionReferences = new Map<string, string>()
   for (const event of publicEvents.toSorted(
@@ -1260,16 +1257,13 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       ),
       reflectionRunning: scope.kind === 'home' && runtime.reflection.isActive(),
     }),
-    syncCursor: [
-      ...allEventStates.map(({ updatedAt }) => updatedAt),
-      ...completions.map((completion) =>
-        maxTimestamp(completion.createdAt, completion.resolvedAt, completion.notifiedAt),
+    syncCursor: allEntries
+      .map(({ updatedAt }) => updatedAt)
+      .reduce<string | null>(
+        (latest, timestamp) =>
+          !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
+        null,
       ),
-    ].reduce<string | null>(
-      (latest, timestamp) =>
-        !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
-      null,
-    ),
   }
 }
 

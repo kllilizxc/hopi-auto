@@ -43,6 +43,11 @@ submit more messages while a turn is running, and durable pending turns wait in 
 order. One Assistant turn runs at a time across all scopes. Goal responsibility Runs and the internal
 Reflection loop remain independent and may run concurrently.
 
+Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
+continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
+could skip a Project message whose durable timestamp precedes that unrelated change. Browser-session
+snapshots remain disposable read caches and reconcile only against the same conversation scope.
+
 ## Operator-Facing Communication
 
 The speaking thread reports only the useful state delta and the operator's next action. The

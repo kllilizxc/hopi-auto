@@ -1847,9 +1847,7 @@ describe('MVP server', () => {
     expect((homeChanges.items as Array<{ id: string }>).map(({ id }) => id)).not.toContain(
       `event:${projectReceipt.eventId}`,
     )
-    expect(Date.parse(String(homeChanges.syncCursor))).toBeGreaterThan(
-      Date.parse(String(initialHome.syncCursor)),
-    )
+    expect(homeChanges.syncCursor).toBe(initialHome.syncCursor)
     const projectFeed = await request(base, '/api/assistant/feed?projectId=P-1')
     expect((projectFeed.items as Array<{ id: string }>).map(({ id }) => id)).toContain(
       `event:${projectReceipt.eventId}`,
@@ -1857,6 +1855,75 @@ describe('MVP server', () => {
     expect((initialHome.items as Array<{ id: string }>).map(({ id }) => id)).toEqual([
       'event:EV-home-scope',
     ])
+  })
+
+  test('does not let another Project advance a cached Project feed past a delayed event', async () => {
+    const homeRoot = join(temporaryRoot, 'assistant-project-cursor-home')
+    const firstRepoRoot = await createRepo(join(temporaryRoot, 'assistant-project-cursor-repo-1'))
+    const secondRepoRoot = await createRepo(join(temporaryRoot, 'assistant-project-cursor-repo-2'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    await home.linkProject({ projectId: 'P-1', repoPath: firstRepoRoot })
+    await home.linkProject({ projectId: 'P-2', repoPath: secondRepoRoot })
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    const firstEvent = await workspace.receiveEvent({
+      eventId: 'EV-project-one-first',
+      content: 'First Project message.',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-16T08:00:00.000Z'),
+    })
+    await workspace.handleEvent(firstEvent.attributes.id, {
+      reply: 'First Project reply.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T08:00:01.000Z'),
+    })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const initial = await request(base, '/api/assistant/feed?projectId=P-1')
+
+    const unrelatedEvent = await workspace.receiveEvent({
+      eventId: 'EV-project-two-newer',
+      content: 'Unrelated Project message.',
+      context: { projectId: 'P-2' },
+      receivedAt: new Date('2026-07-16T10:00:00.000Z'),
+    })
+    await workspace.handleEvent(unrelatedEvent.attributes.id, {
+      reply: 'Unrelated Project reply.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T10:00:01.000Z'),
+    })
+    const afterUnrelated = await request(
+      base,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
+        String(initial.syncCursor),
+      )}`,
+    )
+    expect((afterUnrelated.items as Array<{ id: string }>).map(({ id }) => id)).toEqual([
+      'event:EV-project-one-first',
+    ])
+    expect(afterUnrelated.syncCursor).toBe(initial.syncCursor)
+
+    const delayedEvent = await workspace.receiveEvent({
+      eventId: 'EV-project-one-delayed',
+      content: 'Delayed Project message.',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-16T09:00:00.000Z'),
+    })
+    await workspace.handleEvent(delayedEvent.attributes.id, {
+      reply: 'Delayed Project reply.',
+      disposition: 'answered',
+      handledAt: new Date('2026-07-16T09:00:01.000Z'),
+    })
+    const recovered = await request(
+      base,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
+        String(afterUnrelated.syncCursor),
+      )}`,
+    )
+    expect((recovered.items as Array<{ id: string }>).map(({ id }) => id)).toContain(
+      'event:EV-project-one-delayed',
+    )
   })
 
   test('shows hidden Reflection speaking work only as conversation Thinking activity', async () => {
