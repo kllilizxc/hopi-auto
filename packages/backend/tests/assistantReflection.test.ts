@@ -78,6 +78,7 @@ describe('Assistant Reflection', () => {
           return { reply: 'No handoff.', session: codexSession('reflection-delta') }
         },
       }),
+      { linkProject: true },
     )
     await fixture.workspace.receiveEvent({ eventId: 'EV-user', content: 'Keep public context.' })
     await fixture.workspace.handleEvent('EV-user', {
@@ -91,6 +92,20 @@ describe('Assistant Reflection', () => {
     await fixture.workspace.handleEvent('EV-internal', {
       reply: 'Hidden internal outcome.',
       disposition: 'answered',
+    })
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-delivered',
+      content: 'DELIVERED-BRIEF-MUST-NOT-RECUR',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-delivered'],
+      },
+    })
+    await fixture.workspace.exposeEvent('EV-delivered')
+    await fixture.workspace.handleEvent('EV-delivered', {
+      reply: 'The operator already received this completion update.',
+      disposition: 'notified',
     })
 
     expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
@@ -175,8 +190,13 @@ describe('Assistant Reflection', () => {
     expect(prompt).toContain('No handoff produces no speaking turn')
     expect(prompt).not.toContain('User: Keep public context.')
     expect(prompt).not.toContain('## Recent Public Conversation')
+    expect(prompt).toContain('## Recent Public Assistant Update Receipts')
+    expect(prompt).toContain('"eventId":"EV-delivered"')
+    expect(prompt).toContain('project:P-1/goal:G-1/attention:A-delivered')
+    expect(prompt).toContain('The operator already received this completion update.')
     expect(prompt).not.toContain('## Relevant Current State')
     expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-RECUR')
+    expect(prompt).not.toContain('DELIVERED-BRIEF-MUST-NOT-RECUR')
     expect(prompt).not.toContain('UNRELATED-DESIGN-BODY')
     expect(prompt).toContain('"evidenceCount":2')
     expect(prompt).toContain('"latestEvidenceRef":"E-2"')
@@ -186,7 +206,54 @@ describe('Assistant Reflection', () => {
     expect(prompt).not.toContain('"evidenceRefs"')
     expect(prompt).toContain('SECRET-RUNTIME-PATH')
     expect(prompt).toContain('/diagnostics/workspace-attention.md')
-    expect(prompt.length).toBeLessThan(5_000)
+    expect(prompt.length).toBeLessThan(6_000)
+  })
+
+  test('includes public update receipts when an immediate signal is assessed after startup', async () => {
+    let prompt = ''
+    const fixture = await setup(
+      () => ({
+        digest: 'a'.repeat(64),
+        workspaceAttentions: [
+          {
+            id: 'A-1',
+            target: 'project:P-1',
+            resolvedAt: null,
+            notifiedAt: null,
+          },
+        ],
+      }),
+      () => ({
+        async run(input) {
+          prompt = input.prompt
+          return { reply: 'No handoff.', session: codexSession('reflection-restart-receipt') }
+        },
+      }),
+      { linkProject: true },
+    )
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-before-restart',
+      content: 'Private completion brief.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
+      },
+    })
+    await fixture.workspace.exposeEvent('EV-before-restart')
+    await fixture.workspace.handleEvent('EV-before-restart', {
+      reply: 'Completion was already published before restart.',
+      disposition: 'notified',
+    })
+
+    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
+    await fixture.reflection.waitForIdle()
+
+    expect(prompt).toContain('No previous assessed snapshot is available')
+    expect(prompt).toContain('"eventId":"EV-before-restart"')
+    expect(prompt).toContain('project:P-1/goal:G-1/attention:A-1')
+    expect(prompt).toContain('Completion was already published before restart.')
+    expect(prompt).not.toContain('Private completion brief.')
   })
 
   test('does not interrupt for a newer state and discards the stale handoff before rerunning', async () => {

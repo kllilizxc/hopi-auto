@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import { type ExecutionEnvelope, unreportedExecutionEnvelope } from '../agent/executionEnvelope'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
-import type { InboxContext } from '../domain/assistantWorkspaceDocuments'
+import type { InboxContext, InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { readDurableJsonLines } from '../storage/jsonLines'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
@@ -39,6 +39,14 @@ export interface ReflectionRunSummary {
 
 export interface ReflectionRunDetail extends ReflectionRunSummary {
   events: ReflectionRuntimeEvent[]
+}
+
+interface PublicAssistantUpdateReceipt {
+  eventId: string
+  handledAt: string
+  disposition: string
+  context: InboxContext | null
+  reply: string
 }
 
 export interface AssistantReflection {
@@ -111,6 +119,7 @@ export function createAssistantReflection(options: {
       if (snapshot.stateDigest === lastAssessedDigest) return 'unchanged'
       if (!input.settled && !immediate) return 'deferred'
       const controller = new AbortController()
+      const publicUpdates = await readPublicAssistantUpdateReceipts(options.workspace)
       const entry = {
         digest: snapshot.stateDigest,
         controller,
@@ -118,7 +127,13 @@ export function createAssistantReflection(options: {
       }
       const previousSnapshot = lastAssessedSnapshot
       const assessment = reflectionAssessment(snapshot, input.settled)
-      entry.promise = runReflection(snapshot, previousSnapshot, assessment, controller.signal)
+      entry.promise = runReflection(
+        snapshot,
+        previousSnapshot,
+        publicUpdates,
+        assessment,
+        controller.signal,
+      )
         .then(async ({ handoffEventId }) => {
           if (controller.signal.aborted) return
           failureState = undefined
@@ -191,6 +206,7 @@ export function createAssistantReflection(options: {
   async function runReflection(
     snapshot: AssistantStateSnapshot,
     previousSnapshot: AssistantStateSnapshot | null,
+    publicUpdates: readonly PublicAssistantUpdateReceipt[],
     assessment: ReflectionAssessment,
     signal: AbortSignal,
   ) {
@@ -250,6 +266,7 @@ export function createAssistantReflection(options: {
       const prompt = reflectionPrompt(
         snapshot,
         previousSnapshot,
+        publicUpdates,
         assessment.reasons,
         executionPlan.environment,
       )
@@ -326,6 +343,7 @@ export function createAssistantReflection(options: {
 function reflectionPrompt(
   snapshot: AssistantStateSnapshot,
   previousSnapshot: AssistantStateSnapshot | null,
+  publicUpdates: readonly PublicAssistantUpdateReceipt[],
   trigger: readonly string[],
   environment: ExecutionEnvelope,
 ) {
@@ -357,7 +375,53 @@ function reflectionPrompt(
     '',
     ...delta.lines.map((line) => `- ${line}`),
     '',
+    '## Recent Public Assistant Update Receipts',
+    '',
+    'These are final replies already published by the speaking Assistant. They are delivery facts, not operator input or new work.',
+    '',
+    ...(publicUpdates.length > 0
+      ? publicUpdates.map((update) => `- ${JSON.stringify(update)}`)
+      : ['- No recent public Assistant update is recorded.']),
+    '',
   ].join('\n')
+}
+
+async function readPublicAssistantUpdateReceipts(workspace: AssistantWorkspaceStore) {
+  const state = await workspace.readWorkspace()
+  return [...state.events.values()]
+    .filter(isHandledPublicReflectionEvent)
+    .sort(
+      (left, right) =>
+        right.attributes.handledAt.localeCompare(left.attributes.handledAt) ||
+        right.attributes.id.localeCompare(left.attributes.id),
+    )
+    .slice(0, 8)
+    .map(
+      (event): PublicAssistantUpdateReceipt => ({
+        eventId: event.attributes.id,
+        handledAt: event.attributes.handledAt,
+        disposition: event.attributes.disposition,
+        context: event.attributes.context ?? null,
+        reply: bounded(event.attributes.reply, 1_200),
+      }),
+    )
+}
+
+function isHandledPublicReflectionEvent(event: InboxEventDocument): event is InboxEventDocument & {
+  attributes: InboxEventDocument['attributes'] & {
+    handledAt: string
+    reply: string
+    disposition: string
+  }
+} {
+  return (
+    event.attributes.source === 'reflection' &&
+    event.attributes.visibility === 'public' &&
+    event.attributes.status === 'handled' &&
+    event.attributes.handledAt !== null &&
+    event.attributes.reply !== null &&
+    event.attributes.disposition !== null
+  )
 }
 
 async function appendReflectionEvent(path: string, event: AgentRuntimeEvent, createdAt: Date) {

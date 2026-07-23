@@ -388,7 +388,9 @@ The authority is split by concern rather than repeated in one large document:
 - Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as
   a portable Goal asset whose path and purpose live in editable design Markdown.
 - Reflection proactively assesses meaningful state changes but can only hand a brief to that same
-  Assistant; it never mutates state or appears as another product thread.
+  Assistant; it never mutates state or appears as another product thread. Its compact observation
+  includes bounded receipts for recent public Assistant updates so it knows what the operator already
+  received without inheriting full conversation or private Reflection history.
 - Project owns stable context, one primary Repo binding, and one or more Project-qualified managed
   release worktrees; a Git Repo may participate in several Projects.
 - Goal owns the outcome contract and lifecycle.

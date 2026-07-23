@@ -81,11 +81,16 @@ restrict explicit cross-Project reads or validated HOPI tool targets.
 Reflection is a disposable, read-only model Run that lets the Assistant notice progress or trouble
 without waiting for a new user message. It is an internal runtime mechanism, not a second product
 Assistant, responsibility pass, Work stage, durable workflow entity, or Kanban concept. A Reflection
-is a logical fork: it receives a compact reason for waking and semantic facts changed since the last
-assessed snapshot. It does not receive public conversation or another full current-state dump. The
-speaking thread already owns conversation, and Reflection can reread bounded scoped state only after
-the delta identifies a concrete candidate. Old Reflection briefs are not fed back into later
-Reflection prompts. The implementation does not require a model vendor to clone a live session.
+is a logical fork: it receives a compact reason for waking, semantic facts changed since the last
+assessed snapshot, and bounded receipts for the latest public Assistant updates. A receipt identifies
+the handled Inbox event, its Project/Goal and Attention references, and the final reply that the
+operator already received. It is delivery knowledge, not public conversation history: user turns,
+internal Reflection briefs, tool streams, and unrelated provider context remain absent. This lets
+Reflection distinguish a newly discovered consequence from the state transition caused by delivering
+that same consequence, including across delayed Attention settlement or process restart. Reflection
+can reread bounded scoped state only after the delta identifies a concrete candidate. Old Reflection
+briefs are not fed back into later Reflection prompts. The implementation does not require a model
+vendor to clone a live session.
 
 Reflection is a single read-only background analyst. User input never interrupts its model Run.
 Every Run owns an immutable semantic snapshot; changes observed while it runs make the result stale,
