@@ -338,8 +338,9 @@ retry policy, Work stage, or Goal revision.
 
 Pass result values are:
 
-- `success`: no operator intervention remains; apply the profile transition after validation and
-  any built-in postcondition
+- `success`: this responsibility's own output and proof are complete; apply the profile transition
+  after validation and any built-in postcondition. It does not mean a later responsibility has
+  already accepted the Work.
 - `reject`: Reviewer returns engineering Work to `generate` with findings
 - `attention`: keep the current stage and publish one or more internal Assistant-management
   requests without consuming an attempt
@@ -951,6 +952,9 @@ required, while fail means this Run did not complete valid implementation proof.
 keeps the Engineering Work, does not consume a Reviewer-repair attempt, and creates Work Attention
 instead of redispatching Generator unchanged or creating unrelated Planning. Speaking
 Assistant decides whether the exact recovery is retry, Planning, cancellation, or operator action.
+Generator success is deliberately local to implementation and Generator-owned proof. It advances
+the Work to the independent Reviewer; Reviewer acceptance is therefore never a prerequisite for a
+Generator `success`, even when the Work acceptance criteria require independent review.
 
 The current assignment presents one bounded repair view after the stable Work authority: changed
 files relative to the release base and any candidate-inspection diagnostics. These are workspace

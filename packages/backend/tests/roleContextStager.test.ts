@@ -594,6 +594,7 @@ describe('RoleContextStager', () => {
     expect(reviewerPrompt).toContain(
       'independently determine whether the Engineering Work satisfies',
     )
+    expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)

@@ -1473,6 +1473,7 @@ function generatorPrompt() {
     '## Generator',
     '',
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
+    'Generator success advances the Work to Reviewer; it does not require prior Reviewer acceptance.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
     '',
