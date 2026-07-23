@@ -1257,6 +1257,7 @@ function renderResponsibilityPrompt(
     'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map. Source outside those roots and another Work runtime is outside this assignment.',
+    'A started command remains active until it exits or is cancelled; delayed output is not failure and must not trigger an equivalent concurrent command.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),

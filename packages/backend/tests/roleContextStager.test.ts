@@ -577,6 +577,7 @@ describe('RoleContextStager', () => {
       expect(prompt).not.toContain('Retry only')
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
+      expect(prompt).toContain('must not trigger an equivalent concurrent command')
       expect(prompt.length).toBeLessThan(5_000)
     }
     expect(await Bun.file(generator.proposalCapabilitiesFile).json()).toMatchObject({

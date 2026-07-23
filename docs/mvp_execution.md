@@ -956,6 +956,11 @@ Generator success is deliberately local to implementation and Generator-owned pr
 the Work to the independent Reviewer; Reviewer acceptance is therefore never a prerequisite for a
 Generator `success`, even when the Work acceptance criteria require independent review.
 
+A started long-running command remains active until it completes, fails, or is explicitly
+cancelled. Delayed output is not evidence that the command disappeared: the responsibility polls or
+waits for the existing invocation instead of starting an equivalent validation in parallel. This is
+ordinary execution discipline, not another durable Run state or scheduler concept.
+
 The current assignment presents one bounded repair view after the stable Work authority: changed
 files relative to the release base and any candidate-inspection diagnostics. These are workspace
 facts, not another checklist or completion state. It does not repeat the previous Generator's
