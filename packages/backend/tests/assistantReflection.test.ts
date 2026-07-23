@@ -67,8 +67,83 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
   })
 
+  test('assesses simultaneous Project changes independently without consuming either handoff', async () => {
+    let state: TestState = {
+      digest: 'a'.repeat(64),
+      homeDigest: '0'.repeat(64),
+      projectDigests: { 'P-1': '1'.repeat(64), 'P-2': '2'.repeat(64) },
+      projects: [projectState('P-1', 'active'), projectState('P-2', 'active')],
+    }
+    const prompts: string[] = []
+    const fixture = await setup(
+      () => state,
+      (tools) => ({
+        async run(input) {
+          prompts.push(input.prompt)
+          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
+            brief: 'This Project reached a speaking boundary.',
+          })
+          if (prompts.length === 1) {
+            state = {
+              ...state,
+              digest: 'c'.repeat(64),
+              projectDigests: {
+                ...state.projectDigests,
+                'P-2': '5'.repeat(64),
+              },
+            }
+          }
+          return {
+            reply: 'Handoff prepared.',
+            session: codexSession(`reflection-project-${prompts.length}`),
+          }
+        },
+      }),
+      { linkProjectIds: ['P-1', 'P-2'] },
+    )
+
+    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
+    state = {
+      digest: 'b'.repeat(64),
+      homeDigest: '0'.repeat(64),
+      projectDigests: { 'P-1': '3'.repeat(64), 'P-2': '4'.repeat(64) },
+      projects: [projectState('P-1', 'done'), projectState('P-2', 'done')],
+    }
+
+    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
+    await fixture.reflection.waitForIdle()
+    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
+    await fixture.reflection.waitForIdle()
+
+    expect(await fixture.reflection.listRuns()).toMatchObject([
+      { manifest: { status: 'completed' } },
+      { manifest: { status: 'completed' } },
+    ])
+    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
+    expect(events.map((event) => event.attributes.context?.projectId).sort()).toEqual([
+      'P-1',
+      'P-2',
+    ])
+    expect(prompts).toHaveLength(2)
+    expect(prompts[0]).toContain('Conversation scope: Project P-1')
+    expect(prompts[0]).toContain('Changed Goal P-1/G-1')
+    expect(prompts[0]).not.toContain('P-2/G-1')
+    expect(prompts[1]).toContain('Conversation scope: Project P-2')
+    expect(prompts[1]).toContain('Changed Goal P-2/G-1')
+    expect(prompts[1]).not.toContain('P-1/G-1')
+    expect((await fixture.reflection.listRuns()).map((run) => run.manifest.scope)).toEqual([
+      { kind: 'project', projectId: 'P-2' },
+      { kind: 'project', projectId: 'P-1' },
+    ])
+  })
+
   test('prompts from a semantic delta without feeding internal Reflection history back', async () => {
-    let state: TestState = { digest: 'a'.repeat(64) }
+    let state: TestState = {
+      digest: 'a'.repeat(64),
+      homeDigest: '0'.repeat(64),
+      projectDigests: { 'P-1': 'a'.repeat(64) },
+      projects: [projectState('P-1', 'active')],
+    }
     let prompt = ''
     const fixture = await setup(
       () => state,
@@ -111,10 +186,12 @@ describe('Assistant Reflection', () => {
     expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
     state = {
       digest: 'b'.repeat(64),
+      homeDigest: '0'.repeat(64),
+      projectDigests: { 'P-1': 'b'.repeat(64) },
       workspaceAttentions: [
         {
           id: 'A-1',
-          target: 'home:H-1/event:EV-blocked',
+          target: 'project:P-1',
           resolvedAt: null,
           notifiedAt: null,
           body: 'Coordinator needs safe repair.',
@@ -178,7 +255,7 @@ describe('Assistant Reflection', () => {
 
     expect(prompt).toContain('## Trigger')
     expect(prompt).toContain('Assistant-owned workspace Attention A-1')
-    expect(prompt).toContain('targeting home:H-1/event:EV-blocked')
+    expect(prompt).toContain('targeting project:P-1')
     expect(prompt).toContain('## Changed Facts Since Last Assessment')
     expect(prompt).toContain('Owned outcome: decide whether the changed state warrants')
     expect(prompt).toContain('currentCandidateIntegration is the current C1 merge preflight')
@@ -213,6 +290,8 @@ describe('Assistant Reflection', () => {
     const fixture = await setup(
       () => ({
         digest: 'a'.repeat(64),
+        homeDigest: '0'.repeat(64),
+        projectDigests: { 'P-1': 'a'.repeat(64) },
         workspaceAttentions: [
           {
             id: 'A-1',
@@ -221,6 +300,7 @@ describe('Assistant Reflection', () => {
             notifiedAt: null,
           },
         ],
+        projects: [projectState('P-1', 'active')],
       }),
       () => ({
         async run(input) {
@@ -629,6 +709,8 @@ describe('Assistant Reflection', () => {
 
 interface TestState {
   digest: string
+  homeDigest?: string
+  projectDigests?: Record<string, string>
   workspaceAttentions?: unknown[]
   projects?: unknown[]
 }
@@ -644,13 +726,16 @@ async function setup(
     maxConsecutiveHandoffs?: number
     onLoopExhausted?(eventId: string, message: string): Promise<void> | void
     linkProject?: boolean
+    linkProjectIds?: string[]
   } = {},
 ) {
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(temporaryRoot, publisher)
   await home.initialize()
-  if (reflectionOptions.linkProject) {
-    const repoRoot = join(temporaryRoot, 'repo')
+  const linkedProjectIds =
+    reflectionOptions.linkProjectIds ?? (reflectionOptions.linkProject ? ['P-1'] : [])
+  for (const projectId of linkedProjectIds) {
+    const repoRoot = join(temporaryRoot, `repo-${projectId}`)
     await mkdir(repoRoot, { recursive: true })
     await git(repoRoot, ['init', '-b', 'main'])
     await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
@@ -658,7 +743,7 @@ async function setup(
     await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
     await git(repoRoot, ['add', '.'])
     await git(repoRoot, ['commit', '-m', 'initial'])
-    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    await home.linkProject({ projectId, repoPath: repoRoot })
   }
   const workspace = createAssistantWorkspaceStore(temporaryRoot, publisher)
   const stateReads: Array<{ projectId?: string; goalId?: string; includeEvidence?: boolean }> = []
@@ -666,9 +751,28 @@ async function setup(
     async read(input = {}) {
       stateReads.push(input)
       const current = readState()
+      const projectDigests = Object.fromEntries(
+        (current.projects ?? []).flatMap((project) => {
+          if (
+            typeof project !== 'object' ||
+            project === null ||
+            !('projectId' in project) ||
+            typeof project.projectId !== 'string'
+          ) {
+            return []
+          }
+          return [
+            [project.projectId, current.projectDigests?.[project.projectId] ?? current.digest],
+          ]
+        }),
+      )
       return {
         observedAt: '2026-07-11T00:00:00.000Z',
         stateDigest: current.digest,
+        conversationDigests: {
+          home: current.homeDigest ?? current.digest,
+          projects: projectDigests,
+        },
         activeRuns: [],
         workspaceAttentions: current.workspaceAttentions ?? [],
         projects: current.projects ?? [],
@@ -719,4 +823,20 @@ async function git(cwd: string, args: string[]) {
 
 function codexSession(sessionId: string) {
   return { transport: 'codex' as const, sessionId }
+}
+
+function projectState(projectId: string, lifecycle: 'active' | 'done') {
+  return {
+    projectId,
+    available: true,
+    releaseHead: null,
+    goals: [
+      {
+        goal: { attributes: { id: 'G-1', title: 'Project Goal', lifecycle } },
+        latestPlanningOutcome: null,
+        works: [],
+        attentions: [],
+      },
+    ],
+  }
 }

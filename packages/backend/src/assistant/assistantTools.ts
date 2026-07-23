@@ -606,14 +606,14 @@ export function createAssistantTools(options: {
           const goalId =
             args.goalId ??
             (projectId && projectId === context?.projectId ? context.goalId : undefined)
-          let state: Awaited<ReturnType<typeof options.state.read>>
+          let state: Omit<AssistantStateSnapshot, 'conversationDigests'>
           try {
-            state = await options.state.read({
+            const snapshot = await options.state.read({
               ...(projectId ? { projectId } : {}),
               ...(goalId ? { goalId } : {}),
               ...(args.includeEvidence ? { includeEvidence: true } : {}),
             })
-            state = assistantToolStateProjection(state, { projectId, goalId })
+            state = assistantToolStateProjection(snapshot, { projectId, goalId })
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error)
             const pageContext = context?.projectId
@@ -1486,9 +1486,10 @@ function sameReferences(left: readonly string[], right: readonly string[]) {
 function assistantToolStateProjection(
   snapshot: AssistantStateSnapshot,
   scope: { projectId?: string; goalId?: string },
-): AssistantStateSnapshot {
+): Omit<AssistantStateSnapshot, 'conversationDigests'> {
+  const { conversationDigests: _conversationDigests, ...publicSnapshot } = snapshot
   return {
-    ...snapshot,
+    ...publicSnapshot,
     workspaceAttentions: scope.projectId
       ? snapshot.workspaceAttentions.filter(
           (attention) => isRecord(attention) && attention.target === `project:${scope.projectId}`,

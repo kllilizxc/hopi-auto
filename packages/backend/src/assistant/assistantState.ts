@@ -59,6 +59,10 @@ export interface AssistantStateReader {
 export interface AssistantStateSnapshot {
   observedAt: string
   stateDigest: string
+  conversationDigests: {
+    home: string
+    projects: Record<string, string>
+  }
   activeRuns: AssistantStateActiveRun[]
   workspaceAttentions: unknown[]
   projects: unknown[]
@@ -369,10 +373,43 @@ export function createAssistantStateReader(options: {
           }
         }),
       )
+      const projectIds = new Set(projects.map((project) => project.projectId))
+      const workspaceAttentionProjectId = (attention: DigestWorkspaceAttention) => {
+        if (!attention.target.startsWith('project:')) return null
+        const projectId = attention.target.slice('project:'.length)
+        return projectIds.has(projectId) ? projectId : null
+      }
+      const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
+        semanticDigest(projects, workspaceAttentions),
+        semanticDigest(
+          [],
+          workspaceAttentions.filter(
+            (attention) => workspaceAttentionProjectId(attention) === null,
+          ),
+        ),
+        Promise.all(
+          projects.map(
+            async (project) =>
+              [
+                project.projectId,
+                await semanticDigest(
+                  [project],
+                  workspaceAttentions.filter(
+                    (attention) => workspaceAttentionProjectId(attention) === project.projectId,
+                  ),
+                ),
+              ] as const,
+          ),
+        ),
+      ])
 
       return {
         observedAt: observedAt.toISOString(),
-        stateDigest: await semanticDigest(projects, workspaceAttentions),
+        stateDigest,
+        conversationDigests: {
+          home: homeDigest,
+          projects: Object.fromEntries(projectDigestEntries),
+        },
         activeRuns: activeRunViews.sort(
           (left, right) =>
             left.projectId.localeCompare(right.projectId) ||

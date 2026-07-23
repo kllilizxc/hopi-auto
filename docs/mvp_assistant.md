@@ -98,9 +98,11 @@ briefs are not fed back into later Reflection prompts. The implementation does n
 vendor to clone a live session.
 
 Reflection is a single read-only background analyst. User input never interrupts its model Run.
-Every Run owns an immutable semantic snapshot; changes observed while it runs make the result stale,
-so Coordinator lets the process finish, discards its prepared handoff, and assesses the latest
-snapshot. Reflection follows one small protocol:
+Its observation checkpoint has the same scope as the speaking conversation: one for Home and one
+for each Project. Every Run owns one immutable scoped semantic snapshot; changes in that scope while
+it runs make the result stale, while unrelated Project changes do not. Coordinator lets a stale
+process finish, discards its prepared handoff, and assesses the latest scoped snapshot. Reflection
+follows one small protocol:
 
 1. A meaningful state digest change records that a newer snapshot has not yet been assessed; it does
    not by itself start a model Run. Ordinary log appends remain outside the digest.
@@ -112,11 +114,14 @@ snapshot. Reflection follows one small protocol:
    progress therefore coalesces across Planning, Generation, Review, C1, and final Planning. This
    immediate rule also applies to the first snapshot after process startup; only a non-urgent first
    snapshot establishes the silent baseline.
-3. At most one Reflection runs per Home. Changes coalesce through the current digest instead of
-   forming an event queue. A failed model transport never marks its digest assessed and enters one
-   exponential backoff that survives later semantic changes. Those changes keep coalescing behind
-   the same delay instead of resetting retries; after a small failure threshold, HOPI probes only at
-   the capped interval until one Reflection succeeds and clears the backoff.
+3. At most one Reflection model Run executes per Home, so scoped observations remain globally
+   serialized without creating model concurrency. Changes coalesce through the current digest
+   within their Home or Project scope instead of forming an event queue. Assessing one scope never
+   advances another scope's checkpoint. A failed model transport never marks that scope's digest
+   assessed and enters a scope-local exponential backoff that survives later semantic changes.
+   Those changes keep coalescing behind the same delay instead of resetting retries; after a small
+   failure threshold, HOPI probes that scope only at the capped interval until one Reflection
+   succeeds and clears the backoff. Other scopes remain eligible.
 4. Reflection first decides from the supplied trigger and compact delta. Work facts contain only
    control state plus a bounded latest-Run outcome. It may reread bounded scoped HOPI state and follow
    an exact diagnostic path only when a concrete anomaly needs revalidation. It does not scan the
@@ -130,8 +135,10 @@ snapshot. Reflection follows one small protocol:
    continues the same speaking Session once with an exact closure reminder before accepting the
    resulting response normally. Only an explicit `handoff_to_main` call creates an
    internal brief. Reflection selects any Attention references it means to hand off; Coordinator
-   validates but never infers or expands that selection. Coordinator publishes a brief only after
-   confirming the observed digest is still current; it does not accept an `actions[]` plan.
+   validates but never infers or expands that selection. The observation scope supplies the default
+   conversation route; the model may narrow it to a Goal or selected Attention. Coordinator
+   publishes a brief only after confirming the observed scoped digest is still current; it does not
+   accept an `actions[]` plan.
 6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
    persistent speaking thread used for user turns rereads current state and
    decides whether to call normal HOPI tools, remain silent, or publish one explicit notification

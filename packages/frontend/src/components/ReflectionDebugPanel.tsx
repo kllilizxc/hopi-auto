@@ -160,6 +160,16 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
     >
       <dl>
         <div>
+          <dt>Scope</dt>
+          <dd>
+            {manifest.scope?.kind === 'project'
+              ? `Project ${manifest.scope.projectId}`
+              : manifest.scope?.kind === 'home'
+                ? 'Home'
+                : 'Legacy'}
+          </dd>
+        </div>
+        <div>
           <dt>Digest</dt>
           <dd>{manifest.stateDigest.slice(0, 16)}</dd>
         </div>

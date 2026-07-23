@@ -147,6 +147,7 @@ export interface ReflectionRunDetail {
     version: 1
     reflectionId: string
     stateDigest: string
+    scope?: { kind: 'home' } | { kind: 'project'; projectId: string }
     status: 'running' | 'completed' | 'interrupted' | 'failed'
     startedAt: string
     endedAt: string | null

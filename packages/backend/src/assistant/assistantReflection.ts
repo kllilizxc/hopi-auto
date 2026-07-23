@@ -16,11 +16,19 @@ export interface ReflectionObservation {
   settled: boolean
 }
 
+const reflectionScopeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('home') }).strict(),
+  z.object({ kind: z.literal('project'), projectId: z.string().min(1) }).strict(),
+])
+
+type ReflectionScope = z.infer<typeof reflectionScopeSchema>
+
 const reflectionManifestSchema = z
   .object({
     version: z.literal(1),
     reflectionId: z.string().min(1),
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    scope: reflectionScopeSchema.optional(),
     status: z.enum(['running', 'completed', 'interrupted', 'failed']),
     startedAt: z.string().datetime({ offset: true }),
     endedAt: z.string().datetime({ offset: true }).nullable(),
@@ -88,8 +96,17 @@ export function createAssistantReflection(options: {
     'assistant',
     'reflections',
   )
-  let lastAssessedDigest: string | null = null
-  let lastAssessedSnapshot: AssistantStateSnapshot | null = null
+  const checkpoints = new Map<
+    string,
+    {
+      lastAssessedDigest: string | null
+      lastAssessedSnapshot: AssistantStateSnapshot | null
+      failureState?: { failures: number; retryNotBefore: number }
+      consecutiveHandoffs: number
+      previousHandoffEventId: string | null
+      nextObserveAt: number
+    }
+  >()
   let active:
     | {
         digest: string
@@ -97,38 +114,77 @@ export function createAssistantReflection(options: {
         promise: Promise<void>
       }
     | undefined
-  let failureState: { failures: number; retryNotBefore: number } | undefined
-  let consecutiveHandoffs = 0
-  let previousHandoffEventId: string | null = null
-  let nextObserveAt = 0
+  let lastSelectedScopeKey: string | null = null
 
   const reflection: AssistantReflection = {
     async observe(input) {
       if (active) return 'running'
       const currentTime = now().getTime()
-      if (currentTime < nextObserveAt) return 'unchanged'
-      nextObserveAt = currentTime + minObserveIntervalMs
-      const snapshot = await options.state.read()
-      if (failureState && currentTime < failureState.retryNotBefore) return 'unchanged'
-      const immediate = hasImmediateReflectionSignal(snapshot)
-      if (lastAssessedDigest === null && !immediate) {
-        lastAssessedDigest = snapshot.stateDigest
-        lastAssessedSnapshot = snapshot
-        return 'baseline'
+      const scopedSnapshots = reflectionScopeSnapshots(await options.state.read())
+      const eligible: Array<{
+        scopeKey: string
+        scope: ReflectionScope
+        snapshot: AssistantStateSnapshot
+        checkpoint: NonNullable<ReturnType<typeof checkpoints.get>>
+      }> = []
+      let establishedBaseline = false
+      let deferred = false
+      for (const candidate of scopedSnapshots) {
+        const immediate = hasImmediateReflectionSignal(candidate.snapshot)
+        let checkpoint = checkpoints.get(candidate.scopeKey)
+        if (!checkpoint) {
+          checkpoint = {
+            lastAssessedDigest: null,
+            lastAssessedSnapshot: null,
+            consecutiveHandoffs: 0,
+            previousHandoffEventId: null,
+            nextObserveAt: 0,
+          }
+          checkpoints.set(candidate.scopeKey, checkpoint)
+        }
+        if (checkpoint.lastAssessedDigest === null && !immediate) {
+          checkpoint.lastAssessedDigest = candidate.snapshot.stateDigest
+          checkpoint.lastAssessedSnapshot = candidate.snapshot
+          establishedBaseline = true
+          continue
+        }
+        if (candidate.snapshot.stateDigest === checkpoint.lastAssessedDigest) continue
+        if (currentTime < checkpoint.nextObserveAt) continue
+        if (checkpoint.failureState && currentTime < checkpoint.failureState.retryNotBefore) {
+          continue
+        }
+        if (!input.settled && !immediate) {
+          deferred = true
+          continue
+        }
+        eligible.push({ ...candidate, checkpoint })
       }
-      if (snapshot.stateDigest === lastAssessedDigest) return 'unchanged'
-      if (!input.settled && !immediate) return 'deferred'
+      if (eligible.length === 0) {
+        if (deferred) return 'deferred'
+        return establishedBaseline ? 'baseline' : 'unchanged'
+      }
+      const selected = selectReflectionScope(eligible, lastSelectedScopeKey)
+      lastSelectedScopeKey = selected.scopeKey
+      selected.checkpoint.nextObserveAt = currentTime + minObserveIntervalMs
       const controller = new AbortController()
-      const publicUpdates = await readPublicAssistantUpdateReceipts(options.workspace)
+      const publicUpdates = await readPublicAssistantUpdateReceipts(
+        options.workspace,
+        selected.scope,
+      )
       const entry = {
-        digest: snapshot.stateDigest,
+        digest: selected.snapshot.stateDigest,
         controller,
         promise: Promise.resolve(),
       }
-      const previousSnapshot = lastAssessedSnapshot
-      const assessment = reflectionAssessment(snapshot, input.settled)
+      const previousSnapshot = selected.checkpoint.lastAssessedSnapshot
+      const assessment = reflectionAssessment(
+        selected.snapshot,
+        input.settled,
+        reflectionScopeContext(selected.scope),
+      )
       entry.promise = runReflection(
-        snapshot,
+        selected.scope,
+        selected.snapshot,
         previousSnapshot,
         publicUpdates,
         assessment,
@@ -136,35 +192,39 @@ export function createAssistantReflection(options: {
       )
         .then(async ({ handoffEventId }) => {
           if (controller.signal.aborted) return
-          failureState = undefined
-          lastAssessedDigest = entry.digest
-          lastAssessedSnapshot = snapshot
+          selected.checkpoint.failureState = undefined
+          selected.checkpoint.lastAssessedDigest = entry.digest
+          selected.checkpoint.lastAssessedSnapshot = selected.snapshot
           if (!handoffEventId) {
-            consecutiveHandoffs = 0
-            previousHandoffEventId = null
+            selected.checkpoint.consecutiveHandoffs = 0
+            selected.checkpoint.previousHandoffEventId = null
             return
           }
-          if (previousHandoffEventId) {
-            const previous = await options.workspace.readEvent(previousHandoffEventId)
-            if (previous?.attributes.status === 'handled') consecutiveHandoffs = 0
+          if (selected.checkpoint.previousHandoffEventId) {
+            const previous = await options.workspace.readEvent(
+              selected.checkpoint.previousHandoffEventId,
+            )
+            if (previous?.attributes.status === 'handled') {
+              selected.checkpoint.consecutiveHandoffs = 0
+            }
           }
-          consecutiveHandoffs += 1
-          previousHandoffEventId = handoffEventId
-          if (consecutiveHandoffs >= maxConsecutiveHandoffs) {
+          selected.checkpoint.consecutiveHandoffs += 1
+          selected.checkpoint.previousHandoffEventId = handoffEventId
+          if (selected.checkpoint.consecutiveHandoffs >= maxConsecutiveHandoffs) {
             await options.onLoopExhausted?.(
               handoffEventId,
-              `Background Reflection handed off ${consecutiveHandoffs} consecutive state changes without converging.`,
+              `Background Reflection handed off ${selected.checkpoint.consecutiveHandoffs} consecutive state changes without converging.`,
             )
-            consecutiveHandoffs = 0
+            selected.checkpoint.consecutiveHandoffs = 0
           }
         })
         .catch(() => {
-          const failures = (failureState?.failures ?? 0) + 1
+          const failures = (selected.checkpoint.failureState?.failures ?? 0) + 1
           const delay =
             failures >= failuresBeforeMaxBackoff
               ? failureRetryMaxMs
               : Math.min(failureRetryBaseMs * 2 ** Math.min(failures - 1, 20), failureRetryMaxMs)
-          failureState = {
+          selected.checkpoint.failureState = {
             failures,
             retryNotBefore: now().getTime() + delay,
           }
@@ -204,6 +264,7 @@ export function createAssistantReflection(options: {
   }
 
   async function runReflection(
+    scope: ReflectionScope,
     snapshot: AssistantStateSnapshot,
     previousSnapshot: AssistantStateSnapshot | null,
     publicUpdates: readonly PublicAssistantUpdateReceipt[],
@@ -226,6 +287,7 @@ export function createAssistantReflection(options: {
       version: 1,
       reflectionId,
       stateDigest: snapshot.stateDigest,
+      scope,
       status: 'running',
       startedAt,
       endedAt: null,
@@ -264,6 +326,7 @@ export function createAssistantReflection(options: {
             }),
           }
       const prompt = reflectionPrompt(
+        scope,
         snapshot,
         previousSnapshot,
         publicUpdates,
@@ -299,14 +362,17 @@ export function createAssistantReflection(options: {
         })
         return { handoffEventId: null }
       }
-      const latest = await options.state.read()
+      const latest = reflectionScopeSnapshots(await options.state.read()).find(
+        (candidate) => candidate.scopeKey === reflectionScopeKey(scope),
+      )?.snapshot
       const handoff = preparedHandoff.current
-      if (latest.stateDigest === snapshot.stateDigest && handoff) {
+      if (latest?.stateDigest === snapshot.stateDigest && handoff) {
+        const context = handoff.context ?? reflectionScopeContext(scope)
         const event = await options.workspace.receiveReflectionEvent({
           content: handoff.brief,
-          context: handoff.context
+          context: context
             ? {
-                ...handoff.context,
+                ...context,
                 observedDigest: snapshot.stateDigest,
               }
             : undefined,
@@ -341,6 +407,7 @@ export function createAssistantReflection(options: {
 }
 
 function reflectionPrompt(
+  scope: ReflectionScope,
   snapshot: AssistantStateSnapshot,
   previousSnapshot: AssistantStateSnapshot | null,
   publicUpdates: readonly PublicAssistantUpdateReceipt[],
@@ -359,6 +426,8 @@ function reflectionPrompt(
     'This run is read-only. hopi_read_state reads current canonical state; hopi_handoff_to_main creates one internal Inbox event and does not notify the operator or mutate Goal state.',
     'The supplied snapshot is an observation and may become stale. currentCandidateIntegration is the current C1 merge preflight; creationRationale and latestAttempt are historical records.',
     'No handoff produces no speaking turn.',
+    '',
+    `Conversation scope: ${scope.kind === 'project' ? `Project ${scope.projectId}` : 'Home'}`,
     '',
     `State digest: ${snapshot.stateDigest}`,
     '',
@@ -381,10 +450,18 @@ function reflectionPrompt(
   ].join('\n')
 }
 
-async function readPublicAssistantUpdateReceipts(workspace: AssistantWorkspaceStore) {
+async function readPublicAssistantUpdateReceipts(
+  workspace: AssistantWorkspaceStore,
+  scope: ReflectionScope,
+) {
   const state = await workspace.readWorkspace()
   return [...state.events.values()]
     .filter(isHandledPublicReflectionEvent)
+    .filter((event) =>
+      scope.kind === 'project'
+        ? event.attributes.context?.projectId === scope.projectId
+        : !event.attributes.context?.projectId,
+    )
     .sort(
       (left, right) =>
         right.attributes.handledAt.localeCompare(left.attributes.handledAt) ||
@@ -498,6 +575,76 @@ async function writeManifest(path: string, manifest: ReflectionManifest) {
   await Bun.write(path, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
+function reflectionScopeSnapshots(snapshot: AssistantStateSnapshot) {
+  const projects = new Map<string, unknown>()
+  const homeProjects: unknown[] = []
+  for (const project of snapshot.projects) {
+    const projectId =
+      isRecord(project) && typeof project.projectId === 'string' ? project.projectId : null
+    if (projectId) projects.set(projectId, project)
+    else homeProjects.push(project)
+  }
+  const projectIds = new Set(projects.keys())
+  const workspaceAttentionProject = (attention: unknown) => {
+    const target = recordTarget(attention)
+    if (!target?.startsWith('project:')) return null
+    const projectId = target.slice('project:'.length)
+    return projectIds.has(projectId) ? projectId : null
+  }
+  const home: AssistantStateSnapshot = {
+    ...snapshot,
+    stateDigest: snapshot.conversationDigests.home,
+    activeRuns: snapshot.activeRuns.filter((run) => !projectIds.has(run.projectId)),
+    workspaceAttentions: snapshot.workspaceAttentions.filter(
+      (attention) => workspaceAttentionProject(attention) === null,
+    ),
+    projects: homeProjects,
+  }
+  return [
+    {
+      scopeKey: reflectionScopeKey({ kind: 'home' }),
+      scope: { kind: 'home' } as const,
+      snapshot: home,
+    },
+    ...[...projects.entries()].map(([projectId, project]) => {
+      const stateDigest = snapshot.conversationDigests.projects[projectId]
+      if (!stateDigest) {
+        throw new Error(`Assistant state is missing the conversation digest for ${projectId}`)
+      }
+      return {
+        scopeKey: reflectionScopeKey({ kind: 'project', projectId }),
+        scope: { kind: 'project', projectId } as const,
+        snapshot: {
+          ...snapshot,
+          stateDigest,
+          activeRuns: snapshot.activeRuns.filter((run) => run.projectId === projectId),
+          workspaceAttentions: snapshot.workspaceAttentions.filter(
+            (attention) => workspaceAttentionProject(attention) === projectId,
+          ),
+          projects: [project],
+        },
+      }
+    }),
+  ]
+}
+
+function reflectionScopeKey(scope: ReflectionScope) {
+  return scope.kind === 'home' ? 'home' : `project:${scope.projectId}`
+}
+
+function reflectionScopeContext(scope: ReflectionScope): InboxContext | undefined {
+  return scope.kind === 'project' ? { projectId: scope.projectId } : undefined
+}
+
+function selectReflectionScope<T extends { scopeKey: string }>(
+  eligible: readonly T[],
+  previousScopeKey: string | null,
+) {
+  if (!previousScopeKey) return eligible[0] as T
+  const previousIndex = eligible.findIndex((candidate) => candidate.scopeKey === previousScopeKey)
+  return (previousIndex >= 0 ? eligible[previousIndex + 1] : eligible[0]) ?? (eligible[0] as T)
+}
+
 interface ReflectionAssessment {
   reasons: string[]
   context?: InboxContext
@@ -506,6 +653,7 @@ interface ReflectionAssessment {
 function reflectionAssessment(
   snapshot: AssistantStateSnapshot,
   settled: boolean,
+  defaultContext?: InboxContext,
 ): ReflectionAssessment {
   const reasons: string[] = []
   const contexts: InboxContext[] = []
@@ -564,9 +712,18 @@ function reflectionAssessment(
       : undefined
   return {
     reasons,
-    ...(!hasWorkspaceSignal && projectId
-      ? { context: { projectId, ...(goalId ? { goalId } : {}) } }
-      : {}),
+    ...(defaultContext
+      ? {
+          context: {
+            ...defaultContext,
+            ...(!hasWorkspaceSignal && projectId === defaultContext.projectId && goalId
+              ? { goalId }
+              : {}),
+          },
+        }
+      : !hasWorkspaceSignal && projectId
+        ? { context: { projectId, ...(goalId ? { goalId } : {}) } }
+        : {}),
   }
 }
 
