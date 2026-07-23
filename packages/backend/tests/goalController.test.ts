@@ -212,12 +212,12 @@ describe('GoalController', () => {
 
     const revised = await controller.applyMaterialInstruction('G-1', {
       eventId: 'EV-revise',
-      content: 'Add a measurable latency criterion before implementation continues.',
+      contractChange: 'Add a measurable latency criterion before implementation continues.',
     })
     const goalPackage = await store.readPackage('G-1')
 
     expect(revised.attributes.contractRevision).toBe(2)
-    expect(revised.body).toContain('## Accepted Inbox Instruction EV-revise')
+    expect(revised.body).toContain('## Accepted Goal Change EV-revise')
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'review',
       attempts: 2,
@@ -231,7 +231,7 @@ describe('GoalController', () => {
 
     const repeated = await controller.applyMaterialInstruction('G-1', {
       eventId: 'EV-revise',
-      content: 'Add a measurable latency criterion before implementation continues.',
+      contractChange: 'Add a measurable latency criterion before implementation continues.',
     })
     expect(repeated.attributes.contractRevision).toBe(2)
   })
@@ -254,7 +254,7 @@ describe('GoalController', () => {
 
     const goal = await controller.applyMaterialInstruction('G-1', {
       eventId: 'EV-recover',
-      content: 'Adopt the revised requirement.',
+      contractChange: 'Adopt the revised requirement.',
     })
 
     expect(goal.attributes.contractRevision).toBe(2)
@@ -399,7 +399,7 @@ describe('GoalController', () => {
 
     const reopened = await controller.reopenGoal('G-1', {
       eventId: 'EV-reopen',
-      content: 'Reopen because the supported platform scope changed.',
+      contractChange: 'The supported platform scope changed.',
     })
     const reopenedPackage = await store.readPackage('G-1')
     expect(reopened.attributes).toMatchObject({

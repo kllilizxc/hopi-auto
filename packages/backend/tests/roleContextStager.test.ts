@@ -58,19 +58,15 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain(bundle.workHash)
     expect(occurrences(prompt, fixture.store.paths.goalDocument('goal-1'))).toBe(1)
     expect(occurrences(prompt, fixture.store.paths.workDocument('goal-1', 'plan-initial'))).toBe(1)
-    expect(prompt).toContain('Goal authority is immutable in this responsibility')
+    expect(prompt).toContain('Goal authority and source are read-only')
     expect(prompt).toContain('kind: engineering')
-    expect(prompt).toContain('Never create or edit evidence/** or append evidenceRefs')
-    expect(prompt).toContain('Proposal is an initially empty sparse overlay')
-    expect(prompt).toContain('Absence means unchanged')
+    expect(prompt).toContain('Authority and evidence are immutable')
+    expect(prompt).toContain('Proposal is a sparse overlay')
+    expect(prompt).toContain('an absent path is unchanged')
     expect(prompt).toContain('smallest complete Engineering DAG')
-    expect(prompt).toContain('Target-null Attention represents Goal completion')
-    expect(prompt).toContain('including an empty proposal')
-    expect(prompt).toContain('Terminal Work and Planning Work are immutable')
-    expect(prompt).toContain('Coordinator validates and publishes it')
-    expect(prompt).toContain(
-      'Commit identities belong to that Repo object database; the primary authority snapshot is not a secondary Repo commit.',
-    )
+    expect(prompt).toContain('Goal completion proposal protocol')
+    expect(prompt).toContain('Coordinator alone changes canonical control state')
+    expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
     const repoManifest = await Bun.file(bundle.reposFile).json()
     expect(repoManifest).toEqual({
       primaryRepoId: 'primary',
@@ -83,33 +79,15 @@ describe('RoleContextStager', () => {
     expect(context).toContain(`Project release ref in each Repo: ${projectReleaseRef('project-1')}`)
     expect(context).toContain(`Release head: ${bundle.releaseHead}`)
     expect(context).not.toContain('Integration target snapshot:')
-    expect(prompt).toContain('mutually exclusive with completion')
-    expect(prompt).toContain('New Engineering Work frontmatter (Markdown bodies remain free-form)')
+    expect(prompt).toContain('Engineering Work document protocol')
     expect(prompt).toContain('kind: engineering')
     expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
-    expect(prompt).toContain('Every Project Repo is present in the Engineering environment')
-    expect(prompt).toContain(
-      'workspace membership does not prescribe which Repo commands an Engineering responsibility runs',
-    )
-    expect(prompt).not.toContain('owns its own scripts/hopi/prepare contract')
     expect(prompt).toContain('.hopi/docs/repos.md')
     expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
     expect(prompt).not.toContain(bundle.runRoot)
-    expect(prompt).toContain('canonical-relative beneath Proposal root')
-    expect(prompt).toContain('Use this exact frontmatter')
     expect(prompt).toContain('target: project:project-1/goal:goal-1/work:plan-initial')
-    expect(prompt).toContain('Completion Attention frontmatter (final Planner success only)')
     expect(prompt).toContain('notifiedAt: null')
-    expect(prompt).toContain('one cohesive proof boundary')
-    expect(prompt).toContain(
-      'depends only on required output, overlapping writers, or exclusive resources',
-    )
-    expect(prompt).toContain('retains identity, dependency and Evidence history')
-    expect(prompt).toContain('one canonical owner')
-    expect(prompt).toContain('Planner working directory is not a Git checkout')
-    expect(prompt).toContain('A Work ID owns one cumulative source lineage')
-    expect(prompt).toContain('Public Preview observes only the integrated release')
-    expect(prompt).toContain('Host Browser Harness, when installed')
+    expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     expect(bundle.browserHarnessCommand).toBe(
       process.env.HOPI_BROWSER_HARNESS_COMMAND?.trim() ||
@@ -117,8 +95,11 @@ describe('RoleContextStager', () => {
         Bun.which('browser-harness') ||
         undefined,
     )
-    expect(prompt).toContain('The Public Preview API is available at $HOPI_API_ORIGIN')
-    expect(prompt.length).toBeLessThan(10_000)
+    expect(prompt).toContain('HOPI API: $HOPI_API_ORIGIN')
+    expect(prompt).not.toContain('Retry only')
+    expect(prompt).not.toContain('choose the available')
+    expect(prompt).not.toContain('Planner working directory is not a Git checkout')
+    expect(prompt.length).toBeLessThan(5_000)
     expect(bundle.apiOrigin).toBe('http://127.0.0.1:3000')
     expect(bundle.authorityFiles.find((file) => file.path === 'AGENTS.md')?.hash).toBeNull()
 
@@ -152,9 +133,9 @@ describe('RoleContextStager', () => {
     expect(bundle.extraReadableRoots).toContain(fixture.projectRoot)
     expect(bundle.extraWritableRoots).not.toContain(fixture.projectRoot)
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
-    expect(await Bun.file(bundle.promptFile).text()).toContain(
-      'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
-    )
+    const prompt = await Bun.file(bundle.promptFile).text()
+    expect(prompt).toContain('Project guidance: AGENTS.md')
+    expect(prompt).not.toContain('$HOPI_BOOTSTRAP_SOURCE_ROOT')
   })
 
   test('stages the formal release Preview as immutable Planner completion context', async () => {
@@ -210,14 +191,12 @@ describe('RoleContextStager', () => {
       'Surface receiver (Receiver): http://127.0.0.1:4312/receiver',
     )
     const prompt = await Bun.file(bundle.promptFile).text()
-    expect(prompt).toContain('Formal release Preview snapshot: $HOPI_FORMAL_RELEASE_PREVIEW_FILE')
+    expect(prompt).toContain('Formal release Preview: $HOPI_FORMAL_RELEASE_PREVIEW_FILE')
     expect(prompt).toContain(
-      'A completion proposal requires the snapshot session to be running at the listed Repo release heads',
+      'Goal completion evidence comes from the supplied formal release Preview at its listed release heads',
     )
-    expect(prompt).toContain('direct evidence newly captured from its operator-facing surfaces')
-    expect(prompt).toContain('retained as this Run artifact')
-    expect(prompt).toContain("The evidence target is the accepted Goal's user-visible outcome")
-    expect(prompt).toContain('a generic healthy Preview state that does not demonstrate the Goal')
+    expect(prompt).not.toContain('HTTP reachability')
+    expect(prompt).not.toContain('generic healthy Preview')
     expect(bundle.repoReleaseHeads).toEqual({ primary: baseline.releaseHead })
   })
 
@@ -239,7 +218,7 @@ describe('RoleContextStager', () => {
     expect(planner.operatorPreferenceFile).toBeDefined()
     expect(await Bun.file(planner.operatorPreferenceFile ?? '').text()).toBe(preference)
     expect(await Bun.file(planner.promptFile).text()).toContain(
-      'Operator preferences are defaults below current accepted Input',
+      'Operator preferences are defaults below current Input',
     )
     expect(await Bun.file(planner.contextFile).text()).toContain('Operator preference snapshot:')
     expect(planner.authorityFiles.some((file) => file.path === '.hopi/preference.md')).toBe(false)
@@ -518,11 +497,13 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('Working directory: $HOPI_PRIMARY_REPO_ROOT')
     expect(reviewerPrompt).not.toContain(reviewer.runRoot)
     expect(generatorPrompt).not.toContain('Git writes such as add, commit')
-    expect(generatorPrompt).toContain('[Current execution environment observation]')
+    expect(generatorPrompt).toContain('Current execution environment:')
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
-    expect(generatorPrompt).toContain('owns HOPI-managed task Git metadata')
-    expect(generatorPrompt).toContain('Run-owned clones under $HOPI_RUN_SCRATCH')
-    expect(generatorPrompt).toContain('merge, deploy, production-data mutation')
+    expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
+    expect(generatorPrompt).toContain('Run scratch: $HOPI_RUN_SCRATCH')
+    expect(generatorPrompt).toContain(
+      'External effects require explicit Work or operator authority',
+    )
     expect(generatorPrompt).toContain('### Engineering Work: Engineering Work')
     expect(generatorPrompt).not.toContain('### Goal Contract')
     expect(generatorPrompt).not.toContain('Exercise role context staging.')
@@ -537,46 +518,27 @@ describe('RoleContextStager', () => {
       fixture.store.paths.evidenceDocument('goal-1', 'E-latest'),
     )
     for (const prompt of [generatorPrompt, reviewerPrompt]) {
-      expect(prompt).toContain('the filename stem must equal the frontmatter id')
-      expect(prompt).toContain('Use this exact frontmatter')
+      expect(prompt).toContain('targeted Attention file whose stem equals its id')
       expect(prompt).toContain('id: <stable-id>')
       expect(prompt).toContain('target: project:project-1/goal:goal-1/work:W-1')
       expect(prompt).toContain('createdAt: 1970-01-01T00:00:00.000Z')
       expect(prompt).toContain('resolvedAt: null')
       expect(prompt).toContain('notifiedAt: null')
-      expect(prompt).toContain('evidence that retry cannot help')
-      expect(prompt).toContain('create only added or replaced control documents')
-      expect(prompt).toContain(
-        'Progress messages and the terminal outcome are different protocol surfaces',
-      )
-      expect(prompt).toContain('Progress, when emitted, is non-authoritative ordinary prose')
-      expect(prompt).toContain('exactly one JSON object matching this schema as the final response')
-      expect(prompt).toContain('adapter validates and persists this terminal object')
-      expect(prompt).toContain('Do not enter a vendor plan-approval mode')
-      expect(prompt.length).toBeLessThan(7_500)
+      expect(prompt).toContain('The final response is exactly one JSON object')
+      expect(prompt).not.toContain('Retry only')
+      expect(prompt).not.toContain('choose the available browser client')
+      expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
+      expect(prompt.length).toBeLessThan(5_000)
     }
-    expect(generatorPrompt).toContain('Reviewer findings are evidence about violated invariants')
-    expect(generatorPrompt).toContain('owning invariant')
-    expect(generatorPrompt).toContain('complete owning Engineering Work')
-    expect(generatorPrompt).toContain('canonical representation')
-    expect(generatorPrompt).toContain('HOPI_PREVIEW_SURFACES=<json-array>')
+    expect(generatorPrompt).toContain('implement the complete Engineering Work')
     expect(generatorPrompt).toContain(
-      'HOPI_PREVIEW_URL=<reachable-url> remains the single-surface shorthand',
+      'Public Preview, when present, observes the integrated release',
     )
-    expect(generatorPrompt).toContain('operator-usable user-visible state')
-    expect(generatorPrompt).toContain('HTTP application shells that cannot reach that state')
-    expect(generatorPrompt).toContain('not this candidate')
-    expect(reviewerPrompt).toContain('strongest proportionate evidence')
-    expect(reviewerPrompt).toContain('exact command and input or deterministic inspection')
-    expect(reviewerPrompt).toContain('accepted contract and material risk')
-    expect(reviewerPrompt).toContain('hypothetical inputs outside an accepted grammar')
-    expect(reviewerPrompt).toContain('requires independent real-browser evidence')
-    expect(reviewerPrompt).toContain("adapter's own probe, HTTP success")
-    expect(reviewerPrompt).toContain('choose the available browser client and assertions')
+    expect(reviewerPrompt).toContain(
+      'independently determine whether the Engineering Work satisfies',
+    )
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
-    expect(reviewerPrompt).toContain('integration belong to Coordinator or Planner')
-    expect(reviewerPrompt).toContain('local ports')
-    expect(reviewerPrompt).toContain('$HOPI_RUN_SCRATCH')
+    expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
     expect(
       await Bun.file(
@@ -900,7 +862,7 @@ describe('RoleContextStager', () => {
     expect(planner.authorityFiles.some((file) => file.path === selectedPath)).toBe(true)
     expect(planner.authorityFiles.some((file) => file.path === unrelatedPath)).toBe(false)
     expect(await Bun.file(planner.promptFile).text()).toContain(
-      'exact Goal asset paths and documented purpose',
+      'Attached images are Goal assets with their authority-defined purpose',
     )
 
     await publishEngineeringWork(
@@ -929,10 +891,10 @@ describe('RoleContextStager', () => {
     expect(generator.guardFiles[selectedPath]).toBeTruthy()
     expect(generator.guardFiles[unrelatedPath]).toBeUndefined()
     expect(await Bun.file(generator.promptFile).text()).toContain(
-      'Apply their documented purpose and limits',
+      'Attached images are Goal assets with their authority-defined purpose',
     )
     expect(await Bun.file(reviewer.promptFile).text()).toContain(
-      'Apply their documented purpose and limits',
+      'Attached images are Goal assets with their authority-defined purpose',
     )
   })
 })

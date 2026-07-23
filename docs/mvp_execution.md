@@ -649,6 +649,27 @@ makes each Engineering Work complete for outcome, scope, dependencies, and measu
 acceptance, but cites canonical design paths instead of copying durable design contracts. It repeats
 only a boundary whose omission would make execution or review materially ambiguous.
 
+The four parts are data boundaries, not a workflow tutorial. The primary task states the owned
+outcome. Supporting authority names current documents and observations. The execution boundary is
+the resolved capability envelope plus immutable and writable roots. The result contract contains
+only the structured publication protocol. Responsibility text identifies ownership and available
+effects; it does not teach the model how to investigate, plan, implement, review, retry, or phrase
+evidence.
+
+Information belongs at its narrowest owner:
+
+- actual shell, network, filesystem, source roots, scratch, cache, and browser capabilities belong
+  to the execution envelope or context manifest;
+- operation arguments and durable consequences belong to the matching tool schema and result;
+- document shape and publication ownership belong to deterministic proposal validation;
+- safety, external-side-effect authority, immutable state, and terminal result shape remain explicit
+  red lines;
+- strategy, sequencing, proof selection, and semantic judgment remain unconstrained.
+
+Continuation supplies only changed current assignment sections. Recovery states only that no valid
+terminal result was captured and repeats the terminal protocol. Neither surface adds failure-specific
+reasoning advice.
+
 The contract is minimal as well as complete. Every owned path, acceptance criterion, and proof
 obligation must protect the requested outcome, an accepted compatibility promise, a material safety
 boundary, durable persistence, or a credible regression. Planner distinguishes acceptance of the
@@ -706,9 +727,12 @@ nonterminal Planning Work replaces its concise Objective with the latest plannin
 new accepted Input paths, so the current assignment does not retain a stale trigger. Empty optional
 Goal sections are omitted rather than filled with placeholder prose. Verbatim Input remains distinct
 from the normalized Goal contract: the former preserves operator provenance, while the latter is
-accepted authority, so HOPI does not text-deduplicate the canonical documents. The Run prompt does
-not repeat an Input body already represented by its exact `Accepted Inbox Instruction <event>` in the
-current Goal contract. A latest resolved Attention and its resolution Input remain staged for exact
+accepted authority. A new-contract Planning operation therefore supplies an explicit normalized
+`contractChange`; HOPI links the verbatim Input to Planning and appends only that semantic change
+under `Accepted Goal Change <event>`. It never promotes the raw Inbox body implicitly. Legacy
+`Accepted Inbox Instruction <event>` sections remain readable, and the Run prompt does not repeat an
+Input body already represented verbatim by one of those legacy sections. A latest resolved Attention
+and its resolution Input remain staged for exact
 provenance, but that resolution Input is not promoted into the expanded Planning Inputs unless the
 Planning Work itself accepted it. Even then, its description is evidence of the condition before
 settlement, not a current blocker: Planner rereads the current Attention and Work state and never

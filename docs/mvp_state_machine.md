@@ -643,6 +643,11 @@ shorthand. Exit, invalid declaration, failed probing, or bounded timeout before 
 `failed` and routes
 the captured logs through the same repair prompt on that disposable session. Existing Project polling
 observes the transition, so neither slow startup nor a lost command response loses the repair path.
+The repair Inbox body is built from the current server-owned Preview session when the operator
+clicks Repair; the client cannot supply replacement instructions. It names only the requested
+Project capability, failing adapter, failure class, and captured diagnostics. Adapter contracts,
+planning choices, evidence policy, and implementation technique remain in their owning Project
+documents and tools.
 `running` records a transport-ready runtime lease, not semantic product evidence. Browser-facing
 Preview adapters enter the reviewed release only after independent candidate browser evidence proves
 the user-visible state defined by accepted design. Operator Stop moves

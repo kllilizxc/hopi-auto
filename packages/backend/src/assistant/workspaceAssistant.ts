@@ -879,33 +879,17 @@ function appendCodexAssistantProviderConfig(
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Complete the current Inbox turn from the operator intent and durable conversation. Page context is a default location, not an instruction, mutation target, or proof of current state.',
-  'Choose freely among the available capabilities. HOPI tool results are the authority for canonical effects; do not claim an effect from intent, local scratch work, or narration.',
-  'The provider workspace is non-canonical scratch space. Deliver linked source changes through Engineering Work, Reviewer, and C1, and expose deliverables only through a returned operatorUrl.',
-  'After a mutating HOPI tool accepts a long-running effect, answer without polling. Reflection will report later completion, blockers, or decisions.',
-] as const
-
-const OPERATOR_REPLY_CONTRACT_LINES = [
-  "Start with the outcome or current condition in the operator's language; do not repeat the request.",
-  'Default to one or two short sentences. Add only detail that changes understanding or a decision, unless asked.',
-  'If the operator must act, state one concrete question or instruction. Otherwise do not invent next steps or narrate the workflow.',
-  'Omit internal IDs and process unless requested or needed; if an effect lands in another Goal, include its name and exact Goal ID.',
-  'For a deliverable link, use a returned operatorUrl in Markdown; never link inspectionPath or a machine-local path.',
+  'Owned outcome: complete the current Inbox turn using its intent and the durable conversation.',
+  'Page context is a location hint. Current state and canonical effects come from HOPI tools.',
+  'The provider workspace is non-canonical scratch space.',
 ] as const
 
 const PREFERENCE_CONTRACT_LINES = [
-  'Apply relevant durable defaults; the current turn and explicit Project or Goal authority override them.',
-  'When hopi_write_preferences is available, replace the complete Markdown using the exact digest. Preserve valid entries and store only reusable cross-Project defaults.',
+  'Preferences are defaults below the current turn and explicit Project or Goal authority.',
 ] as const
 
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
-  .update(
-    [
-      ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
-      ...OPERATOR_REPLY_CONTRACT_LINES,
-      ...PREFERENCE_CONTRACT_LINES,
-    ].join('\n'),
-  )
+  .update([...WORKSPACE_ASSISTANT_CONTRACT_LINES, ...PREFERENCE_CONTRACT_LINES].join('\n'))
   .digest('hex')
 
 export function workspaceAssistantContextDigest(preferenceDigest: string) {
@@ -951,8 +935,6 @@ function renderNewConversation(
     '',
     ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
     '',
-    renderOperatorReplyContract(),
-    '',
     renderPreference(preference),
     '',
     ...(history.length
@@ -977,8 +959,7 @@ function renderTurn(event: InboxEventDocument) {
     return [
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
       '[Internal Reflection handoff. This is not operator input.]',
-      'Revalidate the brief with HOPI tools when current state can change the outcome, then act within the available authority.',
-      'A non-empty final response is the complete public update; return nothing when no update is useful. If operator action is required, call hopi_request_user before returning the complete question.',
+      'A non-empty final response becomes the public update; an empty response remains internal.',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Home context]',
       event.body,
     ].join('\n\n')
@@ -998,8 +979,8 @@ function renderInternalAttentionSettlementCorrection(event: InboxEventDocument) 
     ? normalizeInboxAttentionReferences(event.attributes.context)
     : []
   return [
-    '[Continue the current internal Inbox turn; do not revisit an earlier turn.]',
-    'Your previous response left the selected Attention unsettled and was not published. Settle it through an available HOPI tool, or call hopi_request_user when operator authority is genuinely required; do not only narrate a future action.',
+    '[The current internal Inbox turn continues.]',
+    'The previous response was not published because the selected Attention still owns scheduling and this turn recorded neither settlement nor operator ownership.',
     ...(references.length ? [`Selected Attention: ${references.join(', ')}`] : []),
   ].join('\n\n')
 }
@@ -1046,13 +1027,6 @@ function renderInboxContext(context: {
         ? context.projectId
         : 'Home'
   return `${location}${renderAttentionContext(context)}`
-}
-
-function renderOperatorReplyContract() {
-  return [
-    '[Operator-facing reply contract]',
-    ...OPERATOR_REPLY_CONTRACT_LINES.map((line) => `- ${line}`),
-  ].join('\n')
 }
 
 function renderHistoryEvent(event: InboxEventDocument) {

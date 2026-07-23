@@ -310,18 +310,17 @@ describe('PreviewManager', () => {
 
     expect(result).toMatchObject({ kind: 'repair_required', reason: 'missing' })
     if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
-    expect(result.prompt).toContain('Failure class: missing')
-    expect(result.prompt).toContain('Desired outcome:')
+    expect(result.prompt).toContain('Repair the current Project Preview capability.')
+    expect(result.prompt).toContain('Observed failure: missing')
     expect(result.prompt).toContain('scripts/hopi/preview')
-    expect(result.prompt).toContain('clean managed integration worktree')
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
       repair: { reason: 'missing', prompt: result.prompt },
     })
-    expect(result.prompt).toContain('operator-usable surfaces')
-    expect(result.prompt).toContain('independent candidate browser evidence')
+    expect(result.prompt).not.toContain('reviewed contract')
+    expect(result.prompt).not.toContain('browser evidence')
+    expect(result.prompt).not.toContain('scripts/hopi/prepare')
     expect(result.prompt).not.toContain('Planning')
-    expect(result.prompt).not.toContain('First check')
   })
 
   test('shares one preparation and adapter launch across concurrent Start calls', async () => {
@@ -490,8 +489,9 @@ describe('PreviewManager', () => {
     expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
     if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
     expect(result.logs).toContain('missing database')
-    expect(result.prompt).toContain('diagnosis rather than successful Preview')
-    expect(result.prompt).toContain('Failure class: startup_failed')
+    expect(result.prompt).toContain('Observed failure: startup_failed')
+    expect(result.prompt).toContain('Diagnostics:')
+    expect(result.prompt).toContain('missing database')
     expect(result.prompt).not.toContain('Planning')
   })
 

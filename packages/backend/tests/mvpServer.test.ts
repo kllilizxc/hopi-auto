@@ -347,7 +347,11 @@ describe('MVP server', () => {
             arguments: {
               projectId: 'P-1',
               goalId: 'G-1',
-              work: { kind: 'planning', mode: 'new_contract_revision' },
+              work: {
+                kind: 'planning',
+                mode: 'new_contract_revision',
+                contractChange: 'Adopt the new requirement.',
+              },
             },
           }),
         })
@@ -1251,7 +1255,6 @@ describe('MVP server', () => {
     const repair = await request(base, '/api/preview/repair', {
       method: 'POST',
       body: {
-        prompt: failedPreview.repair?.prompt,
         context: { projectId: 'P-1' },
       },
     })
@@ -1260,12 +1263,14 @@ describe('MVP server', () => {
       event?: {
         id: string
         status: string
+        body: string
         context: { projectId: string; goalId: string } | null
       }
     }>
     expect(repairEntries.find((entry) => entry.event?.id === repair.eventId)).toMatchObject({
       event: {
         status: 'pending',
+        body: failedPreview.repair?.prompt,
         context: { projectId: 'P-1' },
       },
     })

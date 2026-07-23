@@ -292,13 +292,10 @@ export function stopPreview(projectId: string) {
   )
 }
 
-export function requestPreviewRepair(
-  prompt: string,
-  context: { projectId: string; goalId?: string },
-) {
+export function requestPreviewRepair(context: { projectId: string; goalId?: string }) {
   return apiRequest<{ eventId: string }>('/api/preview/repair', {
     method: 'POST',
-    body: { prompt, context },
+    body: { context },
   })
 }
 

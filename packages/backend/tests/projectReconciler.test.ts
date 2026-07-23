@@ -684,7 +684,7 @@ describe('ProjectReconciler', () => {
     expect(planning).toBeUndefined()
     expect(attention?.attributes.target).toBe('project:project-1/goal:goal-1/work:W-1')
     expect(attention?.body).toContain('task delta conflicts with the current release')
-    expect(attention?.body).toContain('request Planning only if')
+    expect(attention?.body).not.toContain('request Planning only if')
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       attempts: 0,

@@ -357,6 +357,38 @@ may use mutating HOPI tools or notify the operator. User input has speaking prio
 Reflection may finish but its handoff is discarded when its immutable digest is stale. This adds
 proactive diagnosis without another agent role, workflow, action format, or operator-visible thread.
 
+### 10. Agents receive an environment, not a playbook
+
+Every model-facing surface has four possible inputs:
+
+1. the outcome owned by the current responsibility;
+2. current authority and observed environment facts;
+3. tools whose names, arguments, effects, and ownership match the responsibility;
+4. deterministic red lines required for safety, persistence, external side effects, or protocol
+   integrity.
+
+Nothing else is a fixed instruction. HOPI does not prescribe search order, decomposition style,
+repair strategy, retry heuristics, evidence technique, response style, or tool-call sequence. Those
+are model judgments and improve with the configured model. A historical failure may justify exposing
+a missing fact or improving a tool, but does not justify adding an `if/else` lesson to every later
+prompt.
+
+The execution envelope is the single description of process capabilities. Canonical documents are
+the single source of product intent. Tool schemas describe inputs and effects, not circumstances in
+which the model should choose them. Deterministic validators reject invalid state transitions and
+unsafe writes; they do not classify free-form intent for the model.
+
+Generated diagnostics are context, never operator authority. A UI action may state the operator's
+requested outcome and attach current failure facts, but HOPI does not synthesize planning or
+implementation instructions and then label them as user input. Verbatim Inbox input remains
+provenance; only an explicit semantic operation adopts it into Goal, design, Work, or lifecycle
+authority.
+
+Prompt and tool changes are reviewed by deletion first. A retained sentence must identify its owning
+goal, an otherwise unavailable environment fact, a tool effect, or one of the deterministic red
+lines above. Tests protect those semantics and compactness rather than preserving accumulated
+wording.
+
 ## Architecture Map
 
 The authority is split by concern rather than repeated in one large document:

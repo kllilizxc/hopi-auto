@@ -54,7 +54,7 @@ test('Project cards control the one Project Preview session and expose every nam
   expect(source).toContain('project.preview.surfaces.map')
   expect(source).toContain('startPreview(project.projectId)')
   expect(source).toContain('stopPreview(project.projectId)')
-  expect(source).toContain("requestPreviewRepair(project.preview?.repair?.prompt ?? '', {")
+  expect(source).toContain('requestPreviewRepair({')
   expect(source).toContain('projectId: project.projectId')
 })
 

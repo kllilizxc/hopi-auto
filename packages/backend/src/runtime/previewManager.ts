@@ -598,20 +598,16 @@ async function isExecutable(path: string) {
 }
 
 function repairRequired(reason: PreviewRepairReason, adapter: string, logs: string): PreviewRepair {
-  const details = logs.trim() ? `\n\nStartup logs:\n\n\`\`\`\n${logs.trim()}\n\`\`\`` : ''
+  const details = logs.trim() ? `\n\nDiagnostics:\n\n\`\`\`\n${logs.trim()}\n\`\`\`` : ''
   return {
     kind: 'repair_required',
     reason,
     logs,
     prompt: [
-      `Preview could not start through ${adapter}.`,
-      `Failure class: ${reason}.`,
-      'Desired outcome: the current managed Project release starts through its reviewed Preview capability and exposes operator-usable surfaces.',
-      "The reviewed contract is every Project Repo's scripts/hopi/prepare from its clean managed integration worktree, in manifest order, followed by the primary Repo's scripts/hopi/preview. Prepare owns runtime prerequisites; Preview owns service startup and its operator-usable surfaces.",
-      'A captured preparation or startup error is diagnosis rather than successful Preview behavior.',
-      'For a browser-facing Preview, running state or an HTTP application shell is transport evidence only; accepted user-visible behavior requires independent candidate browser evidence.',
+      'Repair the current Project Preview capability.',
+      `Observed failure: ${reason} at ${adapter}.`,
       details,
-    ].join(' '),
+    ].join('\n'),
   }
 }
 

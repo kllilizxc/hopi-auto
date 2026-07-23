@@ -178,7 +178,6 @@ const inboxSchema = z
   .strict()
 const previewRepairSchema = z
   .object({
-    prompt: z.string().min(1),
     context: z
       .object({
         projectId: stableIdSchema,
@@ -816,8 +815,12 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           if (body.context.goalId && !(await project.store.readGoal(body.context.goalId))) {
             throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
           }
+          const repair = runtime.preview.inspect(body.context.projectId)?.repair
+          if (!repair) {
+            throw new ApiError(409, 'Project Preview has no current repair request')
+          }
           const event = await receiveUserEvent(runtime, {
-            content: body.prompt,
+            content: repair.prompt,
             context: body.context,
           })
           runtime.coordinator.wake()

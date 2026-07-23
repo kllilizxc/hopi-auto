@@ -857,16 +857,13 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
-    expect(seen[0]?.prompt).toContain(
-      'if an effect lands in another Goal, include its name and exact Goal ID',
-    )
-    expect(seen[0]?.prompt).toContain('Choose freely among the available capabilities')
-    expect(seen[0]?.prompt).toContain('answer without polling')
-    expect(seen[0]?.prompt).toContain('[Operator-facing reply contract]')
-    expect(seen[0]?.prompt).toContain('Default to one or two short sentences')
-    expect(seen[0]?.prompt).toContain('Omit internal IDs')
-    expect(seen[0]?.prompt).toContain('include its name and exact Goal ID')
-    expect(seen[0]?.prompt.length).toBeLessThan(3_000)
+    expect(seen[0]?.prompt).toContain('Owned outcome: complete the current Inbox turn')
+    expect(seen[0]?.prompt).toContain('Current state and canonical effects come from HOPI tools')
+    expect(seen[0]?.prompt).toContain('provider workspace is non-canonical scratch space')
+    expect(seen[0]?.prompt).not.toContain('answer without polling')
+    expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
+    expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')
+    expect(seen[0]?.prompt.length).toBeLessThan(1_500)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
@@ -914,7 +911,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[0]).toContain('use a returned operatorUrl in Markdown')
+    expect(prompts[0]).toContain('Owned outcome: complete the current Inbox turn')
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
@@ -1052,7 +1049,9 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-rebuild')
 
     expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, null, 'thread-preference', null])
-    expect(seen[0]?.prompt).toContain('When hopi_write_preferences is available')
+    expect(seen[0]?.prompt).toContain(
+      'Preferences are defaults below the current turn and explicit Project or Goal authority',
+    )
     expect(seen[1]?.prompt).toContain('- Keep replies concise across Projects.')
     expect(seen[2]?.prompt).not.toContain('[Current durable cross-Project user preferences]')
     expect(seen[3]?.prompt).toContain('- Keep replies concise across Projects.')
@@ -1290,7 +1289,8 @@ describe('WorkspaceAssistant conversation', () => {
       status: 'handled',
     })
     expect(prompts[0]).toContain('Internal Reflection handoff. This is not operator input.')
-    expect(prompts[0]).toContain('Revalidate the brief with HOPI tools')
+    expect(prompts[0]).toContain('A non-empty final response becomes the public update')
+    expect(prompts[0]).not.toContain('Revalidate the brief with HOPI tools')
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
@@ -1365,8 +1365,8 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-settlement')
 
     expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('A non-empty final response is the complete public update')
-    expect(prompts[0]).toContain('call hopi_request_user')
+    expect(prompts[0]).toContain('A non-empty final response becomes the public update')
+    expect(prompts[0]).not.toContain('call hopi_request_user')
     expect(sessions).toEqual([null])
     expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
       status: 'handled',
@@ -1506,8 +1506,8 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(calls).toBe(2)
     expect(sessions).toEqual([null, 'thread-omission-first'])
-    expect(prompts[1]).toContain('Your previous response left the selected Attention unsettled')
-    expect(prompts[1]).toContain('do not only narrate a future action')
+    expect(prompts[1]).toContain('selected Attention still owns scheduling')
+    expect(prompts[1]).toContain('recorded neither settlement nor operator ownership')
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes,
     ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
@@ -1629,7 +1629,11 @@ describe('WorkspaceAssistant conversation', () => {
         await tools.execute(input.toolToken, 'hopi_create_work', {
           projectId: 'P-1',
           goalId: 'G-1',
-          work: { kind: 'planning', mode: 'new_contract_revision' },
+          work: {
+            kind: 'planning',
+            mode: 'new_contract_revision',
+            contractChange: 'Replace the prior direction.',
+          },
         })
         await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: 'project:P-1/goal:G-1/attention:A-choice',

@@ -77,7 +77,7 @@ export interface GoalController {
     goalId: string,
     input: {
       eventId: string
-      content: string
+      contractChange: string
       acceptedInput?: PlanningInputAdmission
       planningContext?: PlanningContext
       planningSettlement?: PlanningAttentionSettlement
@@ -116,7 +116,10 @@ export interface GoalController {
   finishWorkRetry(goalId: string, workId: string, result: WorkRetryResult): Promise<string[]>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
-  reopenGoal(goalId: string, input: { eventId: string; content: string }): Promise<GoalDocument>
+  reopenGoal(
+    goalId: string,
+    input: { eventId: string; contractChange?: string },
+  ): Promise<GoalDocument>
 }
 
 export class GoalControllerError extends Error {}
@@ -356,8 +359,7 @@ export function createGoalController(
       ) {
         throw new GoalControllerError('Terminal Goal must be explicitly reopened')
       }
-      const marker = instructionHeading(input.eventId)
-      if (goalPackage.goal.body.includes(marker)) {
+      if (hasAcceptedGoalChange(goalPackage.goal.body, input.eventId)) {
         await this.ensurePlanning(
           goalId,
           `Reassess accepted Inbox event ${input.eventId}.`,
@@ -412,7 +414,7 @@ export function createGoalController(
           ...goalPackage.goal.attributes,
           contractRevision: revision,
         },
-        body: appendInstruction(goalPackage.goal.body, input),
+        body: appendGoalChange(goalPackage.goal.body, input),
       }
       await store.publishGoal(goalId, {
         supportingWrites,
@@ -449,11 +451,9 @@ export function createGoalController(
           operatorRequest: null,
         },
         body: [
-          '## Reviewed recovery decision',
+          '## Reviewed attempt limit reached',
           '',
           `Work ${workId} exhausted its ${work.attributes.attempts} reviewed repair attempts.`,
-          '',
-          'Inspect the linked Evidence and decide whether to retry, revise the Goal, or cancel Work.',
           '',
         ].join('\n'),
       }
@@ -499,8 +499,6 @@ export function createGoalController(
           '## Latest result',
           '',
           latestFailure.trim() || 'No failure summary was recorded.',
-          '',
-          'Inspect the linked Evidence and current documents. Retry only if the blocker changed; otherwise revise or cancel the Work. Notify the operator only when an exact decision or external action remains.',
           '',
         ].join('\n'),
       }
@@ -548,9 +546,6 @@ export function createGoalController(
           '',
           boundedAttentionText(latestFailure),
           '',
-          'Inspect the latest Attempt logs and decide the concrete repair or operator action.',
-          'Resolve this exact Attention only after that intervention so a fresh run may start.',
-          '',
         ].join('\n'),
       }
       await store.publishGoal(goalId, {
@@ -595,8 +590,6 @@ export function createGoalController(
           '## Current diagnostic',
           '',
           boundedAttentionText(diagnostic),
-          '',
-          'Inspect this exact Work lineage. Retry only after the condition changed; request Planning only if the represented Goal contract or DAG must change, and create a distinct Work identity only when its preserved delta must be abandoned.',
           '',
         ].join('\n'),
       }
@@ -955,10 +948,9 @@ export function createGoalController(
     },
     async reopenGoal(goalId, input) {
       let goalPackage = await store.readPackage(goalId)
-      const marker = instructionHeading(input.eventId)
       if (
         goalPackage.goal.attributes.lifecycle === 'active' &&
-        goalPackage.goal.body.includes(marker)
+        hasAcceptedGoalChange(goalPackage.goal.body, input.eventId)
       ) {
         await this.ensurePlanning(
           goalId,
@@ -1010,7 +1002,12 @@ export function createGoalController(
           contractRevision: goalPackage.goal.attributes.contractRevision + 1,
           completionAttentionId: null,
         },
-        body: appendInstruction(goalPackage.goal.body, input),
+        body: input.contractChange
+          ? appendGoalChange(goalPackage.goal.body, {
+              eventId: input.eventId,
+              contractChange: input.contractChange,
+            })
+          : goalPackage.goal.body,
       }
       await store.publishGoal(goalId, {
         supportingWrites,
@@ -1189,8 +1186,8 @@ async function publishWorkCancellation(
   })
 }
 
-function appendInstruction(body: string, input: { eventId: string; content: string }) {
-  return `${body.trimEnd()}\n\n${instructionHeading(input.eventId)}\n\n${input.content.trim()}\n`
+function appendGoalChange(body: string, input: { eventId: string; contractChange: string }) {
+  return `${body.trimEnd()}\n\n${goalChangeHeading(input.eventId)}\n\n${input.contractChange.trim()}\n`
 }
 
 function replacePlanningObjective(body: string, objective: string) {
@@ -1241,8 +1238,15 @@ function appendListEntry(body: string, heading: string, entry: string) {
     .trimStart()}`
 }
 
-function instructionHeading(eventId: string) {
-  return `## Accepted Inbox Instruction ${eventId}`
+function hasAcceptedGoalChange(body: string, eventId: string) {
+  return (
+    body.includes(goalChangeHeading(eventId)) ||
+    body.includes(`## Accepted Inbox Instruction ${eventId}`)
+  )
+}
+
+function goalChangeHeading(eventId: string) {
+  return `## Accepted Goal Change ${eventId}`
 }
 
 function boundedAttentionText(value: string) {

@@ -487,7 +487,7 @@ describe('Assistant HOPI tools', () => {
         goalId: 'G-2',
         work: { ...args.work, title: 'Ship another increment' },
       }),
-    ).rejects.toThrow('request Planning for additional Work')
+    ).rejects.toThrow('Inbox Input already directly admitted Engineering Work')
   })
 
   test('serializes concurrent direct admissions and publishes only one Work', async () => {
@@ -898,15 +898,28 @@ describe('Assistant HOPI tools', () => {
 
     await fixture.workspace.receiveEvent({
       eventId: 'EV-revise',
-      content: 'Add a new success criterion.',
+      content: 'Generated diagnostic: Preview startup failed on port 4312.',
     })
     await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
       projectId: 'P-1',
       goalId: 'G-1',
-      work: { kind: 'planning', mode: 'new_contract_revision' },
+      work: {
+        kind: 'planning',
+        mode: 'new_contract_revision',
+        contractChange: 'Add a new success criterion.',
+      },
     })
 
-    expect((await fixture.goalStore.readGoal('G-1'))?.attributes.contractRevision).toBe(2)
+    const revisedGoal = await fixture.goalStore.readGoal('G-1')
+    expect(revisedGoal?.attributes.contractRevision).toBe(2)
+    expect(revisedGoal?.body).toContain('## Accepted Goal Change EV-revise')
+    expect(revisedGoal?.body).toContain('Add a new success criterion.')
+    expect(revisedGoal?.body).not.toContain('Preview startup failed on port 4312')
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).inputs.find(
+        (input) => input.attributes.sourceEventId === 'EV-revise',
+      )?.body,
+    ).toContain('Preview startup failed on port 4312')
     expect(fixture.interruptedGoalIds).toEqual(['G-1'])
   })
 
@@ -924,7 +937,11 @@ describe('Assistant HOPI tools', () => {
       fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
         projectId: 'P-1',
         goalId: 'G-1',
-        work: { kind: 'planning', mode: 'new_contract_revision' },
+        work: {
+          kind: 'planning',
+          mode: 'new_contract_revision',
+          contractChange: 'Change the accepted outcome.',
+        },
       }),
     ).rejects.toThrow('Terminal Goal must be explicitly reopened')
 
@@ -947,7 +964,7 @@ describe('Assistant HOPI tools', () => {
     await fixture.tools.executeForEvent('EV-revise', 'hopi_control_goal', {
       projectId: 'P-1',
       goalId: 'G-1',
-      action: { kind: 'reopen' },
+      action: { kind: 'reopen', contractChange: 'Change the accepted outcome.' },
     })
     const reopenedPackage = await fixture.goalStore.readPackage('G-1')
     expect(reopenedPackage.goal.attributes).toMatchObject({
@@ -962,7 +979,11 @@ describe('Assistant HOPI tools', () => {
     const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
       projectId: 'P-1',
       goalId: 'G-1',
-      work: { kind: 'planning', mode: 'new_contract_revision' },
+      work: {
+        kind: 'planning',
+        mode: 'new_contract_revision',
+        contractChange: 'Change the accepted outcome.',
+      },
     })
 
     expect(planned.changed).toBe(true)
@@ -1297,7 +1318,11 @@ describe('Assistant HOPI tools', () => {
     const planned = await fixture.tools.executeForEvent('EV-replan-attention', 'hopi_create_work', {
       projectId: 'P-1',
       goalId: 'G-1',
-      work: { kind: 'planning', mode: 'new_contract_revision' },
+      work: {
+        kind: 'planning',
+        mode: 'new_contract_revision',
+        contractChange: 'Create a distinct Engineering Work.',
+      },
     })
 
     expect(planned.value).toMatchObject({
@@ -1367,7 +1392,11 @@ describe('Assistant HOPI tools', () => {
     const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
       projectId: 'P-1',
       goalId: 'G-1',
-      work: { kind: 'planning', mode: 'new_contract_revision' },
+      work: {
+        kind: 'planning',
+        mode: 'new_contract_revision',
+        contractChange: 'Replace the prior direction with the model-native task.',
+      },
     })
     expect(planned.value).toMatchObject({
       effect: { kind: 'planning_created', mode: 'new_contract_revision' },

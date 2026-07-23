@@ -12,7 +12,6 @@ const goalReferences = z
       })
       .strict(),
   )
-  .max(4)
   .default([])
 
 const canonicalAttentionReferenceSchema = z
@@ -94,12 +93,16 @@ const projectRepoSchema = z
   })
   .strict()
 
-const planningWorkSchema = z
-  .object({
-    kind: z.literal('planning'),
-    mode: z.enum(['same_contract', 'new_contract_revision']),
-  })
-  .strict()
+const planningWorkSchema = z.discriminatedUnion('mode', [
+  z.object({ kind: z.literal('planning'), mode: z.literal('same_contract') }).strict(),
+  z
+    .object({
+      kind: z.literal('planning'),
+      mode: z.literal('new_contract_revision'),
+      contractChange: z.string().trim().min(1),
+    })
+    .strict(),
+])
 
 const engineeringWorkSchema = z.preprocess(
   stripLegacyWorkRepos,
@@ -118,7 +121,12 @@ const goalActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pause') }).strict(),
   z.object({ kind: z.literal('resume') }).strict(),
   z.object({ kind: z.literal('cancel') }).strict(),
-  z.object({ kind: z.literal('reopen') }).strict(),
+  z
+    .object({
+      kind: z.literal('reopen'),
+      contractChange: z.string().trim().min(1).optional(),
+    })
+    .strict(),
   z.object({ kind: z.literal('set_priority'), priority: z.number().int() }).strict(),
 ])
 
@@ -149,21 +157,11 @@ export type ReflectionAssistantToolName = (typeof reflectionAssistantToolNames)[
 export const assistantToolSchemas = {
   hopi_read_state: z
     .object({
-      projectId: stableIdSchema
-        .describe(
-          'Exact Project ID copied from current Project state. Never use the Home ID from a home: reference. Omit to use current page or Reflection context.',
-        )
-        .optional(),
-      goalId: stableIdSchema
-        .describe(
-          'Exact Goal ID copied from current Project state. Omit to use current page or Reflection context.',
-        )
-        .optional(),
+      projectId: stableIdSchema.describe('Project ID; omit for the current scope.').optional(),
+      goalId: stableIdSchema.describe('Goal ID; omit for the current scope.').optional(),
       includeEvidence: z
         .boolean()
-        .describe(
-          'Include bounded Evidence bodies and resolved artifacts when preparing a completed Goal update or when the current user question requires an exact deliverable, such as locating a report. Each resolved artifact has an internal inspectionPath and an operatorUrl; only operatorUrl may be linked in a user reply. Defaults to false.',
-        )
+        .describe('Include bounded Evidence bodies and resolved artifact locations.')
         .optional(),
     })
     .strict(),
@@ -215,15 +213,13 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema,
       goalId: stableIdSchema
-        .describe(
-          'Explicit canonical Goal ID for compatibility or deterministic automation. Omit during ordinary creation so Coordinator derives a readable ID from title.',
-        )
+        .describe('Optional explicit Goal ID; otherwise Coordinator derives one from title.')
         .optional(),
       title: z.string().trim().min(1),
       objective: z.string().trim().min(1),
       priority: z.number().int().optional(),
       firstWork: firstWorkSchema.describe(
-        'Required first Work. Choose planning when decisions or decomposition remain; choose engineering only for one complete, verifiable Work that preserves every explicit Goal constraint.',
+        'The first Planning or Engineering Work published with the Goal.',
       ),
       references: goalReferences,
     })
@@ -284,9 +280,7 @@ export const assistantToolSchemas = {
         .refine((value) => parseAttentionReference(value) !== null, {
           message: 'attentionRef must be one complete canonical Attention reference',
         })
-        .describe(
-          'Copy one complete canonical Attention reference exactly from Inbox Reply context or hopi_read_state. This is not an Attention ID.',
-        ),
+        .describe('Canonical Attention reference returned by current state.'),
       resolution: z.string().trim().min(1).max(2_000),
     })
     .strict(),
@@ -302,7 +296,7 @@ export const assistantToolSchemas = {
         .array(canonicalAttentionReferenceSchema)
         .min(1)
         .refine((values) => new Set(values).size === values.length, 'attentionRefs must be unique')
-        .describe('Copy complete reference values verbatim from hopi_read_state.'),
+        .describe('Canonical Attention references returned by current state.'),
     })
     .strict(),
   hopi_handoff_to_main: z
@@ -310,10 +304,8 @@ export const assistantToolSchemas = {
       brief: z.string().trim().min(1).max(12_000),
       context: z
         .object({
-          projectId: stableIdSchema
-            .describe('Exact Project ID from current Project state; never a Home ID.')
-            .optional(),
-          goalId: stableIdSchema.describe('Exact Goal ID from current Project state.').optional(),
+          projectId: stableIdSchema.describe('Project ID.').optional(),
+          goalId: stableIdSchema.describe('Goal ID.').optional(),
           attentionRefs: z
             .array(canonicalAttentionReferenceSchema)
             .min(1)
@@ -321,9 +313,7 @@ export const assistantToolSchemas = {
               (values) => new Set(values).size === values.length,
               'attentionRefs must be unique',
             )
-            .describe(
-              'Copy reference values verbatim from hopi_read_state. Use workspace references without projectId/goalId, or references from exactly the named Goal; never mix scopes.',
-            )
+            .describe('Canonical Attention references from this context.')
             .optional(),
         })
         .strict()
@@ -441,13 +431,17 @@ const mcpCreateWorkSchema = z
   .object({
     projectId: z.string().min(1),
     goalId: z.string().min(1),
-    work: z.discriminatedUnion('kind', [
-      z
-        .object({
-          kind: z.literal('planning'),
-          mode: z.enum(['same_contract', 'new_contract_revision']),
-        })
-        .strict(),
+    work: z.union([
+      z.discriminatedUnion('mode', [
+        z.object({ kind: z.literal('planning'), mode: z.literal('same_contract') }).strict(),
+        z
+          .object({
+            kind: z.literal('planning'),
+            mode: z.literal('new_contract_revision'),
+            contractChange: z.string().min(1),
+          })
+          .strict(),
+      ]),
       z
         .object({
           kind: z.literal('engineering'),

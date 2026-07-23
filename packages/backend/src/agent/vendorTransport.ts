@@ -500,10 +500,8 @@ async function responsibilityContinuationPrompt(
     return [
       '# Re-ground Responsibility Session',
       '',
-      `Continue the same ${input.role ?? input.stepId} responsibility for Work ${input.taskRef ?? input.stepId} in a new Attempt.`,
-      'Reviewer or deterministic integration rejection returned this Work for repair. Retain useful source discovery and workspace changes, but treat every prior completion claim as non-authoritative.',
-      'The complete current assignment below replaces remembered assignment authority. Reassess the complete Work, reread its referenced design authority, and treat the latest rejection as evidence rather than an exhaustive patch list.',
-      'Use the stable $HOPI_* environment names for current Attempt inputs and outputs; never recover a historical Run path from conversation.',
+      `Current responsibility: ${input.role ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
+      'The complete current assignment below replaces the remembered assignment.',
       '',
       assignment,
     ].join('\n')
@@ -515,14 +513,12 @@ async function responsibilityContinuationPrompt(
   return [
     '# Continue Responsibility Session',
     '',
-    `Continue the same ${input.role ?? input.stepId} responsibility for Work ${input.taskRef ?? input.stepId} in a new Attempt.`,
-    'Retain valid prior discovery and work instead of repeating it. Unchanged assignment sections in the saved conversation remain authoritative.',
+    `Current responsibility: ${input.role ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
     previous
       ? changes.length > 0
-        ? 'Each complete section below replaces the remembered section with the same HOPI section identifier; current facts supersede older facts.'
-        : 'No assignment section changed. Continue from the current workspace and prior evidence.'
-      : 'No accepted assignment snapshot was available, so the complete current assignment follows.',
-    'Use the stable $HOPI_* environment names for current Attempt inputs and outputs; never recover a historical Run path from conversation.',
+        ? 'Each section below replaces the remembered section with the same identifier.'
+        : 'No assignment section changed.'
+      : 'No previous assignment snapshot was available; the complete assignment follows.',
     '',
     ...changes,
   ].join('\n')

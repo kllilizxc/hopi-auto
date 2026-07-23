@@ -16,7 +16,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read state at observedAt. Home/Project reads are indexes; name one Goal for diagnostics. currentCandidateIntegration is the complete C1 source preflight; ready needs no source repair or separate reprojection. creationRationale is Attention text from creation; open means unresolved, not still true. Copy Attention references verbatim. Evidence is omitted by default; use includeEvidence: true for an exact deliverable, inspect inspectionPath internally, and link only operatorUrl. Omit IDs for current page/Reflection scope, or Home when none exists. Otherwise use exact Project/Goal IDs; never use a Home ID as projectId.',
+      'Read current Home, Project, or Goal state. Goal state includes Work diagnostics, the current C1 candidate-integration preflight, and canonical Attention references. Evidence bodies and resolved artifacts are optional.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
@@ -28,7 +28,7 @@ if (mode !== 'reflection') {
     'hopi_read_conversation',
     {
       description:
-        "Read a bounded page of durable public Assistant exchanges from Home or one named Project. This does not open, resume, or modify that scope's provider session. Reflection entries expose only their public final reply.",
+        'Read a bounded page of durable public Assistant exchanges from Home or one Project without changing its provider session.',
       inputSchema: assistantMcpToolSchemas.hopi_read_conversation,
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
@@ -41,7 +41,7 @@ if (mode === 'main') {
     'hopi_manage_project',
     {
       description:
-        'Create a Project, add one Repo binding, or partially rebind moved Repos. A Git Repo may be bound read-write by several Projects; only duplicate Git identities inside one Project conflict. The selected checkout locates Git and HOPI never modifies it. Create and add link an existing Git checkout or safely initialize an explicitly selected empty directory or missing leaf before linking. Rebind never initializes. Paths, Repo IDs, and Project IDs are always explicit.',
+        'Create a Project, add a Repo binding, or rebind moved Repos. Repo bindings are Project-local and may share one Git Repo; selected checkouts locate Git and remain unmodified.',
       inputSchema: assistantMcpToolSchemas.hopi_manage_project,
     },
     (args) => callTool('hopi_manage_project', args),
@@ -51,7 +51,7 @@ if (mode === 'main') {
     'hopi_write_preferences',
     {
       description:
-        'Replace the complete cross-Project preference Markdown using the exact current expectedDigest. Preserve valid entries; store only reusable defaults, not one-off, current-task, or Project-specific rules. This remembers a default but does not change delivery.',
+        'Replace the complete cross-Project preference Markdown when expectedDigest matches current state.',
       inputSchema: assistantMcpToolSchemas.hopi_write_preferences,
     },
     (args) => callTool('hopi_write_preferences', args),
@@ -63,7 +63,7 @@ if (mode !== 'reflection') {
     'hopi_create_goal',
     {
       description:
-        'Create one Goal from the current instruction and exactly one first Work. Use firstWork.kind planning when clarification or decomposition remains; HOPI supplies its standard Planning contract. Use engineering only for one complete, verifiable Work and provide its full contract.',
+        'Create one Goal from the current Inbox turn and atomically create its first Planning or Engineering Work.',
       inputSchema: assistantMcpToolSchemas.hopi_create_goal,
     },
     (args) => callTool('hopi_create_goal', args),
@@ -73,7 +73,7 @@ if (mode !== 'reflection') {
     'hopi_create_work',
     {
       description:
-        'Create exactly one Planning or Engineering Work in an existing active Goal. Planning selects same_contract or new_contract_revision and does not resolve Attention; a new revision changes Goal authority and invalidates older Work, while same_contract only requests assessment. Engineering requires a full contract and dependencies; every Project Repo is available to it. One Inbox instruction can directly admit at most one Engineering Work.',
+        'Create one Planning or Engineering Work in an active Goal. A new Planning revision records its explicit normalized contract change; Engineering records a complete Work contract and dependencies.',
       inputSchema: assistantMcpToolSchemas.hopi_create_work,
     },
     (args) => callTool('hopi_create_work', args),
@@ -83,7 +83,7 @@ if (mode !== 'reflection') {
     'hopi_write_design',
     {
       description:
-        'Apply one or more Goal-local design changes. A document change writes Markdown beneath design/. An attachment change adopts one current Inbox image with a stated purpose. This changes documentation only and does not start Planning.',
+        'Write Goal-local design Markdown or adopt current Inbox attachments into Goal-local assets. This does not start Planning.',
       inputSchema: assistantMcpToolSchemas.hopi_write_design,
     },
     (args) => callTool('hopi_write_design', args),
@@ -93,7 +93,7 @@ if (mode !== 'reflection') {
     'hopi_control_goal',
     {
       description:
-        'Apply one Goal lifecycle or priority action: pause, resume, cancel, reopen, or set_priority. Reopen advances the Goal contract and materializes Planning.',
+        'Change one Goal lifecycle or priority. Reopen advances its contract revision, optionally records a normalized contract change, and creates Planning.',
       inputSchema: assistantMcpToolSchemas.hopi_control_goal,
     },
     (args) => callTool('hopi_control_goal', args),
@@ -103,7 +103,7 @@ if (mode !== 'reflection') {
     'hopi_control_work',
     {
       description:
-        'Request one new invocation for a Work, defer it, or cancel one Engineering execution route. Cancellation includes every nonterminal dependent, interrupts their live Runs, and preserves history. It does not change the Goal or request Planning, so the unchanged Goal may later require replacement Work. Retry is pending until that invocation succeeds or fails.',
+        'Retry, defer, or cancel one Work. Cancellation includes nonterminal dependents, interrupts their Runs, and preserves history.',
       inputSchema: assistantMcpToolSchemas.hopi_control_work,
     },
     (args) => callTool('hopi_control_work', args),
@@ -112,8 +112,7 @@ if (mode !== 'reflection') {
   server.registerTool(
     'hopi_resolve_attention',
     {
-      description:
-        'Record that one exact reported condition is already clear. This removes that scheduling gate; it does not send a message or transfer ownership. Copy the complete canonical Attention reference from current state.',
+      description: 'Resolve one canonical Attention condition and remove its scheduling gate.',
       inputSchema: assistantMcpToolSchemas.hopi_resolve_attention,
     },
     (args) => callTool('hopi_resolve_attention', args),
@@ -133,7 +132,7 @@ if (mode !== 'reflection') {
       'hopi_request_user',
       {
         description:
-          "Stage operator ownership for exactly the selected open Attention references. Then return the complete question as this turn's final response. This call sends no text by itself; an empty final response or stale, resolved, mismatched, targetless, or already operator-owned reference rejects the whole request.",
+          "Transfer the selected open Attention references to the operator. The turn's non-empty final response becomes the question; this call sends no text.",
         inputSchema: assistantMcpToolSchemas.hopi_request_user,
       },
       (args) => callTool('hopi_request_user', args),
@@ -144,7 +143,7 @@ if (mode !== 'reflection') {
     'hopi_handoff_to_main',
     {
       description:
-        'Submit one internal brief to the speaking Assistant. To hand off Attention, copy reference values verbatim from hopi_read_state. Select workspace Attention or Attention from exactly one Goal; never mix scopes. No scope or references are inferred. With no handoff call, Reflection produces no speaking turn.',
+        'Create one internal Inbox brief for the speaking Assistant, optionally linked to canonical Attention references from one scope.',
       inputSchema: assistantMcpToolSchemas.hopi_handoff_to_main,
     },
     (args) => callTool('hopi_handoff_to_main', args),

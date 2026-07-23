@@ -485,7 +485,7 @@ export function BoardView() {
   })
   const previewRepairMutation = useMutation({
     mutationFn: () =>
-      requestPreviewRepair(repairPrompt ?? '', {
+      requestPreviewRepair({
         projectId: projectId ?? '',
         goalId: goalId ?? '',
       }),

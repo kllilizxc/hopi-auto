@@ -1075,45 +1075,39 @@ function renderResponsibilityPrompt(
   const boundary = [
     '## Execution Boundary',
     '',
-    '[Current execution environment observation]',
+    'Current execution environment:',
     EXECUTION_ENVELOPE_MARKER,
     '',
     `Working directory: ${input.responsibility === 'generator' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
     'Authority root: $HOPI_AUTHORITY_ROOT',
     'Proposal root: $HOPI_PROPOSAL_ROOT',
-    'Result file: $HOPI_OUTCOME_FILE',
-    'Audit manifest: $HOPI_CONTEXT_FILE',
-    ...(paths.artifactManifestFile
-      ? ['Evidence artifact manifest: $HOPI_EVIDENCE_ARTIFACTS_FILE']
-      : []),
-    'Repo manifest: $HOPI_REPOS_FILE',
+    'Context manifest: $HOPI_CONTEXT_FILE',
+    'Terminal result: $HOPI_OUTCOME_FILE',
+    'Repo roots and release heads: $HOPI_REPOS_FILE',
+    'Run scratch: $HOPI_RUN_SCRATCH',
+    'Shared cache: $HOPI_CACHE_DIR',
+    ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
     ...(paths.formalReleasePreviewFile
-      ? ['Formal release Preview snapshot: $HOPI_FORMAL_RELEASE_PREVIEW_FILE']
+      ? ['Formal release Preview: $HOPI_FORMAL_RELEASE_PREVIEW_FILE']
       : []),
     'Attention proposal directory: $HOPI_ATTENTION_PROPOSAL_DIR',
     `Project guidance: ${paths.agentsPath}`,
-    'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
-    'Source roots: the complete mapping in $HOPI_REPOS_FILE',
-    'Host Browser Harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND; retained output: $HOPI_BROWSER_HARNESS_ARTIFACT_DIR. Otherwise use the Project browser stack available in this execution environment.',
+    'Browser harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND',
+    'Browser artifacts: $HOPI_BROWSER_HARNESS_ARTIFACT_DIR',
     ...(paths.operatorPreferenceFile
-      ? ['Operator preference snapshot: $HOPI_OPERATOR_PREFERENCE_FILE']
+      ? ['Operator preferences: $HOPI_OPERATOR_PREFERENCE_FILE']
       : []),
-    ...(paths.apiOrigin ? ['Public Preview API origin: $HOPI_API_ORIGIN'] : []),
+    ...(paths.apiOrigin ? ['HOPI API: $HOPI_API_ORIGIN'] : []),
     '',
-    'Authority is immutable. Proposal is an initially empty sparse overlay: create only added or replaced control documents and their parent directories. Absence means unchanged; deletion is unsupported.',
-    'Coordinator alone validates proposals, changes control state, writes Evidence, updates evidenceRefs, and owns HOPI-managed task Git metadata, checkpoints, and integration refs.',
-    'The Repo manifest is the complete source-root map. Never infer Repo identity from directory names or inspect sibling, historical, or other Work runtime directories.',
-    'The manifest also gives each Repo release head. Commit identities belong to that Repo object database; the primary authority snapshot is not a secondary Repo commit.',
-    'Use $HOPI_RUN_SCRATCH for retained files and $HOPI_CACHE_DIR for caches; evidence requires a retained file or log.',
+    'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
+    'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
+    '$HOPI_REPOS_FILE is the complete Project source-root map. Source outside those roots and another Work runtime is outside this assignment.',
     ...(paths.hasImages
-      ? [
-          'Attached images correspond only to Goal assets cited by the owning Work. Apply their documented purpose and limits.',
-        ]
+      ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),
-    'Never create or edit evidence/** or append evidenceRefs. The final response is the only Run outcome; the adapter persists it as result.json and Coordinator derives immutable Evidence from it.',
-    'Targeted Attention is for a blocker this role and retry cannot clear. Name Assistant for HOPI repair; name the operator only for an external decision, credential, permission, or action. Technical diagnostics such as local ports are not operator authority.',
+    'External effects require explicit Work or operator authority.',
     ...targetedAttentionContract(input),
     '',
   ]
@@ -1146,8 +1140,7 @@ function assignmentSection(id: string, content: readonly string[]) {
 function targetedAttentionContract(input: PrepareRoleContextInput) {
   const target = workAttentionTarget(input.projectId, input.goalId, input.workId)
   return [
-    'Write targeted Attention as exactly one <id>.md in the Attention proposal directory; the filename stem must equal the frontmatter id.',
-    'Use this exact frontmatter:',
+    'A blocked result owns exactly one targeted Attention file whose stem equals its id:',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -1158,7 +1151,7 @@ function targetedAttentionContract(input: PrepareRoleContextInput) {
     'operatorRequest: null',
     '---',
     '```',
-    'In the body, preserve evidence that retry cannot help, the blocker, and owner; ask the operator only when Assistant cannot act.',
+    'Its body records the observed blocker, evidence, and owner.',
   ]
 }
 
@@ -1241,7 +1234,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
                 '',
                 '#### Current Reproducer Artifacts',
                 '',
-                'Use these current-Run copies instead of remembered or Evidence-embedded historical Run paths:',
+                'Current-Run copies of referenced artifacts:',
                 ...assignment.latestEvidence.artifacts.map(
                   (artifact) => `- ${artifact.reference} -> ${artifact.path}`,
                 ),
@@ -1316,27 +1309,17 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Objective: turn the current Goal contract, accepted Input, design, and source facts into the smallest complete Engineering DAG and durable design needed to deliver the Goal.',
-    'Goal authority is immutable in this responsibility. Proposal is the only publication channel and may contain design/**, Engineering Work, Attention, .hopi/docs/repos.md, and an allowed AGENTS.md bootstrap. Coordinator validates and publishes it.',
+    'Owned outcome: the smallest complete Engineering DAG and durable design that deliver the current Goal.',
+    'Writable proposal types: design/**, Engineering Work, Attention, .hopi/docs/repos.md, and the missing AGENTS.md bootstrap exposed by this environment. Goal authority and source are read-only.',
     ...(paths.operatorPreferenceFile
-      ? [
-          'Operator preferences are defaults below current accepted Input and Project/Goal authority.',
-        ]
+      ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
-    'Durable decisions belong in design/**. Each Engineering Work owns one cohesive proof boundary, is standalone in outcome and acceptance, and depends only on required output, overlapping writers, or exclusive resources.',
-    'Existing nonterminal Work retains identity, dependency and Evidence history. Terminal Work and Planning Work are immutable. A Work ID owns one cumulative source lineage.',
-    'Engineering Work from an older Goal contract revision is not executable authority. A successful proposal must either update each retained nonterminal Work to the current revision or cancel it; reset its stage to generate when the accepted change invalidates implementation.',
-    'When the accepted plan makes existing nonterminal Engineering Work obsolete, preserve its document and change only stage to cancelled. Coordinator expands cancellation through all nonterminal dependents. New or retained Work must not depend on cancelled Work.',
     ...(paths.formalReleasePreviewFile
       ? [
-          "The formal release Preview snapshot is the completion evidence environment for this Project release. Candidate Preview evidence remains Engineering evidence only. A completion proposal requires the snapshot session to be running at the listed Repo release heads and direct evidence newly captured from its operator-facing surfaces and retained as this Run artifact. The evidence target is the accepted Goal's user-visible outcome: it must expose and exercise that outcome rather than substitute an older artifact, transport readiness, HTTP reachability, or a generic healthy Preview state that does not demonstrate the Goal.",
+          'Goal completion evidence comes from the supplied formal release Preview at its listed release heads.',
         ]
-      : [
-          'Public Preview observes only the integrated release and is not Engineering Work acceptance evidence.',
-        ]),
-    'Attention represents a durable blocker that this responsibility and retry cannot clear. Target-null Attention represents Goal completion; targeted Attention and nonterminal Engineering Work are mutually exclusive with completion.',
-    'Goal assets remain durable only through their exact Goal asset paths and documented purpose. Repo responsibilities and shared contracts have one canonical owner.',
-    'New Engineering Work frontmatter (Markdown bodies remain free-form):',
+      : []),
+    'Engineering Work document protocol:',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -1350,7 +1333,7 @@ function plannerPrompt(paths: {
     'stage: generate',
     '---',
     '```',
-    'Completion Attention frontmatter (final Planner success only):',
+    'Goal completion proposal protocol:',
     '```yaml',
     '---',
     'id: <stable-id>',
@@ -1361,14 +1344,9 @@ function plannerPrompt(paths: {
     'operatorRequest: null',
     '---',
     '```',
-    ...(paths.apiOrigin ? ['The Public Preview API is available at $HOPI_API_ORIGIN.'] : []),
-    'Planner working directory is not a Git checkout. Source and Authority are read-only; sparse proposal paths are canonical-relative beneath Proposal root.',
     ...(paths.bootstrapSourceRoot
-      ? [
-          'Project guidance is absent; derive a concise AGENTS.md entrypoint from the read-only source snapshot at $HOPI_BOOTSTRAP_SOURCE_ROOT.',
-        ]
-      : ['Project guidance already exists and is read-only in this responsibility.']),
-    'Every Project Repo is present in the Engineering environment; workspace membership does not prescribe which Repo commands an Engineering responsibility runs.',
+      ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
+      : []),
     '',
   ]
 }
@@ -1377,15 +1355,9 @@ function generatorPrompt() {
   return [
     '## Generator',
     '',
-    'Objective: implement the complete owning Engineering Work in its stable task worktree and provide proportionate evidence for every materially affected acceptance criterion.',
-    'The accepted Work and durable design define scope. Reviewer findings are evidence about violated invariants; the owning invariant, its canonical representation, and materially adjacent variants define the repair boundary.',
-    'Project guidance, the complete Project Repo manifest, Repo-local tooling, accepted Inputs, and latest Evidence are environment knowledge for this Run.',
-    'Candidate runtime proof belongs to the task worktree and Run manifest. Public Project Preview observes the integrated release, not this candidate.',
-    'scripts/hopi/preview readiness is one HOPI_PREVIEW_SURFACES=<json-array> line after every declared operator-facing surface is ready; HOPI_PREVIEW_URL=<reachable-url> remains the single-surface shorthand.',
-    'For a browser-facing Preview, the declared surfaces assert the operator-usable user-visible state defined by accepted design; HTTP application shells that cannot reach that state are not ready.',
-    'The staged canonical context overrides any older .hopi copy in the task branch.',
-    '.hopi, canonical documents, the task worktree Git index/HEAD/branch, and shared Git metadata are Coordinator-owned and immutable here. Coordinator checkpoints source edits after the Run.',
-    'External effects such as merge, deploy, production-data mutation, or delivery outside the Work require explicit Work or operator authority. Run-owned clones under $HOPI_RUN_SCRATCH are available for authorized branch or PR delivery.',
+    'Owned outcome: implement the complete Engineering Work and return observed evidence.',
+    'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
+    'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
     '',
   ]
 }
@@ -1395,15 +1367,10 @@ function reviewerPrompt(projectId: string) {
   return [
     '## Reviewer',
     '',
-    'Objective: independently determine whether the owning Work satisfies its accepted contract and material integrity or safety obligations, using the strongest proportionate evidence.',
-    `The candidate is the Work's cumulative delta from git merge-base ${releaseRef} HEAD to HEAD. Release-only commits, canonical .hopi movement, persistent Preview, and integration belong to Coordinator or Planner rather than this review.`,
-    'Source, ordinary project documents, .hopi, and Git metadata are read-only in this responsibility.',
-    'Rejection is bounded by the accepted contract and material risk. Presentation preferences and hypothetical inputs outside an accepted grammar do not expand the contract into unlimited validation.',
-    'A reproducible rejection identifies the violated invariant, exact command and input or deterministic inspection, and observed failure. Observational findings state their evidence boundary without inventing a reproducer.',
-    'Project guidance, the complete Repo manifest, Repo-local tooling, existing checks, candidate runtime, and browser stack are available evidence sources. Public Project Preview is not candidate evidence.',
-    'scripts/hopi/preview readiness is one HOPI_PREVIEW_SURFACES=<json-array> line after every declared operator-facing surface is ready; HOPI_PREVIEW_URL=<reachable-url> remains the single-surface shorthand.',
-    "A Work that changes, creates, or repairs a browser-facing scripts/hopi/preview requires independent real-browser evidence from the candidate adapter of the accepted user-visible state. The adapter's own probe, HTTP success, an application shell, loaded assets, or the ready marker cannot independently prove it; choose the available browser client and assertions from project design.",
-    'Attention represents missing authority or resources that this responsibility cannot clear; it is not a substitute for an implementation defect or an evidence-backed verdict.',
+    'Owned outcome: independently determine whether the Engineering Work satisfies its accepted contract and material integrity and safety obligations.',
+    `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
+    'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
+    'Public Preview, when present, observes the integrated release rather than this candidate.',
     '',
   ]
 }
@@ -1418,29 +1385,12 @@ function resultInstruction(responsibility: Responsibility) {
   return [
     '## Required Result',
     '',
-    'Progress messages and the terminal outcome are different protocol surfaces. Progress, when emitted, is non-authoritative ordinary prose; it never uses the result schema or claims a Run result.',
-    'After all execution settles, finish by emitting exactly one JSON object matching this schema as the final response:',
-    '',
+    'The final response is exactly one JSON object:',
     '```json',
-    '{"result":"<choose one allowed result>","summary":"Concise evidence-backed result","artifacts":[]}',
+    '{"result":"<allowed result>","summary":"<observed outcome>","artifacts":[]}',
     '```',
-    '',
     `Allowed result for this ${responsibility} Run: ${allowed}.`,
-    ...(responsibility === 'planner'
-      ? [
-          'success = complete valid sparse proposal, including an empty proposal when the existing nonterminal Engineering DAG is already complete; fail = no valid proposal and no durable blocker needs follow-up.',
-        ]
-      : responsibility === 'generator'
-        ? [
-            'success = implementation and observed proof complete; unexecuted edits or claims are not success. fail = execution failed without a durable blocker.',
-          ]
-        : [
-            'success = criteria pass; reject = implementation defect; fail = review failed without a durable blocker.',
-          ]),
-    'attention = exactly one staged blocker for Assistant follow-up.',
-    'The interactive adapter validates and persists this terminal object as the Run-local result.json; do not end with prose, a plan-approval request, or a promised later file write.',
-    'This responsibility is already authorized to execute its assignment. Do not enter a vendor plan-approval mode or ask an interactive user question; use targeted Attention only for authority that cannot be inferred or executed.',
-    'Summary is explanatory evidence, never a control protocol. Artifacts lists only proof files: use a Project-relative path for checked-in source, or an exact Run-local path for generated logs and screenshots that Coordinator must preserve. Leave it empty when no file adds evidence.',
+    'attention requires the targeted Attention file. Artifacts contain only Project-relative source paths or retained Run-local proof files.',
     '',
   ]
 }

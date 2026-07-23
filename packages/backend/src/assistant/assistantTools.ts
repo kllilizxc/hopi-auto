@@ -773,7 +773,7 @@ export function createAssistantTools(options: {
                   dispatched.goalId !== targetGoalId)
               ) {
                 throw new AssistantToolRequestError(
-                  `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
+                  `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}`,
                 )
               }
               const existing = await project.store.readGoal(targetGoalId)
@@ -958,9 +958,10 @@ export function createAssistantTools(options: {
           if (requestedWork.kind === 'planning') {
             let planning: WorkDocument
             if (requestedWork.mode === 'new_contract_revision') {
+              assertPortableGoalText('Goal contract change', requestedWork.contractChange)
               await project.controller.applyMaterialInstruction(args.goalId, {
                 eventId,
-                content: event.body,
+                contractChange: requestedWork.contractChange,
                 acceptedInput: admission,
                 planningContext: {
                   supportingWrites: references.writes,
@@ -1015,7 +1016,7 @@ export function createAssistantTools(options: {
                 dispatched.goalId !== args.goalId)
             ) {
               throw new AssistantToolRequestError(
-                `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}; request Planning for additional Work`,
+                `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}`,
               )
             }
             const work = await project.controller.admitAssistantEngineeringWork(args.goalId, {
@@ -1202,7 +1203,15 @@ export function createAssistantTools(options: {
               break
             case 'reopen':
               if (goal.attributes.lifecycle !== 'active') {
-                await project.controller.reopenGoal(args.goalId, { eventId, content: event.body })
+                if (args.action.contractChange) {
+                  assertPortableGoalText('Goal contract change', args.action.contractChange)
+                }
+                await project.controller.reopenGoal(args.goalId, {
+                  eventId,
+                  ...(args.action.contractChange
+                    ? { contractChange: args.action.contractChange }
+                    : {}),
+                })
                 changed = true
               }
               break

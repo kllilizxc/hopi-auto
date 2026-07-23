@@ -19,7 +19,7 @@ test('turns a transport failure into an actionable backend recovery message', as
   }
 })
 
-test('sends the viewed Goal context with a Preview repair instruction', async () => {
+test('sends only the viewed Goal context for a server-owned Preview repair request', async () => {
   const originalFetch = globalThis.fetch
   let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
   globalThis.fetch = (async (input, init) => {
@@ -28,7 +28,7 @@ test('sends the viewed Goal context with a Preview repair instruction', async ()
   }) as typeof fetch
 
   try {
-    await requestPreviewRepair('Repair Preview', { projectId: 'P-1', goalId: 'G-1' })
+    await requestPreviewRepair({ projectId: 'P-1', goalId: 'G-1' })
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -36,7 +36,6 @@ test('sends the viewed Goal context with a Preview repair instruction', async ()
   expect(observed?.input).toBe('/api/preview/repair')
   expect(observed?.init?.method).toBe('POST')
   expect(JSON.parse(String(observed?.init?.body))).toEqual({
-    prompt: 'Repair Preview',
     context: { projectId: 'P-1', goalId: 'G-1' },
   })
 })
@@ -50,13 +49,12 @@ test('can route a Preview repair from the Project surface without inventing a Go
   }) as typeof fetch
 
   try {
-    await requestPreviewRepair('Repair Project Preview', { projectId: 'P-1' })
+    await requestPreviewRepair({ projectId: 'P-1' })
   } finally {
     globalThis.fetch = originalFetch
   }
 
   expect(JSON.parse(String(observed?.init?.body))).toEqual({
-    prompt: 'Repair Project Preview',
     context: { projectId: 'P-1' },
   })
 })

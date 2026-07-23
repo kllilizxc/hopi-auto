@@ -509,7 +509,7 @@ describe('PassOutcomeCoordinator', () => {
     const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
     await goals.applyMaterialInstruction('goal-1', {
       eventId: 'EV-revise',
-      content: 'Change the required behavior.',
+      contractChange: 'Change the required behavior.',
     })
     let goalPackage = await fixture.store.readPackage('goal-1')
     const planning = [...goalPackage.works.values()].find(

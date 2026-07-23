@@ -520,10 +520,12 @@ and dependencies. HOPI publishes the Goal Input and exactly that first Work in o
 infers omission as "no Work" or silently chooses a responsibility.
 
 `Create Work` provides the same bounded admission for an existing active Goal. Its `planning` branch
-selects same-contract or new-contract-revision Planning. Its `engineering` branch supplies one
-complete, proportionate Work contract with dependencies. Planning and Engineering Work use
-independent authority and readiness. HOPI owns structural facts such as ID, initial stage, revision,
-and dispatch provenance. Goal creation and Create Work each accept one Work rather than an array.
+selects same-contract or new-contract-revision Planning. A new revision includes the normalized
+contract change that Goal authority adopts; the verbatim Inbox body remains linked Input provenance
+and is not copied into the Goal implicitly. Its `engineering` branch supplies one complete,
+proportionate Work contract with dependencies. Planning and Engineering Work use independent
+authority and readiness. HOPI owns structural facts such as ID, initial stage, revision, and dispatch
+provenance. Goal creation and Create Work each accept one Work rather than an array.
 
 Planning and Engineering first Work have distinct domain effects and preconditions. A named model,
 tool, workflow, or delivery path remains part of accepted authority. The product's explicit

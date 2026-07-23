@@ -205,7 +205,11 @@ function createAssistant(): AssistantModelRunner & { materialRevisionRequests: n
             arguments: {
               projectId: PROJECT_ID,
               goalId: GOAL_ID,
-              work: { kind: 'planning', mode: 'new_contract_revision' },
+              work: {
+                kind: 'planning',
+                mode: 'new_contract_revision',
+                contractChange: 'Adopt the revised contract.',
+              },
             },
           }),
         })

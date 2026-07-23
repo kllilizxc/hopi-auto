@@ -528,7 +528,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   })
   const previewRepairMutation = useMutation({
     mutationFn: () =>
-      requestPreviewRepair(project.preview?.repair?.prompt ?? '', {
+      requestPreviewRepair({
         projectId: project.projectId,
       }),
     onSuccess: async () => {

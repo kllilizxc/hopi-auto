@@ -407,11 +407,9 @@ function outcomeRecoveryPrompt(responsibility: Responsibility) {
   return [
     '# Complete Current Responsibility',
     '',
-    `The previous non-interactive ${responsibility} invocation ended without a valid terminal outcome.`,
-    'Continue from the current Session and workspace. Retain completed discovery and edits; do not repeat Repo preparation or already-completed work.',
-    "If the assignment is incomplete, continue it now through proportionate verification. Do not stop for vendor plan approval or a direct user question; use the assignment's Attention path only for authority that cannot be resolved here.",
-    'During any remaining execution, progress messages use ordinary prose and never use the result schema.',
-    'After execution settles, make the final assistant message exactly one responsibility outcome JSON object with no explanatory prose before or after it.',
+    `No valid terminal outcome was captured for the current ${responsibility} invocation.`,
+    'The current Session, workspace, assignment, and execution boundary are unchanged.',
+    'The final response must be exactly one responsibility outcome JSON object.',
   ].join('\n')
 }
 

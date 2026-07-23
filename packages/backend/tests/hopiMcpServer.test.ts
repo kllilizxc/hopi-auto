@@ -62,16 +62,16 @@ describe('HOPI MCP server', () => {
       'Create a Project',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
-      'missing leaf',
+      'may share one Git Repo',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
-    ).toContain('reusable defaults')
+    ).toContain('expectedDigest')
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'exactly one first Work',
+      'atomically create its first Planning or Engineering Work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
       'Choose planning',
@@ -88,32 +88,32 @@ describe('HOPI MCP server', () => {
       'Planning or Engineering Work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'does not resolve Attention',
+      'normalized contract change',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
-      'includeEvidence: true',
+      'current C1 candidate-integration preflight',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
-      'link only operatorUrl',
+      'Evidence bodies and resolved artifacts are optional',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
-      'beneath design/',
+      'Goal-local design Markdown',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'full contract',
+      'complete Work contract',
     )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'every Project Repo is available',
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).not.toContain(
+      'Use ',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.description).toContain(
-      'Goal lifecycle or priority action',
+      'Goal lifecycle or priority',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'does not change the Goal or request Planning',
+      'interrupts their Runs',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
-    ).toContain('removes that scheduling gate')
+    ).toContain('remove its scheduling gate')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
     ).toMatchObject({
@@ -189,7 +189,7 @@ describe('HOPI MCP server', () => {
       'final response',
     )
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'sends no text by itself',
+      'this call sends no text',
     )
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.inputSchema).toMatchObject({
       required: ['attentionRefs'],

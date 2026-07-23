@@ -242,8 +242,9 @@ describe('resolveConfiguredTransportCommand', () => {
       '-',
     ])
     expect(command.sessionTransport).toBe('codex')
-    expect(command.stdin).toContain('Continue the same generator responsibility for Work T-1')
+    expect(command.stdin).toContain('Current responsibility: generator. Current Work: T-1.')
     expect(command.stdin).toContain('# current generator assignment')
+    expect(command.stdin).not.toContain('Retain valid prior discovery')
   })
 
   test('sends only changed complete assignment sections to an accepted Session', async () => {
@@ -363,7 +364,10 @@ describe('resolveConfiguredTransportCommand', () => {
       expect(command.stdin).toContain('Complete current Work.')
       expect(command.stdin).toContain('Current rejection.')
       expect(command.stdin).toContain('Current result contract.')
-      expect(command.stdin).toContain('prior completion claim as non-authoritative')
+      expect(command.stdin).toContain(
+        'The complete current assignment below replaces the remembered assignment.',
+      )
+      expect(command.stdin).not.toContain('latest rejection as evidence')
       expect(command.stdin).not.toContain('Old Work.')
     } finally {
       await rm(root, { recursive: true, force: true })

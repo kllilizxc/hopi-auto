@@ -390,9 +390,12 @@ describe('ConfiguredRoleRunner', () => {
     expect(messages).toContain(
       'The non-interactive responsibility entered vendor Plan Mode and could not obtain operator approval. Continuing the same Session once inside this Run to complete the responsibility outcome.',
     )
-    expect(await Bun.file(join(fixture.runtimeScratchDir, 'recovery-prompt.txt')).text()).toContain(
-      'do not repeat Repo preparation',
-    )
+    const recoveryPrompt = await Bun.file(
+      join(fixture.runtimeScratchDir, 'recovery-prompt.txt'),
+    ).text()
+    expect(recoveryPrompt).toContain('No valid terminal outcome was captured')
+    expect(recoveryPrompt).toContain('assignment, and execution boundary are unchanged')
+    expect(recoveryPrompt).not.toContain('do not repeat Repo preparation')
   })
 
   test('invalidates a Session that omits its outcome again during same-Run recovery', async () => {
