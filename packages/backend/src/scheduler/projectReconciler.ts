@@ -24,11 +24,6 @@ import {
   createPassOutcomeCoordinator,
 } from '../runtime/passOutcomeCoordinator'
 import {
-  type ProjectPreparationResult,
-  type ProjectPreparer,
-  createProjectPreparer,
-} from '../runtime/projectPreparation'
-import {
   type ResponsibilitySessionStore,
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
@@ -73,8 +68,6 @@ export interface ProjectReconcilerOptions {
   now?: () => Date
   createRunId?: () => string
   checkpointTask?: typeof checkpointTaskWorktree
-  preparer?: ProjectPreparer
-  preparationTimeoutMs?: number
   operationalRetryBaseMs?: number
   maxOperationalFailures?: number
   apiOrigin?: () => string
@@ -115,7 +108,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const now = options.now ?? (() => new Date())
   const createRunId = options.createRunId ?? (() => `R-${crypto.randomUUID()}`)
   const checkpointTask = options.checkpointTask ?? checkpointTaskWorktree
-  const preparer = options.preparer ?? createProjectPreparer()
   const contextStager =
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
@@ -444,65 +436,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runRoot: context.runRoot,
           })
           .catch(() => null)
-        if (scopedWorktrees.length > 0) {
-          const preparationProjectRoot = scopedWorktrees[0]?.projectRoot
-          if (!preparationProjectRoot) {
-            throw new Error(`Engineering Work ${workId} has no Repo preparation root`)
-          }
-          const preparation = await preparer.prepare({
-            projectRoot: preparationProjectRoot,
-            runtimeDir: `${context.runtimeScratchDir}/project-prepare`,
-            cacheDir: context.runtimeCacheDir,
-            timeoutMs: options.preparationTimeoutMs,
-            goalId,
-            primaryRepoId,
-            repoRoots: scopedWorktrees.map(({ repo, projectRoot }) => ({
-              repoId: repo.repoId,
-              path: projectRoot,
-            })),
-          })
-          await attempt?.record(preparationEvent(responsibility, preparation))
-          if (preparation.kind !== 'ready') {
-            if (preparation.repos.some((repo) => repo.kind === 'source_changed')) {
-              await Promise.all(
-                worktreeEntries.map(({ repo }) =>
-                  worktrees.prepareClean({
-                    projectRoot: repo.integrationRoot,
-                    projectId: options.projectId,
-                    goalId,
-                    workId,
-                    repoId: repo.repoId,
-                    primaryRepoId,
-                  }),
-                ),
-              )
-            }
-            if (responsibility === 'reviewer') {
-              await goalController.returnEngineeringWorkToGenerate(goalId, workId)
-              const outcome = await candidatePreparationFailureOutcome({
-                preparation,
-                runId,
-                context,
-                roleRepoRoots,
-              })
-              await attempt?.finish({ outcome, application: 'candidate_preparation_failed' })
-              retryResult = retryPending
-                ? {
-                    status: 'failed',
-                    diagnostic: outcome.summary,
-                  }
-                : null
-              return {
-                kind: 'pass_finished',
-                workId,
-                runId,
-                result: outcome.result,
-                application: 'candidate_preparation_failed',
-              }
-            }
-            await appendPreparationDiagnostic(context.promptFile, preparation)
-          }
-        }
         if (runController.signal.aborted) {
           await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
@@ -912,82 +845,6 @@ async function ensureProjectScope(repoRoot: string, projectPath: string) {
   return projectRoot
 }
 
-function preparationEvent(responsibility: string, preparation: ProjectPreparationResult) {
-  const failedRepoIds = preparation.repos
-    .filter((repo) => repo.kind !== 'ready')
-    .map((repo) => repo.repoId)
-  return {
-    kind: 'message' as const,
-    level: preparation.kind === 'ready' ? ('info' as const) : ('error' as const),
-    role: 'coordinator',
-    content:
-      preparation.kind === 'ready'
-        ? `Repo preparation completed before ${responsibility}: ${preparation.repos.map((repo) => repo.repoId).join(', ')}.`
-        : `Repo preparation failed before ${responsibility} for ${failedRepoIds.join(', ')}: ${boundedPreparationLogs(preparation.logs)}`,
-  }
-}
-
-function preparationFailureSummary(preparation: ProjectPreparationResult) {
-  return `Candidate Repo preparation is not ready; Generator retains the Work. ${boundedPreparationLogs(preparation.logs)}`
-}
-
-async function candidatePreparationFailureOutcome(input: {
-  preparation: ProjectPreparationResult
-  runId: string
-  context: {
-    runRoot: string
-    resultFile: string
-    runtimeScratchDir: string
-  }
-  roleRepoRoots: readonly { path: string }[]
-}): Promise<RoleRunResult> {
-  const outcome: RoleRunResult = {
-    result: 'fail',
-    summary: preparationFailureSummary(input.preparation),
-    artifacts: [input.preparation.logPath],
-    exitCode: input.preparation.exitCode,
-  }
-  try {
-    return await preserveOutcomeArtifacts(
-      outcome,
-      input.runId,
-      input.context.runRoot,
-      input.context.resultFile,
-      [input.context.runtimeScratchDir, ...input.roleRepoRoots.map((repo) => repo.path)],
-    )
-  } catch (error) {
-    return {
-      ...outcome,
-      summary: `${outcome.summary} Preparation log preservation failed: ${errorMessage(error)}`,
-      artifacts: [],
-    }
-  }
-}
-
-async function appendPreparationDiagnostic(
-  promptFile: string,
-  preparation: ProjectPreparationResult,
-) {
-  const prompt = await Bun.file(promptFile).text()
-  await Bun.write(
-    promptFile,
-    [
-      prompt.trimEnd(),
-      '',
-      '## Repo Preparation Diagnostic',
-      '',
-      `Status: ${preparation.kind}`,
-      `Repos: ${preparation.repos.map((repo) => `${repo.repoId}=${repo.kind}`).join(', ')}`,
-      `Combined log: ${preparation.logPath}`,
-      '',
-      boundedPreparationLogs(preparation.logs),
-      '',
-      'Repair or create scripts/hopi/prepare in each failing Repo candidate owned by this Work. Each entrypoint must be executable, idempotent, prepare only its own checkout, and leave every Repo source unchanged.',
-      '',
-    ].join('\n'),
-  )
-}
-
 function followsReviewerRejection(
   history: readonly RunAttemptSummary[],
   responsibility: Responsibility,
@@ -1072,10 +929,6 @@ function hasOpenWorkAttention(
     (attention) =>
       attention.attributes.target === target && attention.attributes.resolvedAt === null,
   )
-}
-
-function boundedPreparationLogs(logs: string) {
-  return logs.length <= 4_000 ? logs : `${logs.slice(0, 4_000)}\n[prepare log truncated]`
 }
 
 async function finishAttempt(

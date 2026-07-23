@@ -364,7 +364,7 @@ risk rather than mechanically adding one Live runner per row:
 | `012` | Compose          | Existing active-revision Run proves stale-result safety; existing Live delivery proves model design and planning. No duplicate canary.                      |
 | `015` | Compose          | Browser lifecycle Run plus real process-group contract proves Pause/Resume; model wording cannot affect the guard.                                          |
 | `016` | Keep             | Kill and replace an independently launched Coordinator while a real responsibility process is active.                                                       |
-| `017` | Keep             | Real Planner must choose a multi-Repo workspace and deliver one compatible cross-Repo release.                                                              |
+| `017` | Keep             | Real Planner must use the complete multi-Repo Project workspace and deliver one compatible cross-Repo release.                                             |
 | `018` | Compose          | Real multi-Repo Git contracts prove every C1 boundary; Project Attention Browser Runs already prove unavailable/recovery presentation.                      |
 | `019` | Compose + canary | Deterministic reconciliation proves priority, preemption, and stale-handoff rejection; one focused configured-provider turn proves the notification schema. |
 | `020` | Keep Browser     | Visible multi-Repo linking, settings, and rebind persistence remain unproved; vendor command construction is already Contract evidence.                     |
@@ -372,7 +372,7 @@ risk rather than mechanically adding one Live runner per row:
 | `022` | Keep             | A real multimodal Assistant and responsibility chain must preserve one relevant image through delivery.                                                     |
 | `023` | Compose          | Browser lifecycle and Assistant-tool contracts prove Cancel/Reopen; a model merely choosing the same validated tool adds no independent safety proof.       |
 | `024` | Rotate           | Re-run one small Codex and Claude session canary; do not multiply full delivery by vendor. OpenCode remains skipped.                                        |
-| `027` | Fold into `017`  | The multi-Repo Live fixture starts without root `AGENTS.md` or `scripts/hopi/prepare`, proving silent bootstrap in the same Run.                            |
+| `027` | Fold into `017`  | The multi-Repo Live fixture includes a Repo without `scripts/hopi/prepare`, proving Engineering access does not depend on a universal preparation adapter. |
 
 The selected runners cover every execution boundary accepted in the 2026-07-15 audit. `024` reuses
 the existing session-recovery runner; OpenCode remains the only operator-approved exclusion. The
@@ -401,7 +401,7 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-024` | Vendor, model, and session compatibility matrix           | P1       | Contract and rotating Live | Covered for Codex and Claude; OpenCode intentionally skipped     |
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Covered                                                          |
 | `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Covered                                                          |
-| `HOPI-E2E-027` | Silent Project context and preparation bootstrap          | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
+| `HOPI-E2E-027` | Complete Project context without mandatory preparation    | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
 | `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
 | `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
@@ -819,14 +819,14 @@ Actions:
 
 1. Link both Repos into one Project and record their original checkout state.
 2. Ask the Assistant to repair the failing user-visible full-stack behavior.
-3. Let Planner choose one or more Work units with explicit Repo workspaces.
+3. Let Planner define one or more Work units against the complete Project workspace.
 4. Let Generator modify the required roots and Reviewer inspect the cumulative multi-root candidate.
 5. Verify primary C1, secondary projection, Project tests, and UI outcome.
 
 Pass conditions:
 
 - Canonical Goal, Work, design, and Evidence remain in the primary Project root.
-- Work Repo scope covers every changed Repo without requiring one Work per Repo.
+- Actual Repo deltas cover every required change without requiring one Work per Repo.
 - Reviewer sees and remains read-only across the complete assigned workspace.
 - No Repo ref moves before the combined candidate is accepted.
 - One primary C1 records reviewed Repo heads, then every secondary release projects to its recorded head.
@@ -1181,33 +1181,34 @@ Primary invariants: `INV-01`, `INV-08`, `INV-10`, `INV-13`, `INV-14`.
 Current implementation: `packages/backend/tests/live/longConversationRecovery.live.ts`
 (`bun run e2e:live:026`).
 
-### HOPI-E2E-027: Silent Project Context And Preparation Bootstrap
+### HOPI-E2E-027: Complete Project Context Without Mandatory Preparation
 
 | Field   | Value                                                                                                          |
 | ------- | -------------------------------------------------------------------------------------------------------------- |
-| Risk    | A new Project needs a separate initialization workflow, or stale setup knowledge repeatedly wastes Agent Runs. |
-| Reality | Production context staging, Planning publication, Engineering preparation, and real Project commands.          |
-| Fixture | A linked Repo with native manifests but no root `AGENTS.md` and no `scripts/hopi/prepare`.                     |
-| Cost    | Zero for the contract path; medium for one real Planner/Generator canary.                                      |
+| Risk    | Project membership is mistaken for a mandatory setup command and an unrelated Repo blocks Engineering.       |
+| Reality | Production context staging, Planning publication, complete Engineering workspace, and Project Preview.       |
+| Fixture | A multi-Repo Project with no root `AGENTS.md` and one Repo without `scripts/hopi/prepare`.                    |
+| Cost    | Zero for the contract path; medium for one real Planner/Generator canary.                                   |
 
 Actions:
 
 1. Create a Goal through the ordinary Assistant path without running a separate init task.
 2. Let the first Planner inspect source and native manifests.
 3. Inspect the same Planning proposal for the root `AGENTS.md` supporting write.
-4. Dispatch the first real Engineering Work that needs an executable environment.
-5. Let Generator create and validate `scripts/hopi/prepare` as part of that Work.
-6. Run a later Work after Project dependencies or topology change.
+4. Dispatch real Engineering Work with every Project Repo available.
+5. Let Generator choose the relevant native commands and modify only the Repos required by the outcome.
+6. Exercise Project Preview separately, where all Repo preparation adapters remain part of the Preview contract.
 
 Pass conditions:
 
 - Missing root `AGENTS.md` creates no init Goal, Work, Kanban stage, or operator notification.
 - The first Planner writes one concise Project entrypoint in the same atomic Planning publication.
 - An existing root `AGENTS.md` is read but never silently replaced.
-- Missing `scripts/hopi/prepare` is owned by the first Engineering Work that actually needs it.
-- The adapter is executable, idempotent, receives the multi-Repo manifest, and leaves Project source unchanged when run.
-- A stale adapter failure returns to Engineering for repair with exact diagnostics instead of creating an initialization state.
-- Later responsibilities reuse current `AGENTS.md` and `prepare` rather than rediscovering setup from scratch.
+- Every Engineering responsibility receives every Project Repo even when one has no preparation adapter.
+- Engineering has no automatic all-Repo preparation gate; Agents choose relevant setup and verification from the environment and Work outcome.
+- Checkpoint and C1 include only actual Repo deltas, while Reviewer can inspect the complete Project workspace.
+- Project Preview still prepares every managed integration Repo and reports exact adapter failures through its own repair path.
+- Later responsibilities reuse current `AGENTS.md` and any Repo-local tooling without treating either as Project membership.
 
 Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-11`, `INV-14`.
 

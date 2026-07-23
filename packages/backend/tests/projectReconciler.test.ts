@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type {
@@ -15,7 +15,6 @@ import {
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
-import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { runStoragePath } from '../src/runtime/runPaths'
 import {
@@ -128,6 +127,7 @@ describe('ProjectReconciler', () => {
     const releases: Array<{ projectId: string; commit: string }> = []
     const fixture = await createFixture({
       includeSecondaryRepo: true,
+      changedRepoIds: ['primary', 'api'],
       onReleaseUpdated: (input) => {
         releases.push(input)
       },
@@ -150,11 +150,9 @@ describe('ProjectReconciler', () => {
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
   })
 
-  test('lets the same multi-Repo Work bootstrap a missing Repo prepare entrypoint', async () => {
+  test('exposes every Repo without making a missing prepare adapter an Engineering gate', async () => {
     const fixture = await createFixture({
       includeSecondaryRepo: true,
-      includeSecondaryPrepare: false,
-      generatorCreatesPrepare: true,
     })
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
@@ -165,25 +163,22 @@ describe('ProjectReconciler', () => {
     const api = fixture.linked.repos.find((repo) => repo.repoId === 'api')
     if (!api) throw new Error('Expected linked api Repo')
     expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
+    expect(fixture.runner.repoRootsByRun).toEqual([
+      expect.objectContaining({ responsibility: 'planner', paths: expect.any(Array) }),
+      expect.objectContaining({ responsibility: 'generator', paths: expect.any(Array) }),
+      expect.objectContaining({ responsibility: 'reviewer', paths: expect.any(Array) }),
+    ])
+    expect(fixture.runner.repoRootsByRun.every((run) => run.paths.length === 2)).toBe(true)
     expect(await Bun.file(join(api.integrationRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
-      true,
+      false,
     )
     expect(await Bun.file(join(fixture.apiRepoRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
       false,
     )
+    expect(await Bun.file(join(api.integrationRoot, 'src', 'feature.ts')).text()).toContain('1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
-    const generator = attempts.find((attempt) => attempt.responsibility === 'generator')
-    const events = await fixture.attempts.readEvents(
-      'project-1',
-      'goal-1',
-      'W-1',
-      generator?.runId ?? '',
-    )
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        role: 'coordinator',
-        content: expect.stringContaining('Repo preparation failed before generator for api'),
-      }),
+    expect(attempts.map((attempt) => attempt.application)).not.toContain(
+      'candidate_preparation_failed',
     )
   })
 
@@ -614,8 +609,8 @@ describe('ProjectReconciler', () => {
     )
   })
 
-  test('bootstraps a missing Project prepare script inside the first real Engineering Work', async () => {
-    const fixture = await createFixture({ includePrepare: false, generatorCreatesPrepare: true })
+  test('dispatches Generator and Reviewer when the Project has no prepare adapter', async () => {
+    const fixture = await createFixture()
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await fixture.reconciler.reconcileGoal('goal-1')
@@ -625,84 +620,14 @@ describe('ProjectReconciler', () => {
       'done',
     )
     expect(await Bun.file(join(fixture.projectRoot, 'scripts', 'hopi', 'prepare')).exists()).toBe(
-      true,
+      false,
     )
-  })
-
-  test('keeps Generator ownership when candidate Repo preparation is missing', async () => {
-    const fixture = await createFixture({ includePrepare: false })
-
-    await fixture.reconciler.reconcileGoal('goal-1')
-    await fixture.reconciler.reconcileGoal('goal-1')
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
-
-    expect(result).toMatchObject({
-      kind: 'pass_finished',
-      result: 'fail',
-      application: 'candidate_preparation_failed',
-    })
-    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
-    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
-  })
-
-  test('treats pre-Reviewer preparation fallback as candidate preflight, not rejection', async () => {
-    let preparations = 0
-    const preparer: ProjectPreparer = {
-      async prepare(input) {
-        preparations += 1
-        const kind = preparations === 2 ? 'failed' : 'ready'
-        const logPath = join(input.runtimeDir, 'prepare.log')
-        await mkdir(input.runtimeDir, { recursive: true })
-        await Bun.write(logPath, `${kind}\n`)
-        const repoRoot = input.repoRoots?.[0]?.path ?? input.projectRoot
-        const adapterPath = join(repoRoot, 'scripts', 'hopi', 'prepare')
-        return {
-          kind,
-          adapterPath,
-          exitCode: kind === 'ready' ? 0 : 1,
-          logs: kind,
-          logPath,
-          repos: [
-            {
-              repoId: input.repoRoots?.[0]?.repoId ?? 'primary',
-              repoRoot,
-              kind,
-              adapterPath,
-              exitCode: kind === 'ready' ? 0 : 1,
-              logs: kind,
-              logPath,
-            },
-          ],
-        }
-      },
-    }
-    const fixture = await createFixture({ preparer })
-
-    await fixture.reconciler.reconcileGoal('goal-1')
-    await fixture.reconciler.reconcileGoal('goal-1')
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const goalPackage = await fixture.store.readPackage('goal-1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
-    expect(result).toMatchObject({
-      kind: 'pass_finished',
-      result: 'fail',
-      application: 'candidate_preparation_failed',
-    })
-    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
-    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
-      stage: 'generate',
-      attempts: 0,
-    })
-    expect(attempts.at(0)).toMatchObject({
-      responsibility: 'reviewer',
-      result: 'fail',
-      application: 'candidate_preparation_failed',
-    })
-    expect(
-      [...goalPackage.evidence.values()].some((evidence) => evidence.body.includes('reject')),
-    ).toBe(false)
+    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
+    expect(attempts.map((attempt) => attempt.application)).not.toContain(
+      'candidate_preparation_failed',
+    )
   })
 
   test('contains a task branch synchronization conflict in Work Attention before dispatch', async () => {
@@ -1005,7 +930,7 @@ class DeliveryScriptRunner implements RoleRunner {
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
       reviewerRejectOnce: boolean
-      generatorCreatesPrepare: boolean
+      changedRepoIds: readonly string[]
       generatorWaitForAbort: boolean
       plannerWaitForAbort: boolean
       plannerResult: 'success' | 'fail'
@@ -1082,16 +1007,9 @@ class DeliveryScriptRunner implements RoleRunner {
         toolInvocationKey: `verify-${input.runId}`,
       })
       for (const repo of input.context.repoRoots) {
+        if (!this.options.changedRepoIds.includes(repo.repoId)) continue
         await mkdir(join(repo.path, 'src'), { recursive: true })
         await Bun.write(join(repo.path, 'src', 'feature.ts'), 'export const feature = 2\n')
-      }
-      if (this.options.generatorCreatesPrepare) {
-        for (const repo of input.context.repoRoots) {
-          const adapter = join(repo.path, 'scripts', 'hopi', 'prepare')
-          await mkdir(dirname(adapter), { recursive: true })
-          await Bun.write(adapter, '#!/usr/bin/env bun\nconsole.log("ready")\n')
-          await chmod(adapter, 0o755)
-        }
       }
       if (this.options.generatorWaitForAbort) {
         await waitForAbort(input.signal)
@@ -1211,8 +1129,7 @@ class DeliveryScriptRunner implements RoleRunner {
 async function createFixture(
   options: {
     generatorResult?: 'success' | 'fail'
-    includePrepare?: boolean
-    generatorCreatesPrepare?: boolean
+    changedRepoIds?: readonly string[]
     generatorOperationalFailure?: boolean
     generatorWaitForAbort?: boolean
     plannerWaitForAbort?: boolean
@@ -1220,10 +1137,8 @@ async function createFixture(
     reviewerOperationalWriteOnce?: boolean
     reviewerRejectOnce?: boolean
     includeSecondaryRepo?: boolean
-    includeSecondaryPrepare?: boolean
     projectPath?: string
     operationalRetryBaseMs?: number
-    preparer?: ProjectPreparer
     worktrees?: StableWorktreeManager
     checkpointTask?: Parameters<typeof createProjectReconciler>[0]['checkpointTask']
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
@@ -1239,15 +1154,6 @@ async function createFixture(
     : repoRoot
   await mkdir(join(projectSourceRoot, 'src'), { recursive: true })
   await Bun.write(join(projectSourceRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
-  if (options.includePrepare !== false) {
-    await mkdir(join(projectSourceRoot, 'scripts', 'hopi'), { recursive: true })
-    const prepareAdapter = join(projectSourceRoot, 'scripts', 'hopi', 'prepare')
-    await Bun.write(
-      prepareAdapter,
-      '#!/usr/bin/env bun\nif (!process.env.HOPI_GOAL_ID) process.exit(2)\nconsole.log("ready")\n',
-    )
-    await chmod(prepareAdapter, 0o755)
-  }
   await git(repoRoot, ['init', '-b', 'main'])
   await git(repoRoot, ['config', 'core.autocrlf', 'false'])
   await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
@@ -1266,15 +1172,6 @@ async function createFixture(
     apiRepoRoot = join(temporaryRoot, 'api-repo')
     await mkdir(join(apiRepoRoot, 'src'), { recursive: true })
     await Bun.write(join(apiRepoRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
-    if (options.includeSecondaryPrepare !== false) {
-      await mkdir(join(apiRepoRoot, 'scripts', 'hopi'), { recursive: true })
-      const apiPrepareAdapter = join(apiRepoRoot, 'scripts', 'hopi', 'prepare')
-      await Bun.write(
-        apiPrepareAdapter,
-        '#!/usr/bin/env bun\nif (process.env.HOPI_REPO_ID !== "api") process.exit(2)\nconsole.log("api ready")\n',
-      )
-      await chmod(apiPrepareAdapter, 0o755)
-    }
     await git(apiRepoRoot, ['init', '-b', 'main'])
     await git(apiRepoRoot, ['config', 'core.autocrlf', 'false'])
     await git(apiRepoRoot, ['config', 'user.email', 'hopi@example.test'])
@@ -1324,7 +1221,7 @@ async function createFixture(
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     reviewerRejectOnce: options.reviewerRejectOnce ?? false,
-    generatorCreatesPrepare: options.generatorCreatesPrepare ?? false,
+    changedRepoIds: options.changedRepoIds ?? ['primary'],
     generatorWaitForAbort: options.generatorWaitForAbort ?? false,
     plannerWaitForAbort: options.plannerWaitForAbort ?? false,
     plannerResult: options.plannerResult ?? 'success',
@@ -1345,7 +1242,6 @@ async function createFixture(
       attempts,
       worktrees: options.worktrees,
       checkpointTask: options.checkpointTask,
-      preparer: options.preparer,
       operationalRetryBaseMs: options.operationalRetryBaseMs,
       onProjectBlocked: options.onProjectBlocked,
       onReleaseUpdated: options.onReleaseUpdated,

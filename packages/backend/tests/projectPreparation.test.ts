@@ -171,21 +171,26 @@ describe('ProjectPreparer', () => {
     expect(failed.logs).toContain('api still ran')
   })
 
-  test('passes the exact owning Goal only for an Engineering preparation', async () => {
+  test('does not inherit an unrelated Goal identity during Project preparation', async () => {
     const fixture = await createFixture()
     await writeAdapter(fixture.repo, 'console.log(`goal=${process.env.HOPI_GOAL_ID ?? "none"}`)')
     await git(fixture.repo, ['add', '.'])
     await git(fixture.repo, ['commit', '-m', 'add prepare'])
+    const previousGoalId = process.env.HOPI_GOAL_ID
+    process.env.HOPI_GOAL_ID = 'G-unrelated'
+    try {
+      const result = await createProjectPreparer().prepare({
+        projectRoot: fixture.repo,
+        runtimeDir: fixture.runtime,
+        cacheDir: fixture.cache,
+      })
 
-    const result = await createProjectPreparer().prepare({
-      projectRoot: fixture.repo,
-      runtimeDir: fixture.runtime,
-      cacheDir: fixture.cache,
-      goalId: 'G-北京-ai-调研',
-    })
-
-    expect(result.kind).toBe('ready')
-    expect(result.logs).toContain('goal=G-北京-ai-调研')
+      expect(result.kind).toBe('ready')
+      expect(result.logs).toContain('goal=none')
+    } finally {
+      if (previousGoalId === undefined) Reflect.deleteProperty(process.env, 'HOPI_GOAL_ID')
+      else process.env.HOPI_GOAL_ID = previousGoalId
+    }
   })
 
   test('does not run over uncheckpointed Generator source', async () => {

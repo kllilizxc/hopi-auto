@@ -1019,7 +1019,7 @@ function renderResponsibilityPrompt(
     'Repo manifest: $HOPI_REPOS_FILE',
     'Attention proposal directory: $HOPI_ATTENTION_PROPOSAL_DIR',
     `Project guidance: ${paths.agentsPath}`,
-    'Repo preparation entrypoints: resolve each listed Repo root from $HOPI_REPOS_FILE, then use <root>/scripts/hopi/prepare',
+    'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
     'Source roots: the complete mapping in $HOPI_REPOS_FILE',
@@ -1288,7 +1288,7 @@ function plannerPrompt(paths: {
           'Project guidance is absent; derive a concise AGENTS.md entrypoint from the read-only source snapshot at $HOPI_BOOTSTRAP_SOURCE_ROOT.',
         ]
       : ['Project guidance already exists and is read-only in this responsibility.']),
-    'Every Project Repo is present in the Engineering environment and owns its own scripts/hopi/prepare contract.',
+    'Every Project Repo is present in the Engineering environment; workspace membership does not prescribe which Repo commands an Engineering responsibility runs.',
     '',
   ]
 }
@@ -1299,7 +1299,7 @@ function generatorPrompt() {
     '',
     'Objective: implement the complete owning Engineering Work in its stable task worktree and provide proportionate evidence for every materially affected acceptance criterion.',
     'The accepted Work and durable design define scope. Reviewer findings are evidence about violated invariants; the owning invariant, its canonical representation, and materially adjacent variants define the repair boundary.',
-    'Project guidance, the complete Project Repo manifest, preparation entrypoints, accepted Inputs, and latest Evidence are environment knowledge for this Run. Each Repo owns its own scripts/hopi/prepare contract.',
+    'Project guidance, the complete Project Repo manifest, Repo-local tooling, accepted Inputs, and latest Evidence are environment knowledge for this Run.',
     'Candidate runtime proof belongs to the task worktree and Run manifest. Public Project Preview observes the integrated release, not this candidate.',
     'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after the service is ready.',
     'For a browser-facing Preview, that URL asserts the operator-usable user-visible state defined by accepted design; an HTTP application shell that cannot reach that state is not ready.',
@@ -1320,7 +1320,7 @@ function reviewerPrompt(projectId: string) {
     'Source, ordinary project documents, .hopi, and Git metadata are read-only in this responsibility.',
     'Rejection is bounded by the accepted contract and material risk. Presentation preferences and hypothetical inputs outside an accepted grammar do not expand the contract into unlimited validation.',
     'A reproducible rejection identifies the violated invariant, exact command and input or deterministic inspection, and observed failure. Observational findings state their evidence boundary without inventing a reproducer.',
-    'Project guidance, preparation, Repo manifest, existing checks, candidate runtime, and browser stack are available evidence sources. Public Project Preview is not candidate evidence.',
+    'Project guidance, the complete Repo manifest, Repo-local tooling, existing checks, candidate runtime, and browser stack are available evidence sources. Public Project Preview is not candidate evidence.',
     'scripts/hopi/preview readiness is exactly one HOPI_PREVIEW_URL=<reachable-url> line after startup is ready.',
     "A Work that changes, creates, or repairs a browser-facing scripts/hopi/preview requires independent real-browser evidence from the candidate adapter of the accepted user-visible state. The adapter's own probe, HTTP success, an application shell, loaded assets, or the ready marker cannot independently prove it; choose the available browser client and assertions from project design.",
     'Attention represents missing authority or resources that this responsibility cannot clear; it is not a substitute for an implementation defect or an evidence-backed verdict.',

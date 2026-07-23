@@ -1121,7 +1121,7 @@ from that binding's current release. A responsibility receives one logical
 workspace containing all Project roots; no Repo subtask or extra responsibility is created. Checkout
 directories are disposable and may be rebuilt from their stable branches after migration.
 
-Immediately before Generator or Reviewer preparation, Coordinator compares each stable task branch
+Immediately before Generator or Reviewer dispatch, Coordinator compares each stable task branch
 with that binding's current release. If release is already an ancestor, no Git mutation occurs.
 If the clean task branch is behind or divergent, Coordinator fast-forwards it or merges release into
 it with hooks and signing disabled, preserving the task delta and then verifying a clean checkout and
@@ -1154,40 +1154,26 @@ checkout.
 
 ### Repo preparation
 
-`scripts/hopi/prepare` is each Repo's reviewed, executable preparation contract. It is one fixed
-convention rather than Project configuration, adapter routing, or lifecycle state. Each script is
-foreground, non-interactive, idempotent, prepares only its own checkout, and returns zero only when
-that checkout can be consumed. It may populate ignored dependencies and caches but must not modify
+`scripts/hopi/prepare` is an optional reviewed Repo capability rather than Project membership,
+adapter routing, or lifecycle state. When present, it is foreground, non-interactive, idempotent,
+prepares only its own checkout, and may populate ignored dependencies and caches without modifying
 tracked or non-ignored source.
 
-For an Engineering Run, Coordinator writes one runtime-only `HOPI_REPOS_FILE` containing every
-Project task root. In stable Project manifest order it invokes every checkout's own
-script with that checkout as cwd, `HOPI_REPO_ID`, `HOPI_REPO_ROOT`, and the exact `HOPI_GOAL_ID`.
-For Preview it performs the same sequence over every managed integration root and omits the Goal ID.
-The manifest is context, not delegation authority: a Repo script never scans runtime siblings,
-prepares another Repo, or substitutes for another Repo's missing entrypoint. Repeated invocation,
-rather than a stored initialized flag or lockfile fingerprint, is the freshness check.
+Every Engineering Run receives a runtime-only `HOPI_REPOS_FILE` containing all Project task roots,
+plus the Home-owned persistent `HOPI_CACHE_DIR`. Generator and Reviewer use the accepted Work,
+design, source, and actual candidate delta to decide which Repo setup and verification commands are
+material. Coordinator does not execute Repo preparation before either responsibility, does not
+require no-op adapters in unrelated Repos, and does not convert setup availability into a hidden
+Work gate. A missing entrypoint is simply an environment fact; an Agent may create one when the
+accepted outcome actually needs that durable capability.
 
-Coordinator also supplies the Home-owned persistent `HOPI_CACHE_DIR` to every preparation invocation.
-That cache lives outside managed integration and task worktrees, so a clean Reviewer rematerialization
-does not discard reusable downloads; cache contents remain an optimization and never evidence. Each
-preparation script runs as the leader of its own process group. A bounded timeout terminates that
-whole group, including descendants holding output streams, before Coordinator reports the failure.
-
-A missing script is allowed only while Generator can bootstrap it in the ordinary Engineering Work.
-HOPI does not create an Init or Repair Work. A Repo that needs no setup
-still owns an explicit executable no-op script, so absence never ambiguously means either "ready" or
-"forgotten". Planner never writes the executable directly; Generator makes every Project candidate
-preparable and Reviewer validates the result.
-
-Preparation is best-effort before Generator: Coordinator attempts every Project Repo, captures all
-per-Repo diagnostics, and still starts Generator so the same Work can repair failures. Preparation is
-strict once immediately before Reviewer: any missing, non-executable, failing, timing-out, or
-source-mutating result returns the Work to `generate` with Repo-specific logs but does not call
-Reviewer, publish Reviewer Evidence, or increment semantic rejection attempts. There is no second
-successful-path preparation, Attention, preparation Work, or primary-Repo fallback.
-Preview requires every managed integration Repo to prepare successfully before the primary Repo's
-`scripts/hopi/preview` starts, leaving Preview responsible only for service startup and its ready URL.
+Project Preview is deliberately Project-level. Before startup, Coordinator invokes every managed
+integration Repo's `scripts/hopi/prepare` in stable manifest order with the complete integration-root
+manifest and the Home cache. Each invocation receives its Repo identity and runs in its own checkout;
+missing, non-executable, failing, timing-out, or source-mutating preparation prevents Preview from
+claiming readiness. Each process is a bounded process-group leader so descendants are terminated
+before failure is reported. Only after all Repo preparation succeeds does the primary Repo's
+`scripts/hopi/preview` start.
 The fixed responsibility prompt exposes the adapter's exact ready signal,
 `HOPI_PREVIEW_URL=<reachable-url>`, whenever an Engineering Work may create, repair, or review the
 script; a merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
@@ -1207,9 +1193,9 @@ The fixed API paths are `POST /api/projects/:projectId/preview/start`,
 `GET /api/projects/:projectId/preview`, and `POST /api/projects/:projectId/preview/stop`; Planner
 does not discover variants from Project source.
 
-If a code change makes preparation obsolete, the candidate fails this existing pre-review check and
-the same Work repairs it. If the script exits successfully but the environment is still wrong, normal
-checks and Reviewer expose the defect. Process launch, provider quota, interruption, and malformed Run
+If setup or verification is wrong, the relevant Agent-run checks and Reviewer expose the defect
+against the accepted Work rather than a universal Coordinator preflight. Process launch, provider
+quota, interruption, and malformed Run
 protocol failures are operational Run failures: they remain in Attempt diagnostics, receive bounded
 runtime backoff, publish no responsibility Evidence, and do not increment Work `attempts`.
 
@@ -1254,13 +1240,10 @@ duplicated Work front matter. It carries no success, retry, or stage semantics: 
 Work gate can advance the workflow. Planning has no task worktree and a read-only Reviewer does not
 create an empty commit.
 
-After checkpointing and publishing a Generator `success`, Coordinator runs all Project Repos'
-candidate preparation contract exactly once before it invokes Reviewer. A missing, failing,
-timing-out, or source-mutating preparation returns the Work to `generate`, records
-`candidate_preparation_failed` on the preflight Attempt, and publishes no Reviewer Evidence.
-Reviewer is never dispatched for that candidate, and the preparation result is not synthesized into
-a semantic rejection. Keeping this gate immediately before Reviewer also avoids repeating expensive
-environment preparation on the successful path.
+After checkpointing and publishing a Generator `success`, Reviewer receives the same complete
+Project workspace with clean task branches. It independently selects proportionate setup and proof
+from the accepted Work and actual delta. Coordinator does not run a second command policy before
+Reviewer and does not return Work to Generator merely because an unrelated Repo lacks an adapter.
 
 Checkpointing must not require a linked Repo to track or unignore `.hopi`. HOPI first rejects any
 diff to canonical files that are already tracked in the task branch, then stages the repository as

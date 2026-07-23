@@ -33,7 +33,7 @@ const SECONDARY_REPO_ID = 'api'
 const INSTRUCTION = [
   `在 Project ${PROJECT_ID} 中，web 和 api 两个 Repo 的共享协议标记仍是 v1，测试要求 v2。`,
   '请创建一个 Goal，在两个 Repo 中完成兼容升级并运行各自测试后安全交付。',
-  '项目目前没有根 AGENTS.md 和 scripts/hopi/prepare；按实际需要在同一交付中补齐，不要新建独立 Init 任务。',
+  '项目目前没有根 AGENTS.md，两个 Repo 也没有 scripts/hopi/prepare；请把它们视为完整工作环境，而不是要求每个 Repo 具备同一初始化命令。',
 ].join(' ')
 
 interface FeedView {
@@ -49,9 +49,7 @@ interface FeedView {
   }>
 }
 
-interface GoalView extends LiveGoalDetail {
-  works: Array<LiveGoalDetail['works'][number] & { repos?: string[] }>
-}
+interface GoalView extends LiveGoalDetail {}
 
 interface AttemptView {
   workId: string
@@ -162,12 +160,6 @@ try {
   assert.equal(finalGoal.goal.lifecycle, 'done')
   const engineering = finalGoal.works.filter((work) => work.kind === 'engineering')
   assert.ok(engineering.length >= 1)
-  assert.ok(
-    engineering.some(
-      (work) => work.repos?.includes(PRIMARY_REPO_ID) && work.repos.includes(SECONDARY_REPO_ID),
-    ),
-    'At least one Engineering Work must explicitly own both Repos',
-  )
   const attempts = await readAttempts(harness, goalId, finalGoal)
   for (const responsibility of ['planner', 'generator', 'reviewer'] as const) {
     assert.ok(
@@ -194,10 +186,6 @@ try {
   const primaryIntegration = integrations[PRIMARY_REPO_ID]
   assert.ok(primaryIntegration)
   assert.match(await Bun.file(join(primaryIntegration, 'AGENTS.md')).text(), /./)
-  const preparePath = join(primaryIntegration, 'scripts', 'hopi', 'prepare')
-  const prepare = Bun.file(preparePath)
-  assert.equal(await prepare.exists(), true)
-  assert.notEqual((await prepare.stat()).mode & 0o111, 0)
   const reposDoc = await Bun.file(join(primaryIntegration, '.hopi', 'docs', 'repos.md')).text()
   assert.ok(reposDoc.includes(PRIMARY_REPO_ID) && reposDoc.includes(SECONDARY_REPO_ID))
   await assertAcceptedRelease(primaryRoot, PROJECT_ID, primaryBefore)

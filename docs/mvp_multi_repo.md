@@ -21,8 +21,8 @@ The primary Repo is the existing Project control boundary:
 - its `hopi/project/<projectId>/release` ref is the one logical C1 boundary
 
 Every secondary binding has its own Project-qualified release ref and managed integration worktree, but
-no duplicate Goal package. Every Repo owns the same local `scripts/hopi/prepare` capability; primary
-status does not change preparation ownership. Choosing a primary Repo instead of creating a
+no duplicate Goal package. A Repo may provide a local `scripts/hopi/prepare` capability; Project
+membership does not require one. Choosing a primary Repo instead of creating a
 synthetic control Repo preserves the current single-Repo layout and migration model. Changing or
 removing the primary Repo is outside this MVP because it would move canonical history and the
 irreversible boundary.
@@ -159,13 +159,14 @@ one runtime manifest:
 }
 ```
 
-The process cwd is the primary root; the runtime manifest names every other Project root explicitly.
+The Generator process cwd is the primary root; the runtime manifest names every other Project root
+explicitly.
 `releaseHeads` identifies the commit in each Repo's own Git object database; the primary authority
 snapshot is labeled separately and is never presented as a secondary Repo commit. Project membership
-defines responsibility and checkpoint scope, not a provider filesystem allowlist. Prompts name every
-Repo ID and path. A Generator checkpoint covers every Project root, and Reviewer starts only when
-every root is checkpoint-clean. Reviewer fingerprints
-all roots and one source mutation rejects the Run.
+defines the available environment, not a provider filesystem allowlist or mandatory execution list.
+Prompts name every Repo ID and path. Coordinator inspects every Project task root after Generator,
+but creates checkpoints only where Git reports a source delta. Reviewer can read all roots and
+chooses proof according to the Work, cross-Repo contract, and actual candidate changes.
 
 `dependsOn` continues to express known semantic ordering. HOPI does not infer file locks or serialize
 all Work sharing a Repo. Concurrent Work branches may proceed; C1 revalidates every Project Repo
@@ -173,27 +174,23 @@ against its current release target and rejects a conflict before the primary bou
 
 ## Preparation and Preview
 
-Every Repo owns one local preparation entrypoint; only Preview remains a primary Project adapter.
-Coordinator writes one runtime-only Repo manifest and invokes each Project Repo checkout with:
+`scripts/hopi/prepare` is a Repo-local capability. Every Engineering Run receives the complete
+runtime Repo manifest and Home cache, but Coordinator does not invoke preparation as an Engineering
+preflight. Generator and Reviewer decide which available Repo commands are relevant.
+
+Project Preview invokes each managed integration Repo checkout with:
 
 ```text
 HOPI_REPO_ID=<stable-repo-id>
 HOPI_REPO_ROOT=<current-checkout-root>
 HOPI_REPOS_FILE=<runtime-json-path>
-HOPI_GOAL_ID=<owning-goal-id> # Engineering preparation only
 ```
 
-For an Engineering Run the manifest names all Project task roots and `HOPI_GOAL_ID` identifies the exact
-canonical Goal. For Preview it names every managed integration root and no Goal ID is invented. A
-script prepares only its own cwd; the manifest may inform cross-Repo compatibility checks but never
-delegates another Repo's setup. HOPI adds no adapter schema, initialized flag, adapter revision, or
-primary fallback.
-
-Before Generator the sequence is diagnostic and non-blocking. Before Reviewer every manifested Repo
-must prepare successfully or the same logical Work returns to Generator. Before Preview every managed
-integration Repo must prepare successfully, then the primary Preview adapter starts. A missing
-entrypoint is bootstrapped inside the ordinary Engineering Work; a no-setup Repo uses an
-explicit executable no-op entrypoint.
+The Preview manifest names every managed integration root. A script prepares only its own cwd; the
+manifest may inform cross-Repo compatibility checks but never delegates another Repo's setup. Every
+Preview preparation must succeed before the primary Preview adapter starts. Missing preparation is
+therefore a Preview capability failure, not a reason to block an unrelated Engineering Run. HOPI
+adds no adapter schema, initialized flag, adapter revision, or primary fallback.
 
 ## Primary C1 and Component Commits
 
@@ -276,7 +273,8 @@ The implementation is complete only when automated tests cover:
 - a crash after primary C1 but before zero, one, or all secondary projections converges on restart
 - an unexpected secondary ref value blocks the Project without rollback
 - dirty, switched, detached, or divergent selected checkouts remain unchanged
-- Project prepare and Preview receive the correct multi-Repo runtime manifest
+- Engineering responsibilities receive the complete multi-Repo environment without automatic
+  preparation, while Project Preview prepares the complete managed integration manifest
 - the UI manages Project Repo links without adding a Repo workflow
 - Assistant can perform every supported Project/Repo mutation without calling UI HTTP routes, and a
   topology change preserves its final speaking reply before the runtime rebuild

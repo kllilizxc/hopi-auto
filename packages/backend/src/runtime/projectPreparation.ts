@@ -42,7 +42,6 @@ export interface ProjectPreparer {
     runtimeDir: string
     cacheDir: string
     timeoutMs?: number
-    goalId?: string
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
   }): Promise<ProjectPreparationResult>
@@ -105,7 +104,6 @@ export function createProjectPreparer(): ProjectPreparer {
           runtimeDir: repoRuntimeDir(runtimeDir, repo.repoId, index),
           cacheDir,
           timeoutMs: input.timeoutMs,
-          goalId: input.goalId,
         })
         repos.push(result)
       }
@@ -121,7 +119,6 @@ async function prepareRepo(input: {
   runtimeDir: string
   cacheDir: string
   timeoutMs?: number
-  goalId?: string
 }) {
   const adapterPath = join(input.repo.path, ...PROJECT_PREPARE_PATH.split('/'))
   await mkdir(input.runtimeDir, { recursive: true })
@@ -150,17 +147,13 @@ async function prepareRepo(input: {
   const lines: string[] = []
   let exitCode: number | null = null
   try {
-    const environment: Record<string, string | undefined> = {
-      ...process.env,
-      HOPI_GOAL_ID: undefined,
-    }
-    if (input.goalId) environment.HOPI_GOAL_ID = input.goalId
     const child = Bun.spawn([adapterPath], {
       cwd: input.repo.path,
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
-        ...environment,
+        ...process.env,
+        HOPI_GOAL_ID: undefined,
         HOPI_PROJECT_ROOT: input.repo.path,
         HOPI_REPO_ID: input.repo.repoId,
         HOPI_REPO_ROOT: input.repo.path,

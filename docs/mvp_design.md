@@ -317,13 +317,18 @@ reviewed planning path.
 `Project` is the user's durable product context; `Repo` is a Git object database shared by one or
 more Project bindings. A Project owns one or more Repo bindings with stable `repoId` values and
 exactly one `primaryRepoId`. The primary Repo binding
-contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md`, preparation,
-and Preview entrypoints. Every binding has a HOPI-owned `hopi/project/<projectId>/release` ref and
+contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md` and Preview
+entrypoint. Repo bindings may expose their own `scripts/hopi/prepare` capability. Every binding has
+a HOPI-owned `hopi/project/<projectId>/release` ref and
 managed integration worktree. The selected checkout is never a canonical publication or delivery
 root.
 
 Every Engineering Work receives all Repo bindings in its Project as one source workspace. The
 Project binding is already the durable environment boundary; Work does not repeat or narrow it.
+Workspace membership grants visibility and mutation capability; it does not require every Repo to
+participate in every Work. Generator and Reviewer judge which Repo-local commands and contracts are
+material to the accepted outcome. Coordinator observes Git deltas after execution and checkpoints
+or integrates only bindings whose source actually changed.
 Goal, Work, Kanban, and the fixed responsibility passes remain Project-scoped rather than
 multiplying per Repo. The primary
 Project-qualified release ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
@@ -389,6 +394,9 @@ The authority is split by concern rather than repeated in one large document:
 - Goal owns the outcome contract and lifecycle.
 - Every Engineering Work runs against the Project's complete Repo environment; actual Git deltas,
   rather than a model-authored Repo subset, determine which bindings change at C1.
+- Engineering dispatch does not automatically execute every Repo's setup or verification commands;
+  Repo-local capabilities are environment knowledge for Generator and Reviewer. Project Preview is
+  the Project-level exception and prepares every managed integration Repo before startup.
 - Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
   sparse Work DAG, and makes the final semantic completion assessment.
 - Engineering Work moves through Generator, Reviewer, and deterministic C1 integration.

@@ -99,7 +99,10 @@ Alignment is complete only when:
 - [x] Persist secondary release commits in primary `project.yml`; recover incomplete ref/worktree
   projections after C1 and block unexpected external ref values without rollback.
 - [x] Use the complete Project Repo set in each Engineering `HOPI_REPOS_FILE` instead of asking a
-  model to preselect execution roots, and let unchanged Repos remain C1 no-ops.
+  model to preselect execution roots; let Agents choose relevant commands, Coordinator derive
+  participation from actual Git deltas, and unchanged Repos remain C1 no-ops.
+- [x] Keep all-Repo preparation as the Project Preview contract without making it an Engineering
+  dispatch or Reviewer gate.
 - [x] Materialize HOPI-owned integration and task worktrees with `core.autocrlf=false` without
   changing the user's checkout or Git configuration.
 - [x] Start Planner in its Run root, keep proposal paths single-prefixed, and make injected MCP
@@ -143,7 +146,7 @@ Alignment is complete only when:
    permanent dependencies, singleton Planning, retry, targeting, provenance, and completion rules.
 4. The fixed profile runs immutable Planner, Generator, and Reviewer contexts through one
    `RoleRunner`; missing `AGENTS.md` is silent Planner bootstrap and Engineering Work keeps one stable
-   branch and checkout in every Repo selected by the Work.
+   branch and checkout in every Project Repo.
 5. Workspace Assistant preserves lossless Inbox turns without parsing reply prose or an Action
    object, resumes one compatible vendor-qualified session, exposes validated HOPI tools through a single-turn
    MCP capability, and records normalized live messages, tool calls, results, and failures. One

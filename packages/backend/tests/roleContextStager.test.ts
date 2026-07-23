@@ -88,6 +88,10 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('kind: engineering')
     expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(prompt).toContain('Every Project Repo is present in the Engineering environment')
+    expect(prompt).toContain(
+      'workspace membership does not prescribe which Repo commands an Engineering responsibility runs',
+    )
+    expect(prompt).not.toContain('owns its own scripts/hopi/prepare contract')
     expect(prompt).toContain('.hopi/docs/repos.md')
     expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
     expect(prompt).not.toContain(bundle.runRoot)
@@ -151,7 +155,7 @@ describe('RoleContextStager', () => {
     expect(bundle.extraWritableRoots).not.toContain(fixture.projectRoot)
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
     expect(await Bun.file(bundle.promptFile).text()).toContain(
-      'Repo preparation entrypoints: resolve each listed Repo root from $HOPI_REPOS_FILE',
+      'Repo-local preparation convention, when provided: <repo-root>/scripts/hopi/prepare',
     )
   })
 
