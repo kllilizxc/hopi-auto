@@ -108,6 +108,8 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('use targeted Attention rather than success')
     expect(prompt).toContain('cannot predict the checkpoint commit Coordinator creates after the Run')
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
+    expect(prompt).toContain('keeps every dependsOn edge')
+    expect(prompt).toContain('rewrites may add dependencies but never remove one')
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     const browserHarnessBackend = resolveBrowserHarnessBackendCommand()

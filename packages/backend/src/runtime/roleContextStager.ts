@@ -1464,6 +1464,7 @@ function plannerPrompt(paths: {
       : []),
     'Reviewer success is terminal for the complete Engineering Work; plan separate Work for independent outcomes, and use targeted Attention rather than success while required action or proof remains.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
+    'Existing nonterminal Work keeps every dependsOn edge; rewrites may add dependencies but never remove one, including when another edge transitively covers it.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
