@@ -219,6 +219,7 @@ export async function resolveConfiguredTransportCommand(options: {
     await Bun.write(structuredOutcomeFile, '')
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
+    cmd.push('--disable', 'unified_exec')
     const sandbox = options.fullAccess
       ? 'danger-full-access'
       : options.config.sandbox === 'danger-full-access'

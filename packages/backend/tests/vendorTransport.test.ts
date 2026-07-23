@@ -103,6 +103,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
       ...codexHttpsOnlyArgs(),
+      ...codexBlockingCommandArgs(),
       '-a',
       'never',
       '-c',
@@ -188,6 +189,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
       ...codexHttpsOnlyArgs(),
+      ...codexBlockingCommandArgs(),
       '-a',
       'never',
       '-c',
@@ -227,6 +229,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
       ...codexHttpsOnlyArgs(),
+      ...codexBlockingCommandArgs(),
       '-a',
       'never',
       '-c',
@@ -502,6 +505,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.cmd).toEqual([
       '/usr/local/bin/codex',
       ...codexHttpsOnlyArgs(),
+      ...codexBlockingCommandArgs(),
       '-a',
       'never',
       '-c',
@@ -538,6 +542,7 @@ describe('resolveConfiguredTransportCommand', () => {
       expect(command.cmd).toEqual([
         '/usr/local/bin/codex',
         ...codexHttpsOnlyArgs(),
+        ...codexBlockingCommandArgs(),
         '-a',
         'never',
         '-c',
@@ -733,6 +738,8 @@ describe('resolveConfiguredTransportCommand', () => {
     })
     expect(boundedCodex.cmd).toContain('workspace-write')
     expect(boundedCodex.cmd).not.toContain('danger-full-access')
+    expect(boundedCodex.cmd).toContain('--disable')
+    expect(boundedCodex.cmd).toContain('unified_exec')
     expect(
       boundedCodex.cmd.slice(boundedCodex.cmd.indexOf('-a'), boundedCodex.cmd.indexOf('-a') + 2),
     ).toEqual(['-a', 'never'])
@@ -791,6 +798,8 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(codex.cmd).toContain('danger-full-access')
     expect(codex.cmd).not.toContain('--add-dir')
     expect(codex.cmd).not.toContain('sandbox_workspace_write.network_access=true')
+    expect(codex.cmd).toContain('--disable')
+    expect(codex.cmd).toContain('unified_exec')
 
     const claude = await resolveConfiguredTransportCommand({
       config: { transport: 'claude', cwdMode: 'worktree', permissionMode: 'dontAsk' },
@@ -871,6 +880,10 @@ function codexHttpsOnlyArgs() {
   const command: string[] = []
   appendCodexHttpsOnlyConfig(command)
   return command
+}
+
+function codexBlockingCommandArgs() {
+  return ['--disable', 'unified_exec']
 }
 
 function codexOutcomeCaptureArgs() {

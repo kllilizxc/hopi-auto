@@ -962,9 +962,12 @@ the Work to the independent Reviewer; Reviewer acceptance is therefore never a p
 Generator `success`, even when the Work acceptance criteria require independent review.
 
 A started long-running command remains active until it completes, fails, or is explicitly
-cancelled. Delayed output is not evidence that the command disappeared: the responsibility polls or
-waits for the existing invocation instead of starting an equivalent validation in parallel. This is
-ordinary execution discipline, not another durable Run state or scheduler concept.
+cancelled. The responsibility transport presents each shell invocation as one blocking operation,
+so delayed output cannot create a second model turn that starts an equivalent validation while the
+first is still running. The Codex responsibility adapter therefore disables its asynchronous unified
+exec facility; other vendor adapters must provide the same observable command boundary. Independent
+responsibility Runs remain concurrent under the ordinary scheduler capacities. This is an adapter
+execution property, not another durable Run state, command classifier, lock, or scheduler concept.
 
 The current assignment presents one bounded repair view after the stable Work authority: changed
 files relative to the release base and any candidate-inspection diagnostics. These are workspace
