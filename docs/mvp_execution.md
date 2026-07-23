@@ -1697,9 +1697,10 @@ startup fails, the current UI observes the failed session, shows the condition, 
 Assistant should establish or repair Preview. A
 positive answer submits an ordinary durable message with the adapter path and available failure
 logs plus immutable Project context and, when invoked from a Goal page, that optional Goal context.
-Context helps Assistant judge reuse, reopen, or creation but does not force that Goal to receive the repair.
-The message tells Assistant to first reuse any current Goal or Work already establishing Preview and,
-only if none exists, call its Planning tool for creation or repair. A terminal setup Work whose
-adapter still fails in a clean managed worktree is evidence to reopen or plan repair, not a reason
-to declare the failure already accepted. The model judges equivalence from current documents;
-there is no Preview setup Action, deduplication field, setup state, or Reconciler-created Work.
+Context locates relevant current authority but does not force the viewed Goal to receive the repair.
+The message contains only the current failure facts and the target Project capability. It does not
+prescribe Planning, Engineering, reuse, reopening, or creation. Assistant judges the appropriate
+ordinary Goal and Work effect from current documents and its existing capabilities. Coordinator
+does not synthesize a Work because Goal ownership and a complete acceptance contract are semantic
+choices. There is no Preview setup Action, deduplication field, setup state, or
+Reconciler-created Work.

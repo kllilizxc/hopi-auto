@@ -42,7 +42,7 @@ const assistantRunner: AssistantModelRunner = {
   async run(input) {
     assistantInvocations.push({ eventId: input.eventId, toolMode: input.toolMode ?? 'main' })
     return {
-      reply: 'I will route the Preview repair through the normal planning path.',
+      reply: 'I will establish the Project Preview capability from the current state.',
       session: { transport: 'codex', sessionId: 'preview-repair-browser' },
     }
   },

@@ -623,10 +623,11 @@ the complete managed Project release projection and keeps its process, logs, hea
 operator-facing surfaces in disposable runtime storage. Unintegrated Work worktrees and user
 checkouts are not Preview inputs. A
 missing or failed adapter produces a local prompt; operator confirmation sends an ordinary
-Assistant turn carrying Project context and optional current Goal context. Assistant reuses current Preview setup
-Work when it exists or calls its Planning tool for a repair; page context informs that choice without
-forcing the repair into the viewed Goal. If the effect lands elsewhere, the reply names its Goal ID
-so its scoped Kanban is locatable. Assistant does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
+Assistant turn carrying Project context and optional current Goal context. The prompt provides
+failure facts and the desired capability without selecting a workflow. Assistant chooses among its
+ordinary Goal, design, and Work capabilities from current state; page context does not force the
+repair into the viewed Goal. If the effect lands elsewhere, the reply names its Goal ID so its scoped
+Kanban is locatable. Assistant does not mutate Kanban directly. The shared `scripts/hopi/prepare` contract owns
 prerequisites from a clean managed integration worktree and `scripts/hopi/preview` owns startup, so
 missing dependencies are a failed Project contract rather than an operator setup step. Preview has
 one readiness transition: the Start command immediately returns the admitted `starting` session,
