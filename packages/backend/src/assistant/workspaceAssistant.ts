@@ -38,7 +38,7 @@ import {
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
-import { type AssistantTools, UnsettledInternalAttentionError } from './assistantTools'
+import type { AssistantTools } from './assistantTools'
 
 export interface AssistantModelInput {
   eventId: string
@@ -554,44 +554,7 @@ export function createWorkspaceAssistant(input: {
         }
         let internalIntent: 'silent' | 'inform' | 'request' | null = null
         if (event.attributes.source === 'reflection') {
-          try {
-            internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply, {
-              requireAttentionSettlement: true,
-            })
-          } catch (error) {
-            if (!(error instanceof UnsettledInternalAttentionError)) throw error
-            await input.conversation.record(eventId, {
-              kind: 'message',
-              level: 'info',
-              role: 'coordinator',
-              content:
-                'The first response left selected targeted Attention open; continuing the same Assistant Session once for closure.',
-            })
-            result = await input.runner.run(
-              {
-                eventId,
-                ...(projectId ? { projectId } : {}),
-                prompt: renderInternalAttentionSettlementCorrection(event),
-                rebuildPrompt,
-                session: result.session,
-                cwd: workspaceRoot,
-                lastMessageFile: join(turnRoot, 'last-message.txt'),
-                transcriptFile: join(turnRoot, 'transcript.log'),
-                toolUrl: input.resolveToolUrl(),
-                toolToken,
-                imageFiles,
-                readableRoots: [resolve(input.homeRoot)],
-                toolMode,
-                executionPlan,
-                signal,
-              },
-              observer,
-            )
-            reply = result.reply.trim()
-            internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply, {
-              requireAttentionSettlement: false,
-            })
-          }
+          internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply)
         }
         await input.conversation.writeSession(
           conversationScope,
@@ -1085,17 +1048,6 @@ function renderTurn(event: InboxEventDocument) {
   ]
     .filter(Boolean)
     .join('\n\n')
-}
-
-function renderInternalAttentionSettlementCorrection(event: InboxEventDocument) {
-  const references = event.attributes.context
-    ? normalizeInboxAttentionReferences(event.attributes.context)
-    : []
-  return [
-    '[The current internal Inbox turn continues.]',
-    'The previous response was not published because the selected Attention still owns scheduling and this turn recorded neither settlement nor operator ownership.',
-    ...(references.length ? [`Selected Attention: ${references.join(', ')}`] : []),
-  ].join('\n\n')
 }
 
 function renderPreference(preference: AssistantPreferenceDocument) {

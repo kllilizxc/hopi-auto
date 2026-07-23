@@ -1537,12 +1537,11 @@ Inbox turn. Coordinator validates the selected scope and may attach canonical re
 scope, but it does not select another scope or synthesize a brief. The speaking thread then
 revalidates current state and owns every action and optional operator notification.
 
-For a handoff carrying exact targeted Attention, its first final response must find those references
-resolved or stage their exact `request_user` transfer. If it does neither, Coordinator keeps the same
-Inbox turn and tool capability, continues the same vendor Session once with a concise settlement
-reminder, and accepts the resulting response without applying the settlement check again. Existing
-reference, request, artifact, and mutation validation remains authoritative. This correction does
-not rerun Reflection, publish the rejected response, acknowledge delivery, or add workflow state.
+For a handoff carrying exact targeted Attention, the speaking turn may resolve it after concrete
+repair, stage its exact `request_user` transfer, or leave it Assistant-owned and open while repair is
+unavailable or still running. Coordinator accepts that result without a forced follow-up turn.
+Existing reference, request, artifact, and mutation validation remains authoritative; a prose claim
+or authorization cannot substitute for the state change represented by Attention.
 
 One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
 that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
@@ -1636,8 +1635,8 @@ hidden, returns a non-empty informational final response, or first calls `reques
 current Attention references and then returns the exact public question. Coordinator publishes the
 complete public reply before acknowledging every still-current linked Attention. Only a staged
 request sets `operatorRequest`; informational delivery leaves ownership with Assistant. Targeted
-Attention may remain open after the one bounded same-Session closure correction. Completion resolves
-in its acknowledgement publication. A crash between
+Attention may remain open after the speaking turn. Completion resolves in its acknowledgement
+publication. A crash between
 roots leaves a complete public reply and an unacknowledged Attention; ordinary Inbox recovery
 finishes the acknowledgement. HOPI never records delivery before the message exists.
 

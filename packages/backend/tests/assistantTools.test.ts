@@ -1943,20 +1943,11 @@ describe('Assistant HOPI tools', () => {
       context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
     })
     const token = fixture.tools.issue(event.attributes.id)
-    await expect(
-      fixture.tools.finalizeInternalResponse(
-        token,
-        event.attributes.id,
-        'The internal repair is underway; no action is required.',
-        { requireAttentionSettlement: true },
-      ),
-    ).rejects.toThrow('remains Assistant-owned and open')
     expect(
       await fixture.tools.finalizeInternalResponse(
         token,
         event.attributes.id,
         'The internal repair is underway; no action is required.',
-        { requireAttentionSettlement: false },
       ),
     ).toBe('inform')
     await fixture.workspace.handleEvent(event.attributes.id, {

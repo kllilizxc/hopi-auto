@@ -130,10 +130,9 @@ follows one small protocol:
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
    turn may remain silent, publish one informational final response, or call `request_user` before
-   returning one exact question for a decision or external action. When that handoff selected open
-   targeted Attention and the first response neither settles it nor stages `request_user`, Coordinator
-   continues the same speaking Session once with an exact closure reminder before accepting the
-   resulting response normally. Only an explicit `handoff_to_main` call creates an
+   returning one exact question for a decision or external action. Selected targeted Attention may
+   remain open when its concrete repair is still running or no available tool can complete it;
+   narration, authorization, or intent is never resolution. Only an explicit `handoff_to_main` call creates an
    internal brief. Reflection selects any Attention references it means to hand off; Coordinator
    validates but never infers or expands that selection. The observation scope supplies the default
    conversation route; the model may narrow it to a Goal or selected Attention. Coordinator
@@ -682,13 +681,11 @@ reply or its ownership acknowledgement. Resolving a selected Attention later in 
 the request stale and rejects it rather than asking for an already unnecessary action.
 
 Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
-after an ordinary turn when its evidence is insufficient to resolve it. Coordinator records the
-turn normally; a later state change or Assistant turn decides the next action. For exact targeted
-Attention selected by Reflection, Coordinator first rejects a response that would leave selected
-conditions Assistant-owned and open, then continues that same speaking Session once with the current
-closure requirement. The continued response is accepted without repeating this settlement test;
-ordinary reference, ownership, completion-artifact, and tool safety validation still applies. This
-is one bounded opportunity for the model to act, not a new Reflection handoff or retry state.
+after an ordinary turn when its evidence is insufficient to resolve it or its repair is still in
+progress. Coordinator records the turn normally; a later semantic state change or Assistant turn
+decides the next action. It never adds a forced closure turn: forcing settlement can turn mere
+authorization into false completion. Ordinary reference, ownership, completion-artifact, and tool
+safety validation still applies.
 
 ## Tool Safety And Recovery
 

@@ -76,8 +76,6 @@ export interface AssistantToolResult {
   value: unknown
 }
 
-export class UnsettledInternalAttentionError extends AssistantToolRequestError {}
-
 export interface AssistantTools {
   issue(eventId: string): string
   issueReflection(
@@ -90,7 +88,6 @@ export interface AssistantTools {
     token: string,
     eventId: string,
     message: string,
-    options?: { requireAttentionSettlement?: boolean },
   ): Promise<'silent' | 'inform' | 'request'>
   acknowledgeEventAttentions(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   acceptUserAttentionReply(eventId: string): Promise<string[]>
@@ -301,7 +298,7 @@ export function createAssistantTools(options: {
       capabilities.delete(token)
     },
 
-    async finalizeInternalResponse(token, eventId, message, finalizeOptions = {}) {
+    async finalizeInternalResponse(token, eventId, message) {
       const capability = capabilities.get(token)
       if (capability?.mode !== 'main' || capability.eventId !== eventId) {
         throw new AssistantToolRequestError('Assistant tool capability does not own this turn')
@@ -333,9 +330,6 @@ export function createAssistantTools(options: {
         }
         await assertAssistantOwnedAttentionRefs(references, event.attributes.context)
         return 'request'
-      }
-      if (finalizeOptions.requireAttentionSettlement) {
-        await assertSelectedTargetedAttentionsSettled(event.attributes.context)
       }
       if (!reply) return 'silent'
       return 'inform'
@@ -1432,52 +1426,6 @@ export function createAssistantTools(options: {
     }
   }
 
-  async function assertSelectedTargetedAttentionsSettled(context?: InboxContext | null) {
-    if (!context) return
-    const workspace = await options.workspace.readWorkspace()
-    const unsettled: string[] = []
-    for (const reference of normalizeInboxAttentionReferences(context)) {
-      const parsed = parseAttentionReference(reference)
-      if (!parsed) throw new AssistantToolRequestError(`Invalid Attention reference: ${reference}`)
-      if (parsed.scope === 'workspace') {
-        if (parsed.homeId !== workspace.homeId) {
-          throw new AssistantToolRequestError(
-            `Workspace Attention reference belongs to another Home: ${reference}`,
-          )
-        }
-        const attention = workspace.attentions.get(parsed.attentionId)
-        if (!attention) {
-          throw new AssistantToolRequestError(`Workspace Attention not found: ${reference}`)
-        }
-        if (
-          attention.attributes.resolvedAt === null &&
-          (attention.attributes.operatorRequest ?? null) === null
-        ) {
-          unsettled.push(reference)
-        }
-        continue
-      }
-      const project = requireProject(options.projects, parsed.projectId)
-      const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
-        parsed.attentionId,
-      )
-      if (!attention) {
-        throw new AssistantToolRequestError(`Goal Attention not found: ${reference}`)
-      }
-      if (
-        attention.attributes.target !== null &&
-        attention.attributes.resolvedAt === null &&
-        (attention.attributes.operatorRequest ?? null) === null &&
-        (attention.attributes.retryRunId ?? null) === null
-      ) {
-        unsettled.push(reference)
-      }
-    }
-    if (unsettled.length === 0) return
-    throw new UnsettledInternalAttentionError(
-      `Selected targeted Attention remains Assistant-owned and open: ${unsettled.join(', ')}`,
-    )
-  }
 }
 
 function sameReferences(left: readonly string[], right: readonly string[]) {

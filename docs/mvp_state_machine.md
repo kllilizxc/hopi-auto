@@ -247,11 +247,9 @@ Attention implicitly; when the accepted instruction makes a reported condition o
 resolves that exact reference as a separate effect. Ordinary page-scoped turns carry no inferred
 Attention references.
 If evidence does not establish a safe effect, the Attention remains open for a later Assistant turn
-or an explicit user request. For Reflection-selected targeted Attention only, Coordinator gives the
-speaking model one same-Session correction before accepting such an open result: the first final
-response must settle the selected references or stage their exact `request_user` transfer; otherwise
-it is not published and one closure reminder continues the same turn. The continued response skips
-only this settlement check and proceeds through all existing safety validation.
+or an explicit user request. This is a valid settled speaking turn, not an omission requiring a
+second model call. Authorization, planned work, or an in-progress repair does not resolve the
+Attention; only the represented condition actually changing does.
 
 Tool effects are idempotent by qualified source turn `(homeId, eventId)`, target identity, current
 canonical guards, and expected content. Matching Goal Input proves that Goal accepted the source
@@ -699,10 +697,8 @@ outcome. Other state and document changes do not participate in this runtime tra
 - An event-target Workspace answer closes that guard and leaves the older event pending for a fresh
   canonical-context run; Goal-local answers publish Input before resolution.
 - An internal Attention handoff records an ordinary Assistant turn. An informational final response
-  alone does not transfer ownership, and unresolved Attention remains visible as a fact;
-  Coordinator makes at most one same-Session correction when the first response leaves selected
-  targeted Attention Assistant-owned and open, then trusts the continued response without repeating
-  that settlement check.
+  alone does not transfer ownership, and unresolved Attention remains visible as a fact. Leaving it
+  open while repair is unavailable or still running is valid and creates no forced closure turn.
 - A Goal Input must match its qualified source Inbox turn and digest. One turn may have Inputs in
   multiple Goals only through explicit successful HOPI tool calls.
 - From its first Goal effect until settlement, one Assistant turn installs a process-local barrier

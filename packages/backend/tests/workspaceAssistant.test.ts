@@ -1514,24 +1514,15 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('continues the same Session once when the first internal response leaves Attention open', async () => {
-    const prompts: string[] = []
-    const sessions: Array<string | null> = []
+  test('accepts one internal response while concrete Attention repair remains in progress', async () => {
     let calls = 0
     const fixture = await setup(() => ({
-      async run(input) {
+      async run() {
         calls += 1
-        prompts.push(input.prompt)
-        sessions.push(input.session?.sessionId ?? null)
-        return calls === 1
-          ? {
-              reply: 'I will settle the blocker next.',
-              session: codexSession('thread-omission-first'),
-            }
-          : {
-              reply: 'I am continuing with the repair.',
-              session: codexSession('thread-omission-corrected'),
-            }
+        return {
+          reply: 'The concrete repair is still running; no operator action is required.',
+          session: codexSession('thread-repair-running'),
+        }
       },
     }))
     await createGoalAttention(fixture.goalStore, 'G-1', 'A-omission')
@@ -1550,37 +1541,27 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-omission'))?.attributes).toMatchObject({
       status: 'handled',
       visibility: 'public',
-      reply: 'I am continuing with the repair.',
+      reply: 'The concrete repair is still running; no operator action is required.',
     })
-    expect(calls).toBe(2)
-    expect(sessions).toEqual([null, 'thread-omission-first'])
-    expect(prompts[1]).toContain('selected Attention still owns scheduling')
-    expect(prompts[1]).toContain('recorded neither settlement nor operator ownership')
+    expect(calls).toBe(1)
     expect(
       (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes,
     ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
   })
 
-  test('publishes the corrected result after the continued Session settles Attention', async () => {
+  test('publishes the first result after that turn concretely settles Attention', async () => {
     const reference = 'project:P-1/goal:G-1/attention:A-corrected-settlement'
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
         calls += 1
-        if (calls === 1) {
-          return {
-            reply: 'I will clear the blocker.',
-            session: codexSession('thread-correction-first'),
-          }
-        }
-        expect(input.session).toEqual(codexSession('thread-correction-first'))
         await tools.execute(input.toolToken, 'hopi_resolve_attention', {
           attentionRef: reference,
-          resolution: 'The continued turn verified and cleared the represented condition.',
+          resolution: 'The turn verified and cleared the represented condition.',
         })
         return {
           reply: 'The blocker is cleared.',
-          session: codexSession('thread-correction-settled'),
+          session: codexSession('thread-settled'),
         }
       },
     }))
@@ -1597,7 +1578,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-corrected-settlement')
 
-    expect(calls).toBe(2)
+    expect(calls).toBe(1)
     expect(
       (await fixture.workspace.readEvent('EV-corrected-settlement'))?.attributes,
     ).toMatchObject({
