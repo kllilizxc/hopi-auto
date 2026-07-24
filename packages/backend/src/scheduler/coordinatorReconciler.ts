@@ -40,6 +40,7 @@ export interface CoordinatorReconciler {
   wake(): void
   waitForIdle(): Promise<void>
   runDirectAssistantCommand<T>(operation: () => Promise<T>): Promise<T>
+  quiesceProject(projectId: string): Promise<void>
   protectAssistantGoal(eventId: string, projectId: string, goalId: string): void
   protectAssistantProject(eventId: string, projectId: string): void
   settleAssistantTurn(eventId: string): void
@@ -126,6 +127,24 @@ export function createCoordinatorReconciler(
       } finally {
         directAssistantCommands -= 1
         this.wake()
+      }
+    },
+    async quiesceProject(projectId) {
+      const project = options.projects.find((candidate) => candidate.projectId === projectId)
+      if (!project) throw new Error(`Unknown Project ${projectId}`)
+      eligibleProjects.delete(projectId)
+      this.wake()
+      while (true) {
+        project.reconciler.interruptRuns()
+        const activeReconciliation = reconciling
+        const activeProjectRuns = [...reservations]
+          .filter(([key]) => key.startsWith(`${projectId}/`))
+          .map(([, entry]) => entry.promise)
+        if (!activeReconciliation && activeProjectRuns.length === 0) return
+        await Promise.allSettled([
+          ...(activeReconciliation ? [activeReconciliation] : []),
+          ...activeProjectRuns,
+        ])
       }
     },
     protectAssistantGoal(eventId, projectId, goalId) {
@@ -286,6 +305,7 @@ export function createCoordinatorReconciler(
 
     const deterministic = candidates.find(
       (candidate) =>
+        eligibleProjects.has(candidate.project.projectId) &&
         !goalDispatchBlocked(candidate.project.projectId, candidate.goalId) &&
         ['ensure_planning', 'complete_goal', 'finish_cancellation'].includes(
           candidate.decision.kind,
@@ -317,6 +337,7 @@ export function createCoordinatorReconciler(
     const reserved = { ...passCounts }
     for (const candidate of candidates) {
       if (candidate.decision.kind !== 'dispatch') continue
+      if (!eligibleProjects.has(candidate.project.projectId)) continue
       if (goalDispatchBlocked(candidate.project.projectId, candidate.goalId)) continue
       const responsibility = candidate.decision.responsibility
       const limit = options.concurrency[responsibility]

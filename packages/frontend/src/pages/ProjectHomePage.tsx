@@ -48,6 +48,7 @@ import {
   type ProjectSummary,
   createProject,
   linkProjectRepo,
+  planProjectRepoRebind,
   readShellState,
   readProjectAgentAccess,
   rebindProjectRepo,
@@ -487,6 +488,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   const [nextRepoPath, setNextRepoPath] = useState('')
   const [newRepoId, setNewRepoId] = useState('')
   const [newRepoPath, setNewRepoPath] = useState('')
+  const [rebindPlanSummary, setRebindPlanSummary] = useState<string | null>(null)
   const [fullAgentAccess, setFullAgentAccess] = useState(() =>
     readProjectAgentFullAccess(project.projectId),
   )
@@ -506,8 +508,15 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
     },
   })
   const rebindRepoMutation = useMutation({
-    mutationFn: () =>
-      rebindProjectRepo(project.projectId, editingRepoId ?? '', nextRepoPath.trim()),
+    mutationFn: async () => {
+      const repoId = editingRepoId ?? ''
+      const path = nextRepoPath.trim()
+      const plan = await planProjectRepoRebind(project.projectId, repoId, path)
+      setRebindPlanSummary(
+        [plan.summary, ...plan.warnings].filter(Boolean).join(' '),
+      )
+      return rebindProjectRepo(project.projectId, repoId, path)
+    },
     onSuccess: async () => {
       setEditingRepoId(null)
       setNextRepoPath('')
@@ -709,7 +718,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
                   type="button"
                   onClick={() => {
                     setEditingRepoId(repo.repoId)
-                    setNextRepoPath(repo.repoPath)
+                    setNextRepoPath(scopedRepoPath(repo.repoPath, repo.projectPath))
                   }}
                 >
                   <RefreshCw /> Rebind
@@ -812,6 +821,10 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             previewRepairMutation.error?.message ??
             agentAccessError}
         </AppAlert>
+      )}
+
+      {rebindPlanSummary && !rebindRepoMutation.error && (
+        <p className="project-scope-label">{rebindPlanSummary}</p>
       )}
 
       <div className="project-card-actions">

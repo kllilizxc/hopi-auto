@@ -550,7 +550,7 @@ export function createWorkspaceAssistant(input: {
           )
         }
 
-        let reply = result.reply.trim()
+        const reply = result.reply.trim()
         if (!reply && event.attributes.source !== 'reflection') {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }

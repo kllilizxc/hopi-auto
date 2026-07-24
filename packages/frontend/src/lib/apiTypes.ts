@@ -77,6 +77,13 @@ export interface ProjectRepoSummary {
   primary: boolean
 }
 
+export interface ProjectRebindPlan {
+  command: 'project.rebind'
+  summary: string
+  effects: string[]
+  warnings: string[]
+}
+
 export interface ProjectSummary {
   projectId: string
   primaryRepoId: string

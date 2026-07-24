@@ -131,11 +131,47 @@ HOPI does not manufacture one in every Repo merely because it was linked.
 
 An inconsistent partial link or an unavailable Repo creates one Project Attention and makes the
 Project ineligible. HOPI never guesses a replacement path or silently drops a Repo from a release.
-When several paths move together, rebind accepts only the changed Repo bindings in one request.
+When several bindings change together, rebind accepts only the changed Repo bindings in one request.
 Coordinator fills unchanged bindings from current Project truth, validates the resulting complete
-Repo-ID set, repairs every managed-worktree entry, and changes the local binding document only after
-all targets validate. Rebind never initializes a directory. This is the same Project-link
-publication boundary, not a migration workflow.
+Repo-ID set, and changes the local binding document only after all targets validate.
+
+Rebind changes where one stable `repoId` obtains its source; it is not restricted to another
+worktree registered in the old Git common directory. `repoPath`, `projectPath`, Git common directory,
+remote, and history may all change. The user checkout is never mutated. Coordinator stops the
+affected Project, preserves its canonical documents, creates a fresh managed release projection from
+the selected target HEAD, publishes `project.yml`, and finally publishes `projects.yml` as the one
+binding gate. Existing managed task worktrees are disposable runtime projections: rebind does not
+move them across repositories or guess whether their source still applies. It retains obsolete or
+dirty projections as local recovery evidence and creates one blocking Project Attention when
+nonterminal Work requires semantic reconciliation. Assistant inspects that evidence and decides
+whether to retain, replan, replace, or cancel Work before resolving the Attention.
+
+Repo rebind is an executable Command. The UI, Assistant tool, and optional local CLI submit the same
+typed Command request rather than implementing Git or document mutations separately. Every Command
+supports an inspection-only plan and writes a durable operation journal containing its request,
+observed plan, phase events, and structured result. Deterministic Command code owns locks,
+publication gates, runtime exclusion, and recovery; Assistant owns semantic repair after those
+boundaries are safe. Inspection resolves the selected directories to their actual Git identity and
+Project scope, but remains pure: an operation identity and journal exist only when execution begins,
+and execution replans from current Home truth before mutation. Rebind never initializes a directory.
+
+An in-process rebind first makes only the affected Project ineligible, interrupts its responsibility
+Runs, and waits for its reconciliation work to settle. Other Projects remain eligible. A failed
+mutation revalidates and restores the old Project runtime; a published mutation remains ineligible
+until the post-turn runtime rebuild loads the new binding. Once publication succeeds, a later
+operation-journal write failure is diagnostic rather than a rollback signal, because the binding
+document is already the durable gate.
+
+The local adapter exposes the same Command for inspection or offline recovery:
+
+```sh
+bun run --cwd packages/backend hopi project rebind \
+  --project P-product --repo web --path /code/product --plan
+```
+
+Execution without `--plan` acquires the Coordinator instance lock and therefore refuses to mutate an
+Assistant Home owned by a running Server. Product UI and Assistant use the in-process Command Runner
+so the Server can quiesce and reload its runtime around the same durable mutation.
 
 ## Work Workspace
 

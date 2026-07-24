@@ -504,7 +504,18 @@ while an empty directory or missing leaf whose parent exists is initialized and 
 selected subdirectory already inside a Git worktree links that existing Repo with its relative
 Project path; HOPI never initializes a nested Repo. Missing ancestors and non-empty non-Git
 directories remain validation failures. Rebind accepts a partial set of moved Repo identities,
-merges unchanged current bindings server-side, and never initializes a replacement path.
+merges unchanged current bindings server-side, and never initializes a replacement path. It may
+change the repository, common directory, or Project-relative scope behind a stable `repoId`.
+
+Repo rebind executes through one typed Command boundary shared by the product UI, Assistant tool,
+and local CLI adapter. A Command can describe and plan its effects without mutation, then records
+`request.json`, `plan.json`, append-only phase events, and `result.json` under the Assistant Home
+operation directory. This is the transparent repair contract: Assistant reads facts about what
+completed and what remains instead of reconstructing a partial mutation from prose or unstructured
+process output. Inspection plans normalize actual environment identity but allocate no operation
+state; execution replans before assigning the durable operation ID. The in-process Command makes
+only the affected Project ineligible and waits for its active responsibility Runs before publishing.
+Direct Git commands are not an alternate topology publication path.
 
 Project management and preference writes require a public user turn. An internal Reflection handoff
 may diagnose Project state and ask the operator for a missing path, but cannot originate a new

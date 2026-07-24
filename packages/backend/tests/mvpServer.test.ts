@@ -1486,6 +1486,55 @@ describe('MVP server', () => {
     })
   })
 
+  test('creates reconciliation Attention when Rebind replaces a Repo with nonterminal Work', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const originalRepo = await createRepo(join(temporaryRoot, 'original'))
+    const replacementRepo = await createRepo(join(temporaryRoot, 'replacement'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: originalRepo })
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Reconcile this Work.',
+    })
+    const server = createServer({
+      rootDir: homeRoot,
+      port: 0,
+      startCoordinator: false,
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const state = await request(base, '/api/projects/P-1/rebind', {
+      method: 'POST',
+      body: { repoPath: replacementRepo },
+    })
+
+    expect(state).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          repoPath: await realpath(replacementRepo),
+          openAttentionCount: 1,
+        },
+      ],
+      attentions: [
+        {
+          target: 'project:P-1',
+          resolvedAt: null,
+          body: expect.stringContaining('Repo binding changed'),
+        },
+      ],
+    })
+    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+      projectAttention: {
+        target: 'project:P-1',
+        body: expect.stringContaining('nonterminal Work'),
+      },
+    })
+  })
+
   test('keeps Workspace state readable when a blocked migrated Project root is unavailable', async () => {
     const sourceMachine = join(temporaryRoot, 'source-machine')
     const destinationMachine = join(temporaryRoot, 'destination-machine')
@@ -1567,6 +1616,16 @@ describe('MVP server', () => {
     const movedApiRepo = join(temporaryRoot, 'moved-api')
     await rename(apiRepo, movedApiRepo)
     const canonicalMovedApiRepo = await realpath(movedApiRepo)
+    expect(
+      await request(base, '/api/projects/P-1/rebind/plan', {
+        method: 'POST',
+        body: { repos: [{ repoId: 'api', repoPath: movedApiRepo }] },
+      }),
+    ).toMatchObject({
+      command: 'project.rebind',
+      summary: expect.stringContaining('1 Repo binding'),
+      warnings: [expect.stringContaining('recovery evidence')],
+    })
     const rebound = await request(base, '/api/projects/P-1/repos/api/rebind', {
       method: 'POST',
       body: { repoPath: movedApiRepo },

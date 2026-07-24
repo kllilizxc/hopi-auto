@@ -1,3 +1,4 @@
+import { type CommandRunner, createCommandRunner } from '../commands/commandRunner'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import type { InboxContext, InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import {
@@ -106,6 +107,7 @@ export interface AssistantTools {
 
 export function createAssistantTools(options: {
   home: AssistantHomeStore
+  commands?: CommandRunner
   workspace: AssistantWorkspaceStore
   projects: ReadonlyMap<string, AssistantToolProject>
   publisher: PublicationCoordinator
@@ -117,6 +119,7 @@ export function createAssistantTools(options: {
   onProjectDispatchEffect?: (eventId: string, projectId: string) => void
   now?: () => Date
 }): AssistantTools {
+  const commands = options.commands ?? createCommandRunner(options.home)
   type Capability =
     | {
         mode: 'main'
@@ -670,6 +673,7 @@ export function createAssistantTools(options: {
           const change = args.change
           const before = await options.home.listProjects()
           let project: LinkedProject
+          let operation: Awaited<ReturnType<CommandRunner['executeProjectRebind']>> | undefined
           switch (change.kind) {
             case 'create':
               project = await withPreparedProjectRepositories(change.repos, (repos) =>
@@ -687,31 +691,11 @@ export function createAssistantTools(options: {
               })
               break
             case 'rebind_repos': {
-              const current = await options.home.readProject(change.projectId)
-              const replacements = new Map(change.repos.map((repo) => [repo.repoId, repo]))
-              if (replacements.size !== change.repos.length) {
-                throw new AssistantToolRequestError('Rebound Repo IDs must be unique')
-              }
-              for (const repoId of replacements.keys()) {
-                if (!current.repos.some((repo) => repo.repoId === repoId)) {
-                  throw new AssistantToolRequestError(
-                    `Project ${change.projectId} has no Repo ${repoId}`,
-                  )
-                }
-              }
-              project = await options.home.rebindRepos({
+              operation = await commands.executeProjectRebind({
                 projectId: change.projectId,
-                repos: current.repos.map((repo) => {
-                  const replacement = replacements.get(repo.repoId)
-                  return replacement
-                    ? replacement
-                    : {
-                        repoId: repo.repoId,
-                        repoPath: repo.repoPath,
-                        projectPath: repo.projectPath,
-                      }
-                }),
+                repos: change.repos,
               })
+              project = operation.result.project
               break
             }
           }
@@ -726,6 +710,22 @@ export function createAssistantTools(options: {
             value: {
               effect: { kind: change.kind, projectId: project.projectId },
               project: presentProjectTopology(project),
+              ...(operation
+                ? {
+                    operation: {
+                      operationId: operation.result.operationId,
+                      command: operation.result.command,
+                      status: operation.result.status,
+                      plan: {
+                        summary: operation.plan.summary,
+                        effects: operation.plan.effects,
+                        warnings: operation.plan.warnings,
+                      },
+                      recoveryPaths: operation.result.recoveryPaths,
+                      followUpWarnings: operation.result.followUpWarnings,
+                    },
+                  }
+                : {}),
               runtimeRefresh: changed ? 'after_current_turn' : 'not_needed',
             },
           }
@@ -1435,7 +1435,6 @@ export function createAssistantTools(options: {
         )
     }
   }
-
 }
 
 function sameReferences(left: readonly string[], right: readonly string[]) {

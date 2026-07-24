@@ -21,6 +21,7 @@ import {
   createConfiguredAssistantModelRunner,
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
+import { createProjectCommandRunner } from '../commands/projectCommandRunner'
 import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
 import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
@@ -70,6 +71,7 @@ export interface MvpRuntime {
   coordinator: ReturnType<typeof createCoordinatorReconciler>
   preview: ReturnType<typeof createPreviewManager>
   attempts: ReturnType<typeof createRunAttemptStore>
+  commands: ReturnType<typeof createProjectCommandRunner>
   rebindProject(projectId: string, repoPath: string, projectPath?: string): Promise<void>
   rebindRepo(
     projectId: string,
@@ -110,6 +112,16 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   await assistantConversation.interruptRunning()
   const topologyChangedEvents = new Set<string>()
   const attentions = createWorkspaceAttentionController(workspace)
+  let runProjectMutation: <T>(projectId: string, operation: () => Promise<T>) => Promise<T> = (
+    _projectId,
+    operation,
+  ) => operation()
+  const commands = createProjectCommandRunner({
+    home,
+    publisher,
+    attentions,
+    runProjectMutation: (projectId, operation) => runProjectMutation(projectId, operation),
+  })
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
   const readAdapterConfig = () => readAndMigrateAgentAdapterConfig(adapterPath)
   const roleRunner =
@@ -247,6 +259,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   let protectAssistantProject: (eventId: string, projectId: string) => void = () => undefined
   const assistantTools = createAssistantTools({
     home,
+    commands,
     workspace,
     projects,
     publisher,
@@ -332,11 +345,24 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       )
     }
   }
+  runProjectMutation = async (projectId, operation) => {
+    await coordinator.quiesceProject(projectId)
+    try {
+      return await operation()
+    } catch (error) {
+      await restoreProjectEligibility(projectId)
+      throw error
+    }
+  }
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
   async function rebindProject(projectId: string, repoPath: string, projectPath?: string) {
-    await home.rebindProject({ projectId, repoPath, ...(projectPath ? { projectPath } : {}) })
+    const current = await home.readProject(projectId)
+    await commands.executeProjectRebind({
+      projectId,
+      repos: [{ repoId: current.primaryRepoId, repoPath, projectPath }],
+    })
   }
 
   async function rebindRepo(
@@ -345,11 +371,9 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     repoPath: string,
     projectPath?: string,
   ) {
-    await home.rebindRepo({
+    await commands.executeProjectRebind({
       projectId,
-      repoId,
-      repoPath,
-      ...(projectPath ? { projectPath } : {}),
+      repos: [{ repoId, repoPath, projectPath }],
     })
   }
 
@@ -396,6 +420,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     coordinator,
     preview,
     attempts,
+    commands,
     rebindProject,
     rebindRepo,
     readAgentRoleCodingDefaults: readAgentRoleModelSettings,

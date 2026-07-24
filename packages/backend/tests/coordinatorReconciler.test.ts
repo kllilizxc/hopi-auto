@@ -95,6 +95,60 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)
   })
 
+  test('quiesces one Project before an environment mutation', async () => {
+    const fixture = await workspaceFixture()
+    const goalPackage = engineeringPackage('G-1')
+    let finishRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve
+    })
+    let interruptions = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => ['G-1'],
+            readPackage: async () => goalPackage,
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns() {
+              interruptions += 1
+            },
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal() {
+              await runGate
+              return {
+                kind: 'pass_finished' as const,
+                workId: 'W-1',
+                runId: 'R-1',
+                result: 'success',
+                application: 'published',
+              }
+            },
+          },
+        },
+      ],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    let quiesced = false
+    const quiescing = coordinator.quiesceProject('P-1').then(() => {
+      quiesced = true
+    })
+    await Bun.sleep(0)
+    expect(interruptions).toBeGreaterThan(0)
+    expect(quiesced).toBe(false)
+
+    finishRun?.()
+    await quiescing
+    expect(quiesced).toBe(true)
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+  })
+
   test('holds the contextual Goal until the Assistant turn settles without blocking other Goals', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(

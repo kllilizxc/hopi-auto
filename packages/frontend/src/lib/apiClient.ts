@@ -10,6 +10,7 @@ import type {
   GoalDocumentView,
   GoalExecutionCost,
   PreviewStartResult,
+  ProjectRebindPlan,
   ProjectCodingDefaults,
   ProjectDirectorySelection,
   ReflectionRunSummary,
@@ -194,6 +195,16 @@ export function rebindProjectRepo(
   return apiRequest<AppSnapshot>(
     `/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}/rebind`,
     { method: 'POST', body: { repoPath, ...(projectPath ? { projectPath } : {}) } },
+  )
+}
+
+export function planProjectRepoRebind(projectId: string, repoId: string, repoPath: string) {
+  return apiRequest<ProjectRebindPlan>(
+    `/api/projects/${encodeURIComponent(projectId)}/rebind/plan`,
+    {
+      method: 'POST',
+      body: { repos: [{ repoId, repoPath }] },
+    },
   )
 }
 

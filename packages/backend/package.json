@@ -7,6 +7,7 @@
   "scripts": {
     "start": "bun run src/mvpServer.ts",
     "dev": "bun --watch src/mvpServer.ts",
+    "hopi": "bun run src/cli/hopi.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

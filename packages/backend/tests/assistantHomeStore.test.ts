@@ -542,6 +542,83 @@ describe('createAssistantHomeStore', () => {
     expect(await store.validateProject('P-1')).toEqual(rebound)
   })
 
+  test('rebinds to a different Git Repo and Project scope while preserving canonical documents', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const originalRepo = await createRepo(join(temporaryRoot, 'original'))
+    const linked = await store.linkProject({ projectId: 'P-1', repoPath: originalRepo })
+    const canonicalPath = join(linked.integrationRoot, '.hopi', 'docs', 'preserved.md')
+    await mkdir(dirname(canonicalPath), { recursive: true })
+    await Bun.write(canonicalPath, '# Preserve this Project truth\n')
+    const targetRepo = await createRepo(join(temporaryRoot, 'replacement'))
+    const targetScope = join(targetRepo, 'products', 'knowledge-base')
+    await mkdir(targetScope, { recursive: true })
+    await Bun.write(join(targetScope, 'README.md'), '# Replacement source\n')
+    await git(targetRepo, ['add', 'products/knowledge-base/README.md'])
+    await git(targetRepo, ['commit', '-m', 'add replacement scope'])
+    const targetBefore = await snapshotUserCheckout(targetRepo)
+
+    const rebound = await store.rebindProject({
+      projectId: 'P-1',
+      repoPath: targetScope,
+    })
+
+    expect(rebound.repoPath).toBe(await realpath(targetRepo))
+    expect(rebound.projectPath).toBe('products/knowledge-base')
+    expect(await Bun.file(join(rebound.integrationRoot, '.hopi/docs/preserved.md')).text()).toBe(
+      '# Preserve this Project truth\n',
+    )
+    expect(await readYaml(join(rebound.integrationRoot, '.hopi/project.yml'))).toEqual({
+      version: 2,
+      projectId: 'P-1',
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', projectPath: 'products/knowledge-base' }],
+    })
+    expect(await snapshotUserCheckout(targetRepo)).toEqual(targetBefore)
+    expect(await Bun.file(join(linked.integrationRoot, '.hopi/docs/preserved.md')).exists()).toBe(
+      true,
+    )
+    await expect(store.validateProject('P-1')).resolves.toEqual(rebound)
+  })
+
+  test('rolls back freshly materialized Rebind projections before the binding gate', async () => {
+    const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
+    const originalPrimary = await createRepo(join(temporaryRoot, 'original-primary'))
+    const originalApi = await createRepo(join(temporaryRoot, 'original-api'))
+    await store.linkProject({
+      projectId: 'P-1',
+      primaryRepoId: 'primary',
+      repos: [
+        { repoId: 'primary', repoPath: originalPrimary },
+        { repoId: 'api', repoPath: originalApi },
+      ],
+    })
+    const replacementPrimary = await createRepo(join(temporaryRoot, 'replacement-primary'))
+    const blockedApi = await createRepo(join(temporaryRoot, 'blocked-api'))
+    await git(blockedApi, ['switch', '-c', projectReleaseBranch('P-1')])
+    const linksBefore = await Bun.file(store.paths.projectLinksPath).text()
+
+    await expect(
+      store.rebindRepos({
+        projectId: 'P-1',
+        repos: [
+          { repoId: 'primary', repoPath: replacementPrimary },
+          { repoId: 'api', repoPath: blockedApi },
+        ],
+      }),
+    ).rejects.toThrow('Cannot materialize rebound Repo api')
+
+    expect(await Bun.file(store.paths.projectLinksPath).text()).toBe(linksBefore)
+    expect(
+      await Bun.file(store.paths.managedProjectDocumentPath('P-1', replacementPrimary)).exists(),
+    ).toBe(false)
+    const replacementRelease = await gitResult(replacementPrimary, [
+      'rev-parse',
+      '--verify',
+      projectReleaseRef('P-1'),
+    ])
+    expect(replacementRelease.exitCode).not.toBe(0)
+  })
+
   test('reconstructs a missing secondary managed root only from its documented release', async () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
@@ -566,7 +643,7 @@ describe('createAssistantHomeStore', () => {
     expect(await store.validateProject('P-1')).toEqual(rebound)
   })
 
-  test('rejects secondary reconstruction when its release diverged from project.yml', async () => {
+  test('adopts the selected target release when a rebound Repo release changed', async () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const primaryPath = await createRepo(join(temporaryRoot, 'primary'))
     const apiPath = await createRepo(join(temporaryRoot, 'api'))
@@ -582,11 +659,15 @@ describe('createAssistantHomeStore', () => {
     const movedApi = join(temporaryRoot, 'moved-api')
     await rename(apiPath, movedApi)
 
-    await expect(
-      store.rebindRepo({ projectId: 'P-1', repoId: 'api', repoPath: movedApi }),
-    ).rejects.toThrow('disagrees with project.yml')
-    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
-      projects: [{ repos: [{ repoId: 'primary' }, { repoId: 'api', repoPath: apiPath }] }],
+    const rebound = await store.rebindRepo({
+      projectId: 'P-1',
+      repoId: 'api',
+      repoPath: movedApi,
+    })
+    const reboundApi = rebound.repos.find((repo) => repo.repoId === 'api')
+    expect(reboundApi?.repoPath).toBe(await realpath(movedApi))
+    expect(await readYaml(join(rebound.integrationRoot, '.hopi/project.yml'))).toMatchObject({
+      repos: [{ repoId: 'primary' }, { repoId: 'api', releaseCommit: expect.any(String) }],
     })
   })
 
@@ -760,7 +841,7 @@ describe('createAssistantHomeStore', () => {
     await rename(originalRepo, movedRepo)
 
     await expect(store.rebindProject({ projectId: 'P-1', repoPath: movedRepo })).rejects.toThrow(
-      'refusing to reconstruct',
+      'project.yml is missing',
     )
     expect(
       await Bun.file(
@@ -795,14 +876,19 @@ async function readYaml(path: string) {
 }
 
 async function git(cwd: string, args: string[]) {
+  const result = await gitResult(cwd, args)
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`)
+  }
+  return result.stdout
+}
+
+async function gitResult(cwd: string, args: string[]) {
   const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ])
-  if (exitCode !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${stderr.trim()}`)
-  }
-  return stdout.trim()
+  return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }

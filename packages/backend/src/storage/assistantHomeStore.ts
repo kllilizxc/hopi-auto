@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
@@ -147,6 +147,7 @@ export interface AssistantHomePaths {
   projectLinksPath: string
   preferenceDocumentPath: string
   mutationLockPath: string
+  operationsRoot: string
   projectDir(projectId: string): string
   integrationRoot(projectId: string): string
   repoIntegrationRoot(projectId: string, repoId: string, primaryRepoId: string): string
@@ -234,6 +235,7 @@ export function createAssistantHomePaths(rootDir = process.cwd()): AssistantHome
     projectLinksPath: join(hopiDir, 'projects.yml'),
     preferenceDocumentPath: join(hopiDir, 'preference.md'),
     mutationLockPath: join(hopiDir, 'home.lock'),
+    operationsRoot: join(hopiDir, 'operations'),
     projectDir(projectId) {
       assertStableId(projectId, 'projectId')
       return join(hopiDir, 'projects', projectId)
@@ -530,10 +532,7 @@ export function createAssistantHomeStore(
         repos: project.repos.map((repo) => ({
           repoId: repo.repoId,
           repoPath: repo.repoId === input.repoId ? input.repoPath : repo.repoPath,
-          projectPath:
-            repo.repoId === input.repoId
-              ? (input.projectPath ?? repo.projectPath)
-              : repo.projectPath,
+          projectPath: repo.repoId === input.repoId ? input.projectPath : repo.projectPath,
         })),
       })
     },
@@ -559,6 +558,7 @@ export function createAssistantHomeStore(
             `Rebind requires the complete Repo set for ${input.projectId}: ${linkedIds.join(', ')}`,
           )
         }
+        const currentDocument = await readAndValidateProjectDocument(paths, link, publisher)
         const inspected = await Promise.all(
           input.repos.map(async (repo) => ({
             ...repo,
@@ -566,24 +566,78 @@ export function createAssistantHomeStore(
           })),
         )
         assertUniqueRequestedRepos(input.projectId, link.primaryRepoId, inspected)
-        for (const requested of inspected) {
-          const repoLink = link.repos.find((repo) => repo.repoId === requested.repoId)
-          if (!repoLink)
-            throw invalidProject(input.projectId, `Repo ${requested.repoId} is missing`)
-          if (normalizeProjectPath(repoLink.projectPath) !== requested.inspection.projectPath) {
-            throw new AssistantHomeStoreError(
-              'project_conflict',
-              `Rebind cannot change projectPath for ${requested.repoId}; link a different Project instead`,
-            )
-          }
-          await repairManagedRepoRoot(paths, link, repoLink, requested.inspection)
-        }
         const updatedLink: ProjectLink = {
           ...link,
           repos: inspected
             .map((repo) => repoLink(repo.repoId, repo.inspection))
             .sort((left, right) => repoLinkOrder(link.primaryRepoId, left, right)),
         }
+        const created: MaterializedManagedRoot[] = []
+        try {
+          for (const requested of inspected) {
+            const previous = link.repos.find((repo) => repo.repoId === requested.repoId)
+            if (!previous)
+              throw invalidProject(input.projectId, `Repo ${requested.repoId} is missing`)
+            const previousIntegrationRoot = paths.managedIntegrationRoot(
+              input.projectId,
+              previous.repoPath,
+            )
+            const previousRootExists = await pathExists(previousIntegrationRoot)
+            if (previousRootExists) {
+              try {
+                await repairManagedRepoRoot(paths, link, previous, requested.inspection)
+                continue
+              } catch {
+                // A different Git common directory cannot adopt the registered worktree.
+                // Rebind materializes a fresh projection below and leaves this root as recovery.
+              }
+            }
+
+            const materialized = await materializeReboundManagedRoot(
+              paths,
+              input.projectId,
+              requested.repoId,
+              requested.inspection,
+            )
+            if (materialized.created) created.push(materialized)
+            if (requested.repoId === link.primaryRepoId) {
+              if (!previousRootExists) {
+                throw invalidProject(
+                  input.projectId,
+                  'canonical Project root is unavailable; refusing to replace its primary Repo',
+                )
+              }
+              await replaceCanonicalTree(previousIntegrationRoot, materialized.integrationRoot)
+            }
+          }
+
+          const nextDocument: ProjectDocument = {
+            ...currentDocument,
+            repos: await Promise.all(
+              updatedLink.repos.map(async (repo) =>
+                repo.repoId === updatedLink.primaryRepoId
+                  ? repoDocument(repo)
+                  : {
+                      ...repoDocument(repo),
+                      releaseCommit: (
+                        await runGit(repo.repoPath, [
+                          'rev-parse',
+                          projectReleaseRef(input.projectId),
+                        ])
+                      ).stdout,
+                    },
+              ),
+            ),
+          }
+          assertProjectMembership(presentProject(paths, updatedLink), nextDocument)
+          await publishProjectDocument(paths, updatedLink, nextDocument, publisher)
+        } catch (error) {
+          for (const item of created.toReversed()) {
+            await removeMaterializedManagedRoot(input.projectId, item).catch(() => undefined)
+          }
+          throw error
+        }
+
         const projectDocument = await readAndValidateProjectDocument(paths, updatedLink, publisher)
         assertProjectMembership(presentProject(paths, updatedLink), projectDocument)
         for (const repo of presentProject(paths, updatedLink).repos) {
@@ -834,6 +888,117 @@ async function createManagedRepoRoot(
       'invalid_project',
       `Cannot create managed integration worktree for ${projectId}/${repoId}: ${result.stderr || result.stdout}`,
     )
+  }
+}
+
+interface MaterializedManagedRoot {
+  repo: RepoInspection
+  integrationRoot: string
+  releaseHead: string
+  created: boolean
+  previousReleaseHead: string | null
+}
+
+async function materializeReboundManagedRoot(
+  paths: AssistantHomePaths,
+  projectId: string,
+  repoId: string,
+  repo: RepoInspection,
+): Promise<MaterializedManagedRoot> {
+  const integrationRoot = paths.managedIntegrationRoot(projectId, repo.repoPath)
+  if (await pathExists(integrationRoot)) {
+    await validateExistingManagedRepoRoot(integrationRoot, projectId, repoId, repo)
+    return {
+      repo,
+      integrationRoot,
+      releaseHead: (await runGit(integrationRoot, ['rev-parse', 'HEAD'])).stdout,
+      created: false,
+      previousReleaseHead: null,
+    }
+  }
+
+  await mkdir(dirname(integrationRoot), { recursive: true })
+  const releaseBranch = projectReleaseBranch(projectId)
+  const previousRelease = await runGit(
+    repo.repoPath,
+    ['rev-parse', '--verify', projectReleaseRef(projectId)],
+    true,
+  )
+  const targetHead = (await runGit(repo.repoPath, ['rev-parse', 'HEAD'])).stdout
+  const result = await runGit(
+    repo.repoPath,
+    [
+      '-c',
+      'core.autocrlf=false',
+      'worktree',
+      'add',
+      '-B',
+      releaseBranch,
+      integrationRoot,
+      targetHead,
+    ],
+    true,
+  )
+  if (result.exitCode !== 0) {
+    throw invalidProject(
+      projectId,
+      `Cannot materialize rebound Repo ${repoId}: ${result.stderr || result.stdout}`,
+    )
+  }
+  await validateExistingManagedRepoRoot(integrationRoot, projectId, repoId, repo)
+  return {
+    repo,
+    integrationRoot,
+    releaseHead: targetHead,
+    created: true,
+    previousReleaseHead: previousRelease.exitCode === 0 ? previousRelease.stdout : null,
+  }
+}
+
+async function replaceCanonicalTree(sourceIntegrationRoot: string, targetIntegrationRoot: string) {
+  const source = join(sourceIntegrationRoot, '.hopi')
+  const target = join(targetIntegrationRoot, '.hopi')
+  if (!(await pathExists(source))) {
+    throw new Error(`Canonical Project documents are missing: ${source}`)
+  }
+  await rm(target, { recursive: true, force: true })
+  await cp(source, target, {
+    recursive: true,
+    dereference: false,
+    preserveTimestamps: true,
+    verbatimSymlinks: true,
+  })
+}
+
+async function removeMaterializedManagedRoot(
+  projectId: string,
+  materialized: MaterializedManagedRoot,
+) {
+  await runGit(
+    materialized.repo.repoPath,
+    ['worktree', 'remove', '--force', materialized.integrationRoot],
+    true,
+  )
+  const current = await runGit(
+    materialized.repo.repoPath,
+    ['rev-parse', '--verify', projectReleaseRef(projectId)],
+    true,
+  )
+  if (current.exitCode === 0 && current.stdout === materialized.releaseHead) {
+    if (materialized.previousReleaseHead) {
+      await runGit(materialized.repo.repoPath, [
+        'update-ref',
+        projectReleaseRef(projectId),
+        materialized.previousReleaseHead,
+        materialized.releaseHead,
+      ])
+    } else {
+      await runGit(
+        materialized.repo.repoPath,
+        ['update-ref', '-d', projectReleaseRef(projectId), materialized.releaseHead],
+        true,
+      )
+    }
   }
 }
 

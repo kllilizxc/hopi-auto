@@ -414,6 +414,28 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         }
         if (
           request.method === 'POST' &&
+          parts.length === 5 &&
+          parts[0] === 'api' &&
+          parts[1] === 'projects' &&
+          parts[3] === 'rebind' &&
+          parts[4] === 'plan'
+        ) {
+          const projectId = requirePart(parts, 2)
+          const body = await parseBody(request, rebindProjectSchema)
+          const repos =
+            'repos' in body
+              ? body.repos
+              : [
+                  {
+                    repoId: (await runtime.home.readProject(projectId)).primaryRepoId,
+                    repoPath: body.repoPath,
+                    projectPath: body.projectPath,
+                  },
+                ]
+          return json(await runtime.commands.planProjectRebind({ projectId, repos }))
+        }
+        if (
+          request.method === 'POST' &&
           parts.length === 4 &&
           parts[0] === 'api' &&
           parts[1] === 'projects' &&
@@ -422,8 +444,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, rebindProjectSchema)
           const nextRuntime = await reloadRuntime(async (current) => {
-            if ('repos' in body) await current.home.rebindRepos({ projectId, repos: body.repos })
-            else await current.rebindProject(projectId, body.repoPath, body.projectPath)
+            if ('repos' in body) {
+              await current.commands.executeProjectRebind({ projectId, repos: body.repos })
+            } else await current.rebindProject(projectId, body.repoPath, body.projectPath)
           })
           return json(await presentState(await nextRuntime))
         }

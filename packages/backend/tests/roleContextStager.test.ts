@@ -106,7 +106,9 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).toContain('Reviewer success is terminal for the complete Engineering Work')
     expect(prompt).toContain('use targeted Attention rather than success')
-    expect(prompt).toContain('cannot predict the checkpoint commit Coordinator creates after the Run')
+    expect(prompt).toContain(
+      'cannot predict the checkpoint commit Coordinator creates after the Run',
+    )
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
     expect(prompt).toContain('keeps every dependsOn edge')
     expect(prompt).toContain('rewrites may add dependencies but never remove one')
@@ -605,7 +607,9 @@ describe('RoleContextStager', () => {
     )
     expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
     expect(reviewerPrompt).toContain('Success is terminal for the complete Work')
-    expect(reviewerPrompt).toContain('remaining required action or proof returns targeted Attention')
+    expect(reviewerPrompt).toContain(
+      'remaining required action or proof returns targeted Attention',
+    )
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
