@@ -1,10 +1,5 @@
-import type { AssistantFeedEntry, AttentionView } from './apiTypes'
-import type { MessageFeedItem } from './messageFeed'
-import {
-  goalAttentionReference,
-  normalizeAttentionReferences,
-  workspaceAttentionReference,
-} from './attentionReference'
+import type { AssistantOpenRequest, AttentionView } from './apiTypes'
+import { goalAttentionReference, workspaceAttentionReference } from './attentionReference'
 
 export interface AssistantPageScope {
   projectId: string
@@ -36,64 +31,25 @@ export function assistantAttentionReference(attention: AttentionView, homeId?: s
   return homeId ? workspaceAttentionReference(homeId, attention.id) : null
 }
 
-export function findAttentionNotificationEventId(
-  entries: readonly AssistantFeedEntry[],
+export function findAttentionRequestEventId(
+  requests: readonly AssistantOpenRequest[],
   attention: AttentionView,
   homeId?: string,
 ) {
   const reference = assistantAttentionReference(attention, homeId)
-  const requestEventId = attention.operatorRequest?.split('/event:')[1]
-  if (!reference || !requestEventId) return null
-
-  return entries.some(
-    (candidate) =>
-      candidate.kind === 'event' &&
-      candidate.event.id === requestEventId &&
-      candidate.event.context &&
-      normalizeAttentionReferences(candidate.event.context).includes(reference),
-  )
-    ? requestEventId
-    : null
-}
-
-export function isNeedsYouAttention(attention: AttentionView) {
-  return attention.resolvedAt === null && !!attention.operatorRequest
-}
-
-export function groupNeedsYouAttentions(
-  entries: readonly AssistantFeedEntry[],
-  attentions: readonly AttentionView[],
-  homeId?: string,
-) {
-  const groups = new Map<string, AttentionView[]>()
-  for (const attention of attentions) {
-    if (!isNeedsYouAttention(attention)) continue
-    const eventId = findAttentionNotificationEventId(entries, attention, homeId)
-    if (!eventId) continue
-    const groupId = `inbox:${eventId}`
-    const group = groups.get(groupId)
-    if (group) group.push(attention)
-    else groups.set(groupId, [attention])
-  }
-  return groups
-}
-
-export function findLatestNeedsYouGroupId(
-  messages: readonly MessageFeedItem[],
-  needsYouByGroupId: ReadonlyMap<string, number>,
-) {
+  if (!reference) return null
   return (
-    messages.findLast(
-      (message) =>
-        Boolean(message.groupId) && (needsYouByGroupId.get(message.groupId ?? '') ?? 0) > 0,
-    )?.groupId ?? null
+    requests.find((request) =>
+      request.attentions.some(
+        (candidate) => assistantAttentionReference(candidate, homeId) === reference,
+      ),
+    )?.eventId ?? null
   )
 }
 
 export function resolveAssistantInboxContext(
   pageScope: AssistantPageScope | null,
   replyAttention: AttentionView | AttentionView[] | null,
-  _openAttentions: readonly AttentionView[] = [],
   homeId?: string,
 ): AssistantInboxContext | undefined {
   const replyAttentions = Array.isArray(replyAttention)

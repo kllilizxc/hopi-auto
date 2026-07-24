@@ -1,9 +1,5 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query'
-import type {
-  AssistantFeedChanges,
-  AssistantFeedPage,
-  CursorPage,
-} from './apiTypes'
+import type { AssistantFeedChanges, AssistantFeedPage, CursorPage } from './apiTypes'
 import { infiniteMessageHistoryQueryKey } from './queryKeys'
 
 const CACHE_VERSION = 1
@@ -112,8 +108,10 @@ export function mergeAssistantChangesIntoHistory(
   pages[0] = {
     ...pages[0],
     items: [...merged.values()].sort(
-      (left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
+      (left, right) =>
+        left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
     ),
+    requests: changes.requests ?? pages[0].requests ?? [],
     activity: changes.activity,
     syncCursor: changes.syncCursor,
     pageInfo: {

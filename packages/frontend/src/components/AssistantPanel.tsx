@@ -1,20 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Activity, ArrowLeft, Bot, ImagePlus, Send, X } from 'lucide-react'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  type AppSnapshot,
-  type AttentionView,
-  readAssistantAttentions,
-  sendInboxMessage,
-} from '../lib/api'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type AppSnapshot, type AttentionView, sendInboxMessage } from '../lib/api'
 import {
   type AssistantInboxContext,
   type AssistantPageScope,
   assistantAttentionReference,
-  findAttentionNotificationEventId,
-  findLatestNeedsYouGroupId,
-  groupNeedsYouAttentions,
-  isNeedsYouAttention,
+  findAttentionRequestEventId,
   resolveAssistantInboxContext,
 } from '../lib/assistantContext'
 import {
@@ -22,11 +14,7 @@ import {
   assistantFeedEntriesToMessageFeed,
   assistantFeedEventIds,
 } from '../lib/messageFeed'
-import {
-  ACTIVE_STREAM_POLL_INTERVAL_MS,
-  CANONICAL_POLL_INTERVAL_MS,
-  STABLE_QUERY_NOTIFY_PROPS,
-} from '../lib/queryPerformance'
+import { ACTIVE_STREAM_POLL_INTERVAL_MS } from '../lib/queryPerformance'
 import { useAssistantFeedStream } from '../lib/useAssistantFeedStream'
 import { cn, projectDisplayName } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
@@ -99,14 +87,6 @@ export function AssistantPanel({
   const scopeProjectId = scope?.projectId
   const scopeProject = snapshot?.projects.find((project) => project.projectId === scopeProjectId)
   const scopeLabel = scopeProject ? projectDisplayName(scopeProject) : (scopeProjectId ?? 'Home')
-  const attentionQuery = useQuery({
-    queryKey: ['assistant-attentions', scopeProjectId ?? 'home'],
-    queryFn: () => readAssistantAttentions(scopeProjectId),
-    enabled: isOpen,
-    refetchInterval: isOpen ? CANONICAL_POLL_INTERVAL_MS : false,
-    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
-  })
-
   useEffect(() => {
     draftImagesRef.current = draftImages
   }, [draftImages])
@@ -169,13 +149,16 @@ export function AssistantPanel({
       )
     })
   }, [canonicalEventIds])
-  const needsYouAttentions = useMemo(
-    () => (attentionQuery.data?.attentions ?? []).filter(isNeedsYouAttention),
-    [attentionQuery.data?.attentions],
-  )
   const needsYouAttentionsByGroupId = useMemo(
-    () => groupNeedsYouAttentions(assistantStream.items, needsYouAttentions, snapshot?.home.homeId),
-    [assistantStream.items, needsYouAttentions, snapshot?.home.homeId],
+    () =>
+      new Map(
+        assistantStream.requests.map((request) => [`inbox:${request.eventId}`, request.attentions]),
+      ),
+    [assistantStream.requests],
+  )
+  const needsYouAttentions = useMemo(
+    () => assistantStream.requests.flatMap((request) => request.attentions),
+    [assistantStream.requests],
   )
   const needsYouByGroupId = useMemo(
     () =>
@@ -187,31 +170,31 @@ export function AssistantPanel({
       ),
     [needsYouAttentionsByGroupId],
   )
-  const latestNeedsYouGroupId = useMemo(
-    () => findLatestNeedsYouGroupId(messages, needsYouByGroupId),
-    [messages, needsYouByGroupId],
+  const latestNeedsYouRequest = assistantStream.requests.at(-1)
+  const latestNeedsYouGroupId = latestNeedsYouRequest
+    ? `inbox:${latestNeedsYouRequest.eventId}`
+    : null
+  const visibleMessageGroupIds = new Set(
+    messages.flatMap((message) => (message.groupId ? [message.groupId] : [])),
   )
-  const mappedNeedsYouCount = [...needsYouAttentionsByGroupId.values()].reduce(
-    (total, attentions) => total + attentions.length,
+  const visibleNeedsYouCount = [...needsYouAttentionsByGroupId].reduce(
+    (total, [groupId, attentions]) =>
+      total + (visibleMessageGroupIds.has(groupId) ? attentions.length : 0),
     0,
   )
   const attentionNotificationEventId = useMemo(
     () =>
       initialReply?.operatorRequest
-        ? findAttentionNotificationEventId(
-            assistantStream.items,
-            initialReply,
-            snapshot?.home.homeId,
-          )
+        ? findAttentionRequestEventId(assistantStream.requests, initialReply, snapshot?.home.homeId)
         : null,
-    [assistantStream.items, initialReply, snapshot?.home.homeId],
+    [assistantStream.requests, initialReply, snapshot?.home.homeId],
   )
 
   useEffect(() => {
     const initialNotificationMissing = Boolean(
       initialReply?.operatorRequest && !attentionNotificationEventId,
     )
-    const needsYouNotificationMissing = mappedNeedsYouCount < needsYouAttentions.length
+    const needsYouNotificationMissing = visibleNeedsYouCount < needsYouAttentions.length
     if (
       (!initialNotificationMissing && !needsYouNotificationMissing) ||
       !assistantStream.hasMoreBefore ||
@@ -226,15 +209,14 @@ export function AssistantPanel({
     assistantStream.loadOlder,
     attentionNotificationEventId,
     initialReply?.operatorRequest,
-    mappedNeedsYouCount,
+    visibleNeedsYouCount,
     needsYouAttentions.length,
   ])
 
   useEffect(() => {
-    if (!snapshot || !attentionQuery.data || replyAttentions.length === 0) return
+    if (!snapshot || replyAttentions.length === 0) return
     const openReferences = new Set(
-      attentionQuery.data.attentions.flatMap((attention) => {
-        if (attention.resolvedAt !== null) return []
+      needsYouAttentions.flatMap((attention) => {
         const reference = assistantAttentionReference(attention, snapshot.home.homeId)
         return reference ? [reference] : []
       }),
@@ -246,7 +228,7 @@ export function AssistantPanel({
       })
       return next.length === current.length ? current : next
     })
-  }, [attentionQuery.data, replyAttentions.length, snapshot])
+  }, [needsYouAttentions, replyAttentions.length, snapshot])
 
   const replyToNeedsYouMessage = useCallback(
     (groupId: string) => {
@@ -287,24 +269,15 @@ export function AssistantPanel({
         ),
       )
       assistantStream.refresh()
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
-        queryClient.invalidateQueries({
-          queryKey: ['assistant-attentions', scopeProjectId ?? 'home'],
-        }),
-      ])
+      void queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
     onError: (_error, submission) => {
       setOptimisticMessages((current) =>
         current.filter((message) => message.clientId !== submission.clientId),
       )
-      setInput((current) =>
-        current.trim() ? `${submission.text}\n\n${current}` : submission.text,
-      )
+      setInput((current) => (current.trim() ? `${submission.text}\n\n${current}` : submission.text))
       setDraftImages((current) => [...submission.images, ...current])
-      setReplyAttentions((current) =>
-        current.length > 0 ? current : submission.replyAttentions,
-      )
+      setReplyAttentions((current) => (current.length > 0 ? current : submission.replyAttentions))
     },
   })
 
@@ -324,12 +297,7 @@ export function AssistantPanel({
           url: image.url,
         })),
         images,
-        context: resolveAssistantInboxContext(
-          scope,
-          replyAttentions,
-          attentionQuery.data?.attentions,
-          snapshot?.home.homeId,
-        ),
+        context: resolveAssistantInboxContext(scope, replyAttentions, snapshot?.home.homeId),
         replyAttentions,
       }
       setOptimisticMessages((current) => [...current, submission])

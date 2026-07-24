@@ -34,6 +34,16 @@ test('Needs-you count focuses the newest exact request and starts its reply', as
   expect(source).toContain("messageFocus?.source === 'needs-you'")
   expect(source).toContain('latestNeedsYouGroupId')
   expect(focusHandler).toContain("source: 'needs-you'")
+  expect(source).toContain('assistantStream.requests.map')
   expect(focusHandler).toContain('needsYouAttentionsByGroupId.get(latestNeedsYouGroupId)')
   expect(focusHandler).toContain('setReplyAttentions(attentions)')
+})
+
+test('Assistant Needs-you state comes only from the scoped Feed projection', async () => {
+  const source = await Bun.file(new URL('./AssistantPanel.tsx', import.meta.url)).text()
+
+  expect(source).not.toContain('readAssistantAttentions')
+  expect(source).not.toContain("queryKey: ['assistant-attentions'")
+  expect(source).not.toContain('groupNeedsYouAttentions')
+  expect(source).toContain('assistantStream.requests')
 })

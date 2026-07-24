@@ -830,6 +830,14 @@ Attention and global Reflection activity; a Project includes only its own events
 The synchronization cursor still advances across global updates so an unrelated Project cannot trap
 a scoped client on an old cursor.
 
+The scoped Feed projection is the single Assistant read model. Each history and incremental response
+includes the complete current set of unresolved operator requests, already joined server-side from
+canonical Attention to its exact public Inbox event using one scoped read. The counter, message
+decoration, navigation, and reply context consume that set; they do not call a separate Attention
+endpoint, rescan Goal packages in the browser, or infer ownership from cached conversation rows.
+Open requests are a full current projection rather than cursor deltas, so resolving or transferring
+Attention replaces the set even when its linked conversation event is older than the current page.
+
 Within that scope, the drawer shows one chronological conversation:
 
 - submitting snapshots and clears the composer immediately, then appends one memory-only optimistic

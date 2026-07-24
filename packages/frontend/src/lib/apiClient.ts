@@ -1,18 +1,17 @@
 import type {
   AppSnapshot,
-  ConfigurableAgentRole,
-  AssistantAttentionState,
   AssistantFeedChanges,
   AssistantFeedPage,
+  ConfigurableAgentRole,
   CursorPage,
   GoalBoardDetail,
   GoalDetail,
   GoalDocsDetail,
-  GoalExecutionCost,
   GoalDocumentView,
+  GoalExecutionCost,
   PreviewStartResult,
-  ProjectDirectorySelection,
   ProjectCodingDefaults,
+  ProjectDirectorySelection,
   ReflectionRunSummary,
   RunAttemptDetail,
   RunAttemptEvent,
@@ -67,12 +66,6 @@ export function readState() {
 
 export function readShellState() {
   return apiRequest<AppSnapshot>('/api/state?view=shell')
-}
-
-export function readAssistantAttentions(projectId?: string) {
-  return apiRequest<AssistantAttentionState>(
-    withAssistantScope('/api/assistant/attentions', projectId),
-  )
 }
 
 export function readAssistantFeed(input: CursorPageRequest & AssistantScopeRequest = {}) {
@@ -315,8 +308,4 @@ function withPage(path: string, input: CursorPageRequest, projectId?: string) {
   if (projectId) query.set('projectId', projectId)
   const suffix = query.toString()
   return suffix ? `${path}?${suffix}` : path
-}
-
-function withAssistantScope(path: string, projectId?: string) {
-  return projectId ? `${path}?projectId=${encodeURIComponent(projectId)}` : path
 }

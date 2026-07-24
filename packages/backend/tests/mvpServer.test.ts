@@ -11,6 +11,7 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
+import { inboxEventReference } from '../src/domain/inboxEventReference'
 import {
   createServer,
   deriveAssistantFeedActivity,
@@ -19,7 +20,10 @@ import {
   presentAttempt,
 } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
-import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
+import {
+  acknowledgeGoalAttention,
+  clearGoalAttentionOperatorRequest,
+} from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -1088,18 +1092,8 @@ describe('MVP server', () => {
       body: expect.any(String),
     })
     expect(await request(base, '/api/state?view=shell')).toMatchObject({ attentions: [] })
-    const assistantAttentionProjection = await request(
-      base,
-      '/api/assistant/attentions?projectId=P-1',
-    )
-    expect(assistantAttentionProjection.attentions).toHaveLength(2)
-    expect(
-      (assistantAttentionProjection.attentions as Array<{ id: string; body: string }>).find(
-        (attention) => attention.id === 'A-board-routing',
-      ),
-    ).toMatchObject({
-      body: expect.stringContaining('Choose the delivery strategy'),
-    })
+    const removedAttentionEndpoint = await fetch(`${base}/api/assistant/attentions?projectId=P-1`)
+    expect(removedAttentionEndpoint.status).toBe(404)
     const attemptStore = createRunAttemptStore(homeRoot, {
       now: () => new Date('2026-07-11T00:00:00Z'),
     })
@@ -1324,6 +1318,98 @@ describe('MVP server', () => {
       },
     })
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
+  })
+
+  test('projects open operator requests through the same scoped Feed snapshot', async () => {
+    const homeRoot = join(temporaryRoot, 'assistant-request-feed-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'assistant-request-feed-repo'))
+    const publisher = new PublicationCoordinator()
+    const linked = await createAssistantHomeStore(homeRoot, publisher).linkProject({
+      projectId: 'P-1',
+      repoPath: repoRoot,
+    })
+    const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attentionReference = 'project:P-1/goal:G-1/attention:A-choice'
+    await store.publishGoal('G-1', {
+      supportingWrites: [],
+      gateWrite: {
+        path: store.paths.attentionDocument('G-1', 'A-choice'),
+        expectedHash: null,
+        content: renderAttentionDocument({
+          attributes: {
+            id: 'A-choice',
+            target: 'project:P-1/goal:G-1/work:plan-initial',
+            createdAt: '2026-07-16T08:00:00.000Z',
+            resolvedAt: null,
+            notifiedAt: null,
+          },
+          body: 'Choose the release window.',
+        }),
+      },
+    })
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    const event = await workspace.receiveReflectionEvent({
+      eventId: 'EV-choice',
+      content: 'The release window needs an operator decision.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [attentionReference],
+      },
+    })
+    await workspace.handleEvent(event.attributes.id, {
+      reply: 'Choose today or tomorrow.',
+      disposition: 'operator-requested',
+      expose: true,
+      handledAt: new Date('2026-07-16T08:01:00.000Z'),
+    })
+    const workspaceState = await workspace.readWorkspace()
+    const operatorRequest = inboxEventReference(workspaceState.homeId, event.attributes.id)
+    await acknowledgeGoalAttention(
+      store,
+      'G-1',
+      'A-choice',
+      new Date('2026-07-16T08:01:01.000Z'),
+      operatorRequest,
+    )
+
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const feed = await request(base, '/api/assistant/feed?projectId=P-1&limit=1')
+    expect(feed.requests).toEqual([
+      {
+        eventId: 'EV-choice',
+        attentions: [
+          expect.objectContaining({
+            scope: 'goal',
+            projectId: 'P-1',
+            goalId: 'G-1',
+            id: 'A-choice',
+            operatorRequest,
+          }),
+        ],
+      },
+    ])
+    expect((await request(base, '/api/assistant/feed?limit=1')).requests).toEqual([])
+
+    const changes = await request(
+      base,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
+        String(feed.syncCursor),
+      )}`,
+    )
+    expect(changes.requests).toEqual(feed.requests)
+
+    await clearGoalAttentionOperatorRequest(store, 'G-1', 'A-choice', operatorRequest)
+    const afterReturnToAssistant = await request(
+      base,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
+        String(changes.syncCursor),
+      )}`,
+    )
+    expect(afterReturnToAssistant.requests).toEqual([])
   })
 
   test('keeps Project Attention explicit after rebind and exposes it on the Board contract', async () => {

@@ -64,7 +64,13 @@ test('requests mutable Assistant changes from the independent synchronization cu
   let observed: RequestInfo | URL | null = null
   globalThis.fetch = (async (input) => {
     observed = input
-    return Response.json({ items: [], removedIds: [], activity: null, syncCursor: null })
+    return Response.json({
+      items: [],
+      removedIds: [],
+      requests: [],
+      activity: null,
+      syncCursor: null,
+    })
   }) as typeof fetch
 
   try {

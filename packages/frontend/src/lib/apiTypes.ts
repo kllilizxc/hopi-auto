@@ -195,6 +195,11 @@ export interface AssistantFeedActivity {
   phase: 'waiting' | 'working' | 'thinking'
 }
 
+export interface AssistantOpenRequest {
+  eventId: string
+  attentions: AttentionView[]
+}
+
 export interface CursorPageInfo {
   oldestCursor: string | null
   newestCursor: string | null
@@ -209,6 +214,7 @@ export interface CursorPage<T> {
 }
 
 export interface AssistantFeedPage extends CursorPage<AssistantFeedEntry> {
+  requests: AssistantOpenRequest[]
   activity: AssistantFeedActivity | null
   syncCursor: string | null
 }
@@ -216,6 +222,7 @@ export interface AssistantFeedPage extends CursorPage<AssistantFeedEntry> {
 export interface AssistantFeedChanges {
   items: AssistantFeedEntry[]
   removedIds: string[]
+  requests: AssistantOpenRequest[]
   activity: AssistantFeedActivity | null
   syncCursor: string | null
 }
@@ -449,10 +456,6 @@ export interface GoalDocsDetail {
   evidence: Array<
     Pick<EvidenceView, 'id' | 'createdAt' | 'producerRun' | 'owner'> & { excerpt: string }
   >
-}
-
-export interface AssistantAttentionState {
-  attentions: AttentionView[]
 }
 
 export type PreviewStartResult =
