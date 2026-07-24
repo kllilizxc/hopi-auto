@@ -132,7 +132,7 @@ if (mode !== 'reflection') {
       'hopi_request_user',
       {
         description:
-          "Transfer the selected open Attention references to the operator. The turn's non-empty final response becomes the question; this call sends no text.",
+          "Transfer the selected open Attention references to the operator. They remain open, keep their targets unscheduled, and stop unattended progress until the operator replies. Assistant-owned diagnosis, execution, coordination, and waiting remain Assistant-owned; transfer represents genuinely missing operator-owned information, a decision, or an external action. The turn's non-empty final response becomes the question; this call sends no text.",
         inputSchema: assistantMcpToolSchemas.hopi_request_user,
       },
       (args) => callTool('hopi_request_user', args),

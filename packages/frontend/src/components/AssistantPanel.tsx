@@ -257,13 +257,19 @@ export function AssistantPanel({
     },
     [needsYouAttentionsByGroupId],
   )
-  const focusLatestNeedsYouMessage = useCallback(() => {
+  const replyToLatestNeedsYouMessage = useCallback(() => {
+    const attentions = latestNeedsYouGroupId
+      ? needsYouAttentionsByGroupId.get(latestNeedsYouGroupId)
+      : null
+    if (!attentions?.length) return
     setShowReflectionDebug(false)
+    setReplyAttentions(attentions)
     setMessageFocus({
       source: 'needs-you',
       request: ++messageFocusSequenceRef.current,
     })
-  }, [])
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [latestNeedsYouGroupId, needsYouAttentionsByGroupId])
 
   const sendMutation = useMutation({
     mutationFn: (submission: OptimisticInboxSubmission) =>
@@ -396,9 +402,9 @@ export function AssistantPanel({
             className="assistant-needs-you-jump"
             variant="ghost"
             type="button"
-            onClick={focusLatestNeedsYouMessage}
-            aria-label={`Jump to newest of ${needsYouAttentions.length} requests needing your reply`}
-            title="Jump to newest request"
+            onClick={replyToLatestNeedsYouMessage}
+            aria-label={`Reply to newest of ${needsYouAttentions.length} requests needing your reply`}
+            title="Reply to newest request"
           >
             <CountBadge className="assistant-needs-you-count" color="warning">
               {needsYouAttentions.length}

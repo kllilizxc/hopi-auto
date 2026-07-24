@@ -678,10 +678,14 @@ then mirrors only this handled public reply and records `webhookDeliveredAt` on 
 does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
 documents instead of adding a notification ledger or parsing brief text.
 
-`request_user` stages ownership intent only; it does not publish at call time. After the final model
-response is available, Coordinator revalidates every selected reference before publishing either the
-reply or its ownership acknowledgement. Resolving a selected Attention later in the same turn makes
-the request stale and rejects it rather than asking for an already unnecessary action.
+`request_user` stages ownership intent only; it does not publish at call time. Transferring ownership
+keeps the selected Attention open, keeps its target unscheduled, and ends unattended progress until
+the operator replies. Assistant-owned diagnosis, execution, coordination, or waiting therefore stays
+Assistant-owned; this capability represents genuinely missing operator-owned information, a
+decision, or an external action. After the final model response is available, Coordinator revalidates
+every selected reference before publishing either the reply or its ownership acknowledgement.
+Resolving a selected Attention later in the same turn makes the request stale and rejects it rather
+than asking for an already unnecessary action.
 
 Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
 after an ordinary turn when its evidence is insufficient to resolve it or its repair is still in
@@ -790,8 +794,9 @@ The drawer identifies its active conversation as `Assistant · Home` or `Assista
 non-zero unresolved count follows the Reflection entry in the same compact, top-edge floating
 control row. Kanban keeps its Work badge and focus projection but does not repeat Needs-you as a
 separate page banner. Selecting the count focuses the newest unresolved public request in the
-conversation; it does not implicitly enter reply context, which remains the exact message's `Reply`
-action.
+conversation and enters that exact message's reply context. This is the same exact-reference action
+as selecting the message's `Reply`; it never attaches another open Attention from the page or
+Project.
 
 A **Needs you** projection must navigate to the exact public Assistant turn that acknowledged its
 canonical Attention reference. The conversation loads older pages when necessary and focuses that

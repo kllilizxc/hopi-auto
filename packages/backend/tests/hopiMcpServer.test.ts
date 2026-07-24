@@ -194,6 +194,12 @@ describe('HOPI MCP server', () => {
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
       'this call sends no text',
     )
+    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
+      'keep their targets unscheduled',
+    )
+    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
+      'Assistant-owned',
+    )
     expect(tools.find((tool) => tool.name === 'hopi_request_user')?.inputSchema).toMatchObject({
       required: ['attentionRefs'],
       properties: { attentionRefs: { type: 'array' } },

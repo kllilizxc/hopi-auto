@@ -23,16 +23,17 @@ test('Assistant submit publishes locally before waiting for the Inbox response',
   expect(mutation).toContain('setDraftImages((current) => [...submission.images, ...current])')
 })
 
-test('Needs-you count focuses the newest request without starting a reply', async () => {
+test('Needs-you count focuses the newest exact request and starts its reply', async () => {
   const source = await Bun.file(new URL('./AssistantPanel.tsx', import.meta.url)).text()
   const focusHandler = source.slice(
-    source.indexOf('const focusLatestNeedsYouMessage = useCallback'),
+    source.indexOf('const replyToLatestNeedsYouMessage = useCallback'),
     source.indexOf('const sendMutation = useMutation'),
   )
 
-  expect(source).toContain('onClick={focusLatestNeedsYouMessage}')
+  expect(source).toContain('onClick={replyToLatestNeedsYouMessage}')
   expect(source).toContain("messageFocus?.source === 'needs-you'")
   expect(source).toContain('latestNeedsYouGroupId')
   expect(focusHandler).toContain("source: 'needs-you'")
-  expect(focusHandler).not.toContain('setReplyAttentions')
+  expect(focusHandler).toContain('needsYouAttentionsByGroupId.get(latestNeedsYouGroupId)')
+  expect(focusHandler).toContain('setReplyAttentions(attentions)')
 })
