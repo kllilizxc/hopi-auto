@@ -882,7 +882,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
 
 async function presentState(runtime: MvpRuntime, options: { includeAttentions?: boolean } = {}) {
   const includeAttentions = options.includeAttentions ?? true
-  const [home, workspace, agentRoleSettingEntries] = await Promise.all([
+  const [home, workspace, agentRoleSettingEntries, attemptSnapshot] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspace(),
     Promise.all(
@@ -890,7 +890,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         async (role) => [role, await runtime.readAgentRoleCodingDefaults(role)] as const,
       ),
     ),
+    runtime.attempts.snapshot(),
   ])
+  const runningAttempts = attemptSnapshot.running()
   const agentRoleSettings = Object.fromEntries(agentRoleSettingEntries) as Record<
     ConfigurableAgentRole,
     Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
@@ -922,9 +924,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
     for (const { goalId, goalPackage } of readableGoalPackages) {
       const projectAttentionOpen = Boolean(projectAttention)
       const liveWorkIds = new Set(
-        [...runtime.coordinator.activeRuns().keys()]
-          .filter((key) => key.startsWith(`${project.projectId}/${goalId}/`))
-          .map((key) => key.slice(`${project.projectId}/${goalId}/`.length)),
+        runningAttempts
+          .filter((attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId)
+          .map((attempt) => attempt.workId),
       )
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: !projectAttentionOpen,
@@ -985,9 +987,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
           ...goalAttentions.map((attention) => ({ scope: 'goal', ...attention })),
         ]
       : [],
-    activeRuns: [...runtime.coordinator.activeRuns()].map(([key, responsibility]) => ({
-      key,
-      responsibility,
+    activeRuns: runningAttempts.map((attempt) => ({
+      key: `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`,
+      responsibility: attempt.responsibility,
     })),
   }
 }
@@ -1537,13 +1539,21 @@ async function presentGoal(
       })),
     }
   }
-  const activePrefix = `${projectId}/${goalId}/`
+  const [workspace, designSnapshot, attemptsByWork] = await Promise.all([
+    runtime.workspace.readWorkspace(),
+    view === 'full'
+      ? runtime.publisher.snapshotTree(
+          project.store.paths.publicationRoot,
+          project.store.paths.designRoot(goalId),
+        )
+      : null,
+    runtime.attempts.listGoal(projectId, goalId),
+  ])
   const liveWorkIds = new Set(
-    [...runtime.coordinator.activeRuns().keys()]
-      .filter((key) => key.startsWith(activePrefix))
-      .map((key) => key.slice(activePrefix.length)),
+    [...attemptsByWork.entries()].flatMap(([workId, attempts]) =>
+      attempts.some((attempt) => attempt.status === 'running') ? [workId] : [],
+    ),
   )
-  const workspace = await runtime.workspace.readWorkspace()
   const projectAttention = [...workspace.attentions.values()].find(
     (attention) =>
       attention.attributes.target === `project:${projectId}` &&
@@ -1556,15 +1566,6 @@ async function presentGoal(
     passCapacity: { planner: true, generator: true, reviewer: true },
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
-  const [designSnapshot, attemptsByWork] = await Promise.all([
-    view === 'full'
-      ? runtime.publisher.snapshotTree(
-          project.store.paths.publicationRoot,
-          project.store.paths.designRoot(goalId),
-        )
-      : null,
-    runtime.attempts.listGoal(projectId, goalId),
-  ])
   const agentPlanByWork = await readLiveAgentPlans(
     runtime,
     projectId,

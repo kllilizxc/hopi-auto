@@ -73,7 +73,7 @@ export interface AssistantStateActiveRun {
   goalId: string
   workId: string
   responsibility: Responsibility
-  runId: string | null
+  runId: string
 }
 
 interface DigestWorkspaceAttention {
@@ -115,7 +115,6 @@ export function createAssistantStateReader(options: {
   projects: ReadonlyMap<string, AssistantStateProject>
   publisher: PublicationCoordinator
   attempts: RunAttemptStore
-  activeRuns?: () => ReadonlyMap<string, Responsibility>
   concurrency?: Readonly<Record<Responsibility, number>>
   now?: () => Date
   staleAfterMs?: number
@@ -132,8 +131,13 @@ export function createAssistantStateReader(options: {
         options.workspace.readWorkspace(),
         options.attempts.snapshot(),
       ])
-      const activeRuns = options.activeRuns?.() ?? new Map<string, Responsibility>()
-      const activeCounts = responsibilityCounts(activeRuns)
+      const runningAttempts = attemptSnapshot.running()
+      const activeCounts = responsibilityCounts(runningAttempts)
+      const runningAttemptsByWork = new Map<string, RunAttemptSummary>()
+      for (const attempt of runningAttempts) {
+        const key = `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`
+        if (!runningAttemptsByWork.has(key)) runningAttemptsByWork.set(key, attempt)
+      }
       const activeRunViews: AssistantStateActiveRun[] = []
       const selected = input.projectId
         ? [requireProject(options.projects, input.projectId)]
@@ -166,9 +170,12 @@ export function createAssistantStateReader(options: {
               const goalPackage = await project.store.readPackage(goalId)
               const prefix = `${project.projectId}/${goalId}/`
               const liveWorkIds = new Set(
-                [...activeRuns.keys()]
-                  .filter((key) => key.startsWith(prefix))
-                  .map((key) => key.slice(prefix.length)),
+                runningAttempts
+                  .filter(
+                    (attempt) =>
+                      attempt.projectId === project.projectId && attempt.goalId === goalId,
+                  )
+                  .map((attempt) => attempt.workId),
               )
               const projections = deriveGoalWorkProjections(
                 project.projectId,
@@ -222,28 +229,26 @@ export function createAssistantStateReader(options: {
                   .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
                   .map(async (work) => {
                     const key = `${prefix}${work.attributes.id}`
+                    const runningAttempt = runningAttemptsByWork.get(key) ?? null
                     const runtime = await readWorkRuntime({
                       homeRoot,
                       projectRoot: project.projectRoot,
                       projectId: project.projectId,
                       goalId,
                       workId: work.attributes.id,
-                      activeResponsibility: activeRuns.get(key) ?? null,
+                      activeResponsibility: runningAttempt?.responsibility ?? null,
                       attemptSnapshot,
                       attemptStore: options.attempts,
                       observedAt,
                       staleAfterMs,
                     })
-                    if (runtime.activeResponsibility) {
+                    if (runningAttempt) {
                       activeRunViews.push({
                         projectId: project.projectId,
                         goalId,
                         workId: work.attributes.id,
-                        responsibility: runtime.activeResponsibility,
-                        runId:
-                          runtime.latestAttempt?.status === 'running'
-                            ? runtime.latestAttempt.runId
-                            : null,
+                        responsibility: runningAttempt.responsibility,
+                        runId: runningAttempt.runId,
                       })
                     }
                     const evidence = input.goalId
@@ -763,9 +768,9 @@ async function semanticDigest(
   return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
 }
 
-function responsibilityCounts(active: ReadonlyMap<string, Responsibility>) {
+function responsibilityCounts(active: readonly RunAttemptSummary[]) {
   const counts: Record<Responsibility, number> = { planner: 0, generator: 0, reviewer: 0 }
-  for (const responsibility of active.values()) counts[responsibility] += 1
+  for (const attempt of active) counts[attempt.responsibility] += 1
   return counts
 }
 

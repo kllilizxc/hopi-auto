@@ -542,7 +542,7 @@ ready(work) :=
   and every work.dependsOn item is done
   and (work.notBefore is null or work.notBefore <= now)
   and no open targeted Attention covers its project, Goal, or Work
-  and no active Run owns the Work lease
+  and no Coordinator reservation occupies the Work
   and no unsettled Assistant turn has touched the Goal
   and capacity exists for pass(work.kind, work.stage)
 ```
@@ -604,9 +604,9 @@ Each nonterminal card shows exactly one primary badge, chosen by this priority:
 | ----------------------- | -------------------------------------------------------------------------------- |
 | `Needs you`             | Open targeted Attention covers the Work or Goal and `operatorRequest` is non-null |
 | `Waiting for Assistant` | Open targeted Attention covers the Work or Goal and `operatorRequest` is null     |
-| `working`               | A live Run owns the Work lease                                          |
+| `working`               | The Work has a persisted Attempt with `status: running`                  |
 | `scheduled`             | Nonterminal Work has a future `notBefore`                               |
-| `queued`                | `ready(work)` and no live Run                                           |
+| `queued`                | `ready(work)` and no running Attempt                                    |
 | `waiting`               | A non-stage readiness predicate is false                                |
 
 The first matching badge wins, so cards do not accumulate competing status labels. Terminal and
@@ -657,8 +657,10 @@ outcome. Other state and document changes do not participate in this runtime tra
 
 ## Core Invariants
 
-- Canonical documents are the sole durable product truth; runtime indexes, leases, Runs, and Kanban
-  badges rebuild from them.
+- Canonical documents are the sole durable workflow truth. A durable Attempt manifest is the sole
+  runtime truth for its Run lifecycle; API, Assistant, Reflection, and Kanban derive active Runs
+  only from `status: running`. Coordinator reservations are private scheduling mechanics and never
+  become product or Run state.
 - An MVP Project contains one primary Repo and zero or more secondary Repos. The primary managed
   worktree owns canonical documents and the single C1; every managed Repo materializes the release
   recorded by that C1. User checkouts are outside publication and repair. Missing primary root

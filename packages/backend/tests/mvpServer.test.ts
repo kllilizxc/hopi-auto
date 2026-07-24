@@ -43,6 +43,55 @@ afterEach(async () => {
 })
 
 describe('MVP server', () => {
+  test('derives every public active-Run projection from durable Attempt manifests', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+    })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    await request(base, '/api/state')
+
+    const attempts = createRunAttemptStore(homeRoot)
+    const recorder = await attempts.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      runId: 'R-live',
+      responsibility: 'planner',
+      runRoot: runStoragePath(homeRoot, 'R-live'),
+    })
+
+    expect(await request(base, '/api/state')).toMatchObject({
+      activeRuns: [
+        {
+          key: 'P-1/G-1/plan-initial',
+          responsibility: 'planner',
+        },
+      ],
+    })
+    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+      works: [{ projection: { primaryBadge: 'working' } }],
+    })
+
+    await recorder.finish({
+      outcome: { result: 'success', summary: 'Finished before cleanup settles.', exitCode: 0 },
+      application: 'cleanup_pending',
+    })
+
+    expect(await request(base, '/api/state')).toMatchObject({ activeRuns: [] })
+    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+      works: [{ projection: { primaryBadge: 'queued' } }],
+    })
+  })
+
   test('projects one prioritized conversation activity from public and hidden model work', () => {
     expect(
       deriveAssistantFeedActivity({

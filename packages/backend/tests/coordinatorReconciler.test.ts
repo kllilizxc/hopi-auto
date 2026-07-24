@@ -5,6 +5,7 @@ import type { AssistantReflection } from '../src/assistant/assistantReflection'
 import type { WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
+import type { Responsibility } from '../src/runtime/roleContextStager'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createCoordinatorReconciler as createCoordinatorReconcilerWithOptions } from '../src/scheduler/coordinatorReconciler'
 import type { ProjectReconciler } from '../src/scheduler/projectReconciler'
@@ -489,11 +490,7 @@ describe('CoordinatorReconciler', () => {
       })
 
       expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 3 })
-      expect([...coordinator.activeRuns().values()]).toEqual([
-        responsibility,
-        responsibility,
-        responsibility,
-      ])
+      expect([...pending.keys()]).toEqual(['G-1', 'G-2', 'G-3'])
       expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
 
       pending.get('G-1')?.()
@@ -571,8 +568,7 @@ describe('CoordinatorReconciler', () => {
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
-    expect([...coordinator.activeRuns().keys()]).toEqual(['P-1/G-1/W-1', 'P-1/G-1/W-2'])
-    expect([...coordinator.activeRuns().values()]).toEqual(['generator', 'generator'])
+    expect([...live]).toEqual(['W-1', 'W-2'])
 
     finish.get('W-1')?.()
     finish.get('W-2')?.()
@@ -656,7 +652,7 @@ describe('CoordinatorReconciler', () => {
     await overlappingScanStarted
     finish?.()
     await Bun.sleep(0)
-    expect(coordinator.activeRuns().size).toBe(0)
+    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
     releaseOverlappingScan?.()
     expect(await overlappingTick).toEqual({ kind: 'idle' })
     expect(observations).toEqual([false, false])
@@ -665,7 +661,7 @@ describe('CoordinatorReconciler', () => {
     expect(observations).toEqual([false, false, true])
   })
 
-  test('revokes only the paused Goal live Run leases', async () => {
+  test('revokes only the paused Goal reservation', async () => {
     const fixture = await workspaceFixture()
     const packages = new Map(['G-1', 'G-2'].map((goalId) => [goalId, engineeringPackage(goalId)]))
     const finish = new Map<string, () => void>()
@@ -704,7 +700,7 @@ describe('CoordinatorReconciler', () => {
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     await Bun.sleep(0)
     expect(interrupted).toEqual(['G-1'])
-    expect([...coordinator.activeRuns().keys()]).toEqual(['P-1/G-2/W-1'])
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
 
     requirePackage(packages, 'G-2').goal.attributes.lifecycle = 'paused'
     finish.get('G-2')?.()
@@ -723,6 +719,7 @@ describe('CoordinatorReconciler', () => {
       finishPlanning = resolve
     })
     let dispatchCount = 0
+    const inFlight = new Set<Responsibility>()
     const store = {
       listGoalIds: async () => ['G-1'],
       readPackage: async () => goalPackage,
@@ -733,10 +730,12 @@ describe('CoordinatorReconciler', () => {
       async reconcileGoal() {
         dispatchCount += 1
         if (dispatchCount === 1) {
+          inFlight.add('generator')
           await engineeringRun
           const engineering = goalPackage.works.get('W-1')
           if (!engineering) throw new Error('Missing Engineering Work')
           engineering.attributes.stage = 'review'
+          inFlight.delete('generator')
           return {
             kind: 'pass_finished' as const,
             workId: 'W-1',
@@ -745,11 +744,13 @@ describe('CoordinatorReconciler', () => {
             application: 'published',
           }
         }
+        inFlight.add('planner')
         await planningRun
         const planning = goalPackage.works.get('plan-0002')
         if (!planning) throw new Error('Missing Planning Work')
         planning.attributes.stage = 'done'
         goalPackage.goal.attributes.lifecycle = 'paused'
+        inFlight.delete('planner')
         return {
           kind: 'pass_finished' as const,
           workId: 'plan-0002',
@@ -767,7 +768,7 @@ describe('CoordinatorReconciler', () => {
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
-    expect([...coordinator.activeRuns().values()]).toEqual(['generator'])
+    expect([...inFlight]).toEqual(['generator'])
     ;(goalPackage.works as Map<string, WorkDocument>).set('plan-0002', {
       attributes: {
         id: 'plan-0002',
@@ -785,11 +786,11 @@ describe('CoordinatorReconciler', () => {
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
     expect(dispatchCount).toBe(2)
-    expect([...coordinator.activeRuns().values()].toSorted()).toEqual(['generator', 'planner'])
+    expect([...inFlight].toSorted()).toEqual(['generator', 'planner'])
 
     finishEngineering?.()
     await Bun.sleep(0)
-    expect([...coordinator.activeRuns().values()]).toEqual(['planner'])
+    expect([...inFlight]).toEqual(['planner'])
 
     finishPlanning?.()
     await coordinator.waitForIdle()

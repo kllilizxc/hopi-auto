@@ -38,7 +38,6 @@ import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBo
 import { createGoalController } from './goalController'
 import { createPreviewManager, readProjectReleaseHeads } from './previewManager'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
-import type { Responsibility } from './roleContextStager'
 import { createRunAttemptStore } from './runAttemptStore'
 import { readSoftwareDeliveryProfile } from './softwareDeliveryProfile'
 import { createWorkspaceAttentionController } from './workspaceAttentionController'
@@ -234,14 +233,12 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       resolveToolUrl:
         options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
     })
-  let readActiveRuns: () => ReadonlyMap<string, Responsibility> = () => new Map()
   const assistantState = createAssistantStateReader({
     homeRoot: options.homeRoot,
     workspace,
     projects,
     publisher,
     attempts,
-    activeRuns: () => readActiveRuns(),
     concurrency: profile.concurrency,
   })
   let restoreProjectEligibility: (projectId: string) => Promise<void> = async () => undefined
@@ -306,7 +303,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     concurrency: profile.concurrency,
     delivery,
   })
-  readActiveRuns = () => coordinator.activeRuns()
   protectAssistantGoal = (eventId, projectId, goalId) =>
     coordinator.protectAssistantGoal(eventId, projectId, goalId)
   protectAssistantProject = (eventId, projectId) =>

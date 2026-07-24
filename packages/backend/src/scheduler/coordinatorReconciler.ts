@@ -45,7 +45,6 @@ export interface CoordinatorReconciler {
   settleAssistantTurn(eventId: string): void
   setProjectEligible(projectId: string, eligible: boolean): void
   interruptInternalAssistant(): void
-  activeRuns(): ReadonlyMap<string, Responsibility>
 }
 
 interface ActiveAssistantTurn {
@@ -67,7 +66,7 @@ export function createCoordinatorReconciler(
   const now = options.now ?? (() => new Date())
   const intervalMs = options.intervalMs ?? 1_000
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
-  const active = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
+  const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
   const assistantTurnBarriers = new Map<string, { projects: Set<string>; goals: Set<string> }>()
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -77,11 +76,6 @@ export function createCoordinatorReconciler(
   let directAssistantCommands = 0
 
   const coordinator: CoordinatorReconciler = {
-    activeRuns() {
-      return new Map(
-        [...active.entries()].map(([key, value]) => [key, value.responsibility] as const),
-      )
-    },
     setProjectEligible(projectId, eligible) {
       if (eligible) eligibleProjects.add(projectId)
       else eligibleProjects.delete(projectId)
@@ -116,10 +110,10 @@ export function createCoordinatorReconciler(
       }, 0)
     },
     async waitForIdle() {
-      while (reconciling || active.size > 0 || assistantActive.size > 0) {
+      while (reconciling || reservations.size > 0 || assistantActive.size > 0) {
         await Promise.allSettled([
           ...(reconciling ? [reconciling] : []),
-          ...[...active.values()].map((entry) => entry.promise),
+          ...[...reservations.values()].map((entry) => entry.promise),
           ...[...assistantActive.values()].map((entry) => entry.promise),
         ])
       }
@@ -146,7 +140,7 @@ export function createCoordinatorReconciler(
     async reconcileOnce() {
       if (reconciling) return reconciling
       const epoch = reconcileEpoch
-      const startedWithActiveResponsibility = active.size > 0
+      const startedWithReservation = reservations.size > 0
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
@@ -159,7 +153,7 @@ export function createCoordinatorReconciler(
             if (!publicPending && !internalHandoffPending) {
               await options.reflection.observe({
                 settled:
-                  result.kind === 'idle' && !startedWithActiveResponsibility && active.size === 0,
+                  result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
               })
             }
           }
@@ -232,7 +226,7 @@ export function createCoordinatorReconciler(
     const refreshedWorkspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const projectBlocks = blockedProjects(refreshedWorkspace)
-    const passCounts = activePassCounts(active)
+    const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId) || projectBlocks.has(project.projectId)) continue
@@ -243,7 +237,7 @@ export function createCoordinatorReconciler(
         for (const [goalId, goalPackage] of reconciliationPackages) {
           if (goalDispatchBlocked(project.projectId, goalId)) continue
           const liveWorkIds = new Set(
-            [...active.keys()]
+            [...reservations.keys()]
               .filter((key) => key.startsWith(`${project.projectId}/${goalId}/`))
               .map((key) => key.slice(`${project.projectId}/${goalId}/`.length)),
           )
@@ -328,7 +322,7 @@ export function createCoordinatorReconciler(
       const limit = options.concurrency[responsibility]
       if (reserved[responsibility] >= limit) continue
       const key = `${candidate.project.projectId}/${candidate.goalId}/${candidate.decision.workId}`
-      if (active.has(key)) continue
+      if (reservations.has(key)) continue
       reserved[responsibility] += 1
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
@@ -352,10 +346,10 @@ export function createCoordinatorReconciler(
           )
         })
         .finally(() => {
-          active.delete(key)
+          reservations.delete(key)
           coordinator.wake()
         })
-      active.set(key, { responsibility, promise })
+      reservations.set(key, { responsibility, promise })
       started += 1
     }
     if (started > 0) return { kind: 'passes_started', count: started }
@@ -437,9 +431,11 @@ function blockedProjects(workspace: AssistantWorkspace) {
   return blocked
 }
 
-function activePassCounts(active: ReadonlyMap<string, { responsibility: Responsibility }>) {
+function reservationPassCounts(
+  reservations: ReadonlyMap<string, { responsibility: Responsibility }>,
+) {
   const counts: Record<Responsibility, number> = { planner: 0, generator: 0, reviewer: 0 }
-  for (const entry of active.values()) counts[entry.responsibility] += 1
+  for (const entry of reservations.values()) counts[entry.responsibility] += 1
   return counts
 }
 

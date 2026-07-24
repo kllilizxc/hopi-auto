@@ -62,6 +62,7 @@ describe('RunAttemptStore', () => {
       ],
       vendorEventType: 'item.updated',
     })
+    expect((await store.snapshot()).running().map((attempt) => attempt.runId)).toEqual(['R-1'])
     await recorder.finish({
       outcome: {
         result: 'success',
@@ -70,6 +71,7 @@ describe('RunAttemptStore', () => {
       },
       application: 'published',
     })
+    expect((await store.snapshot()).running()).toEqual([])
 
     const attempts = await store.list('P-1', 'G-1', 'W-1')
     const detail = await store.read('P-1', 'G-1', 'W-1', 'R-1')

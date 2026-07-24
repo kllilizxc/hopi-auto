@@ -25,7 +25,6 @@ import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { clearGoalAttentionOperatorRequest } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
-import type { Responsibility } from '../src/runtime/roleContextStager'
 import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
@@ -2051,8 +2050,7 @@ describe('Assistant HOPI tools', () => {
   })
 
   test('reads current control state without inlining durable history', async () => {
-    const active = new Map<string, Responsibility>()
-    const fixture = await setup({ activeRuns: () => active })
+    const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-live')
     const attempt = await fixture.attempts.start({
@@ -2063,7 +2061,19 @@ describe('Assistant HOPI tools', () => {
       responsibility: 'planner',
       runRoot,
     })
-    active.set('P-1/G-1/plan-initial', 'planner')
+    await fixture.goalStore.createGoal({
+      goalId: 'G-2',
+      title: 'Other Goal',
+      objective: 'Run independently.',
+    })
+    const otherAttempt = await fixture.attempts.start({
+      projectId: 'P-1',
+      goalId: 'G-2',
+      workId: 'plan-initial',
+      runId: 'R-other-goal',
+      responsibility: 'planner',
+      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-other-goal'),
+    })
     await fixture.workspace.receiveEvent({ eventId: 'EV-read', content: 'Inspect current state.' })
 
     const current = (
@@ -2121,7 +2131,6 @@ describe('Assistant HOPI tools', () => {
     expect(current.projects[0]?.goals[0]).not.toHaveProperty('evidence')
 
     await attempt.interrupt(new Error('test interruption'))
-    active.clear()
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     const after = (
       await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
@@ -2146,6 +2155,7 @@ describe('Assistant HOPI tools', () => {
       attributes: { id: 'plan-initial', stage: 'done' },
       runtime: { latestAttempt: { status: 'interrupted' } },
     })
+    await otherAttempt.interrupt(new Error('test cleanup'))
   })
 
   test('projects complete canonical references for every open Attention', async () => {
@@ -2479,7 +2489,6 @@ describe('Assistant HOPI tools', () => {
 
 async function setup(
   options: {
-    activeRuns?: () => ReadonlyMap<string, Responsibility>
     trackInterrupts?: boolean
     trackAttemptReads?: boolean
   } = {},
@@ -2557,7 +2566,6 @@ async function setup(
     projects,
     publisher,
     attempts,
-    activeRuns: options.activeRuns,
   })
   const rawTools = createAssistantTools({
     home,

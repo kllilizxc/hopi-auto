@@ -470,6 +470,13 @@ stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bo
 the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
 Work and cannot replace Evidence or a canonical gate.
 
+The durable Attempt manifest is the sole runtime authority for whether that Run is active. An
+in-memory Coordinator reservation begins before preparation so concurrent ticks cannot admit the
+same Work or oversubscribe a responsibility, and it may outlive a terminal Attempt while application
+cleanup unwinds. That reservation is private scheduling state, not a Run, and never appears in API,
+Assistant, Reflection, or Kanban projections. Before the manifest exists the Work remains publicly
+queued; after the manifest becomes terminal it is publicly non-running.
+
 Vendor-native task tracking is normalized at this boundary. A Codex todo snapshot is already
 complete. Claude `TaskCreate`, `TaskUpdate`, and `TaskList` operations are reduced into the same
 complete plan snapshot; their ordinary tool rows are suppressed to avoid presenting one internal

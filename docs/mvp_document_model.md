@@ -423,8 +423,8 @@ title, objective, and acceptance criteria; Coordinator supplies only structural 
 initial stage, revision, dependency invariants, and dispatch provenance. Direct Engineering
 admission does not assert that the Work completes the Goal; it only removes an unnecessary initial
 Planning pass. A
-non-active Goal cannot own a live Run lease:
-Coordinator interrupts that Goal's admitted Runs without disturbing other Goals. Pause therefore
+non-active Goal cannot retain a Coordinator reservation:
+Coordinator interrupts that Goal's running Attempts without disturbing other Goals. Pause therefore
 prevents new dispatch, interrupts running passes, and rejects any racing result publication or
 integration. An interrupted pass may preserve isolated artifacts and Attempt diagnostics but
 cannot advance canonical Work while paused. Material instructions may update a paused contract

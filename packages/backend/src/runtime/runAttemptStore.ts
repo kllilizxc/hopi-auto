@@ -149,6 +149,7 @@ export interface RunAttemptRecorder {
 }
 
 export interface RunAttemptSnapshot {
+  running(): readonly RunAttemptSummary[]
   list(projectId: string, goalId: string, workId: string): readonly RunAttemptSummary[]
   listGoal(projectId: string, goalId: string): ReadonlyMap<string, readonly RunAttemptSummary[]>
 }
@@ -458,7 +459,17 @@ function createAttemptSnapshot(attempts: readonly RunAttemptSummary[]): RunAttem
       new Map([...byWork].map(([workId, byRun]) => [workId, sortAttempts([...byRun.values()])])),
     )
   }
+  const running = sortAttempts(
+    [...sorted.values()].flatMap((byWork) =>
+      [...byWork.values()].flatMap((workAttempts) =>
+        workAttempts.filter((attempt) => attempt.status === 'running'),
+      ),
+    ),
+  )
   return {
+    running() {
+      return running
+    },
     list(projectId, goalId, workId) {
       return sorted.get(`${projectId}\u0000${goalId}`)?.get(workId) ?? []
     },

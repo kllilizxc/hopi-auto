@@ -171,10 +171,13 @@ because a hung process may produce no state transition.
 One state observation scans durable Run manifests once and derives one immutable, request-scoped
 Attempt index. Every Goal and Work lookup in that observation reuses the index; no Work starts its
 own archive scan, and the index is discarded after the observation rather than becoming cached
-authority with invalidation rules. Terminal Attempt activity comes from its manifest. Only the
-latest running Attempt reads mutable event and transcript activity needed for stale-Run detection.
-Manifest reads use bounded concurrency so a larger Run archive increases work linearly without
-creating an unbounded native-I/O allocation burst.
+authority with invalidation rules. The Attempt manifest is the sole public authority for Run
+lifecycle: only `status: running` is an active Run, and a terminal manifest disappears from every
+active-Run projection immediately even if Coordinator is still unwinding cleanup. Coordinator's
+in-memory dispatch reservation remains private scheduling state and is never merged into Assistant,
+API, Reflection, or Kanban Run state. Only a running Attempt reads mutable event and transcript
+activity needed for stale-Run detection. Manifest reads use bounded concurrency so a larger Run
+archive increases work linearly without creating an unbounded native-I/O allocation burst.
 
 New user input has strict speaking priority. It may interrupt a Reflection-sourced internal speaking
 turn, which remains pending and is revalidated later, but it never interrupts the read-only
@@ -201,7 +204,7 @@ The selected context is a convenience, not hidden memory. Current canonical docu
 HOPI tools override stale conversational assumptions.
 
 `hopi_read_state` returns a bounded current-state slice by default, not the whole durable archive. It exposes
-active Runs explicitly; includes every Engineering Work plus only nonterminal Planning Work; and
+running Attempts explicitly as active Runs; includes every Engineering Work plus only nonterminal Planning Work; and
 inlines open Attention and each visible Work's latest Attempt while representing Goal, Work, and
 design documents with compact current facts plus canonical paths. The default Work projection omits
 cumulative Evidence-reference arrays and returns only their count and latest reference. It also
