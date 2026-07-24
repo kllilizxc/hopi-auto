@@ -65,6 +65,7 @@ docs/*
 !docs/e2e_regression_report_2026-07-14.md
 !docs/e2e_test_cases.md
 !docs/e2e_test_issues.md
+!docs/local_runtime_problem_catalog.md
 !docs/unified_design.md
 .playwright*
 artifacts

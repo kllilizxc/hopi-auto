@@ -21,6 +21,9 @@
   process-crash recovery rules.
 - [`mvp_state_machine.md`](./mvp_state_machine.md): derived state charts, readiness, and Kanban
   projection.
+- [`local_runtime_problem_catalog.md`](./local_runtime_problem_catalog.md): deduplicated local
+  production-history problem catalog, current open records, evidence paths, code ownership, and
+  downstream Project incidents for zero-context debugging.
 - [`mvp_alignment_plan.md`](./mvp_alignment_plan.md): implementation evidence and cutover checklist;
   it is not a design authority.
 
